@@ -1,0 +1,25 @@
+# .NET build output
+bin/
+obj/
+*.user
+
+# NativeAOT publish output
+publish/
+
+# callboard's derived index — rebuildable from the primary record, never authoritative,
+# and never committed (ADR-0004). Committing it would make a disposable artefact look
+# like a source of truth in review.
+callboard/.index/
+*.db
+*.db-shm
+*.db-wal
+
+# dmons tripwire scratch
+.claude/.dmons-tripwire/
+
+# local-only Claude Code settings (settings.json IS committed)
+.claude/settings.local.json
+.claude/.cc-writes/
+
+# macOS
+.DS_Store

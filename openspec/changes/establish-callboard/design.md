@@ -1,0 +1,210 @@
+## Context
+
+See `proposal.md` — Why, for motivation, and the eight capability specs for requirements. This document
+records the technology decisions taken in the Architect session of 2026-08-19 and the gate commands they
+imply.
+
+Constraints that shape every decision below:
+
+- **The tool must not be a precondition for reading the record.** `record-retrieval` requires the loop to
+  proceed unenforced rather than blocked when the tool is unavailable.
+- **Refusals must bind.** `process-enforcement` is the product; a rule that can be written around is a
+  rule that was only requested.
+- **Working context must fit under 3,000 tokens and stay flat** as a change lengthens
+  (`working-context`).
+- **The corpus is large and unbounded.** The incumbent reached 2.07 MB for one change, and the register
+  now lives above the change, so it accumulates across changes without a ceiling.
+- **One maintainer, one machine** (`darwin/arm64`), no CI at present.
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- Fix the platform, language, storage model and command surface firmly enough that the Apply Workflow can
+  gate on them.
+- Keep the primary record independent of the tool, so enforcement can fail without comprehension failing.
+- Keep query cost independent of narrative volume.
+
+**Non-Goals:**
+
+- Choosing internal module boundaries, class names or a testing framework beyond the gate command. Those
+  are the Apply Workflow's calls.
+- Deciding the CLI's verb-by-verb surface. The shape is fixed (non-interactive, JSON out, stdin for
+  bodies); the vocabulary follows the specs during apply.
+- Performing the `DEVLOG.md` migration. `callboard` must be able to receive it; carrying it out is a
+  later act.
+
+## Decisions
+
+### D1 — A command-line tool is the single surface
+
+See **ADR-0001**. Resolves `PRD.md` OQ-1.
+
+Agents invoke `callboard` through the shell; card bodies arrive on stdin; machine-facing output is JSON;
+every command is non-interactive and exits non-zero on refusal. Direct agent writes to `callboard/` are
+denied by the existing hook layer alongside git, `tasks.md`, the `Makefile`, `CLAUDE.md` and `.claude/`.
+
+Rejected: MCP-only (no degraded mode; enforcement surface would have to be built from nothing);
+CLI + MCP reads (deferred, and the intended escape hatch if shell ergonomics prove poor).
+
+### D2 — .NET 10, NativeAOT, single self-contained binary
+
+See **ADR-0002**.
+
+Chosen for closed unions with exhaustive matching over a state machine whose value is that it never
+fails open; single-binary distribution with no runtime at the point of use; and genuine check-mode
+gates. Rejected: Rust (runner-up; learning and compile cost), TypeScript (moot once MCP was rejected;
+needs a runtime present), Go (no sum types, so refusal completeness stays a test concern).
+
+Startup latency was explicitly **not** a factor — the difference is roughly thirty seconds across an
+entire change.
+
+**NativeAOT constrains library choice:** no runtime code generation, no unbounded reflection,
+serialization via source generators. Any candidate dependency must be verified AOT-compatible before
+adoption.
+
+### D3 — Git-committed Markdown cards, one file per card
+
+See **ADR-0003**.
+
+YAML frontmatter, Markdown body, comments appended as delimited blocks. Layout is scope-shaped so archive
+is structural rather than a data migration:
+
+```
+callboard/
+  register/          repository-scoped: rule, hazard, question
+  decisions/         capability-scoped, mirroring the spec paths they bind
+  changes/<name>/    change-scoped: block, obligation, finding, section
+```
+
+Rejected: directory-per-card with file-per-comment (433 files per change, and thread order still needs
+atomic sequence allocation); split card/thread files (card state and its history stop being one diff).
+
+### D4 — SQLite as the derived index, holding metadata only
+
+See **ADR-0004**.
+
+**This decision reverses the Architect's recommendation at the Product Owner's direction, and the
+Product Owner was right.** The Architect proposed deriving in memory with no persistent store, sizing the
+corpus by card count. That ignored that narrative moves onto the cards rather than disappearing — the
+incumbent measured 2.07 MB for one change — and that the register now accumulates above the change
+without a ceiling.
+
+The index holds derived queryable state only: status, owner, kind, scope, blocked-on edges, thread
+routing, citation counts, staleness inputs, section rollups. Comment bodies stay in files; narrative
+retrieval is a file read by identity. This keeps query cost independent of narrative volume, which is
+what makes the flat-cost requirement achievable.
+
+Gitignored. Never authoritative. Never taken as a lock.
+
+No full-text search in v1 — the specs require retrieval by identifier, not search.
+
+### D5 — The human view is static HTML emitted by the CLI
+
+A single self-contained HTML file with inline CSS, generated by `callboard` itself. No server, no
+npm, no build step.
+
+**This departs from the standing vanilla-TypeScript-plus-Vite frontend convention, deliberately.** A JS
+toolchain would make this a two-stack project, which under the Apply Workflow means a second full set of
+build/test/format/lint gates, a second `worker-web` agent, and an npm dependency tree — for a read-only
+render. Trade-off accepted: the view cannot offer interactive filtering without revisiting this.
+
+### D6 — Token budget by priority assembly with character-based measurement
+
+Resolves `PRD.md` OQ-2.
+
+The response is assembled in priority order — register, then brief, then unresolved threads addressed to
+the caller, then narrative — measuring cumulatively and stopping when the ceiling is reached. Only
+narrative is ever dropped, and any omission is stated in the response.
+
+Measurement uses a character count with a conservative divisor and margin rather than a real tokenizer.
+The requirement is that the response *fits* a budget, not that it reports an exact token count; a real
+tokenizer would ship a BPE vocabulary in an AOT binary and tie the tool to one model family's
+tokenization. Trade-off accepted: slight over-truncation of narrative.
+
+### D7 — Per-card advisory lock plus atomic rename
+
+Writes take a per-card advisory lock with a timeout; the file is written to a temporary path and renamed
+into place. An interrupted write therefore cannot produce the corrupt card `record-retrieval` must
+contain.
+
+Rejected: serialising through the SQLite transaction. It would give one locking mechanism instead of two,
+but makes the index load-bearing for correctness — which the specs require it never to be.
+
+### D8 — Gate commands
+
+Single stack, so no target prefixes and no per-stack short name. Recorded verbatim for
+`/dmons:scaffold` to harvest into the `Makefile`:
+
+| Target | Exit label | Command |
+|---|---|---|
+| `build` | `BUILD_EXIT` | `dotnet build -c Release --nologo` |
+| `test` | `TEST_EXIT` | `dotnet test -c Release --nologo` |
+| `format` | `FORMAT_EXIT` | `dotnet format --verify-no-changes` |
+| `validate` | `VALIDATE_EXIT` | `openspec validate <change> --strict`, over every active change |
+| `clean` | `CLEAN_EXIT` | `dotnet clean` |
+| `publish` | `PUBLISH_EXIT` | `dotnet publish src/Callboard -c Release -r osx-arm64` |
+
+**There is no `lint` target.** An earlier draft of this decision split format from lint as
+`dotnet format whitespace` versus `dotnet format style` plus `dotnet format analyzers`. That was
+revised during scaffolding: bare `dotnet format --verify-no-changes` runs all three subcommands in one
+pass, so the single `format` gate covers strictly more than the split `format` gate did, and with
+`TreatWarningsAsErrors` enabled (task 1.2) analyzer violations already fail `build`. A separate `lint`
+target would re-run the formatter under another name.
+
+Verified against the installed toolchain: `--verify-no-changes` exists, exits non-zero, and rewrites
+nothing. `publish` exists because NativeAOT genuinely ships an artefact.
+
+`validate` iterates the active changes discovered from `openspec/changes/`, excluding `archive/`, and
+treats "no active change" as a failure rather than a silent pass — an empty run would otherwise report
+`VALIDATE_EXIT:0` having validated nothing.
+
+`osx-arm64` is the only runtime identifier. Add others when CI or a second machine needs them.
+
+## Risks / Trade-offs
+
+- **Shell quoting of multi-line card bodies** → all body input arrives on stdin; no workflow may require
+  quoting a body as an argument. If this still proves painful, ADR-0001 names MCP reads as the escape
+  hatch.
+- **A refusal rule that fails open is invisible until it matters** → the refusal set is modelled as a
+  closed union so an unhandled case is a compile error, and every rule carries a test per the amended S5.
+- **Index and record diverging** → the record governs and the index is rebuilt; this must be a tested
+  behaviour, not a documented intention. The index is never taken as a lock, so it can be deleted at any
+  moment without risking data.
+- **A crashed agent leaving a card locked** → locks carry a timeout and a clear failure message naming
+  the card and the holder.
+- **NativeAOT rejecting a needed library** → AOT compatibility is checked before any dependency is
+  adopted, not after. YAML parsing is the first place this will bite; hand-rolling against a deliberately
+  narrow frontmatter schema is the fallback.
+- **Character-based budget measurement drifting from real tokenization** → conservative divisor and
+  margin, so the failure mode is over-truncating narrative rather than blowing the budget. Narrative is
+  the only thing droppable, so the failure stays benign.
+- **The static human view cannot grow interactivity** → accepted to keep the project single-stack.
+  Revisiting means adding a second stack and its gates, and should be a deliberate change rather than a
+  drift.
+- **Card files grow large with long threads** → accepted. The working-context path never reads full
+  threads; narrative is fetched by identity.
+
+## Migration Plan
+
+The existing `DEVLOG.md` is not parsed or auto-imported. §0–§11 are closed under a supervisor approval
+and move wholesale to an archive path.
+
+Live state is migrated by hand in a single session — roughly 50–60 cards: `LEDGER.md`'s 32 forward
+obligations with their owing sections, the standing rules earned in §0–§11, the live hazards, D8–D18 as
+decisions, and §12's live state as blocks and open questions.
+
+**This change delivers the ability to receive that migration; performing it is a later act.** Per the
+amended S5, dogfooding validates `callboard` but does not gate its completion.
+
+Rollback is `git revert` plus continuing to append to `DEVLOG.md`. Because the record is plain text in the
+repository and the index is disposable, there is no data to extract on rollback.
+
+## Open Questions
+
+- **Verb vocabulary for the CLI.** The surface shape is fixed; the specific verbs follow the specs during
+  apply and change neither the approach nor the task breakdown.
+- **Frontmatter parsing: library or hand-rolled.** Decided by AOT compatibility once tried. Either way the
+  schema and the file format are unchanged.
+- **The exact character-to-token divisor and margin.** Tunable against real responses without changing
+  the approach.
