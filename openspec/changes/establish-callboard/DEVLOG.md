@@ -688,13 +688,131 @@ neighbours picked up the internal `CommandContext` type where they touch it dire
 
 No `→ @reviewer` — back to @architect to land.
 
+**[supervisor]** Section 1 re-audit — same range, `c18d6f9..993827f`, now two commits (`6065453`
+feature, `993827f` fix). Read every post under `## 1.` since my verdict, the whole of
+`CommandDispatcher.cs`, `Program.cs` and `CommandDispatcherTests.cs` at HEAD, and grepped the member
+usage of `CommandContext` across `src/` and `tests/`. Gates quoted from the architect, run personally:
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 15 tests.
+
+**Verdict: Approve.**
+
+### The three holes are closed, not papered over
+
+I looked for the failure mode where a blocker is answered by a symbol that exists rather than by a
+behaviour that holds. It isn't what happened.
+
+- **Blocker 1.** `Dispatch` (`CommandDispatcher.cs:106`) forwards the context uniformly and `RunVersion`
+  (`:120`) is an ordinary consumer of it — the convention is not a `version`-shaped patch, which was the
+  thing worth checking. `callboard version --oops` → exit `1`, `unrecognised-argument`, verified against
+  the published binary by the worker and again by the reviewer.
+- **Blocker 2.** `RequireStdinRedirected` (`:99`) refuses instead of blocking, both branches tested,
+  and `StdinBodyReader.ReadBody`'s `TextReader` signature is untouched as asked.
+- **Blocker 3.** The `try` at `:67` wraps dispatch **and** `WriteEnvelope`, so a failure during
+  serialisation is caught rather than only a failure during dispatch — that is the part I would have
+  expected to be missed, and it isn't. `WriteToolFailureEnvelope` (`:158`) builds the envelope directly
+  and never routes through `CommandOutcome.Refusal`. The test is a real mid-write failure simulation,
+  asserts exactly one line survives, and asserts the exit code is distinct from *both* `0` and `1`
+  rather than merely equal to `2`.
+
+**The reviewer's dead-parameter catch is the most valuable thing in this round**, and I want it recorded
+as such: `isInputRedirected` reaching `Run` and stopping there was the same fail-open illusion as the
+original blocker, relocated — a guard that looks wired, is tested in isolation, and is unreachable from
+production. Finding it inside a remediation for that exact pattern is the loop working.
+
+### `CommandContext` is the right seam, with one member that is wrong
+
+`RemainingArgs` is consumed; `Input` and `IsInputRedirected` are forward-looking but justified by the
+blocker-2 requirement rather than by speculation. Nesting inside `CommandDispatcher` is fine and will
+naturally become a top-level type when §2 moves handlers out — a predictable move, not a tear-up.
+
+**`Output` is read nowhere in production** (grepped: `context.Output` has no call site in `src/`; it
+appears only in the record declaration, in `Run`'s construction of it, and in a test's
+`TextWriter.Null`). The record's own doc comment at `:48` says *"Only members an already-briefed need
+has asked for belong here — this is not a place to speculate ahead of a section."* `Output` is that
+speculation, and of the five members it is the one that can break the invariant this very round
+established: handing every future handler the stdout writer turns "exactly one JSON line on stdout"
+from something only the dispatcher *can* do into something twelve sections of handlers must *refrain*
+from doing. A handler has no legitimate need for stdout — its output is its `ICommandResult`. `Error`
+is unused too and less dangerous, since stderr is free-form by convention.
+
+I considered blocking on this and decided not to, deliberately: nothing uses it, the invariant holds at
+HEAD, and the change is a strictly subtractive one-liner. Spending the two-round escalation — which
+exists for a section that cannot converge — on an unused record member would be the wrong use of it.
+But it should be **the first line of §2's brief**, not a `## NEXT` entry that competes for attention:
+delete `CommandContext.Output` (and `Error` unless §2 has a named diagnostic need) before the first
+handler that could reach for it. Once it is gone, the stdout convention is structural rather than
+observed, which is the standard the rest of this section met.
+
+### Are the new conventions strong enough to survive twelve sections?
+
+- **Exit codes: yes, genuinely.** Three named constants, the rationale for `2 ≠ 1` written where the
+  next worker will read it (`:29-39`), `ExitCodeFor` exhaustive over the closed union, and
+  `ToolFailureExitCode` returned from exactly one place. This is stated, not merely observed.
+- **stdout/stderr: observed, not yet enforced** — and `context.Output` is the entire reason. See above.
+- **The argument boundary is per-handler discipline.** A §2 handler that forgets to inspect
+  `RemainingArgs` silently ignores tokens again — the original blocker, reachable by omission. That is
+  the right trade for one no-arg verb and I am not asking for a parser now. But when §2 lands the first
+  flag-taking verb, the boundary should become structural: the parser reports what it consumed and the
+  dispatcher refuses the remainder, so a handler *cannot* forget.
+- **The stdin guard is remembered, not enforced.** Nothing stops a §2 handler calling
+  `StdinBodyReader.ReadBody(context.Input)` without calling `RequireStdinRedirected` first. Worth
+  considering in §2 whether the body read should take the context (or a redirect-checked reader) so the
+  guard is unskippable. Not §1's to decide — §2 is the section with the first real body verb and the
+  information to choose.
+
+### One wire-shape observation for §9
+
+A tool failure is carried in the field named `refusal`, with `code: "tool-failure"`
+(`CommandDispatcher.cs:164-167`). Nothing is broken: the exit code is the discriminator, it is reliable,
+and ADR-0001 blesses exit codes for exactly this purpose. But a stdout-only consumer tells "the board
+said no" from "enforcement broke" by string-matching a code inside an object named `refusal` — and those
+two carry opposite instructions. When §9 closes the refusal set into a union, `tool-failure` must not
+become a member of it; the envelope likely wants a third mutually-exclusive `error` payload alongside
+`result` and `refusal`. Relatedly, `CliEnvelope`'s doc comment (`CliEnvelope.cs:6-8`) is now stale — it
+still says `ok` discriminates "success from refusal" with "the two payload shapes", but `ok:false` now
+means refusal *or* tool failure. Doc comments are how §2–§13 workers learn these conventions, so a stale
+one here misleads at precisely the point that matters.
+
+### Status of the carried obligations
+
+All six from last round stand unchanged — `Ordinal` (§2), `CliRefusal`'s provisional shape (§2→§9),
+index-path re-verification (§3), the closed refusal union (§9), the version-string duplication, and the
+`-k` aggregation demonstration. Nothing was resolved by this remediation and nothing has grown. Adding:
+
+- **§2 brief, first item** — delete `CommandContext.Output` (and `Error` absent a named need) before the
+  first handler lands.
+- **§2 brief** — the first flag-taking verb makes the argument boundary structural rather than
+  per-handler.
+- **§2 brief** — decide whether the stdin guard becomes unskippable at the body-read call site.
+- **§9** — `tool-failure` must not become a member of the closed refusal set; consider a third `error`
+  payload on the envelope.
+- **Opportunistic** — `CliEnvelope`'s doc comment no longer describes the envelope's three states.
+
+Section 1 is closed. The foundation §2 builds on is sound, and the one defect above is subtractive and
+belongs at the top of §2's brief rather than in a third remediation round.
+
 ## NEXT
 
-**Section 1** — remediation block with @worker, then reviewer, gates, `fix` commit, then the §1
-supervisor re-run over `c18d6f9..HEAD`. §2 does not open until §1 has an `Approve`.
+**Section 1 is closed** — supervisor `Approve` at `993827f` over `c18d6f9..HEAD`. Two blocks landed
+(`6065453` feat, `993827f` fix), 1.1–1.6 ticked, three review rounds and one remediation.
+
+**Section 2 opens next** — primary record, card files (2.1–2.8). Post its `Base:` sha before briefing
+its first block.
 
 Carried obligations, each with the section that owes it:
 
+- **§2 brief, first line** — **delete `CommandContext.Output`.** It is read nowhere in production, and
+  of the five members it is the one that can break the invariant §1 established: handing every handler
+  the stdout writer turns "exactly one JSON line on stdout" from something only the dispatcher *can* do
+  into something twelve sections of handlers must *refrain* from doing. A handler's output is its
+  `ICommandResult`. `Error` is also currently unused — decide it at the same time. The record's own doc
+  comment forbids speculating ahead of a section; this is that.
+- **§2 brief** — the stdout/stderr split is **observed, not enforced**. Exit codes are genuinely stated
+  in code; this one is not, and `Output` above is why.
+- **§2 brief** — a handler that forgets to inspect `RemainingArgs` silently ignores tokens again, and
+  nothing stops a handler calling `ReadBody(context.Input)` without the stdin guard. Both are discipline
+  where §1 made the sibling cases structural. §2 hardens them, since §2 is where real handlers first
+  exist.
 - **§2 brief** — string comparison and frontmatter key matching must be explicitly `Ordinal`.
   `InvariantGlobalization=true` makes the current behaviour correct by accident, not by statement.
 - **§2 brief** — first real emission of `CliRefusal`. Its two-field shape is provisional until §9;
@@ -703,7 +821,12 @@ Carried obligations, each with the section that owes it:
   1.5 could only verify the reserved layout; nobody currently holds the real check.
 - **§9** — the refusal set becomes a closed union. `Refusal(string, string)` currently accepts a free
   string, so every section that adds a refusal before §9 widens the retrofit.
-- **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs:13`
+- **§9** — a tool failure currently travels in the field named `refusal` with `code:"tool-failure"`.
+  Nothing is broken — the exit code is the discriminator — but a stdout-only consumer then distinguishes
+  two opposite instructions by string-matching inside an object named `refusal`. When §9 closes the
+  refusal set, **`tool-failure` must not become a member of it**. Relatedly `CliEnvelope.cs:6-8` is now
+  stale: it still says `ok` discriminates success from refusal and describes only two payload shapes.
+- **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs`
   versus an absent `<Version>` in the csproj).
 - **Gate hygiene** — 1.4 exercised only `format`'s whitespace facet and never demonstrated `-k`
   aggregation on a red `make gates`. Worth proving once when a section next has a genuine failure.
@@ -711,3 +834,4 @@ Carried obligations, each with the section that owes it:
   (`make gates` hung the full 600s in-sandbox, sub-second with the override). Tracked outside the
   change; if it is not fixed it costs every block a wasted hang and trains agents to reach for the
   override reflexively.
+
