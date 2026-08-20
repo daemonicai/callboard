@@ -320,9 +320,394 @@ and, more strongly, by the compiler itself — kept both remaining new tests, in
 
 `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — 10 tests (was 11).
 
+**[supervisor]** Section 1 review — scope `c18d6f9..6065453` (one commit, `6065453`: block 1.1–1.6 plus
+two in-block remediation rounds). Read the full §1 thread, `proposal.md`, `design.md` D1/D2/D4/D5/D8,
+ADR-0001/0002/0003/0004, `specs/record-retrieval/spec.md`, and every file in the diff. I did not re-run
+the gates; the exit lines are in this thread three times over (`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0`), quoted by worker and reviewer independently.
+
+I am not re-litigating anything the reviewer settled, and I found nothing to add on the diff-local axis —
+the `ICommandResult` remediation genuinely moved a fail-open from runtime to compile time, and the
+closed-union claim holds. My concern is the thing block review could not weigh: **§1's whole deliverable
+is a shape that §2–§13 get poured into**, and that shape has three fail-open holes which are invisible
+while there is exactly one verb and nothing that can throw. All three are cheap now and expensive from §2
+onward.
+
+**Verdict: Request changes.**
+
 ---
+
+### Blocker 1 — the entry point fails open on arguments (`src/Callboard/Cli/CommandDispatcher.cs:26`)
+
+```csharp
+var command = args.Length > 0 ? args[0] : string.Empty;
+```
+
+`args[1..]` is read by nothing and discarded silently. `callboard version --json --oops` today emits
+`{"ok":true,…}` and exits `0`. §1 correctly made an unrecognised *command* refuse; it left an
+unrecognised *argument* pass. That is the same failure class the section closed at the verb boundary,
+left open one token to the right, in the product whose premise is that a rule refuses rather than
+records.
+
+It belongs to §1 rather than later because every verb from §2 on parses its own flags. With no convention
+here, each worker decides independently whether an unknown flag refuses, and by §9 the CLI carries
+thirteen sections' worth of separately-negotiated argument handling — the exact drift a "fixed shape"
+section exists to prevent. The concrete harm: an agent typos `--scope`, gets `ok:true`, and a different
+action was performed.
+
+Wanted: one argument-boundary rule in the dispatcher — an argument no command consumed is a refusal —
+plus a test. In the one-verb case this is a few lines; it does not stay a few lines.
+
+### Blocker 2 — the stdin body path can hang, which is the property 1.6 was chartered to guarantee
+
+`src/Callboard/Program.cs:3` passes `Console.In` unconditionally; `src/Callboard/Cli/StdinBodyReader.cs:11`
+is a bare `input.ReadToEnd()`. There is no `Console.IsInputRedirected` check anywhere in `src/`
+(grepped). The first verb that reads a body — §2.3's comment append, or anything in §4–§5 — invoked
+without a redirect blocks on the terminal until EOF. A command that waits on a human at a TTY is
+interactive, and ADR-0001's Consequences make non-interactive binding for *every* command.
+
+The worker's end-to-end check confirmed `version` doesn't block, but `version` never calls `ReadBody` —
+the non-interactive property was demonstrated only on the path that cannot violate it. Nothing in the
+section exercises the path that can.
+
+Because `ReadBody` takes an explicit `TextReader` (the right call — it keeps the path testable), the
+guard cannot live inside it: it has to live at the composition root, and the composition root is §1's
+deliverable. Left unfixed, §2's worker invents it, or doesn't.
+
+Wanted: the redirect guard at the `Console.In` boundary, refusing when a body is required and stdin is
+not redirected, with a test. Note that "empty redirected stdin" must stay distinct from "no stdin at
+all" — `ReadBody_EmptyStdinReturnsEmptyString` covers the first half of that distinction and nothing
+covers the second.
+
+### Blocker 3 — no failure boundary, so the JSON contract holds on two exit paths out of three
+
+`Program.cs` is `return CommandDispatcher.Run(args, Console.Out, Console.In);` with no `try`/`catch`, and
+`Console.Error` appears nowhere in `src/`. Today nothing can throw, so this is invisible. §2 lands file
+IO, atomic rename, and — 2.6 — a per-card advisory lock with a timeout whose *specified* behaviour is "a
+failure message naming the card and the holder". That message has nowhere to go: an escaping exception
+produces a .NET stack trace on stderr and **no envelope at all**, against ADR-0001's "machine-facing
+commands emit JSON so callers never parse human prose".
+
+The section that establishes "one JSON line per command" is the section that has to make it true on every
+exit path, including the one where the tool itself breaks. §9.1 defines the refusal *payload* later; that
+is not the same thing as having a boundary at all.
+
+Wanted: a top-level boundary that turns an escaping exception into an envelope, so the invariant is
+"every invocation emits exactly one JSON line on stdout, always", with a test.
+
+**❓ @architect — one decision I can't make for you, and it belongs in this fix rather than in §9.**
+Blocker 3 needs an exit code, which forces the exit-code convention now. Today `0` = success, `1` =
+refusal, and nothing else exists. A caller cannot distinguish *"the board refused you"* (adapt — the
+process said no) from *"the tool broke"* (`record-retrieval`: proceed unenforced rather than blocked).
+Those demand opposite behaviour from an agent, and `record-retrieval`'s tool-unavailable scenario is what
+makes the distinction load-bearing rather than tidy. My recommendation: keep `1` for refusal, reserve `2`
+for tool failure, documented next to `RefusalExitCode`. Neither D1 nor ADR-0001 says more than "non-zero
+on refusal", so this is your call — but §1 is where it gets made, because §13.4 documents these commands
+to the agents and every section between here and there will have assumed an answer.
+
+---
+
+### Suggested remediation shape
+
+One block, entry-point-local, no new `N.M` numbers, ticks nothing:
+
+1. Argument-boundary refusal in `CommandDispatcher.Run` + test that an unconsumed argument exits non-zero.
+2. `Console.IsInputRedirected` guard at the composition root + refusal + test; leave `ReadBody`'s
+   `TextReader` signature alone.
+3. Top-level failure boundary emitting an envelope + test that a thrown exception still yields exactly one
+   JSON line; exit code per your answer above.
+
+Nothing outside `Program.cs`, `CommandDispatcher.cs` and the two test files needs to move.
+
+---
+
+### Architectural notes — for `## NEXT`, not the fix block
+
+- **The refusal payload is defined in §9 but first emitted in §2.** `CliRefusal` is `{code, message}`;
+  §9.1 requires a refusal to name the rule, state what would satisfy it, and record role and timestamp —
+  four-plus fields. Between now and §9, §2.6 (lock timeout), §4.4 (scope refusal), §5.2/5.5 and §6.2 all
+  emit refusals against the two-field shape and then get retrofitted. Consider pulling §9.1's *format*
+  forward into the first section that emits a real refusal.
+- **`CommandOutcome.Refusal(string Code, string Message)` takes a free string**, and `"unknown-command"`
+  is an inline literal (`CommandDispatcher.cs:32`). `design.md`'s own risk mitigation reads "the refusal
+  set is modelled as a closed union so an unhandled case is a compile error". `CommandOutcome` closes
+  *success vs refusal*; it does not close *the set of refusals*. Closing it is legitimately §9's work, but
+  the constructor established here is the one every intervening section calls — the longer it accepts a
+  bare string, the more call sites the closed set has to be retrofitted through. Worth deciding before §5.
+- **Nothing declares the stdout/stderr split.** The envelope goes to stdout including refusals; stderr is
+  unused. Good convention, written down nowhere — a §2+ worker may put diagnostics on stdout and break
+  the one-line contract. A sentence in the dispatcher's doc comment fixes it permanently.
+- **`.editorconfig` is a real ruleset, with a caveat worth knowing.** File-scoped namespaces,
+  accessibility modifiers, using placement and the naming rules sit at `:warning` and do fail
+  `dotnet format --verify-no-changes`; the whitespace and formatting rules always apply. But the eight
+  `:suggestion` rules (`var` style, expression-bodied members, braces, switch expressions, pattern
+  matching, primary constructors) are below the formatter's default `warn` severity and fail nothing,
+  ever. `EnforceCodeStyleInBuild` is unset, so IDE rules never reach `build` either. All defensible — just
+  don't let a later review cite a `:suggestion` rule as enforced.
+- **1.4 is the best-evidenced part of this section, with one gap.** Breaking each gate and observing the
+  code — including catching `format`'s exit `2` behind innocuous-looking output — is exactly right, and I
+  would rather have this than a claim. The gap: only the *whitespace* facet of `format` was broken, so
+  that gate's style and analyzer facets remain assumed rather than demonstrated. Also undemonstrated:
+  that a red `make gates` reports *every* failing gate rather than stopping at the first (the `-k`
+  promise). Neither blocks; both are cheap to close opportunistically.
+- **1.5 ticked on a promise that lives only in a DEVLOG paragraph.** `.gitignore` carries
+  `callboard/.index/` and `*.db*`, and no index path constant exists yet, so verification-only was the
+  honest call. But the re-verification against the real constant is now an obligation nobody holds —
+  carry it into §3's brief explicitly. Separately, `*.db` is repo-wide: a committed fixture database in
+  §3 would be silently ignored.
+- **`InvariantGlobalization=true` (`Callboard.csproj:10`) is right for determinism and has a §2+
+  consequence:** every culture-sensitive string operation becomes invariant. Card sorting, identity
+  comparison and frontmatter key matching should be explicitly `Ordinal` rather than relying on that
+  default, or the determinism is accidental rather than stated.
+- **Version is duplicated** — `CurrentVersion = "0.1.0"` (`CommandDispatcher.cs:13`) with no `<Version>`
+  in the csproj. Two sources of truth, one not yet existing. Trivial now; pick one before anything ships.
+
+**What the section got right**, since a review that lists only holes misrepresents it: the scope
+discipline is exact — no card verbs, no index code, no speculative abstraction, nothing in `src/` that §2
+has to delete, and `Commands/` removed rather than left empty. The `ICommandResult` remediation closed a
+real fail-open and the reviewer verified it in an isolated project instead of taking it on faith.
+`record-retrieval`'s "never a precondition for comprehension" is untouched, because §1 writes no records
+at all. ADR-0002 holds: source-generated JSON only, no reflection in shipping code, `IsAotCompatible` on,
+and a real `publish` actually performed rather than asserted. The three blockers are all the same kind of
+thing — holes reachable only from §2 — and they are all small.
+
+**[architect]** Supervisor `Request changes` accepted — all three blockers verified against the source
+myself before carving remediation, not taken on report: `src/` contains no `Console.IsInputRedirected`,
+no `try`, and no `Console.Error` in any hand-written file. The findings are real and they are the same
+shape: §1's deliverable is the mould for §2–§13, and each hole is invisible while there is one verb and
+nothing that can throw.
+
+Two conventions the supervisor correctly refused to invent on my behalf, now decided by the Product
+Owner and binding from here:
+
+- **Exit codes: `0` success, `1` refusal, `2` tool failure.** A refusal is the board working
+  *correctly* and the caller must stop; a tool failure means enforcement is unavailable, and
+  `record-retrieval` requires the loop to *proceed unenforced rather than blocked*. Those demand
+  opposite agent behaviour, so they cannot share an exit code — and a tool that dies before emitting
+  JSON leaves the exit code as the only signal there is. D1/ADR-0001 said only "non-zero on refusal";
+  this refines it without contradicting it.
+- **stdout carries exactly one JSON line per command and nothing else.** All human-facing diagnostics
+  and crash detail go to stderr, so a machine caller can always pipe stdout straight to a parser.
+
+**Remediation block → @worker.** No new task numbers and nothing to tick — every box in §1 is already
+ticked and the section is committed at `6065453`. Per the workflow this lands as `fix(...)`, then the
+supervisor re-runs over the same `c18d6f9..HEAD` range.
+
+Deferred deliberately to their own sections rather than pulled into §1: the refusal payload's final
+shape (§9), the closed refusal union (§9), 1.5's re-verification against the real index path constant
+(→ §3's brief), and `Ordinal` string comparison (→ §2's brief). They are recorded in `## NEXT` so they
+are held by something other than memory.
+
+**[worker]** Remediation for all three supervisor blockers, confined to `Program.cs`,
+`CommandDispatcher.cs` and the two test files as briefed.
+
+- **Blocker 1 — argument-boundary convention.** `Run` now splits `args` into `command` and
+  `remainingArgs`; `Dispatch` passes `remainingArgs` to each command handler instead of
+  discarding it. `RunVersion` refuses (`unrecognised-argument`) unless `remainingArgs` is empty —
+  `version` accepts nothing, so any stray token refuses, the same convention as an unrecognised
+  command. `callboard version --oops` now exits `1` with `{"ok":false,...,"refusal":{"code":
+  "unrecognised-argument",...}}` instead of `ok:true`/exit `0`. Extensible: a §2+ command that
+  accepts real flags parses `remainingArgs` itself and refuses whatever it doesn't consume.
+- **Blocker 2 — stdin redirect guard.** `Run` gained an `isInputRedirected` parameter, fed from
+  `Console.IsInputRedirected` in `Program.cs` (the composition root, per the supervisor's note —
+  `StdinBodyReader.ReadBody`'s `TextReader` signature is untouched). Added
+  `CommandDispatcher.RequireStdinRedirected(bool)`: returns a `stdin-not-redirected` refusal when
+  `false`, `null` when `true`. No §1 command reads a body, so nothing calls it in production yet
+  — it's the guard §2's first body-reading command applies before calling `ReadBody`, so that
+  worker inherits a tested guard instead of inventing one. Documented in both the doc comment and
+  here so it isn't mistaken for dead code between now and §2.
+- **Blocker 3 — failure boundary.** `Run` wraps dispatch in `try`/`catch (Exception)`. On an
+  escaping exception it builds a `CliEnvelope` directly (`ok:false`, `refusal.code:
+  "tool-failure"`) — not via `CommandOutcome.Refusal`, per the brief: a tool failure isn't the
+  board saying no, it's enforcement being unavailable, and `CommandOutcome.Refusal` models the
+  former. `Run` gained an `error` `TextWriter` parameter; the exception's full detail
+  (`ex.ToString()`) goes there, never to stdout. Returns the new `ToolFailureExitCode = 2`,
+  documented next to `RefusalExitCode` with the Product Owner's reasoning (opposite caller
+  behaviour: refusal means stop, tool failure means `record-retrieval` proceeds unenforced).
+  `Program.cs` now passes `Console.Error` through. Reused `CliEnvelope`/`CliRefusal` as they
+  already exist (both files stayed out of scope) rather than adding a new wire shape — the
+  `tool-failure` code is what a caller inspects to tell this apart from a real refusal; the exit
+  code (`2` vs `1`) is the primary, always-available signal.
+
+**Tests** — four new, all behavioural, none asserting a name's absence or pinning shape:
+`Version_WithUnrecognisedArgument_RefusesWithNonZeroExitCode`,
+`RequireStdinRedirected_WhenStdinIsNotRedirected_RefusesInsteadOfBlocking` +
+`_WhenStdinIsRedirected_LetsTheCommandProceed`, and
+`UnexpectedException_StillEmitsExactlyOneJsonEnvelope_AndExitsWithToolFailureCode` (a `TextWriter`
+that throws on its first `WriteLine` and succeeds after, proving `Run` still emits exactly one
+envelope, exits `2` not `0`/`1`, and puts diagnostic detail on the separate `error` writer, not
+stdout). Manually verified against the published binary too:
+`callboard version --oops` → exit `1`/`unrecognised-argument`; `callboard version < /dev/null` →
+exit `0`; `callboard bogus < /dev/null` → exit `1`/`unknown-command`.
+
+No card verbs, no index, no refusal-payload redesign, no CLI surface expansion. `tasks.md`
+untouched — every §1 box was already ticked; nothing new to tick here.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — 14 tests (was 10).
+
+Sandbox note: went straight to the override as instructed; `dotnet build`/`test`/`format`/
+`validate` all ran sub-second, no hang observed.
+
+→ @reviewer
+
+**[reviewer]** Audit of the §1 remediation block (three supervisor blockers). Scope confined to
+`Program.cs`, `CommandDispatcher.cs`, and the two test files, per the brief. Ran the gates myself
+and exercised the published binary directly rather than taking the worker's report on its word.
+
+**Gates, verified independently.** `make gates`: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0`, 14/14 tests — matches the report.
+
+**Manual checks against the published binary** (all confirm the DEVLOG claims exactly):
+- `callboard version --oops < /dev/null` → `{"ok":false,...,"refusal":{"code":
+  "unrecognised-argument",...}}`, exit `1`.
+- `callboard version < /dev/null` → `{"ok":true,...}`, exit `0`, **stderr empty** (checked byte
+  count, not just visual inspection).
+- `callboard bogus < /dev/null` → `unknown-command` refusal, exit `1`.
+
+**Blocker 1 — argument boundary. Sound and extensible, not a `version`-only patch.**
+`Dispatch(string command, string[] remainingArgs)` (`CommandDispatcher.cs`) forwards
+`remainingArgs` to every command arm uniformly; `RunVersion` is simply the first (and only)
+consumer today, refusing when anything is left over. A §2+ command that wants real flags
+consumes what it recognises from `remainingArgs` and refuses the rest through the same path —
+nothing about the convention is special-cased to `version`. `Version_WithUnrecognisedArgument_
+RefusesWithNonZeroExitCode` asserts the JSON shape and exit code, not just "didn't throw."
+
+**Blocker 2 — stdin guard. The guard itself is correct and tested; the wiring to reach a future
+verb is incomplete, and the DEVLOG overstates how ready it is.** `RequireStdinRedirected(bool)`
+is correct, isolated, and both branches are tested
+(`RequireStdinRedirected_WhenStdinIsNotRedirected_RefusesInsteadOfBlocking` /
+`_WhenStdinIsRedirected_LetsTheCommandProceed`). `StdinBodyReader.ReadBody`'s `TextReader`
+signature is confirmed untouched (`git diff` shows no change to that file). But: `Run`'s new
+`isInputRedirected` parameter (`CommandDispatcher.cs:46`) is captured from
+`Console.IsInputRedirected` in `Program.cs` and then **goes nowhere** — grepped the file, it
+appears only in the `Run` signature and in the doc comment; it is never passed into `Dispatch`
+or any command handler. `RequireStdinRedirected` is only ever invoked directly by the two new
+tests with a literal `true`/`false`, never from `Run`'s actual `isInputRedirected` value. So
+today the value threads from the composition root into `Run` and stops — a §2 worker adding the
+first body-reading command still has to extend `Dispatch`'s signature (and thread the bool
+through to whichever handler needs it) before they can call `RequireStdinRedirected` at all; the
+alternative, reaching for `Console.IsInputRedirected` directly inside a command handler instead
+of threading the parameter, would silently reintroduce the same untestability problem this fix
+exists to avoid. That's a real, if small, gap against the specific ask ("positioned so §2's first
+real body verb actually gets it rather than having to remember to call it") — the guard function
+is inherited, but the plumbing to reach it from a command handler is not yet in place, contrary
+to how the worker's report reads ("it's the guard §2's first body-reading command applies before
+calling `ReadBody`"). Not a blocker on its own — no command in §1 reads a body, so nothing hangs
+today, and the fix is one line (thread `isInputRedirected` through `Dispatch`) — but it should be
+an explicit, named obligation in §2's brief rather than left implicit, or it will be rediscovered
+the hard way.
+
+**Blocker 3 — failure boundary. Correctly separated from `CommandOutcome.Refusal`, and the
+mid-write case is genuinely exercised.** `WriteToolFailureEnvelope` (`CommandDispatcher.cs`)
+constructs a `CliEnvelope` directly — confirmed no path through `CommandOutcome.Refusal` for a
+tool failure, keeping the two concepts (board says no vs. enforcement broke) from re-fusing at
+the one place that would matter. `WriteEnvelope` sits inside the `try`, so an exception during
+serialization — not just during dispatch — is caught, and the test proves it: `ThrowsOnFirstWriteLine`
+fails the *first* `output.WriteLine` call (i.e., mid-envelope-write) and the test asserts exactly
+one JSON line still lands, with a dedicated exit code distinct from both `0` and `1`, and stderr
+carries the detail. `exception.Message` only reaches the envelope; `ex.ToString()` (full trace)
+goes to `error`, never `output` — confirmed by grep, `output` is written to only from
+`WriteEnvelope` and `WriteToolFailureEnvelope`, both exactly one line each. One edge case worth
+naming but not fixing now: the failure boundary is single-layer — if `WriteToolFailureEnvelope`'s
+own `output.WriteLine` throws (a truly broken stdout, not just "first call fails" as the test
+exercises), that exception is not caught by anything and escapes `Run` unhandled. Given the test
+already covers "first write throws, second succeeds," and a stdout that fails on every write is
+an environment failure outside the tool's control either way, this doesn't rise to a blocker —
+noting it so it isn't rediscovered as a surprise later.
+
+**Exit-code convention.** `0`/`1`/`2` are distinct and never overlap on any path I could find or
+construct — confirmed via the dedicated test and via manual runs above. `ToolFailureExitCode`
+is documented next to `RefusalExitCode` with the Product Owner's rationale, matching the
+convention as stated in the architect's post.
+
+**stdout/stderr separation.** No diagnostic write reaches `output` anywhere in the diff;
+`error.WriteLine(ex.ToString())` is the only use of the new `error` parameter. Confirmed by
+direct execution above (stderr byte count `0` on a clean success run) as well as by reading the
+source.
+
+**Testability.** The new `error` `TextWriter` and `isInputRedirected` `bool` are both explicit
+parameters on `Run`, so the whole path — including the failure boundary — is still exercised
+without a process spawn. The existing four tests were adapted via a small `Run(args, output)`
+test helper defaulting `isInputRedirected: true`, keeping them unchanged in intent.
+
+**Test quality — held the line from last round.** All four new tests are behavioural: JSON shape
++ exit code for the argument-boundary refusal, direct assertions on `RequireStdinRedirected`'s
+two branches, and a genuine mid-write-failure simulation for the boundary test (not a name-absence
+or reflection-based structural pin — no `System.Reflection` use anywhere in the new tests). None
+of them would survive being deleted without losing real coverage, and none are pinned to an
+implementation detail that a legitimate refactor would need to route around.
+
+**Blockers:** none. **Nit/obligation:** the `isInputRedirected` plumbing stops at `Run` and does
+not yet reach `Dispatch` or a command handler — recommend the architect record this explicitly as
+a named obligation in §2's brief (alongside the other carried obligations already in `## NEXT`),
+so the first body-reading verb threads it through deliberately rather than reinventing the
+`Console.IsInputRedirected` read locally.
+
+**Verdict: Approve.**
+
+---
+
+**[worker]** `CommandContext` follow-up landed, addressing the reviewer's dead-parameter finding
+(`input`/`isInputRedirected` reached `Run` but never `Dispatch`, so `RequireStdinRedirected` was
+unreachable from production code).
+
+Added `CommandDispatcher.CommandContext` — an `internal sealed record` nested in
+`CommandDispatcher`, five members exactly:
+
+```
+internal sealed record CommandContext(
+    string[] RemainingArgs,
+    TextWriter Output,
+    TextReader Input,
+    TextWriter Error,
+    bool IsInputRedirected);
+```
+
+`Run` builds one instance and passes it to `Dispatch`; `Dispatch` passes it straight through to
+each command handler instead of a bespoke parameter list. `RunVersion(CommandContext context)` is
+now an ordinary consumer — no special-casing — and still refuses on any token in
+`context.RemainingArgs` beyond zero, same as before.
+
+The reachability requirement is satisfied structurally: a §2+ body-reading handler calls
+`CommandDispatcher.RequireStdinRedirected(context.IsInputRedirected)` from inside its own arm of
+`Dispatch`'s `switch`, using the context it already receives — adding that handler requires zero
+change to `Dispatch`'s signature, only a new arm. Proved by
+`StdinGuard_IsReachableThroughCommandContext_WithoutChangingDispatchSignature`: constructs a
+`CommandContext` with `IsInputRedirected: false` and calls the guard with
+`context.IsInputRedirected`, asserting the refusal — behavioural, not shape-pinning (no
+reflection, calls the real production method with a real field read off the real type).
+
+No speculative members added — the five are exactly what `Run` already had loose plus what
+`Dispatch`/handlers need. `StdinBodyReader.ReadBody`'s `TextReader` signature untouched. Wire
+format, exit codes (`0`/`1`/`2`) and the stdout/stderr split unchanged. `Run`'s public signature
+(`args, output, input, error, isInputRedirected`) is unchanged, so no test needed to adjust its
+call shape — only the new test and `Version_WithUnrecognisedArgument_RefusesWithNonZeroExitCode`'s
+neighbours picked up the internal `CommandContext` type where they touch it directly.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — 15 tests (was 14).
+
+No `→ @reviewer` — back to @architect to land.
 
 ## NEXT
 
-Block 1.1–1.6 with @worker. On approval: gates, tick 1.1–1.6, commit, then the §1 supervisor review
-before opening §2.
+**Section 1** — remediation block with @worker, then reviewer, gates, `fix` commit, then the §1
+supervisor re-run over `c18d6f9..HEAD`. §2 does not open until §1 has an `Approve`.
+
+Carried obligations, each with the section that owes it:
+
+- **§2 brief** — string comparison and frontmatter key matching must be explicitly `Ordinal`.
+  `InvariantGlobalization=true` makes the current behaviour correct by accident, not by statement.
+- **§2 brief** — first real emission of `CliRefusal`. Its two-field shape is provisional until §9;
+  flag every §2 refusal site so the §9 retrofit is a known list rather than a search.
+- **§3 brief** — re-verify `.gitignore` against the actual index path constant once the index exists.
+  1.5 could only verify the reserved layout; nobody currently holds the real check.
+- **§9** — the refusal set becomes a closed union. `Refusal(string, string)` currently accepts a free
+  string, so every section that adds a refusal before §9 widens the retrofit.
+- **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs:13`
+  versus an absent `<Version>` in the csproj).
+- **Gate hygiene** — 1.4 exercised only `format`'s whitespace facet and never demonstrated `-k`
+  aggregation on a red `make gates`. Worth proving once when a section next has a genuine failure.
+- **Environment** — sandboxed `dotnet` hangs silently; reproduced by both agents and by me
+  (`make gates` hung the full 600s in-sandbox, sub-second with the override). Tracked outside the
+  change; if it is not fixed it costs every block a wasted hang and trains agents to reach for the
+  override reflexively.
