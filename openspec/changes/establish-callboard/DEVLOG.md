@@ -830,8 +830,18 @@ Carried obligations, each with the section that owes it:
   versus an absent `<Version>` in the csproj).
 - **Gate hygiene** — 1.4 exercised only `format`'s whitespace facet and never demonstrated `-k`
   aggregation on a red `make gates`. Worth proving once when a section next has a genuine failure.
-- **Environment** — sandboxed `dotnet` hangs silently; reproduced by both agents and by me
-  (`make gates` hung the full 600s in-sandbox, sub-second with the override). Tracked outside the
-  change; if it is not fixed it costs every block a wasted hang and trains agents to reach for the
-  override reflexively.
+- **Environment (updated 2026-08-20, partially fixed)** — the sandboxed `dotnet` hang was diagnosed and
+  half fixed. **Cause:** MSBuild worker nodes create IPC sockets at `/tmp/MSBuild<pid>`, and `/tmp` was
+  not sandbox-writable, so the parent waited forever for a connection that could not arrive — silent, no
+  error, full 600s. **Fixed** by adding `/tmp` and `/private/tmp` to `sandbox.filesystem.allowWrite` in
+  the Product Owner's `~/.claude/settings.json`: `build`, `format` and `validate` now run sandboxed.
+  **Still open:** `make test` fails sandboxed — vstest's testhost gets `SocketException (13): Permission
+  denied` connecting back to `vstest.console`. Raw loopback TCP does work in the sandbox (verified over
+  IPv4 and IPv6), so no path or domain grant reaches it. `sandbox.network.allowLocalBinding: true` is set
+  but may only initialise at session start — **retest after a fresh session before investigating
+  further**; if it persists, the fix is moving `tests/Callboard.Tests` to Microsoft.Testing.Platform
+  (xUnit v3), which has no vstest↔testhost socket IPC at all. Note `sandbox.excludedCommands` does **not**
+  exempt a command from the sandbox — `dotnet` was listed there throughout and still hung.
+  **Until then: agents run `make gates` with the sandbox override**, and the override is justified by a
+  real observed denial, never reflexively.
 
