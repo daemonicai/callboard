@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Callboard</RootNamespace>
+    <AssemblyName>callboard</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- ADR-0002: single self-contained NativeAOT binary, no runtime at the point of use. -->
+    <PublishAot>true</PublishAot>
+    <RuntimeIdentifiers>osx-arm64</RuntimeIdentifiers>
+
+    <!-- design.md D2 / ADR-0002: no unhandled analyzer or trim/AOT warning ships. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+</Project>

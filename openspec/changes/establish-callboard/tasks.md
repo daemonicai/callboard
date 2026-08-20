@@ -1,11 +1,11 @@
 ## 1. Project setup and the command surface
 
-- [ ] 1.1 Create the .NET 10 solution with a single `src/Callboard` project and a `tests/Callboard.Tests` project
-- [ ] 1.2 Enable NativeAOT publishing, nullable reference types, and treat warnings as errors
-- [ ] 1.3 Add `.editorconfig` so `dotnet format` has rules to verify against
-- [ ] 1.4 Verify each gate command from `design.md` D8 runs non-interactively and exits non-zero on failure
-- [ ] 1.5 Gitignore the derived index path
-- [ ] 1.6 Establish the CLI entry point: non-interactive, JSON output for machine commands, card bodies read from stdin, non-zero exit on refusal
+- [x] 1.1 Create the .NET 10 solution with a single `src/Callboard` project and a `tests/Callboard.Tests` project
+- [x] 1.2 Enable NativeAOT publishing, nullable reference types, and treat warnings as errors
+- [x] 1.3 Add `.editorconfig` so `dotnet format` has rules to verify against
+- [x] 1.4 Verify each gate command from `design.md` D8 runs non-interactively and exits non-zero on failure
+- [x] 1.5 Gitignore the derived index path
+- [x] 1.6 Establish the CLI entry point: non-interactive, JSON output for machine commands, card bodies read from stdin, non-zero exit on refusal
 
 ## 2. Primary record — card files
 
