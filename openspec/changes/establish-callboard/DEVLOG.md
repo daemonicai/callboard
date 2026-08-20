@@ -830,18 +830,24 @@ Carried obligations, each with the section that owes it:
   versus an absent `<Version>` in the csproj).
 - **Gate hygiene** — 1.4 exercised only `format`'s whitespace facet and never demonstrated `-k`
   aggregation on a red `make gates`. Worth proving once when a section next has a genuine failure.
-- **Environment (updated 2026-08-20, partially fixed)** — the sandboxed `dotnet` hang was diagnosed and
-  half fixed. **Cause:** MSBuild worker nodes create IPC sockets at `/tmp/MSBuild<pid>`, and `/tmp` was
-  not sandbox-writable, so the parent waited forever for a connection that could not arrive — silent, no
-  error, full 600s. **Fixed** by adding `/tmp` and `/private/tmp` to `sandbox.filesystem.allowWrite` in
-  the Product Owner's `~/.claude/settings.json`: `build`, `format` and `validate` now run sandboxed.
-  **Still open:** `make test` fails sandboxed — vstest's testhost gets `SocketException (13): Permission
-  denied` connecting back to `vstest.console`. Raw loopback TCP does work in the sandbox (verified over
-  IPv4 and IPv6), so no path or domain grant reaches it. `sandbox.network.allowLocalBinding: true` is set
-  but may only initialise at session start — **retest after a fresh session before investigating
-  further**; if it persists, the fix is moving `tests/Callboard.Tests` to Microsoft.Testing.Platform
-  (xUnit v3), which has no vstest↔testhost socket IPC at all. Note `sandbox.excludedCommands` does **not**
-  exempt a command from the sandbox — `dotnet` was listed there throughout and still hung.
-  **Until then: agents run `make gates` with the sandbox override**, and the override is justified by a
-  real observed denial, never reflexively.
+- **Environment (updated 2026-08-20, resolved)** — the sandboxed `dotnet` failures are fixed and
+  `make gates` is green **inside** the sandbox: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+  GATES_EXIT:0`. Two distinct causes, both now closed:
+  1. **The hang.** MSBuild worker nodes create IPC sockets at `/tmp/MSBuild<pid>` and `/tmp` was not
+     sandbox-writable, so the parent waited on a connection that could not arrive — silent, full 600s.
+     Fixed by adding `/tmp` and `/private/tmp` to `sandbox.filesystem.allowWrite` in the Product Owner's
+     `~/.claude/settings.json`.
+  2. **`make test`.** vstest's testhost could not connect back to `vstest.console` over loopback. The
+     fresh-session retest confirmed `sandbox.network.allowLocalBinding: true` does **not** reach it, so
+     the parked fallback was taken: `tests/Callboard.Tests` now runs **xUnit v3 on Microsoft.Testing
+     .Platform**, which has no vstest↔testhost socket IPC at all. `dotnet test` selects MTP via the
+     repo-root **`global.json`** (`test.runner`), not `dotnet.config`; MTP rejects `--nologo`, so the
+     Makefile's `test` target no longer passes it. MTP also exits **5** on "zero tests ran" rather than
+     0 — a green `TEST_EXIT:0` now genuinely means tests executed.
+  **Consequences worth knowing.** `sandbox.excludedCommands` does **not** exempt a command from the
+  sandbox — `dotnet` was listed there throughout and still hung. And **NuGet restore still needs the
+  sandbox override**: the sandbox proxies egress through a loopback port and `dotnet restore` is denied
+  it (`NU1301 ... Permission denied (localhost:<port>)`). That bites only when package references
+  change; the restored cache then builds and tests sandboxed fine. **Agents run `make gates` sandboxed
+  from here on** — an override now needs a fresh observed denial, and "it failed before" is not one.
 

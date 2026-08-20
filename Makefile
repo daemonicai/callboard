@@ -25,8 +25,12 @@ CHANGES := $(notdir $(patsubst %/,%,$(filter-out %/archive/,$(wildcard openspec/
 build:
 	@dotnet build -c Release --nologo; code=$$?; echo "BUILD_EXIT:$$code"; exit $$code
 
+# Runs under Microsoft.Testing.Platform, selected by the repo-root global.json. The
+# test project is an xUnit v3 executable that MTP runs in-process, so there is no
+# vstest.console <-> testhost socket handshake -- the IPC the command sandbox denies.
+# MTP does not accept --nologo, and it exits 5 rather than 0 if zero tests ran.
 test:
-	@dotnet test -c Release --nologo; code=$$?; echo "TEST_EXIT:$$code"; exit $$code
+	@dotnet test -c Release; code=$$?; echo "TEST_EXIT:$$code"; exit $$code
 
 format:
 	@dotnet format --verify-no-changes; code=$$?; echo "FORMAT_EXIT:$$code"; exit $$code
