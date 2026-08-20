@@ -23,3 +23,6 @@ callboard/.index/
 
 # macOS
 .DS_Store
+
+# Microsoft.Testing.Platform run artefacts
+TestResults/

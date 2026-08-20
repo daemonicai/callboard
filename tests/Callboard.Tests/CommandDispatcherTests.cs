@@ -135,9 +135,7 @@ public sealed class CommandDispatcherTests
     {
         var context = new CommandDispatcher.CommandContext(
             RemainingArgs: Array.Empty<string>(),
-            Output: TextWriter.Null,
             Input: TextReader.Null,
-            Error: TextWriter.Null,
             IsInputRedirected: false);
 
         var refusal = CommandDispatcher.RequireStdinRedirected(context.IsInputRedirected);

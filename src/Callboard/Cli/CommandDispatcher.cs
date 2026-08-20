@@ -40,19 +40,21 @@ internal static class CommandDispatcher
 
     /// <summary>
     /// Everything a command handler needs to execute: the argv tokens it hasn't been told are
-    /// unrecognised yet, the envelope writer, the stdin reader, the diagnostic writer, and
-    /// whether stdin is actually redirected. Bundled rather than passed as five loose parameters
-    /// because every verb from §2 on needs some subset of these — a body-reading command reads
-    /// <see cref="Input"/> after checking <see cref="IsInputRedirected"/> via
-    /// <see cref="RequireStdinRedirected"/>, and <see cref="Dispatch"/> never has to change shape
-    /// to hand a new command whichever of these it needs. Only members an already-briefed need
-    /// has asked for belong here — this is not a place to speculate ahead of a section.
+    /// unrecognised yet, the stdin reader, and whether stdin is actually redirected. Bundled
+    /// rather than passed as loose parameters because every verb from §2 on needs some subset of
+    /// these — a body-reading command reads <see cref="Input"/> after checking
+    /// <see cref="IsInputRedirected"/> via <see cref="RequireStdinRedirected"/>, and
+    /// <see cref="Dispatch"/> never has to change shape to hand a new command whichever of these
+    /// it needs. Only members an already-briefed need has asked for belong here — this is not a
+    /// place to speculate ahead of a section. There is deliberately no output/error writer here:
+    /// a handler's output is its <see cref="ICommandResult"/>, and <see cref="Run"/> is the only
+    /// place permitted to write to stdout or stderr — handing every handler those writers would
+    /// turn "exactly one JSON line on stdout" from something only the dispatcher can enforce into
+    /// something every future handler must individually refrain from breaking.
     /// </summary>
     internal sealed record CommandContext(
         string[] RemainingArgs,
-        TextWriter Output,
         TextReader Input,
-        TextWriter Error,
         bool IsInputRedirected);
 
     internal static int Run(
@@ -67,7 +69,7 @@ internal static class CommandDispatcher
         try
         {
             var remainingArgs = args.Length > 0 ? args[1..] : Array.Empty<string>();
-            var context = new CommandContext(remainingArgs, output, input, error, isInputRedirected);
+            var context = new CommandContext(remainingArgs, input, isInputRedirected);
             var outcome = Dispatch(command, context);
 
             WriteEnvelope(output, command, outcome);

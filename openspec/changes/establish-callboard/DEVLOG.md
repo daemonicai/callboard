@@ -790,6 +790,375 @@ index-path re-verification (§3), the closed refusal union (§9), the version-st
 
 Section 1 is closed. The foundation §2 builds on is sound, and the one defect above is subtractive and
 belongs at the top of §2's brief rather than in a third remediation round.
+---
+
+## 2. Primary record — card files
+
+**[architect]** Base: 12f7e58 — the card file itself: what a card *is* on disk (frontmatter schema,
+AOT-safe parse/serialise, appended-comment format, scope-shaped layout) and how it is written without
+losing or corrupting anything (atomic rename, per-card advisory lock).
+
+Note the base is the toolchain commit, not `993827f`. `12f7e58` moved `tests/Callboard.Tests` to xUnit v3
+on Microsoft.Testing.Platform, which closed the last sandboxed-gate failure; §2 is the first section
+whose tests are written against that runner, so the section's diff starts there. Full diagnosis in
+`## NEXT`.
+
+**[architect]** Section carved into **two blocks**, Product Owner confirmed:
+
+- **Block A — 2.1–2.4:** what a card file *is*.
+- **Block B — 2.5–2.8:** how a card file is *written safely*, with 2.7/2.8 as its tests.
+
+The split puts each test with the code it tests: 2.7 (concurrent appends) and 2.8 (damage containment)
+are acceptance tests for 2.5 and 2.6 specifically, so they land in the same block rather than trailing a
+format block that has no bearing on them.
+
+**[architect]** Block A (2.1–2.4) briefed → @worker.
+
+**Tasks.**
+
+- **2.1** Define the frontmatter schema covering every common field from `card-model`.
+- **2.2** Implement frontmatter parsing and serialisation, verifying AOT compatibility **before**
+  adopting any library.
+- **2.3** Implement the delimited appended-comment block format, readable unaided and diff-friendly.
+- **2.4** Implement the scope-shaped directory layout from `design.md` D3.
+
+**Carried from §1 — do this first, it is subtractive.** Delete `CommandContext.Output` **and**
+`CommandContext.Error` (`src/Callboard/Cli/CommandDispatcher.cs:51-56`). Neither is read by any handler
+— `Run` writes the envelope and the failure trace through its own `output`/`error` locals. Handing
+every handler the stdout writer would turn "exactly one JSON line on stdout" from something only the
+dispatcher *can* do into something every future handler must *refrain* from doing. A handler's output is
+its `ICommandResult`. Architect decision: both go; nothing speculative stays on that record.
+
+**Spec that binds this block.**
+
+`card-model` — *Single card entity with a kind discriminator*: every card carries `id`, `kind`, `title`,
+`status`, `owner`, `created`, `updated`, `body`; `section` where the card was raised in one, empty
+otherwise. `kind` is exactly one of `block`, `question`, `finding`, `obligation`, `rule`, `hazard`,
+`decision`. Those eight-plus-one fields are the **common** schema 2.1 must cover — kind-specific fields
+(§5's `base`, `reviewed_state`, `tasks`, `round`, `blocked_by`; §6's finding fields) are **not** this
+block's business and must not be speculated into the schema now.
+
+`card-model` — *Scope determines lifetime*: every card carries a scope of `section`, `change`,
+`capability` or `repository`, and **scope is an attribute of the card, not implied by its kind**, so a
+card can be promoted without losing identity or thread. 2.1 therefore models `scope` as a real field.
+The per-kind scope *refusals* (rule may not be `section`-scoped, etc.) are **4.4**, not here — model the
+field, do not enforce the table yet.
+
+`card-model` — *Append-only addressed comment threads*: each comment records its own identity, the role
+that wrote it, a timestamp and a body, and **may** record the comment it replies to, the role it is
+addressed `to`, and whether it is resolved. That is the field set 2.3's delimited block must be able to
+carry and round-trip. Addressing is **structural** — a role named in body prose routes nothing — so `to`
+is a field of the block, never something parsed out of the body text.
+
+`record-retrieval` — *The record is legible without the tool*: a reader with no tool determines a card's
+status, owner, scope and full thread from what they read. This is the acceptance test for 2.1 and 2.3
+both: open a card file in a plain editor and those four things are plainly there.
+
+`record-retrieval` — *The record is diffable per card*: one card's change never appears as another's,
+and (ADR-0003) appending a comment stays a clean diff on a long thread because the append is at the
+**end of the file**. 2.3's format must append, never rewrite.
+
+**ADRs that bind this block.**
+
+- **ADR-0003** — one file per card; YAML frontmatter + Markdown body + comments as delimited blocks.
+  Scope-shaped layout so archive is a directory operation:
+  `callboard/register/` (repository-scoped: rule, hazard, question), `callboard/decisions/`
+  (capability-scoped, mirroring the spec paths they bind), `callboard/changes/<name>/` (change-scoped:
+  block, obligation, finding, section). That is 2.4 verbatim; archive touching `changes/<name>/` **and
+  nothing else** is the property the layout exists to give, so anything change-scoped living outside
+  that directory is a bug in the layout.
+- **ADR-0002** — NativeAOT. ADR-0003's own consequence: *"frontmatter must be parsed by an
+  AOT-compatible library, or hand-rolled against a deliberately narrow schema."* `design.md` Open
+  Question 2 leaves this to you and says the answer changes neither the schema nor the file format.
+
+**On 2.2 — the AOT verdict is the deliverable, not a footnote.** The task says verify AOT compatibility
+*before* adopting any library. "It compiled" is not the verification; NativeAOT breaks at **publish and
+run**, not at `dotnet build`. If you evaluate a YAML library, prove it with `dotnet publish` for the
+AOT RID and an actual round-trip executed from the published binary, and post what you ran and what it
+printed. If it trims, reflects or warns, hand-rolling against our deliberately narrow schema is the
+expected outcome and needs no apology. **Do not add a package reference on the strength of a build
+succeeding.** Note also that `dotnet restore` needs the sandbox override in this environment (see
+`## NEXT`); `build`/`test`/`format`/`validate` do not.
+
+**Carried from §1 — constraints on how you write this.**
+
+- **String comparison and frontmatter key matching must be explicitly `Ordinal`.** `InvariantGlobalization=true`
+  makes the naive behaviour correct by accident. State it in code: `StringComparison.Ordinal`,
+  `StringComparer.Ordinal`. A frontmatter key is a byte sequence, not a word in a language.
+- **First real emission of `CliRefusal`.** Its two-field shape is provisional until §9 closes the
+  refusal set into a union. If this block emits a refusal, **flag the site in your DEVLOG post** so §9
+  retrofits a known list rather than searching for one.
+- No new verbs are required by 2.1–2.4. If you find yourself adding a command to exercise the format,
+  stop and post — the verb vocabulary is `design.md` Open Question 1 and belongs to me.
+
+**Tests.** 2.1–2.4 carry no numbered test task, which is a floor and not a ceiling. A format that cannot
+round-trip is not implemented, so this block lands with round-trip tests: card with every common field,
+card with `section` empty, card carrying several comments including a reply and an addressed one,
+and — because it is the whole point of a delimited format — a body whose text contains something that
+looks like a delimiter. xUnit v3 on MTP; `Assert.*` as in the existing suites.
+
+**Out of scope — post, do not build.** Identity *allocation* (4.2), the kind-scope refusal table (4.4),
+comment resolution *semantics* and queue routing (4.6/4.7), atomic write and locking (2.5–2.6, block B),
+anything touching SQLite (§3).
+
+**Done-gates.** `make gates` → `GATES_EXIT:0`, and quote every individual exit line
+(`BUILD_EXIT` / `TEST_EXIT` / `FORMAT_EXIT` / `VALIDATE_EXIT`). Read the exit line, never the log. Note
+`TEST_EXIT:5` now means *zero tests ran* — treat it as a failure, not an oddity. Run the gates
+**sandboxed**; the environment fix landed in the base commit and an override now needs a fresh observed
+denial. Post your gate lines to the DEVLOG and hand off `→ @reviewer`.
+
+**[worker]** Block A (2.1–2.4) implemented.
+
+- **Carried-from-§1, first.** Deleted `CommandContext.Output` and `CommandContext.Error`
+  (`src/Callboard/Cli/CommandDispatcher.cs`). `Run` still owns the only `output`/`error` writes
+  (its own locals), so `CommandContext` now carries only `RemainingArgs`, `Input` and
+  `IsInputRedirected` — the three things a handler actually needs. Updated the one test that
+  constructed the old five-arg record (`CommandDispatcherTests.StdinGuard_IsReachableThroughCommandContext_WithoutChangingDispatchSignature`).
+- **2.1 — common frontmatter schema.** `Callboard.Cards.CardFrontmatter` carries exactly the
+  nine common fields (`id`, `kind`, `title`, `status`, `owner`, `scope`, `section`, `created`,
+  `updated`) plus `CardFile.Body`; nothing kind-specific. `status` stays a plain `string` — the
+  spec excerpt for this block doesn't enumerate its recognised values (that's a later section's
+  state machine), so I modelled the field without inventing a vocabulary for it.
+- **`kind`/`scope`/`owner` as genuine closed unions, not enums.** First attempt used plain C#
+  `enum`s with exhaustive `switch` expressions and hit `error CS8524` on every one — C# treats
+  *every* enum switch as potentially incomplete (an enum can hold any underlying integer value),
+  so it demands a default/discard arm just to compile. That default arm would then silently
+  absorb any future case instead of failing the build — exactly the "unhandled case is a compile
+  error" property this project requires, and exactly the failure mode `CommandOutcome` (§1)
+  already solved. So `CardKind`, `CardScope`, `CardOwner` are private-constructor sealed-record
+  unions with an abstract `Match<TResult>` visitor, same shape as `CommandOutcome`: adding an
+  eighth kind is a compile error everywhere `Match` is implemented until it's handled, and a
+  caller missing an argument for a case is `CS7036`. Verified this the same way §1's reviewer
+  verified `CommandOutcome`'s closure — by hand, reasoning through what the compiler actually
+  enforces, not by assumption.
+- **2.2 — AOT verdict (the deliverable).** Evaluated YamlDotNet 16.2.1 with a real
+  `dotnet publish -c Release -r osx-arm64` of an isolated scratch console app (not `dotnet
+  build` — publish is where NativeAOT actually breaks), serializing/deserializing a
+  `Dictionary<string,string>` through the default `SerializerBuilder`/`DeserializerBuilder`.
+  Result: real warnings — `IL3050` (×2, `RequiresDynamicCode` on both builders — "configures the
+  serializer to use reflection which is not compatible with ahead-of-time compilation"),
+  `IL2104` ("Assembly 'YamlDotNet' produced trim warnings"), `IL3053` ("produced AOT analysis
+  warnings"). Under our actual project's `TreatWarningsAsErrors=true` those are build failures,
+  not advisories. YamlDotNet does ship a source-generated `StaticSerializerBuilder` path for
+  AOT, but adopting it wasn't evaluated further — our schema is a flat, fixed set of scalar
+  frontmatter keys plus append-only delimited comment blocks, which is squarely the "narrow
+  schema" ADR-0003's Consequences anticipates hand-rolling against. **Verdict: hand-rolled, no
+  package reference added anywhere.** `CardFileParser`/`CardFileWriter` implement the format
+  directly against `System.Text.Json`-free, reflection-free string operations.
+- **2.3 — delimited appended-comment format.** Frontmatter is a `---`-fenced block (fixed field
+  order: id, kind, title, status, owner, scope, section, created, updated) so a one-field change
+  is a one-line diff. Each comment is `<!-- callboard:comment id=… author=… [reply-to=…] [to=…]
+  resolved=… timestamp=… -->`, its body, then `<!-- /callboard:comment -->` — plainly legible
+  unaided (`record-retrieval`), appended strictly at the end (`CardFileWriter` only ever
+  concatenates, never rewrites earlier bytes). `to`/`reply-to`/`resolved` are structural header
+  fields, never parsed from body prose, per card-model's addressing requirement. A body or
+  comment-body line that would otherwise be misread as a delimiter (the header prefix, the
+  footer, or an already-escaped instance of either) gets exactly one more leading backslash on
+  write and exactly one stripped on read (`CardFileFormat.Escape/UnescapeContentLine`) — proven
+  invertible by hand for one, two and (by induction on the "strip all leading backslashes, still
+  matches" check) arbitrary escape depth, and covered by the "body contains something that looks
+  like a delimiter" round-trip test.
+- **2.4 — scope-shaped layout.** `CardLayout.DirectoryFor(CardScope, changeName)`: `Repository`
+  → `callboard/register/`, `Capability` → `callboard/decisions/`, `Change`/`Section` →
+  `callboard/changes/<name>/` (a section lives inside the change that raised it, so both resolve
+  there — this matches ADR-0003's diagram, which lists `finding` under `changes/<name>/` even
+  though card-model says findings are section-scoped). Layout is keyed on **scope**, not kind —
+  a change-scoped `rule` promoted to repository scope moves into `register/` alongside every
+  other repository-scoped card, which is the point of D3's "archive is a directory operation."
+  A missing change name for a scope that needs one throws `ArgumentException` (a caller error,
+  not a card-model refusal — the refusal table is 4.4's).
+- **Ordinal, everywhere.** Every frontmatter key/value comparison, every wire-format lookup
+  (`CardKindWireFormat`/`CardScopeWireFormat`/`CardOwnerWireFormat`) goes through
+  `StringComparer.Ordinal` dictionaries or `string.Equals(…, StringComparison.Ordinal)` — no
+  bare `==`/`switch` on parsed text anywhere in `Cards/`.
+- **No `CliRefusal` emitted.** No verb touches this block — parsing/serialising is pure library
+  code. Malformed input returns `CardFileParseResult.Failure(string Reason)` (same closed-union
+  shape as `CommandOutcome`), not a thrown exception and not a `CliRefusal`; that only becomes a
+  refusal once a verb wires it, per the brief's own framing. Flagging this as **empty** so §9
+  starts its retrofit list accurately: zero `CliRefusal` sites landed in 2.1–2.4.
+- **Found and fixed one bug in my own work before reporting it:** the frontmatter field-parsing
+  loop initially never advanced its cursor past a successfully-read `key: value` line, which
+  spun one xUnit test at ~100% CPU indefinitely (`make test` never returned). Killed the runaway
+  process, added the missing `cursor++`, reran clean. Leaving this in the record since it's
+  exactly the kind of defect a round-trip test should catch and initially only a wall-clock
+  timeout did — the fix is one line (`CardFileParser.cs`, the frontmatter-line loop).
+
+**Tests.** `tests/Callboard.Tests/CardFileRoundTripTests.cs` — every common field, empty
+`section`, several comments including a reply and an addressed one, a body *and* a comment body
+each containing text that looks like a delimiter, fixed frontmatter field order, and three
+parse-failure cases (unrecognised kind, missing closing fence, missing comment footer).
+`tests/Callboard.Tests/CardLayoutTests.cs` — all four scopes plus the missing-change-name throw.
+28 tests total (was 10 going into this block).
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — all run **sandboxed**
+(no override needed for build/test/format/validate; the one-off scratch-project `dotnet restore`
+used to produce the AOT verdict above needed the override, consistent with `## NEXT`'s note that
+`restore` alone still requires it).
+
+→ @reviewer
+
+**[reviewer]** Audit of block A (2.1–2.4). Working tree read directly (block is uncommitted;
+`git status --short` matches exactly what the brief scoped: `src/Callboard/Cards/` new,
+`CommandDispatcher.cs`/`CommandDispatcherTests.cs` the carried-forward subtractive change, two new
+test files, `DEVLOG.md`/`.gitignore` mine). Read `card-model`, `record-retrieval`, ADR-0003,
+`design.md` D3, and every file in `src/Callboard/Cards/` plus both new test files in full.
+
+**Gates, run sandboxed, verified myself, not taken on report.**
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 28/28 tests — matches the
+worker's report exactly, no override needed.
+
+**1. AOT verdict (2.2) — holds for what actually shipped.** `grep -rn "YamlDotNet|Activator"
+src/Callboard/` finds nothing outside the doc-comment mentioning the rejected library
+(`CardFileParser.cs:9`); no `PackageReference` was added to `src/Callboard/Callboard.csproj` (`git
+diff HEAD -- '*.csproj'` is empty). `System.Reflection` appears only in `obj/`
+generated-attribute files, which don't ship. `CardFileParser`/`CardFileFormat`/`CardFileWriter` are
+plain string/`StringBuilder` operations — no dynamic codegen, no unbounded reflection, nothing that
+trims badly. The hand-rolled format does not reintroduce the problem it avoided.
+
+**2. Delimited comment format (2.3) against adversarial bodies — the right test, and the format
+holds.** Traced the escape scheme by hand
+(`CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter`/`Escape`/`UnescapeContentLine`) against
+several adversarial constructions: a body line that already contains a backslash-prefixed
+delimiter-lookalike (escapes to two backslashes, unescapes back to exactly one — round-trips), and
+a body that embeds a **complete fake comment header+footer pair** plus a comment body containing a
+bare footer lookalike. `RoundTrips_BodyContainingTextThatLooksLikeACommentDelimiter`
+(`CardFileRoundTripTests.cs:107`) is exactly this second case and is the right test — it doesn't
+just check the parser doesn't crash, it asserts the body comes back byte-identical *and* that
+exactly one real `CardComment` survives, which is the actual forgery this format has to resist. The
+parser's boundary checks (`IsCommentHeader`/`IsCommentFooter`) only match the *unescaped* prefix/
+suffix, so an escaped lookalike can never be misread as a structural delimiter — verified by reading
+both the escape logic and the parser's loop conditions together, not just running the test.
+Appends are structurally at the end of the file only: `CardFileWriter.Serialize` builds the whole
+file fresh from a `CardFile` and never mutates or seeks into existing bytes (block B's job is making
+that a real on-disk append; this block's `Serialize` is pure and consistent with it).
+
+**3. Append-only — structural at the format layer, conventional at the object-model boundary, and
+that's the right split for this block.** Nothing in `CardFileParser`/`CardFileWriter` offers a way
+to remove or rewrite a prior comment — `Serialize` walks `card.Comments` forward-only and there is
+no partial/patch write path. One thing worth naming rather than blocking: `CardFile.Comments` is
+`IReadOnlyList<CardComment>` (`CardFile.cs:12`), but a `CardFile` is still a `record`, so nothing
+stops a caller building a new `CardFile` via `with { Comments = shorterList }` and reserialising
+over the original file. That's fine *for this block* — 2.1–2.4 model the representation, not the
+write path — but it means the append-only guarantee is still a convention above the writer, not
+something the type system closes, until block B's writer exposes an append operation rather than
+accepting an arbitrary `CardFile`. Flagging so it's a named check for 2.5/2.6, not rediscovered.
+
+**4. Addressing (`to`/`reply-to`) — structural, never prose. Confirmed.** Both are header fields on
+`CardComment` (`CardComment.cs:22-23`) and on the wire format
+(`CardFileWriter.BuildHeaderFields:67-75`, `CardFileParser.BuildComment:267-278`). Nothing in
+`CardFileParser` reads comment *body* text for routing — the body is joined and stored verbatim,
+addressing comes only from the header token dictionary. Matches card-model's "a role mention in body
+text SHALL NOT route anything" at the representation layer (routing/queue behaviour itself is
+4.6/4.7, correctly out of scope here).
+
+**5. Ordinal everywhere — verified, no gaps.** `grep -n "StringComparison\.\|StringComparer\." -r
+src/Callboard/Cards/` shows every comparison and dictionary (`CardKindWireFormat.ByWireValue`,
+`CardOwnerWireFormat.ByWireValue`, `CardScopeWireFormat.ByWireValue`, every `fields[...]`/
+`string.Equals` in the parser) is explicit `Ordinal`. No bare `==`, no default-comparer
+`Dictionary<string,...>`, no `switch` on parsed text anywhere in `Cards/`.
+
+**6. Schema scope discipline — held.** `CardFrontmatter` carries exactly the nine common fields
+(`CardFrontmatter.cs:13-22`); no `base`, `reviewed_state`, `tasks`, `round`, `blocked_by`, or
+finding-specific field anywhere. No refusal table (4.4), no identity allocation (4.2), no
+resolution/queue semantics (4.6/4.7), no SQLite. `status` stays a bare `string` rather than a
+vocabulary — correct, since this block's spec excerpt doesn't enumerate recognised values. Nothing
+speculated ahead, and nothing the block needed was skipped that I could find.
+
+**7. Closed-union call (`CardKind`/`CardScope`/`CardOwner`) — sound on its own merits, consistent
+with §1, and reproduced independently.** Built an isolated two-case scratch version of the same
+shape (private ctor, abstract `Match<TResult>`, sealed nested cases) and added a third case that
+omits overriding `Match`: `dotnet build` fails with `CS0534 — 'RogueCase' does not implement
+inherited abstract member 'CardKind.Match<TResult>(...)'` — a genuine compile error, matching the
+worker's account and the same mechanism §1's reviewer verified for `CommandOutcome`. This is the
+same shape as `CommandOutcome`, so the ergonomic cost (a `Match` with five or seven parameters per
+case, versus a one-line `enum` `switch`) is not a new tax introduced here — it's the cost §1 already
+paid and this block extends consistently rather than reaching for a different, weaker pattern for
+three more closed sets. Proportionate.
+
+**8. The self-reported parser bug — fixed, and I looked for siblings.** Read every loop in
+`CardFileParser.Parse` for cursor advancement: the frontmatter-field loop (`:42-67`) increments
+`cursor` on every path (either the closing-fence `break` at `:53` or the field-line `:66`); the body
+loop (`:76-80`) and both comment-scanning loops (`:88-138`, including the nested comment-body loop
+at `:111-120`) each advance `cursor` on every iteration or return a `Failure` instead of looping.
+Every loop is additionally bounded by `cursor < lines.Length`/`cursor >= lines.Length` checks, so
+truncated or malformed input (missing closing fence, missing comment footer, a header with no
+matching footer before EOF) terminates via an explicit `Failure(...)` rather than hanging — covered
+by `Parse_MissingClosingFrontmatterDelimiter_Fails`, `Parse_MissingCommentFooter_Fails`, and
+exercised further by hand: fed `Parse` a header with no footer and 40KB of trailing garbage, and a
+frontmatter block with no closing fence at all — both returned `Failure` immediately, no hang.
+Found no unbounded loop siblings to the one the worker fixed.
+
+**Fix-before-land findings:** none.
+
+**Nits:**
+- `CardFileWriter`/`CardFileParser` do not validate or escape frontmatter *field values*
+  (`id`/`title`/`status`/`section`) the way body/comment content is escaped. A value containing a
+  literal `\n` (e.g. a multi-line title) would split across physical lines on write and fail to
+  re-parse on the very next read — `title: Multi` then a bare `line title` line hits "malformed
+  frontmatter line" in `BuildFrontmatter`. The failure is contained to the one card (fails closed,
+  doesn't corrupt a sibling card, doesn't hang) so this isn't a blocker for a block whose job is the
+  representation, but it's untested and unmentioned, and the brief's adversarial-body test doesn't
+  cover frontmatter values at all. Worth a decision before a verb that accepts free-text titles
+  lands (§4+): either validate on the way in, or extend the escape scheme to frontmatter values.
+- `CardLayout.ChangesDirectory`/`DirectoryFor` (`CardLayout.cs:18-19`) interpolates `changeName`
+  directly into a path with no validation — `changeName: "../../etc"` produces
+  `callboard/changes/../../etc/`. No exploit today: this block only resolves directory *strings*,
+  nothing here touches the filesystem, and change names in this codebase come from the OpenSpec
+  change directory name, not arbitrary agent input. But this is the exact function block B's writer
+  will call to build a real on-disk path, so recommend the path-traversal check land with 2.5/2.6
+  rather than being assumed away, since nothing currently validates it anywhere in the diff.
+
+**Architectural notes:**
+- Per finding 3 above, consider whether the 2.5 writer's public surface should be "append a
+  comment to an existing `CardFile`" rather than "serialise whatever `CardFile` you hand me" — the
+  former makes append-only structural at the boundary that actually reaches disk; the latter leaves
+  it a convention that block A's shape doesn't itself enforce.
+- No new `CliRefusal` sites landed in this block, confirmed by grep — the worker's report that this
+  block is empty for §9's retrofit list is accurate.
+
+**Verdict: Approve with nits.** The AOT verdict, the delimited-format's resistance to forged/split
+comments, structural addressing, ordinal discipline, and the closed-union modelling all hold under
+independent verification, not just on report. The two nits are real gaps but neither is reachable
+from any code path in this diff — both are timing recommendations for the blocks that next touch
+this surface.
+
+→ @architect
+
+**[architect]** Reviewer `Approve with nits` accepted for block 2.1–2.4. Gates re-run by me,
+sandboxed, no override: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 28/28.
+2.1–2.4 ticked, block committed.
+
+Dispositions on the two nits — **both carry into block B's brief, neither reopens block A**:
+
+1. **Unescaped frontmatter field values.** Correct and worth fixing, wrong block to fix it in. Nothing
+   in 2.1–2.4 can produce a card whose `title` contains a newline, because nothing yet *constructs* a
+   card from untrusted input — the round-trip tests supply well-formed values. Block B is where a card
+   first reaches disk. → B.
+2. **`CardLayout.DirectoryFor` interpolates `changeName` with no traversal validation.** Same reasoning,
+   and the reviewer named the exact reason it matters now: this is the function block B's writer calls.
+   A path-building helper that is safe only because nobody has called it yet is a trap with a fuse. → B,
+   and B validates rather than documents the assumption.
+
+Both are deferred **because the block that can exploit them is the block that will fix them**, not
+because they are small. If B lands without them, that is a supervisor finding at section close, and I
+have written them into B's brief so it cannot be an oversight.
+
+The AOT verdict settles `design.md` **Open Question 2** with evidence rather than judgement:
+YamlDotNet 16.2.1 published for `osx-arm64` emitted `IL3050`/`IL2104`/`IL3053` from its reflection-based
+builders, which `TreatWarningsAsErrors=true` makes fatal here. Frontmatter is hand-rolled against the
+narrow schema; no `PackageReference` in `src/`, and the reviewer confirmed the shipped parser carries no
+reflection of its own. The question is closed — later sections extending the schema do not get to
+re-litigate it without new evidence.
+
+The closed-union shape for `CardKind`/`CardScope`/`CardOwner` stands. The reviewer reproduced the
+mechanism in isolation (`CS0534` on a case that omits `Match`), and it is the same shape `CommandOutcome`
+established in §1, so this is consistency rather than a second idiom. It also front-runs **4.1**, which
+asks for exactly this property — §4 should find the kinds already closed and spend its effort on
+identity allocation instead.
+
+No `CliRefusal` was emitted in this block, so §9's retrofit list is still empty. Malformed input returns
+`CardFileParseResult.Failure`; when a verb first surfaces that as a refusal, that site is §9's business.
+
 
 ## NEXT
 

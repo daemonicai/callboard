@@ -9,10 +9,10 @@
 
 ## 2. Primary record — card files
 
-- [ ] 2.1 Define the frontmatter schema covering every common field from `card-model`
-- [ ] 2.2 Implement frontmatter parsing and serialization, verifying AOT compatibility before adopting any library
-- [ ] 2.3 Implement the delimited appended-comment block format, readable unaided and diff-friendly
-- [ ] 2.4 Implement the scope-shaped directory layout from `design.md` D3
+- [x] 2.1 Define the frontmatter schema covering every common field from `card-model`
+- [x] 2.2 Implement frontmatter parsing and serialization, verifying AOT compatibility before adopting any library
+- [x] 2.3 Implement the delimited appended-comment block format, readable unaided and diff-friendly
+- [x] 2.4 Implement the scope-shaped directory layout from `design.md` D3
 - [ ] 2.5 Implement atomic write via temporary file and rename
 - [ ] 2.6 Implement the per-card advisory lock with a timeout and a failure message naming the card and holder
 - [ ] 2.7 Test that two concurrent comment appends to one card both survive in a determinate order
