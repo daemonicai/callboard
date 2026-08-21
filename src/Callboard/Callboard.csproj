@@ -22,9 +22,11 @@
 
   <ItemGroup>
     <!-- D2/D4 (ADR-0002/ADR-0004): the derived index's only dependency. A native SQLite
-         binding, not a reflection-based ORM, so it is the AOT-compatible choice — see
-         src/Callboard/Index/IndexSchema.cs for the verification record. Pinned to the .NET 10
-         band. -->
+         binding, not a reflection-based ORM, so it is the AOT-compatible choice. Verified by an
+         out-of-repo scratch-project `dotnet publish -c Release -r osx-arm64` (nothing to check
+         into this repo); the record of that verification is the DEVLOG
+         (openspec/changes/establish-callboard/DEVLOG.md, §3), not any file under src/ — no gate
+         re-runs the check (DEVLOG §3, supervisor note N1). Pinned to the .NET 10 band. -->
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
 
     <!-- Microsoft.Data.Sqlite 10.0.10 pins SQLitePCLRaw.bundle_e_sqlite3 2.1.11, which carries a

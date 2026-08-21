@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Callboard.Cli;
+using Callboard.Index;
 
 namespace Callboard.Tests;
 
@@ -166,9 +167,9 @@ public sealed class CommandDispatcherTests
 
     // Blocker 1 (§1 remediation): an argument no command consumed is a refusal, the same
     // convention as an unrecognised command, established here so §2+ don't each invent their own
-    // flag handling. §3 obligation 3 made this structural: the refusal now happens in
-    // CommandDispatcher.WithNoFurtherArguments, before RunVersion — which takes no arguments at
-    // all — ever runs.
+    // flag handling. §3 obligation 3 made this structural: CommandDispatcher.Run funnels every
+    // outcome through EnforceNoUnconsumedArguments once, after Dispatch (and therefore RunVersion,
+    // which takes no arguments at all) has already returned.
     [Fact]
     public void Version_WithUnrecognisedArgument_RefusesWithNonZeroExitCode()
     {
@@ -184,8 +185,9 @@ public sealed class CommandDispatcherTests
         Assert.False(root.TryGetProperty("result", out _));
     }
 
-    // §3 obligation 3: proves the mechanism generalises to a two-token command's leaf, not just
-    // the single-token `version`.
+    // §3 obligation 3: asserts RunVersion itself takes no parameters, i.e. it contains no
+    // argument-count check of its own — the funnel in EnforceNoUnconsumedArguments is the only
+    // place that check exists.
     [Fact]
     public void RunVersion_HasNoArgumentCheckInItsOwnBody()
     {
@@ -325,6 +327,28 @@ public sealed class CommandDispatcherTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("unrecognised-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // Characterisation test for obligation O-3 (DEVLOG §3 remediation): pins today's accepted
+    // trade-off — RunIndexRebuild's database write already ran by the time the trailing token is
+    // caught, because EnforceNoUnconsumedArguments runs after Dispatch returns, not before a leaf
+    // handler runs. Accepted here because the index is disposable (design.md D4); it is NOT
+    // acceptable for the first CLI verb whose side effect writes the primary record. The section
+    // that discharges O-3 must invert this test — assert the database was NOT written when the
+    // command refuses — as proof the parse/execute split now runs before the handler's side
+    // effect, not after it.
+    [Fact]
+    public void IndexRebuild_WithTrailingToken_RefusesButHasAlreadyWrittenTheIndex()
+    {
+        using var repo = new TempGitRepo();
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(["index", "rebuild", "extra"], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("unrecognised-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.True(File.Exists(IndexPaths.DatabasePath(repo.Path)));
     }
 
     [Fact]

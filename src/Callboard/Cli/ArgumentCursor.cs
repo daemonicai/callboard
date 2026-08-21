@@ -5,11 +5,22 @@ namespace Callboard.Cli;
 /// takes tokens off the front one at a time via <see cref="TryTake"/> and never sees the raw
 /// array, so "a handler ignored a token the caller passed" stops being possible to write by
 /// accident — there is no <c>string[]</c> to index into. What is left unconsumed after routing
-/// reaches a leaf command is what <see cref="CommandDispatcher"/> checks, and it checks it
-/// <em>before</em> the leaf handler runs (see <c>CommandDispatcher.WithNoFurtherArguments</c>),
-/// per ADR-0001's "any token it does not consume is a refusal" — a command that has not yet
-/// declared what it accepts by consuming from this cursor gets no chance to act on a caller's
-/// input the boundary has already rejected.
+/// reaches a leaf command is what <see cref="CommandDispatcher"/> checks — in
+/// <c>CommandDispatcher.EnforceNoUnconsumedArguments</c>, called once from <c>Run</c> on whatever
+/// <see cref="CommandDispatcher.Dispatch(string, CommandDispatcher.CommandContext)"/> returned —
+/// per ADR-0001's "any token it does not consume is a refusal".
+/// <para>
+/// That check runs <em>after</em> <c>Dispatch</c> returns, not before: it overrides a
+/// <see cref="CommandOutcome.Success"/> into a refusal, but a <see cref="CommandOutcome.Refusal"/>
+/// the handler already returned passes through untouched. Enforcement is therefore post-hoc — by
+/// the time an unrecognised trailing token turns a handler's outcome into a refusal, that handler
+/// has already run and any side effect it had has already happened. §3 accepted this for
+/// <c>index rebuild</c> because its side effect (the derived index) is disposable and rebuildable;
+/// it is <b>not</b> acceptable for a verb whose side effect writes the primary record (obligation
+/// O-3, DEVLOG §3) — see
+/// <c>CommandDispatcherTests.IndexRebuild_WithTrailingToken_RefusesButHasAlreadyWrittenTheIndex</c>
+/// for the pinned characterisation of today's behaviour.
+/// </para>
 /// </summary>
 internal sealed class ArgumentCursor
 {
