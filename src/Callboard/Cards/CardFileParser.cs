@@ -144,10 +144,12 @@ internal static class CardFileParser
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
         IReadOnlyDictionary<string, string> fields)
     {
-        if (!fields.TryGetValue("id", out var id))
+        if (!fields.TryGetValue("id", out var rawId))
         {
             return (null, "missing required frontmatter field: id");
         }
+
+        var id = CardFileFormat.UnescapeFrontmatterValue(rawId);
 
         if (!fields.TryGetValue("kind", out var kindText))
         {
@@ -159,15 +161,19 @@ internal static class CardFileParser
             return (null, $"unrecognised kind: '{kindText}'. Recognised kinds: {CardKindWireFormat.RecognisedValues}.");
         }
 
-        if (!fields.TryGetValue("title", out var title))
+        if (!fields.TryGetValue("title", out var rawTitle))
         {
             return (null, "missing required frontmatter field: title");
         }
 
-        if (!fields.TryGetValue("status", out var status))
+        var title = CardFileFormat.UnescapeFrontmatterValue(rawTitle);
+
+        if (!fields.TryGetValue("status", out var rawStatus))
         {
             return (null, "missing required frontmatter field: status");
         }
+
+        var status = CardFileFormat.UnescapeFrontmatterValue(rawStatus);
 
         if (!fields.TryGetValue("owner", out var ownerText))
         {
@@ -189,7 +195,9 @@ internal static class CardFileParser
             return (null, $"unrecognised scope: '{scopeText}'. Recognised scopes: {CardScopeWireFormat.RecognisedValues}.");
         }
 
-        var section = fields.TryGetValue("section", out var sectionValue) ? sectionValue : string.Empty;
+        var section = fields.TryGetValue("section", out var rawSection)
+            ? CardFileFormat.UnescapeFrontmatterValue(rawSection)
+            : string.Empty;
 
         if (!fields.TryGetValue("created", out var createdText))
         {

@@ -17,13 +17,13 @@ internal static class CardFileWriter
         var frontmatter = card.Frontmatter;
 
         builder.Append(CardFileFormat.FrontmatterFence).Append('\n');
-        builder.Append("id: ").Append(frontmatter.Id).Append('\n');
+        builder.Append("id: ").Append(CardFileFormat.EscapeFrontmatterValue(frontmatter.Id)).Append('\n');
         builder.Append("kind: ").Append(frontmatter.Kind.ToWireString()).Append('\n');
-        builder.Append("title: ").Append(frontmatter.Title).Append('\n');
-        builder.Append("status: ").Append(frontmatter.Status).Append('\n');
+        builder.Append("title: ").Append(CardFileFormat.EscapeFrontmatterValue(frontmatter.Title)).Append('\n');
+        builder.Append("status: ").Append(CardFileFormat.EscapeFrontmatterValue(frontmatter.Status)).Append('\n');
         builder.Append("owner: ").Append(frontmatter.Owner.ToWireString()).Append('\n');
         builder.Append("scope: ").Append(frontmatter.Scope.ToWireString()).Append('\n');
-        builder.Append("section: ").Append(frontmatter.Section).Append('\n');
+        builder.Append("section: ").Append(CardFileFormat.EscapeFrontmatterValue(frontmatter.Section)).Append('\n');
         builder.Append("created: ").Append(FormatTimestamp(frontmatter.Created)).Append('\n');
         builder.Append("updated: ").Append(FormatTimestamp(frontmatter.Updated)).Append('\n');
         builder.Append(CardFileFormat.FrontmatterFence).Append('\n');

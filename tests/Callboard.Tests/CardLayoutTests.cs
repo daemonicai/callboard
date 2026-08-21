@@ -23,4 +23,34 @@ public sealed class CardLayoutTests
     [Fact]
     public void ChangeScope_WithoutAChangeName_Throws() =>
         Assert.Throws<ArgumentException>(() => CardLayout.DirectoryFor(CardScope.Change, changeName: null));
+
+    [Theory]
+    [InlineData("../../etc")]
+    [InlineData("..")]
+    [InlineData(".")]
+    [InlineData("foo/bar")]
+    [InlineData("foo\\bar")]
+    [InlineData("foo/../../etc")]
+    [InlineData("")]
+    public void ChangeScope_WithATraversalOrSeparatorInTheChangeName_Throws(string changeName) =>
+        Assert.Throws<ArgumentException>(() => CardLayout.DirectoryFor(CardScope.Change, changeName));
+
+    [Fact]
+    public void SectionScope_WithATraversalInTheChangeName_Throws() =>
+        Assert.Throws<ArgumentException>(() => CardLayout.DirectoryFor(CardScope.Section, "../../etc"));
+
+    [Fact]
+    public void RequireSafePathSegment_AcceptsAnOrdinaryName() =>
+        Assert.Equal("establish-callboard", CardLayout.RequireSafePathSegment("establish-callboard", "changeName"));
+
+    [Theory]
+    [InlineData("../x")]
+    [InlineData("x/..")]
+    [InlineData("..")]
+    [InlineData(".")]
+    [InlineData("a/b")]
+    [InlineData("a\\b")]
+    [InlineData("")]
+    public void RequireSafePathSegment_RejectsTraversalSeparatorsAndEmpty(string value) =>
+        Assert.Throws<ArgumentException>(() => CardLayout.RequireSafePathSegment(value, "id"));
 }

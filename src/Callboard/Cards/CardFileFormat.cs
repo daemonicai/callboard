@@ -58,4 +58,60 @@ internal static class CardFileFormat
     /// <summary>An unescaped line marking the end of an appended comment's body.</summary>
     internal static bool IsCommentFooter(string line) =>
         string.Equals(line, CommentFooter, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Escapes a free-text frontmatter field value (<c>id</c>/<c>title</c>/<c>status</c>/
+    /// <c>section</c>) so it always occupies exactly one physical line. Frontmatter is
+    /// line-based (<c>key: value</c>), unlike the body/comment format above which is delimiter-
+    /// based — a literal newline in a value would otherwise split it across lines and the next
+    /// read would hit "malformed frontmatter line" on the fragment. A backslash is escaped first
+    /// so the scheme stays invertible regardless of what the value already contains.
+    /// </summary>
+    internal static string EscapeFrontmatterValue(string value) =>
+        value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Replace("\r", "\\r", StringComparison.Ordinal);
+
+    /// <summary>Reverses <see cref="EscapeFrontmatterValue"/>.</summary>
+    internal static string UnescapeFrontmatterValue(string value)
+    {
+        if (value.IndexOf('\\') < 0)
+        {
+            return value;
+        }
+
+        var builder = new System.Text.StringBuilder(value.Length);
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '\\' && i + 1 < value.Length)
+            {
+                var next = value[i + 1];
+                if (next == 'n')
+                {
+                    builder.Append('\n');
+                    i++;
+                    continue;
+                }
+
+                if (next == 'r')
+                {
+                    builder.Append('\r');
+                    i++;
+                    continue;
+                }
+
+                if (next == '\\')
+                {
+                    builder.Append('\\');
+                    i++;
+                    continue;
+                }
+            }
+
+            builder.Append(value[i]);
+        }
+
+        return builder.ToString();
+    }
 }

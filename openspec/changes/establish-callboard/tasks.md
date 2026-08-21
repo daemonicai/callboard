@@ -13,10 +13,10 @@
 - [x] 2.2 Implement frontmatter parsing and serialization, verifying AOT compatibility before adopting any library
 - [x] 2.3 Implement the delimited appended-comment block format, readable unaided and diff-friendly
 - [x] 2.4 Implement the scope-shaped directory layout from `design.md` D3
-- [ ] 2.5 Implement atomic write via temporary file and rename
-- [ ] 2.6 Implement the per-card advisory lock with a timeout and a failure message naming the card and holder
-- [ ] 2.7 Test that two concurrent comment appends to one card both survive in a determinate order
-- [ ] 2.8 Test that a corrupted card file leaves every other card readable
+- [x] 2.5 Implement atomic write via temporary file and rename
+- [x] 2.6 Implement the per-card advisory lock with a timeout and a failure message naming the card and holder
+- [x] 2.7 Test that two concurrent comment appends to one card both survive in a determinate order
+- [x] 2.8 Test that a corrupted card file leaves every other card readable
 
 ## 3. Derived index
 

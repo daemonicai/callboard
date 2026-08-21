@@ -14,6 +14,11 @@ callboard/.index/
 *.db-shm
 *.db-wal
 
+# callboard per-card advisory locks and atomic-write temp files (2.5/2.6) — process state, not
+# record; never committed, same as the derived index above.
+callboard/**/*.lock
+callboard/**/*.tmp-*
+
 # dmons tripwire scratch
 .claude/.dmons-tripwire/
 

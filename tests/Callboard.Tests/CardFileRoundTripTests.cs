@@ -166,6 +166,72 @@ public sealed class CardFileRoundTripTests
     }
 
     [Fact]
+    public void RoundTrips_TitleContainingANewline()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0100",
+            CardKind.Block,
+            "Multi\nline title",
+            "open",
+            CardOwner.Worker,
+            CardScope.Change,
+            "2",
+            Created,
+            Updated);
+        var card = new CardFile(frontmatter, "Body.", []);
+
+        var serialized = CardFileWriter.Serialize(card);
+
+        // The frontmatter block stays one line per field even though the title itself carries a
+        // newline — that's the property this escaping exists to guarantee.
+        Assert.DoesNotContain("line title", serialized.Split('\n'));
+
+        var parsed = AssertSuccess(CardFileParser.Parse(serialized));
+        Assert.Equal(frontmatter.Title, parsed.Frontmatter.Title);
+    }
+
+    [Fact]
+    public void RoundTrips_FrontmatterValuesContainingBackslashesAndCarriageReturns()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0101",
+            CardKind.Block,
+            @"A title with a \backslash\ in it",
+            "open",
+            CardOwner.Worker,
+            CardScope.Change,
+            "2",
+            Created,
+            Updated);
+        var card = new CardFile(frontmatter, "Body.", []);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
+
+        Assert.Equal(frontmatter.Title, parsed.Frontmatter.Title);
+    }
+
+    [Fact]
+    public void RoundTrips_IdAndSectionContainingTheFrontmatterDelimiterAsSubstring()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0102---",
+            CardKind.Block,
+            "Title",
+            "open",
+            CardOwner.Worker,
+            CardScope.Change,
+            "---not-a-fence---",
+            Created,
+            Updated);
+        var card = new CardFile(frontmatter, "Body.", []);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
+
+        Assert.Equal(frontmatter.Id, parsed.Frontmatter.Id);
+        Assert.Equal(frontmatter.Section, parsed.Frontmatter.Section);
+    }
+
+    [Fact]
     public void Parse_UnrecognisedKind_Fails()
     {
         const string raw = "---\nid: X-0001\nkind: sprocket\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 1\ncreated: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n";
