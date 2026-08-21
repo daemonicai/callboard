@@ -32,6 +32,15 @@
          error under TreatWarningsAsErrors. Pinned up to the first patched line explicitly; a
          direct top-level reference wins NuGet's version resolution over the transitive minimum. -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+
+    <!-- §3 obligation 2: enforces "only Program.cs touches Console" as a build error rather than
+         a doc comment. Analyzer-only — loads into the compiler process, never the published
+         binary, so it carries no AOT/trim implication (design.md D2 / ADR-0002). -->
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.6.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="BannedSymbols.txt" />
   </ItemGroup>
 
 </Project>

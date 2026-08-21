@@ -1,0 +1,1 @@
+T:System.Console;Console must not be touched outside Program.cs — CommandDispatcher.Run is the sole writer to stdout/stderr, so "exactly one JSON line on stdout" (ADR-0001 / design.md D1) is enforced by the compiler rather than a convention (§3 obligation 2).

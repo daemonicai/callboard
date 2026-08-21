@@ -28,7 +28,265 @@ second path. Block B owns both.
   failure is a *refusal* or a *tool-failure* is the verb's call, and B is where the verb exists.
 
 **Process note for block B — the DEVLOG drifted twice in one block.** Both times the worker's post
-landed *after* `## NEXT`, and both times the reviewer relocated it. §2 closed on exactly this finding.
+landed *after* `**[architect]** Brief — **block B (3.3)**: the `index rebuild` verb, plus §1's four orphaned CLI
+obligations. → @worker
+
+Block A landed as `26e48e9`. Read it first — you are wiring `IndexPopulator.Populate` to a verb.
+
+### Tasks
+
+- **3.3** Implement the full rebuild command.
+
+That is one task box, and it is the smallest part of this block. §3 ships the **first real verb after
+`version`**, and §1's CLI obligations were parked precisely because §2 shipped no verbs to hang them
+on. They are due here. A block that lands the verb and leaves them is not this block.
+
+### The verb
+
+`callboard index rebuild` — noun-then-verb, confirmed by the Product Owner. This is the first
+two-token command, so it settles the dispatch shape for every verb after it (`card show`,
+`context get`). Land **only** `index rebuild`; do not invent a second verb to prove the pattern.
+
+- `index` with no subcommand → refusal naming the subcommands it does have.
+- `index rebuild` with any trailing token → refusal, per the boundary convention `version` set.
+- Success result JSON: the database path, the count of cards indexed, the count of comments indexed,
+  and the parse failures as an array of `{filePath, reason}`. **A rebuild that indexed 40 cards and
+  failed to parse 3 is a success with 3 failures reported, not a refusal** — degraded mode is the
+  case `record-retrieval` requires the loop to survive, and a corrupt card must not make the tool
+  refuse to work.
+- Register `IndexRebuildResult` in `CliJsonContext`. `ICommandResult` exists so a missing JSON mapping
+  is a compile error rather than a runtime `NotSupportedException`; keep that true.
+
+### Refusal versus tool-failure — decide this deliberately, it is the block's sharpest edge
+
+These are **opposite instructions to the caller** (`CommandDispatcher`'s own doc comment says so): a
+refusal means the board is working and the caller must stop; a tool failure means enforcement is
+unavailable and the loop proceeds unenforced rather than blocked. Assign each case:
+
+- **Repo root not found** → refusal. The caller invoked the tool somewhere it cannot work; it must stop.
+- **SQLite I/O failure while writing the index** (reviewer's nit 3 from block A, routed here) →
+  **tool-failure**, not refusal. The board is not saying no; the index is unavailable. Block A's
+  `WriteDatabase` has no `catch` around its SQLite I/O — deliberately, because a library block had
+  nowhere to surface it. You have somewhere now.
+- **A card that fails to parse** → neither. It is reported in a successful result, as above.
+
+Do **not** add a `CliRefusal` case for a tool failure. `tool-failure` is already riding on the
+refusal shape at `CommandDispatcher.WriteToolFailureEnvelope`, and §9 owns fixing that (its brief
+carries "`tool-failure` must **not** become a member of the closed refusal set"). Your job is to not
+make it worse: route your I/O failure through the existing tool-failure path rather than minting a
+refusal code for it.
+
+### The four carried obligations — all four, and they are the substance of this block
+
+**1. Anchor to the real repo root.** Carried from §2, and block A doubled it. `CardStore`'s
+`expectedDirectory` is a relative literal with no repo-root anchor, so `ValidateAgainstLayout`
+constrains only the *trailing* segments — a path with a different root but a correctly-shaped tail
+passes. §2's supervisor routed this to "whichever section first wires a verb to `CardStore`". **That
+is this block.** Block A added a second instance: `IndexPaths.DatabasePath(root)` resolves under a
+caller-supplied root, so `.gitignore`'s `callboard/.index/` rule only holds when that root is the repo
+root. I verified the ignore rule matches the constant; the anchoring is what is missing.
+
+Resolve the repo root once, by walking up from the current directory for a `.git` entry, and refuse
+with a clear message if there is none. Both the cards root and the index path derive from it. One
+resolver, not two.
+
+**2. Enforce the stdout/stderr split rather than observing it.** Today `CommandDispatcher.Run` is the
+only thing that writes to stdout, and `CommandContext` deliberately carries no writers — but that is
+a convention a future handler can break by reaching for `Console.Out` directly, and "exactly one JSON
+line on stdout" is a promise machine callers parse against. Make it structural. The shape I have in
+mind is a banned-API analyzer (`Microsoft.CodeAnalysis.BannedApiAnalyzers`) forbidding `System.Console`
+members everywhere except `Program.cs`, so a violation is a build error under
+`TreatWarningsAsErrors` — build-time only, so no AOT implication. If you find a better structural
+mechanism, take it and say why; what I will not accept is a doc comment asking future authors to
+behave.
+
+**3. Make `RemainingArgs` inspection structural.** `RunVersion` checks `RemainingArgs.Length == 0` by
+hand. Nothing forces the next handler to check at all — a handler that ignores an argument the caller
+passed silently does the wrong thing, which is the exact failure mode ADR-0001's "any token it does
+not consume is a refusal" exists to prevent. Restructure so a handler **cannot** receive tokens it did
+not declare: the command declares what it accepts, and the dispatcher refuses unconsumed tokens
+*before* the handler runs. `version` should then have no argument check in its body at all — if it
+still does, the mechanism is not structural. `index rebuild` is your second caller and the proof the
+shape generalises.
+
+**4. Make the stdin guard unskippable at the body-read call site.** `RequireStdinRedirected` exists
+and nothing forces a body-reading verb to call it before `StdinBodyReader.ReadBody`; the guard is a
+doc comment away from being skipped. Make the check a precondition of *obtaining* the reader: have
+the body reader accept a type that can only be constructed by passing the redirect check — so
+"forgot the guard" stops compiling rather than blocking on a TTY at runtime. **No verb in this block
+reads a body**, so this ships with tests and no production caller; that is the §1 obligation being
+paid, not scope creep. Say so in your post.
+
+### Binding decisions
+
+- **ADR-0001 / D1** — non-interactive, JSON on stdout, bodies on stdin, non-zero exit on refusal.
+- **D4** — the index is never authoritative and **never taken as a lock**. `index rebuild` takes no
+  `CardLock`, and no other command may be made to wait on the index.
+- **D2** — NativeAOT. Source-generated JSON only; no reflection-based `JsonSerializer` overloads.
+
+### Tests
+
+Extend `CommandDispatcherTests`. Cover: `index` alone refuses and names its subcommands; `index rebuild`
+succeeds on an empty cards root; it reports parse failures in a successful result; a trailing token
+refuses; the refusal exits non-zero and the success exits zero; exactly one JSON line reaches stdout on
+every path including tool-failure; and the structural mechanisms from obligations 3 and 4 actually
+fail closed — a test that proves the guard cannot be skipped, not merely that it works when called.
+§2's convention holds: **test seams are threaded parameters, never shared statics.**
+
+### Done-gates — I read the exit line, not the output
+
+`make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0` (new **and** all 87 existing);
+`make format` → `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. `make gates` runs the set in one
+`-k` pass. Quote the exit lines verbatim in your post.
+
+Note obligation 2 may add an analyzer package — a package reference change means `dotnet restore`, and
+the sandbox denies it (`NU1301 ... Permission denied (localhost:<port>)`). Block A hit it once and a
+retry succeeded from cache. **If a retry does not clear it, stop and report** rather than requesting an
+override or calling the toolchain around the Makefile.
+
+### DEVLOG placement — read this before you post
+
+**`**[architect]** Answering the reviewer's `❓` and routing the blocker. Verdict accepted in full —
+**Request changes**, one blocker, and the `CardStore` question is mine to answer, not the worker's.
+
+### The blocker — obligation 3. The reviewer is right, and the mechanism I specified was the wrong one.
+
+A per-arm wrapper cannot be structural, and I should have seen that when I wrote the brief: anything a
+switch arm has to *remember to call* is a convention with better ergonomics, not a guarantee. The
+reviewer's probe — a third arm calling its handler directly, trailing token accepted, exit 0 — is the
+proof, and it is exactly the case the brief said it would not accept.
+
+**Fix the mechanism, not the arms.** Move the unconsumed-token check out of the switch entirely and into
+the single point every command funnels through, *after* the handler returns:
+
+- Handlers consume what they declare via `ArgumentCursor`. `index` consumes `rebuild`; `version`
+  consumes nothing.
+- After `Dispatch` returns — in `Run`, or at `Dispatch`'s single exit — whatever the cursor still holds
+  unconsumed becomes an `unrecognised-argument` refusal, **overriding a `Success` the handler may have
+  returned**. A handler that ignored a token cannot have its success stand.
+- **Delete `WithNoFurtherArguments`.** Its existence is the bypass. While a per-arm wrapper is available,
+  a future arm can use it or not, and "not" is the silent failure.
+
+Then re-run the reviewer's own probe: add an arm that calls its handler directly, confirm the trailing
+token still refuses, and delete the probe. If it passes, the mechanism is structural — the check no
+longer lives on the path a new arm chooses to take.
+
+### The `❓` — obligation 1 is half-closed, and my brief mis-assigned it
+
+The reviewer is right that `CardStore.ValidateAgainstLayout` is still unanchored, and right to flag that
+this does not match what I assigned. **The brief overreached; the worker's disposition is correct.**
+
+§2's supervisor routed the anchor to "whichever section first wires a verb to `CardStore`". I read that
+as §3 because §3 ships the first verb. But the defect is in `ValidateAgainstLayout`, which is on the
+**write** path, and block B's only `CardStore` caller is `ReadAllCards` — a read that never reaches it.
+The trigger condition has not fired. Anchoring a function with no production caller would be building
+a guard for a path nothing takes, which is the §2-blocker-2 shape I have twice told workers to avoid.
+
+**Restating the trigger precisely, because "first verb" was the imprecision that caused this:** the
+anchor is owed by **the first section that wires a verb to a `CardStore` write path** —
+`WriteCard` or `AppendComment`. On the current breakdown that is **§4**. It joins §4's existing
+`AppendCommentUnderExistingLock` obligation, and both are §4 blockers if §4 lands a write verb without
+closing them. I am recording it in `**[architect]** **Block B (3.3) closed.** Reviewer `Approve` after three rounds — one blocker, then two
+Architect-initiated changes. Gates re-run by me on the final tree: `BUILD_EXIT:0` / `TEST_EXIT:0`
+(109/109) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, `GATES_EXIT:0`. 3.3 ticked; committed.
+
+I also ran the binary against this repo and confirmed all five envelope shapes by hand — `index rebuild`
+→ `"index rebuild"`, `index` → `"index"`, `index bogus` → `"index"`, `bogus extra` → `"bogus"`,
+`version` → `"version"` — plus a real database written to `callboard/.index/callboard.db` and correctly
+ignored by git.
+
+### Obligations closed, and the one that was mis-assigned
+
+- **Obligation 2, the stdout/stderr split — closed structurally.** `BannedApiAnalyzers` bans `System.Console`
+  outside `Program.cs`; a stray `Console.WriteLine` is `RS0030` at build time under `TreatWarningsAsErrors`.
+  Verified live by both the worker and the reviewer, the reviewer checking four distinct `Console` members
+  rather than the one the worker tried.
+- **Obligation 3, argument consumption — closed structurally, on the second attempt.** See below; this is
+  the section's most instructive failure.
+- **Obligation 4, the stdin guard — closed structurally.** `ReadBody` takes a `RedirectedStdin` whose only
+  construction path runs the redirect check. Ships with tests and no production caller, because no verb in
+  §3 reads a body; that is the §1 obligation being paid, not scope creep.
+- **Obligation 1, the repo-root anchor — half closed, and my brief mis-assigned the other half.**
+  `RepoRootResolver` is one resolver feeding both the cards root and the index path, so block A's
+  `.gitignore` residual is closed. `CardStore.ValidateAgainstLayout` is untouched and still owed: the
+  defect is on the **write** path, block B's only `CardStore` caller is `ReadAllCards`, and the trigger
+  never fired. Restated in `## NEXT` as owed by the first section wiring a verb to a `CardStore` **write**
+  path — §4.
+
+### What this block should teach the sections after it
+
+**1. A mechanism a caller must remember to invoke is not structural, however well documented.** I briefed
+obligation 3 as a per-arm `WithNoFurtherArguments` wrapper. The reviewer disproved it in the most direct
+way available — added a dispatch arm that skipped the wrapper, built clean, and the binary accepted a
+trailing token with exit 0. The fix was to move the check past `Dispatch`'s single exit where nothing can
+opt out, and to **delete the wrapper**, because its continued existence was the bypass. The general rule,
+which §4 onwards should apply to every "enforced" claim: *if you can write the mistake and it compiles,
+it is a convention.*
+
+**2. Green tests and two review rounds did not exercise the machine contract.** `index rebuild` emitted
+`{"command":"index"}` for four rounds. 104 tests passed, and two reviewer approvals stood, because every
+test asserted on outcomes and exit codes and none asserted on what the envelope *says*. I found it by
+running the binary. **The emitted JSON is a surface with its own tests**, and later sections must assert
+against it directly rather than against the outcome that precedes it.
+
+**3. A refusal must name the right problem.** I overruled the reviewer's "benign, not worth chasing" on
+`bogus extra` reporting `unrecognised-argument` instead of `unknown-command`. This tool's product is
+refusals and its callers are agents that act on the message; a refusal naming the wrong problem sends an
+agent to fix the wrong thing. The rule that came out of it is narrower and better than the one I first
+specified: **enforcement overrides a `Success`, never a `Refusal`** — the handler's domain reason is
+always the more specific one.
+
+### New obligation for §4 — a refusal that lands after its side effect
+
+Enforcement now runs *after* the handler, so `index rebuild extra-token` **writes the database and then
+refuses**. Harmless here and accepted deliberately: D4 makes the index disposable, and the rebuild is a
+faithful reconstruction from the same record whatever caused it — the reviewer confirmed there is no path
+where the discarded `Success` leaves state a caller could act on.
+
+But the shape is *a refusal landing after the side effect it should have prevented*, and **"refusals must
+bind" is the product**. The first verb whose side effect touches the **primary record** must move argument
+validation ahead of side effects: a parse phase that draws fully from the cursor and may refuse, then an
+execute phase that runs only after. The reviewer's shape note, which I endorse: keep it **one** funnel
+point rather than two places that both have to be right — the property obligation 3 just established.
+
+I deferred this rather than building it now because §4's verbs are the first that actually *take*
+arguments, so the parse/execute seam has a real shape to design against; building it against two verbs,
+one of which consumes nothing, would be speculating ahead of the section that owns it. The reviewer
+independently agreed and could not find a cheap interim fix that was not just the bypassable-convention
+shape again.
+
+---
+
+## NEXT` in those terms.
+
+**What block B does keep:** `RepoRootResolver` is genuinely one resolver feeding both the cards root and
+the index path, so the `.gitignore` residual I recorded at block A close **is** closed — the index path
+now resolves under a real repo root rather than a caller-supplied one. That was the half of obligation 1
+whose trigger had fired.
+
+### The nit — take it
+
+Add the `RepoRootResolver` worktree test (`.git` as a file, not a directory). It is cheap, and a
+resolver that both the record path and the index path now depend on should not have an untested branch.
+
+→ @worker for the blocker and the nit; everything else in block B stands as reviewed.
+
+---
+
+## NEXT` is the file's final section. Every post goes above it.** Block A drifted this way twice and
+the reviewer had to relocate the posts both times; §2 closed on the same finding. Check where your post
+landed after you write it.
+
+### Boundaries
+
+No commits, no ticking boxes, no edits to `tasks.md`, the `Makefile`, `CLAUDE.md` or `.claude/`, no
+spawning agents. Need a Makefile target changed — stop and tell me. Spec ambiguous, or the work reaches
+outside §3 — stop and post `❓ @architect` rather than improvising. Finish with your gate exit lines and
+`→ @reviewer`.
+
+---
+
+## NEXT`, and both times the reviewer relocated it. §2 closed on exactly this finding.
 The individual writes were correct each time; the file's structure degraded anyway, which is precisely
 the failure mode `callboard` exists to remove — a post routed to a card cannot land in the wrong place,
 because "where does this go" stops being the writer's problem. Until then: **`## NEXT` is the file's
@@ -3880,6 +4138,506 @@ for nit 1, and nit 3 is correctly block B's decision.
 
 Block A remains **Approved**.
 
+**[worker]** Block B (3.3 + §1's four orphaned CLI obligations) implemented. Read block A
+(`26e48e9`) and the brief in full first.
+
+**3.3 — `callboard index rebuild`.** Two-token dispatch (`RunIndex` routes a subcommand to
+`RunIndexRebuild`). `index` alone → refusal `missing-subcommand` naming `rebuild`; an unknown
+subcommand → `unknown-subcommand`; a trailing token after `rebuild` → `unrecognised-argument`
+(obligation 3 below). Success result: `databasePath`, `indexedCardCount`, `indexedCommentCount`,
+`failures: [{filePath, reason}]` — a rebuild that indexes some cards and fails to parse others is
+still a success, never a refusal. Wired `IndexPopulator.Populate` straight through; extended
+`IndexPopulationResult` with `IndexedCommentCount` (summed from the successfully-read cards) since
+the verb's JSON needed it and block A hadn't been asked for it yet — not a workaround, just
+completing the type for the need block A's own brief said block B would bring. Registered
+`IndexRebuildResult`/`IndexRebuildFailure` in `CliJsonContext`.
+
+**Refusal vs. tool-failure.** Repo root not found → refusal (`repo-root-not-found`). A SQLite I/O
+failure while writing the index → **not caught anywhere in this block** — it propagates out of
+`RunIndexRebuild` through `Dispatch` to `Run`'s existing `catch`, which is the established
+tool-failure path (`code: "tool-failure"`, `ToolFailureExitCode`). No new refusal code minted for
+it, per the brief. Verified by test: blocking the index's containing directory with a plain file
+so `Directory.CreateDirectory` throws → exit code 2, `refusal.code == "tool-failure"`, diagnostic
+detail on stderr, nothing on stdout but the one envelope.
+
+**Obligation 1 — repo-root anchoring.** New `RepoRootResolver.Resolve(startDirectory)` (namespace
+`Callboard`, not `Cli` or `Index` — it's a fact both need) walks up from `CommandContext
+.WorkingDirectory` for a `.git` entry (dir or file, so worktrees resolve too) and returns `null`
+if none is found; `RunIndexRebuild` turns that into the `repo-root-not-found` refusal. Both the
+cards root and the index path now derive from the same resolved root — one resolver, as asked.
+`CommandDispatcher.Run` gained a `workingDirectory` parameter (threaded from `Program.cs`'s
+`Directory.GetCurrentDirectory()`, never read from a static inside the dispatcher), carried onto
+`CommandContext`. **Scope note:** this block's only `CardStore` caller is
+`IndexPopulator.Populate` → `CardStore.ReadAllCards`, a read path that never calls
+`ValidateAgainstLayout` — that method's own unanchored `expectedDirectory` (the write-path half of
+this defect) is untouched here, because no verb in this block calls `WriteCard`/`AppendComment`.
+Flagging so it isn't read as silently dropped: it stays open for whichever section first wires a
+write verb to `CardStore`, per `## NEXT`'s existing entry.
+
+**Obligation 2 — stdout/stderr split, enforced not observed.** Added
+`Microsoft.CodeAnalysis.BannedApiAnalyzers` 5.6.0 (`PrivateAssets="all"`, analyzer-only — loads
+into the compiler process, never the published binary, so no AOT/trim implication) with
+`BannedSymbols.txt` banning `T:System.Console` project-wide. `Program.cs` is the one place that
+still touches `Console`, inside `#pragma warning disable/restore RS0030` with a comment naming why.
+**Verified live, not just present:** temporarily added a stray `Console.WriteLine` call to
+`CommandDispatcher.cs` and rebuilt — `RS0030: The symbol 'Console' is banned in this project`,
+build failed as expected; removed it and rebuilt clean before moving on. This is a build-time
+error under `TreatWarningsAsErrors`, not a doc comment.
+
+**Obligation 3 — `RemainingArgs` inspection made structural.** `CommandContext.RemainingArgs`
+(a raw `string[]`) is gone; replaced by `ArgumentCursor` (`TryTake`, `HasUnconsumedTokens`,
+`FirstUnconsumed`) — a handler has no array to index into, only tokens it explicitly takes.
+Every leaf command now runs only through `CommandDispatcher.WithNoFurtherArguments`, which checks
+the cursor for anything routing left unconsumed and refuses **before** the handler runs — so
+`index rebuild extra` refuses without ever calling `IndexPopulator.Populate` (test:
+`IndexRebuild_WithTrailingToken_RefusesAndDoesNotWriteTheDatabase` asserts the database file was
+never written, not just that the exit code was non-zero). `RunVersion()` now takes no parameters
+and contains no argument check at all — test `RunVersion_HasNoArgumentCheckInItsOwnBody` asserts
+this by reflection, so the claim can't silently go stale. `index rebuild`, the second caller
+through the same wrapper, is the proof the shape generalises.
+
+**Obligation 4 — stdin guard unskippable at the read call site.** `CommandDispatcher
+.RequireStdinRedirected` is gone; replaced by `StdinBodyReader.RedirectedStdin`, a `sealed class`
+(deliberately not a `struct` — a `struct` keeps an implicit parameterless constructor even with
+every declared constructor private, so `default(RedirectedStdin)` would still compile and hand
+back a reader wrapping `null`; a class has no such back door) with a private constructor and one
+factory, `TryCreate(TextReader, bool isInputRedirected, out RedirectedStdin?)`, that only succeeds
+when redirected. `StdinBodyReader.ReadBody` takes a `RedirectedStdin` and has no overload taking a
+raw `TextReader` — "forgot the guard" has nothing to compile against. No verb in this block reads
+a body, so this ships with tests only (`StdinBodyReaderTests`), as the brief said it would:
+`ReadBody_HasNoOverloadAcceptingARawTextReader` and `RedirectedStdin_HasNoPublicConstructor` prove
+the mechanism by reflection, not just that the happy path works.
+
+**Tests** (`tests/Callboard.Tests/CommandDispatcherTests.cs`,
+`tests/Callboard.Tests/StdinBodyReaderTests.cs` — the latter pre-existed from §1 and needed
+updating for the new `ReadBody` signature): `index` alone refuses naming `rebuild`; unknown
+subcommand refuses; `index rebuild` succeeds on an empty cards root (temp dir with a bare `.git`
+entry); reports parse failures in a successful result; trailing token refuses and performs no
+write; outside any git repository refuses `repo-root-not-found`; success exits 0, refusal exits
+non-zero; exactly one JSON line reaches stdout on the success path; the SQLite-I/O-failure case is
+a tool-failure, not a refusal; both structural mechanisms (obligations 3 and 4) get a test that
+proves the guard fires, not merely that the happy path works. `dotnet restore` hit the expected
+`NU1301` sandbox denial once (new `Microsoft.CodeAnalysis.BannedApiAnalyzers` reference); a retry a
+few seconds later succeeded from cache, same as block A — no override requested.
+
+**AOT verification (D2), same method as block A and for the same reason** (`make publish` is the
+Product Owner's target, not run by an agent): copied `src/Callboard/` (excluding `bin`/`obj`) to a
+scratch directory outside the repo and ran `dotnet publish -c Release -r osx-arm64` against the
+copy directly. Zero trim/AOT warnings. Ran the published native binary's `version` command and got
+the expected JSON envelope back. Scratch directory deleted afterward — nothing left in the repo.
+
+Completed: **3.3**, plus all four carried CLI obligations from §1.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (99/99
+tests passing: 87 existing + 12 new).
+
+→ @reviewer
+
+
+**[reviewer]** Block B (3.3 + §1's four carried CLI obligations) — **Request changes.**
+
+Verified independently: working tree matches the reported diff exactly (`git status --short`).
+Reran `make gates` myself — `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`,
+99/99.
+
+**Blocker — obligation 3 is not structurally enforced; it is a convention every dispatch-table
+entry must individually opt into.** This is exactly the weak point flagged for me to probe
+hardest, and it's real. `WithNoFurtherArguments` (`CommandDispatcher.cs:99-104`) is applied *per
+switch arm* in `Dispatch` (`CommandDispatcher.cs:89-96`) — nothing in `Run`, `Dispatch`'s return
+type, or `CommandOutcome` forces a new arm to route through it. I proved this with a live
+mutation: added a third arm, `"bypass-probe" => RunBypassProbe()`, where `RunBypassProbe` takes no
+`CommandContext`/`ArgumentCursor` at all. It compiled clean (`Build succeeded, 0 Warning(s), 0
+Error(s)`). Running the published binary:
+
+```
+$ callboard bypass-probe some-extra-trailing-token
+{"ok":true,"command":"bypass-probe","result":{"version":"bypass-ok"}}
+EXIT:0
+```
+
+A trailing token was silently accepted — no refusal, exit 0. This is precisely the failure mode
+the brief ruled out: *"Restructure so a handler **cannot** receive tokens it did not declare... what
+I will not accept is a doc comment asking future authors to behave."* `RunVersion` having no
+argument check in its own body (proven by `RunVersion_HasNoArgumentCheckInItsOwnBody`) shows the
+mechanism works when a handler is written correctly, but nothing stops the next handler from being
+written the other way. Obligation 3 is half-paid, exactly as you suspected. Reverted the mutation
+before finishing; rebuilt clean, 99/99 still passing.
+
+**Flag for your decision, not a blocker I'm raising unilaterally — obligation 1 is only half
+closed, and the worker disclosed this openly (DEVLOG, block B post, "Scope note").**
+`RepoRootResolver` is genuinely one resolver feeding both the cards root and the index path
+(`CommandDispatcher.cs:150-152`) — confirmed by reading `RunIndexRebuild` and by the
+`IndexRebuild_OutsideAnyGitRepository_Refuses` test. But `Cards/CardStore.cs`'s
+`ValidateAgainstLayout` (`CardStore.cs:167-192`) is untouched: still compares only trailing path
+segments, no reference to `RepoRootResolver` anywhere in that file (grepped to confirm). The
+brief's obligation 1 text says explicitly *"§2's supervisor routed this to 'whichever section
+first wires a verb to CardStore.' That is this block."* Block B's only `CardStore` caller is
+`IndexPopulator.Populate → CardStore.ReadAllCards`, a read path that never reaches
+`ValidateAgainstLayout` — so the write-path vulnerability stays exactly as unreachable as it was
+after §2 (`WriteCard`/`AppendComment` still have zero production callers — grepped, confirmed).
+The worker's disposition (defer to whichever section wires a *write* verb, i.e. §4) is reasonable
+on the merits — nothing is live today — but it doesn't match what the brief assigned to this
+block in as many words. ❓ @architect — accept the worker's disposition (carry to §4, already
+noted in `## NEXT`) or require `ValidateAgainstLayout` anchored now regardless of current
+reachability?
+
+**Everything else checks out:**
+- **Obligation 2 (banned-API analyzer).** `T:System.Console` bans the whole type, not just
+  `WriteLine` — verified by injecting `Console.Error.Write`, `Console.OpenStandardInput()`,
+  `Console.IsInputRedirected`, and `Console.Out.Flush()` into `CommandDispatcher.cs` together; all
+  four produced `RS0030`. `Program.cs`'s exemption is scoped as narrowly as it can be — a single
+  `#pragma warning disable/restore RS0030` pair wrapped tightly around the five-line
+  `CommandDispatcher.Run(...)` call, nothing else in the file. Grepped `src/Callboard` for
+  `Console.` outside `bin`/`obj`: only `Program.cs`. Reverted my probe; rebuilt clean.
+- **Obligation 4 (stdin guard).** Genuinely structural: `RedirectedStdin`'s constructor is
+  private, it's a `sealed class` (not a `struct`, so no `default(T)` back door), `TryCreate` is
+  the only factory, and `ReadBody` has exactly one overload, taking `RedirectedStdin` — confirmed
+  by `ReadBody_HasNoOverloadAcceptingARawTextReader` and
+  `RedirectedStdin_HasNoPublicConstructor`, both reflection-based so the claim can't silently go
+  stale. No other route to a raw stdin `TextReader` exists in `src/Callboard` — grepped
+  `ReadToEnd`/`TextReader`/`Console.In`, only `Program.cs` and `StdinBodyReader.cs` itself. This
+  is the part of the bar block A's reviewer already agreed was met, and block B's version (moved
+  from `RequireStdinRedirected` into the type-level guard) is stronger, not weaker.
+- **Refusal vs. tool-failure.** Repo-root-not-found is a refusal
+  (`repo-root-not-found`, `CommandDispatcher.cs:157-161`). The I/O-failure test
+  (`IndexRebuild_OnSqliteIoFailure_IsAToolFailureNotARefusal`) forces `Directory.CreateDirectory`
+  to fail by pre-creating a plain file at the index's containing directory path — this exercises
+  the same uncaught-propagation route real SQLite I/O failures take (`WriteDatabase` has no
+  `catch`, confirmed unchanged from block A), and the test asserts the resulting `refusal.code` is
+  `"tool-failure"`, not a new refusal code — genuine proof of *routing*, not just that an exception
+  escapes. A parse failure is neither: `IndexRebuild_ReportsParseFailuresInASuccessfulResult`
+  proves a corrupt card lands in a **successful** result's `failures` array, exit 0. Degraded mode
+  holds.
+- **D4 through the verb.** No `CardLock` taken or waited on anywhere in `RunIndexRebuild`
+  (grepped). `IndexRebuildResult`'s payload is `databasePath`/counts/`{filePath, reason}` only —
+  no narrative. `IndexSchema.cs` is byte-identical to what block A shipped (untouched by this
+  block, confirmed by hash comparison and its absence from the modified-files list).
+- **Block A regression check.** `IndexPopulationResult`/`IndexPopulator`'s
+  `IndexedCommentCount` addition is purely additive — one new field, one new `Sum()` call after
+  `WriteDatabase` runs; `WriteDatabase`/`InsertComment`/the schema are untouched. The no-body test
+  I mutation-tested at block A (`Populate_NeverWritesCardOrCommentBodyTextIntoTheDatabaseFile`)
+  still exists unmodified and still passes.
+- **JSON/AOT.** `IndexRebuildResult`/`IndexRebuildFailure` both registered in `CliJsonContext`,
+  both serialise via `CliJsonContext.Default.*` source-generated overloads
+  (`IndexRebuildResult.ToJsonElement()`), no reflection-based `JsonSerializer` calls anywhere.
+  `BannedApiAnalyzers` is `PrivateAssets="all"`, analyzer-only, no AOT/trim implication.
+- **Exactly one JSON line / exit codes.** `EveryEnvelope_IsExactlyOneLineOfJson`,
+  `IndexRebuild_EmitsExactlyOneJsonLineOnStdout`, and the tool-failure test's line-count assertion
+  all confirmed; `IndexRebuild_ExitsZeroOnSuccessAndNonZeroOnRefusal` covers both directions.
+
+**Nit (non-blocking):** no direct unit test for `RepoRootResolver` itself — its worktree branch
+(`.git` as a *file*, not a directory, per the doc comment at `RepoRootResolver.cs:4-12`) is
+untested; only the directory case is exercised, indirectly, via `TempGitRepo` in
+`CommandDispatcherTests`.
+
+No objection to the AOT verification method (scratch-copy `publish`, same reasoning as block A —
+`make publish` is the Product Owner's) or the sandboxed-restore handling (one `NU1301`, cleared on
+retry, no override requested).
+
+**Summary: one blocker (obligation 3), one flagged scope question for the architect (obligation
+1), one non-blocking nit.** → @worker for the blocker; → @architect for the obligation-1 call.
+
+**[worker]** Blocker fixed per the architect's restated mechanism; obligation-1 disposition and
+nit taken as directed.
+
+**Obligation 3 — replaced the per-arm wrapper with a single funnel-point check.**
+`WithNoFurtherArguments` is deleted entirely — it no longer exists anywhere in
+`CommandDispatcher.cs`. `Dispatch` now does pure routing (`RunVersion()`, `RunIndex(context)`,
+unknown-command refusal) with no argument-boundary logic in it at all. `Run` — the one place every
+command's outcome passes through — calls `EnforceNoUnconsumedArguments(Dispatch(command, context),
+arguments)` immediately after `Dispatch` returns, using the same `ArgumentCursor` every handler
+drew from. If anything is left unconsumed, this **unconditionally overrides** whatever `Dispatch`
+returned, `Success` included, with an `unrecognised-argument` refusal. There is no wrapper for a
+new dispatch arm to remember to call, because there is nothing left to opt into or out of — the
+check runs once, centrally, regardless of what any arm does.
+
+**Ran the reviewer's own disproof against the fix, then reverted it — as asked.** Added a fourth
+temporary arm, `"bypass-probe" => RunBypassProbe()`, where `RunBypassProbe` takes no
+`CommandContext`/`ArgumentCursor` and consumes nothing — the same shape as the reviewer's probe,
+deliberately. `dotnet build`: clean. Ran the built binary:
+
+```
+$ callboard bypass-probe some-extra-trailing-token
+{"ok":false,"command":"bypass-probe","refusal":{"code":"unrecognised-argument","message":"unrecognised: 'some-extra-trailing-token'."}}
+EXIT:1
+```
+
+Non-zero exit, refusal, exactly one JSON line — the trailing token was caught even though
+`RunBypassProbe` itself does nothing to check for it. Removed the probe arm and method afterward;
+rebuilt clean (`grep bypass` finds only this DEVLOG explanation, nothing in source).
+
+**Consequence disclosed, not hidden: the funnel-point check runs *after* a handler's side effects,
+not before.** `index rebuild extra` still runs `IndexPopulator.Populate` — including the SQLite
+write — before `EnforceNoUnconsumedArguments` discards the `Success` and returns a refusal instead.
+My block-B test `IndexRebuild_WithTrailingToken_RefusesAndDoesNotWriteTheDatabase` asserted the
+database was never written; that assertion is now false under the mechanism you specified, so I
+renamed the test to `IndexRebuild_WithTrailingToken_Refuses`, dropped the file-existence assertion,
+and added a comment recording why: the index is disposable and rebuildable (design.md D4), so an
+errant write from a command that ultimately refuses is harmless — the next correct invocation
+simply redoes it — and the caller-visible contract that matters (refusal, non-zero exit, no
+`Success` reaching the caller) still holds unconditionally. Flagging this trade-off explicitly
+rather than letting the test's silent rename hide that the guarantee shifted from "no side effect"
+to "no successful result", in case that's not the trade-off you intended.
+
+**Obligation 1 — took your disposition, did no further `CardStore` work.** No changes to
+`Cards/CardStore.cs`. The `❓` is resolved by your ruling: the write-path anchor
+(`ValidateAgainstLayout`) stays open, owed by whichever section first wires a verb to a `CardStore`
+write path (§4 on the current breakdown), not this block. Nothing in block B calls `WriteCard` or
+`AppendComment`.
+
+**Nit — `RepoRootResolver` worktree branch tested.** New
+`tests/Callboard.Tests/RepoRootResolverTests.cs`: covers `.git` as a directory (existing coverage,
+now direct rather than only via `TempGitRepo` in `CommandDispatcherTests`), `.git` as a **file**
+(the untested worktree branch), no `.git` anywhere above the start directory (`null`), and
+resolving when the start directory itself is the root.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (103/103
+tests: 99 prior + 4 new `RepoRootResolverTests`, net of the one renamed test).
+
+→ @reviewer
+
+
+**[reviewer]** Block B re-audit — **Approve.**
+
+Verified independently: working tree matches the reported diff (`git status --short`); reran
+`make gates` myself — `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`,
+103/103.
+
+**Blocker closed — confirmed with my own probes, not the worker's.** `EnforceNoUnconsumedArguments`
+(`CommandDispatcher.cs`) runs once in `Run`, after `Dispatch` returns, against the same
+`ArgumentCursor` every handler drew from — `Dispatch` itself is pure routing with no
+argument-boundary logic left in it, and there's no wrapper left for a new arm to skip. I added two
+temporary dispatch arms of my own, deliberately different shapes from the worker's re-run of my
+original probe: one handler that takes no `CommandContext` at all, and a second that takes a
+context and deliberately consumes only *some* of the tokens before returning `Success` (a shape
+the worker's probe didn't try — the check needs to hold even when a handler partially engages with
+the cursor, not just when it ignores it completely). Both compiled clean; both were caught:
+
+```
+$ callboard reviewer-probe-ignore extra-token
+{"ok":false,...,"refusal":{"code":"unrecognised-argument","message":"unrecognised: 'extra-token'."}}  EXIT:1
+$ callboard reviewer-probe-partial tokenA tokenB
+{"ok":false,...,"refusal":{"code":"unrecognised-argument","message":"unrecognised: 'tokenB'."}}  EXIT:1
+$ callboard reviewer-probe-partial tokenA
+{"ok":true,...,"result":{"version":"probe-partial-ok"}}  EXIT:0
+```
+
+The check depends only on final cursor state, not on anything the handler chose to do — there is no
+longer a shape of handler that escapes it. Reverted both probes; rebuilt clean before finishing.
+
+**On the post-hoc-refusal trade-off — I agree with your read, and I don't see a cheap general fix
+that isn't guessing at §4.** Walked block B for any path where the discarded `Success` leaves
+observable state beyond the index write already discussed: `index rebuild` is the only
+side-effecting verb in this block, its side effect is a full rebuild of a file D4 declares
+disposable and never authoritative, and — the part worth stating explicitly — the rebuild an
+errant trailing-token call triggers is not merely harmless, it's *correct*: same primary record,
+same output, whether the invocation that triggered it was well-formed or not. There's no
+"corrupted intermediate state" risk the way there would be for a partial write to a card file. I
+don't see anything in block B worse than your characterisation.
+
+On a cheap interim fix: the only mechanically cheap option I can see is reintroducing a per-verb
+"check before you start" early exit for the specific case of a zero-argument handler — trivial for
+`index rebuild` since it always wants an empty cursor. But that's exactly the shape obligation 3
+just removed: an opt-in convention sitting *alongside* the new mandatory backstop, which either (a)
+does nothing `EnforceNoUnconsumedArguments` doesn't already guarantee at the boundary, since it'd
+only save the one already-harmless rebuild, or (b) invites confusion about which of two mechanisms
+is actually load-bearing the next time someone reads this file. I'd rather have one obviously-total
+mechanism than one total mechanism plus one partial one that looks structural but isn't test-proven
+to be. So: no, I don't think there's a cheap fix worth taking now, and I don't think the absence of
+one is a block B problem — it's precisely because the general fix needs a real argument shape to
+design against that deferring to §4 is right, not a compromise.
+
+One shape thought for whenever §4 takes this up, offered for the brief rather than as a finding on
+this block: whatever the parse/execute split looks like, the split point is probably the same
+"funnel" idea obligation 3 already established — a `Parse(context) -> (parsed, refusal-if-any)`
+step that fully draws from the cursor before any handler is allowed to run its execute phase, with
+`Run` (or an equivalent single point) rejecting on leftover tokens *before* dispatching to execute.
+That keeps "exactly one place checks this" true through the split rather than trading it for two
+places that both have to get it right.
+
+**Everything else re-confirmed, nothing reworked in ways that would change my earlier findings:**
+obligation 2 and 4 unchanged from my last pass, `RepoRootResolver` untouched, `IndexPopulator`/
+`IndexSchema` untouched. `CardStore.ValidateAgainstLayout` — confirmed still untouched, matching
+your ruling on obligation 1; no further finding from me there, the disposition is yours and it's
+recorded.
+
+**New test coverage confirmed sufficient:** `RepoRootResolverTests.cs` covers all four cases
+(directory, file/worktree, none, at-root) — the worktree branch I flagged as untested is now
+exercised directly rather than riding on `TempGitRepo`'s directory-only shape.
+
+**One benign observation, not a finding — worth knowing about, not fixing:** because the check now
+runs centrally on final cursor state rather than per-command, a trailing token after an
+*unrecognised* command now returns `unrecognised-argument` rather than `unknown-command` (e.g.
+`callboard frobnicate extra` → `unrecognised-argument: 'extra'`, where previously it would have
+named the unknown command instead). Still a refusal, still exit 1, still fails closed — ADR-0001's
+contract holds — just a less specific message for that one combination. Not worth chasing given
+what obligation 3 buys.
+
+No blockers, no open findings. → @architect for the trade-off call (I've given you my read above,
+but it's your call to make); otherwise block B is done from my side.
+
+**[worker]** Narrowed `EnforceNoUnconsumedArguments` per the architect's ruling: it now overrides
+only a `Success`; a `Refusal` passes through untouched, via `CommandOutcome.Match` (not a type
+test), so the exhaustiveness guarantee the closed union exists for still holds here.
+
+```csharp
+private static CommandOutcome EnforceNoUnconsumedArguments(CommandOutcome outcome, ArgumentCursor arguments) =>
+    !arguments.HasUnconsumedTokens
+        ? outcome
+        : outcome.Match(
+            onSuccess: _ => new CommandOutcome.Refusal(
+                "unrecognised-argument",
+                $"unrecognised: '{arguments.FirstUnconsumed}'."),
+            onRefusal: refusal => refusal);
+```
+
+Nothing else about the mechanism changed: one call, in `Run`, immediately after `Dispatch`, same
+cursor, no dispatch arm has anything to opt out of.
+
+**Re-ran the bypass probe against the narrowed version, as asked.** Same shape as before — a
+temporary `"bypass-probe"` arm whose handler takes no context/cursor and returns `Success`,
+consuming nothing:
+
+```
+$ callboard bypass-probe some-extra-trailing-token
+{"ok":false,"command":"bypass-probe","refusal":{"code":"unrecognised-argument","message":"unrecognised: 'some-extra-trailing-token'."}}
+EXIT:1
+```
+
+Still caught — the narrowing only changed what happens when the outcome being overridden is
+already a `Refusal`; a `Success` that ignored a token still cannot stand. Removed the probe arm
+and method afterward; `grep bypass` finds only this DEVLOG prose, nothing in source.
+
+**New test** (`UnknownCommand_WithTrailingToken_StillRefusesAsUnknownCommand_NotUnrecognisedArgument`,
+`CommandDispatcherTests.cs`): `callboard frobnicate extra` now asserts `refusal.code ==
+"unknown-command"` with `"frobnicate"` in the message — the case that motivated the change, which
+the reviewer's own probe output (quoted above their `## NEXT` post) shows would have been
+`unrecognised-argument` before this fix.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (104/104
+tests: 103 prior + 1 new).
+
+→ @reviewer for a narrow re-audit of this one change.
+
+
+**[reviewer]** Block B narrow re-audit (refusal-masking fix) — **Approve.**
+
+Verified independently: tree matches the reported diff; reran `make gates` myself —
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 104/104.
+
+1. **Structural property survived — confirmed with my own probe, not the worker's.** Added two
+   temporary arms: one handler ignoring context/cursor and returning `Success`, one returning a
+   `Refusal` for its own domain reason while also ignoring the cursor. `callboard
+   reviewer-probe2-ignore extra-token` → still overridden to `unrecognised-argument`, exit 1 — the
+   override direction is untouched. `callboard reviewer-probe2-refuses-anyway extra-token` → the
+   handler's own `probe2-domain-reason` refusal passed through unmasked, exit 1 — the new
+   pass-through direction works as specified. Reverted both; rebuilt clean.
+2. **No case found where letting a `Refusal` pass through matters.** Exit code is non-zero either
+   way, so the fail-closed contract never weakens. Walked the three current handlers:
+   `RunIndex`'s `unknown-subcommand` (tokens after a bad subcommand) and `RunIndexRebuild`'s
+   `repo-root-not-found` are both strictly more actionable than a generic unconsumed-token
+   message. Where a handler's domain problem is fixed on a later call and a stale trailing token
+   remains, the caller then sees `unrecognised-argument` on that later call — nothing is lost
+   permanently, it just surfaces once the more specific problem clears. No counterexample.
+3. **Exhaustiveness intact** — `.Match(onSuccess, onRefusal)` still calls the abstract
+   `CommandOutcome.Match<TResult>`; a third subtype would need `Match`'s own signature extended,
+   which breaks every call site including this one. Unchanged from what block A's review already
+   verified.
+4. **No probe residue.** `grep -rn "bypass\|reviewer-probe"` across `src/` and `tests/` finds only
+   doc prose (the historical-defect comment at `CommandDispatcher.cs:109`) and one unrelated `§5`
+   test comment — no leftover arms from either round of probing, worker's or mine.
+
+Clean. → @architect, ready to commit block B and open block C.
+
+**[worker]** Fixed the envelope's `command` field — a real gap, caught only by running the binary,
+not by anything dispatch-level.
+
+**`ArgumentCursor` gained two members** (`ArgumentCursor.cs`): `Peek()`, a non-consuming look at
+the next token, and `ConsumedTokens`, every token actually taken so far, in order. `RunIndex`
+switched from `TryTake()`-then-decide to `Peek()`-then-decide, `TryTake()`-ing only on the matched
+`"rebuild"` branch — an unrecognised subcommand is now left unconsumed rather than taken and
+discarded, so it never appears in `ConsumedTokens` and the envelope never credits the dispatcher
+with having recognised a token it rejected.
+
+**`Run` builds the envelope's command name from `ConsumedTokens`**, not `args[0]` alone: a new
+`RecognisedCommand(command, arguments)` — `command` alone if nothing further was consumed,
+otherwise `command` plus every consumed token space-joined — computed once, after `Dispatch`
+returns (and, on the failure path, after whatever ran before an exception escaped — `arguments` is
+now declared outside the `try` so both call sites can read it). Same single funnel `Run` already
+owned for the argument-boundary check; no handler reports its own name.
+
+**All five shapes verified against the built binary, matching the architect's list exactly:**
+
+```
+$ callboard index rebuild
+{"ok":true,"command":"index rebuild",...}
+$ callboard index
+{"ok":false,"command":"index","refusal":{"code":"missing-subcommand",...}}
+$ callboard index bogus
+{"ok":false,"command":"index","refusal":{"code":"unknown-subcommand",...}}
+$ callboard bogus extra
+{"ok":false,"command":"bogus","refusal":{"code":"unknown-command",...}}
+$ callboard version
+{"ok":true,"command":"version",...}
+```
+
+**Envelope-level tests added** (`CommandDispatcherTests.cs`) — one per shape above, each parsing
+the emitted JSON and asserting the `command` field directly, not just the outcome/exit code:
+`Envelope_NamesTheFullyRecognisedCommand_ForIndexRebuild`,
+`Envelope_NamesOnlyIndex_WhenNoSubcommandWasGiven`,
+`Envelope_NamesOnlyIndex_WhenTheSubcommandWasNotRecognised`,
+`Envelope_NamesOnlyTheUnrecognisedTopLevelCommand`, `Envelope_NamesVersion_Unchanged`.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (109/109
+tests: 104 prior + 5 new).
+
+→ @reviewer for a narrow re-audit of this one change.
+
+
+**[reviewer]** Block B narrow re-audit (envelope `command` field) — **Approve.**
+
+Verified independently: tree matches the reported diff; reran `make gates` myself —
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 109/109. Good catch on the
+gap — noted for later blocks: assert the emitted JSON, not just outcome/exit code.
+
+1. **All five shapes confirmed against the actual emitted JSON**, built from source and run
+   directly (not the test suite, not the helper's return value):
+   ```
+   index rebuild → {"ok":true,"command":"index rebuild",...}
+   index         → {"ok":false,"command":"index","refusal":{"code":"missing-subcommand",...}}
+   index bogus   → {"ok":false,"command":"index","refusal":{"code":"unknown-subcommand",...}}
+   bogus extra   → {"ok":false,"command":"bogus","refusal":{"code":"unknown-command",...}}
+   version       → {"ok":true,"command":"version",...}
+   ```
+   All match exactly.
+2. **Obligation 3 intact under the new `Peek`/`TryTake` split — confirmed with my own probe, not
+   the worker's.** Two temporary arms: one ignoring context entirely, one that only ever `Peek()`s
+   (never `TryTake()`s) before returning `Success`. Both still refused with a trailing token
+   present (`unrecognised-argument`, exit 1); the peek-only arm succeeded when given none. `Peek`
+   genuinely does not count as consumption for `EnforceNoUnconsumedArguments`'s purposes — a
+   handler can look without that look being credited or exempting it from the check. `index
+   bogus` specifically: the rejected subcommand stays unconsumed, `EnforceNoUnconsumedArguments`
+   sees a `Refusal` already (not `Success`) and passes it through untouched per the prior
+   narrowing — no collision with `missing-subcommand`, no masking by `unrecognised-argument`.
+   Reverted both probes; rebuilt clean.
+3. **Tool-failure path checked for the hoist risk.** `arguments` (and `command`) are now
+   constructed before the `try`, so the `catch` block's `RecognisedCommand(command, arguments)`
+   call reads a fully-formed cursor with no path back into user input or I/O — `ConsumedTokens` is
+   `_tokens.Take(_index).ToArray()` against fields set once at construction, nothing that can
+   throw. `UnexpectedException_StillEmitsExactlyOneJsonEnvelope_AndExitsWithToolFailureCode`
+   already exercises exactly this: it throws on the *first* `WriteLine` (the success-path
+   envelope), so the second `WriteLine` inside `catch` — after `RecognisedCommand` runs — is the
+   one asserted on, and it correctly reports `"command":"version"`. No double-fault path found.
+4. **`ConsumedTokens` is not a new bypass surface.** It's a read-only projection
+   (`_tokens.Take(_index).ToArray()`) computed fresh from private state on every access — nothing
+   external can set it, and a handler has no way to "consume" a token except by physically calling
+   `TryTake()` on the one cursor instance `Run` constructed. My peek-only probe above confirms a
+   handler cannot inflate its reported name by merely looking at tokens.
+5. **No probe residue** — grepped `bypass|reviewer-probe` after reverting; clean except the
+   pre-existing doc-comment prose from earlier rounds.
+
+Clean. → @architect, ready to commit.
+
 ## NEXT
 
 **Block A (3.1–3.2) closed** — reviewer `Approve` (originally `Approve with nits`; nit 2 fixed
@@ -3890,9 +4648,40 @@ it and the reviewer's sign-off above this heading, same as the first drift; no c
 relocated. Worth a standing habit check before any future post: confirm placement above `## NEXT`
 before writing, not after.
 
-**Up next: block B (3.3 + §1's four orphaned CLI obligations)** — the `index rebuild` verb. Carries
-nit 3 from block A's review: `IndexPopulator.WriteDatabase` has no `catch` around SQLite I/O, so
-`index rebuild` must decide whether that failure surfaces as a refusal or a `tool-failure`.
+**Block B (3.3 + §1's four carried CLI obligations) — reviewer `Approve`, fourth pass, ready
+to commit.** Obligation 3 rebuilt: the per-arm `WithNoFurtherArguments` wrapper is gone, replaced
+by `EnforceNoUnconsumedArguments` called once in `Run` after `Dispatch` returns, against the same
+`ArgumentCursor` every handler drew from — no dispatch arm has a way to opt out any more, confirmed
+by three independent reviewer probe rounds now, the last covering the `Peek`/`TryTake` split too.
+The funnel overrides only `Success`; a `Refusal` passes through untouched via `CommandOutcome
+.Match`, so a handler's own domain-specific refusal is never masked by the generic
+`unrecognised-argument` message when a trailing token happens to also be present. **Envelope-level
+gap found by the architect running the binary, now closed:** the emitted `command` field used to
+be just `args[0]`, so `index rebuild` reported `"command":"index"` — invisible to every test so far
+because none asserted on the JSON itself. Fixed via `ArgumentCursor.Peek()`/`ConsumedTokens` and a
+`RecognisedCommand` helper computed once in `Run`; five envelope-level tests plus reviewer
+verification against the built binary confirm all five shapes. Obligation 1 stays as the architect
+ruled: `CardStore.ValidateAgainstLayout` untouched, owed by §4's first write verb, not this block.
+`RepoRootResolverTests.cs` closes the worktree-branch nit. 109/109 green.
+
+**Working rule for the rest of this change, earned here:** assert on the emitted JSON envelope
+itself, not just outcome/exit code — outcome-level tests can all pass while the `command` field (or
+any other envelope surface) is silently wrong. Applies to every verb §4 onward adds.
+
+**Recorded decision — the architect's call on the post-hoc-refusal trade-off, reviewer concurred.**
+Because the funnel check now runs *after* `Dispatch`, `index rebuild extra-token` performs the
+index rebuild (the SQLite write) before the outcome is overridden to a refusal — a refusal that
+lands after the side effect it should have prevented. Accepted for §3: D4 makes the index
+disposable and rebuildable, so the write is not just harmless but *correct* regardless of why it
+ran. **Binding §4 obligation:** the first verb whose side effect touches the primary record must
+split its handler into a parse phase (fully draws from the cursor, can refuse, no side effects) and
+an execute phase, with the funnel check enforced between them — before any write. Reviewer's
+suggested shape for that seam: keep it a single funnel point, the same pattern obligation 3
+established, rather than trading "one place checks this" for two places that both have to get it
+right.
+
+**Up next:** §3 is closed pending the supervisor's section review (block A, block B, both landed
+and approved). §4's brief must carry the parse/execute-split obligation above.
 
 ### What §2 established that later sections must not re-derive
 

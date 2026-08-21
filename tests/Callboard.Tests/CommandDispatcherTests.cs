@@ -47,6 +47,83 @@ public sealed class CommandDispatcherTests
         Assert.False(root.TryGetProperty("result", out _));
     }
 
+    // EnforceNoUnconsumedArguments only overrides a Success — a handler's own Refusal is always
+    // the more specific reason and must not be replaced by a generic "unrecognised" complaint. An
+    // unknown command with a trailing token must still read "no such command", or an agent acting
+    // on the message would go fix the wrong thing.
+    [Fact]
+    public void UnknownCommand_WithTrailingToken_StillRefusesAsUnknownCommand_NotUnrecognisedArgument()
+    {
+        var output = new StringWriter();
+
+        var exitCode = Run(["frobnicate", "extra"], output);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("unknown-command", refusal.GetProperty("code").GetString());
+        Assert.Contains("frobnicate", refusal.GetProperty("message").GetString());
+    }
+
+    // The envelope's `command` field names what was actually recognised, not just args[0] — the
+    // gap the architect found running the built binary: everything up to now asserted on outcomes
+    // and exit codes, never on what the envelope itself says a two-token verb's command was.
+    [Fact]
+    public void Envelope_NamesTheFullyRecognisedCommand_ForIndexRebuild()
+    {
+        using var repo = new TempGitRepo();
+        var output = new StringWriter();
+
+        RunInRepo(["index", "rebuild"], output, repo.Path);
+
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("index rebuild", doc.RootElement.GetProperty("command").GetString());
+    }
+
+    [Fact]
+    public void Envelope_NamesOnlyIndex_WhenNoSubcommandWasGiven()
+    {
+        var output = new StringWriter();
+
+        Run(["index"], output);
+
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("index", doc.RootElement.GetProperty("command").GetString());
+    }
+
+    [Fact]
+    public void Envelope_NamesOnlyIndex_WhenTheSubcommandWasNotRecognised()
+    {
+        var output = new StringWriter();
+
+        Run(["index", "bogus"], output);
+
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("index", doc.RootElement.GetProperty("command").GetString());
+    }
+
+    [Fact]
+    public void Envelope_NamesOnlyTheUnrecognisedTopLevelCommand()
+    {
+        var output = new StringWriter();
+
+        Run(["bogus", "extra"], output);
+
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("bogus", doc.RootElement.GetProperty("command").GetString());
+    }
+
+    [Fact]
+    public void Envelope_NamesVersion_Unchanged()
+    {
+        var output = new StringWriter();
+
+        Run(["version"], output);
+
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("version", doc.RootElement.GetProperty("command").GetString());
+    }
+
     [Fact]
     public void NoCommand_RefusesWithNonZeroExitCode()
     {
@@ -89,7 +166,9 @@ public sealed class CommandDispatcherTests
 
     // Blocker 1 (§1 remediation): an argument no command consumed is a refusal, the same
     // convention as an unrecognised command, established here so §2+ don't each invent their own
-    // flag handling.
+    // flag handling. §3 obligation 3 made this structural: the refusal now happens in
+    // CommandDispatcher.WithNoFurtherArguments, before RunVersion — which takes no arguments at
+    // all — ever runs.
     [Fact]
     public void Version_WithUnrecognisedArgument_RefusesWithNonZeroExitCode()
     {
@@ -105,43 +184,33 @@ public sealed class CommandDispatcherTests
         Assert.False(root.TryGetProperty("result", out _));
     }
 
-    // Blocker 2 (§1 remediation): the composition-root guard a body-reading command applies
-    // before touching stdin. No §1 command reads a body, so this is exercised directly rather
-    // than through the CLI end to end — its contract is what §2's first body-reading command
-    // will rely on.
+    // §3 obligation 3: proves the mechanism generalises to a two-token command's leaf, not just
+    // the single-token `version`.
     [Fact]
-    public void RequireStdinRedirected_WhenStdinIsNotRedirected_RefusesInsteadOfBlocking()
+    public void RunVersion_HasNoArgumentCheckInItsOwnBody()
     {
-        var refusal = CommandDispatcher.RequireStdinRedirected(isInputRedirected: false);
+        var method = typeof(CommandDispatcher).GetMethod("RunVersion", BindingFlags.NonPublic | BindingFlags.Static)!;
 
-        Assert.NotNull(refusal);
-        Assert.Equal("stdin-not-redirected", refusal!.Code);
+        Assert.Empty(method.GetParameters());
     }
 
-    [Fact]
-    public void RequireStdinRedirected_WhenStdinIsRedirected_LetsTheCommandProceed()
-    {
-        var refusal = CommandDispatcher.RequireStdinRedirected(isInputRedirected: true);
-
-        Assert.Null(refusal);
-    }
-
-    // Wiring check (§1 remediation follow-up): proves the stdin guard is reachable from a
-    // command handler through the CommandContext it already receives, with no change to
-    // Dispatch's signature required for a new body-reading command to reach it — not merely
-    // that RequireStdinRedirected exists in isolation.
+    // §1 remediation follow-up, restructured for §3 obligation 4: proves the stdin guard is
+    // reachable from a command handler through the CommandContext it already receives, with no
+    // change to Dispatch's signature required for a new body-reading command to reach it.
     [Fact]
     public void StdinGuard_IsReachableThroughCommandContext_WithoutChangingDispatchSignature()
     {
         var context = new CommandDispatcher.CommandContext(
-            RemainingArgs: Array.Empty<string>(),
+            Arguments: new ArgumentCursor([]),
             Input: TextReader.Null,
-            IsInputRedirected: false);
+            IsInputRedirected: false,
+            WorkingDirectory: ".");
 
-        var refusal = CommandDispatcher.RequireStdinRedirected(context.IsInputRedirected);
+        var refusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
 
         Assert.NotNull(refusal);
         Assert.Equal("stdin-not-redirected", refusal!.Code);
+        Assert.Null(stdin);
     }
 
     // Blocker 3 (§1 remediation): an escaping exception still yields exactly one JSON envelope
@@ -153,7 +222,7 @@ public sealed class CommandDispatcherTests
         var output = new ThrowsOnFirstWriteLine();
         var error = new StringWriter();
 
-        var exitCode = CommandDispatcher.Run(["version"], output, TextReader.Null, error, isInputRedirected: true);
+        var exitCode = CommandDispatcher.Run(["version"], output, TextReader.Null, error, isInputRedirected: true, workingDirectory: ".");
 
         Assert.Equal(CommandDispatcher.ToolFailureExitCode, exitCode);
         Assert.NotEqual(CommandDispatcher.SuccessExitCode, exitCode);
@@ -170,8 +239,158 @@ public sealed class CommandDispatcherTests
         Assert.False(string.IsNullOrWhiteSpace(error.ToString()));
     }
 
+    // --- index rebuild -----------------------------------------------------------------------
+
+    [Fact]
+    public void Index_WithNoSubcommand_RefusesNamingTheSubcommandsItHas()
+    {
+        var output = new StringWriter();
+
+        var exitCode = Run(["index"], output);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("missing-subcommand", refusal.GetProperty("code").GetString());
+        Assert.Contains("rebuild", refusal.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public void Index_WithUnknownSubcommand_Refuses()
+    {
+        var output = new StringWriter();
+
+        var exitCode = Run(["index", "frobnicate"], output);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("unknown-subcommand", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void IndexRebuild_OnAnEmptyCardsRoot_Succeeds()
+    {
+        using var repo = new TempGitRepo();
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(["index", "rebuild"], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.Equal(0, result.GetProperty("indexedCardCount").GetInt32());
+        Assert.Equal(0, result.GetProperty("indexedCommentCount").GetInt32());
+        Assert.Empty(result.GetProperty("failures").EnumerateArray());
+        Assert.True(File.Exists(result.GetProperty("databasePath").GetString()));
+    }
+
+    [Fact]
+    public void IndexRebuild_ReportsParseFailuresInASuccessfulResult()
+    {
+        using var repo = new TempGitRepo();
+        var registerDirectory = Path.Combine(repo.Path, "callboard", "register");
+        Directory.CreateDirectory(registerDirectory);
+        File.WriteAllText(Path.Combine(registerDirectory, "corrupt.md"), "not a valid card file");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(["index", "rebuild"], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        var failure = Assert.Single(result.GetProperty("failures").EnumerateArray());
+        Assert.Contains("corrupt.md", failure.GetProperty("filePath").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(failure.GetProperty("reason").GetString()));
+    }
+
+    // The argument-boundary check runs once, after Dispatch returns (CommandDispatcher
+    // .EnforceNoUnconsumedArguments) — the single funnel point every command's outcome passes
+    // through, chosen over a per-arm wrapper specifically because a wrapper is something a new
+    // dispatch arm can skip and still compile (the reviewer proved this live against the
+    // wrapper-per-arm version). One consequence: a handler with a side effect (index rebuild's
+    // database write) still runs before the trailing token is caught and the result discarded —
+    // that trade-off is accepted, not overlooked, because the index is disposable and rebuildable
+    // (design.md D4): an errant write from an ultimately-refused command is harmless and the next
+    // correct invocation simply redoes it. What matters, and what this test proves, is that the
+    // caller-visible outcome is unconditionally a refusal with a non-zero exit — never a Success
+    // a handler happened to return.
+    [Fact]
+    public void IndexRebuild_WithTrailingToken_Refuses()
+    {
+        using var repo = new TempGitRepo();
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(["index", "rebuild", "extra"], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("unrecognised-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void IndexRebuild_OutsideAnyGitRepository_Refuses()
+    {
+        using var directory = new TempDirectory();
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(["index", "rebuild"], output, directory.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("repo-root-not-found", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void IndexRebuild_ExitsZeroOnSuccessAndNonZeroOnRefusal()
+    {
+        using var repo = new TempGitRepo();
+
+        var successExitCode = RunInRepo(["index", "rebuild"], TextWriter.Null, repo.Path);
+        var refusalExitCode = RunInRepo(["index", "rebuild", "extra"], TextWriter.Null, repo.Path);
+
+        Assert.Equal(0, successExitCode);
+        Assert.NotEqual(0, refusalExitCode);
+    }
+
+    [Fact]
+    public void IndexRebuild_EmitsExactlyOneJsonLineOnStdout()
+    {
+        using var repo = new TempGitRepo();
+        var output = new StringWriter();
+
+        RunInRepo(["index", "rebuild"], output, repo.Path);
+
+        var trimmed = output.ToString().TrimEnd('\r', '\n');
+        Assert.DoesNotContain('\n', trimmed);
+    }
+
+    // A SQLite I/O failure must surface as a tool failure, never a refusal (§3: "opposite
+    // instructions to the caller"). Forcing Directory.CreateDirectory to fail by putting a plain
+    // file where the index's containing directory needs to be reproduces it without touching
+    // IndexPopulator directly.
+    [Fact]
+    public void IndexRebuild_OnSqliteIoFailure_IsAToolFailureNotARefusal()
+    {
+        using var repo = new TempGitRepo();
+        var indexParentDirectory = Path.Combine(repo.Path, "callboard");
+        Directory.CreateDirectory(indexParentDirectory);
+        File.WriteAllText(Path.Combine(indexParentDirectory, ".index"), "blocking the index directory");
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        var exitCode = CommandDispatcher.Run(["index", "rebuild"], output, TextReader.Null, error, isInputRedirected: true, workingDirectory: repo.Path);
+
+        Assert.Equal(CommandDispatcher.ToolFailureExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("tool-failure", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(error.ToString()));
+    }
+
     private static int Run(string[] args, TextWriter output) =>
-        CommandDispatcher.Run(args, output, TextReader.Null, TextWriter.Null, isInputRedirected: true);
+        CommandDispatcher.Run(args, output, TextReader.Null, TextWriter.Null, isInputRedirected: true, workingDirectory: ".");
+
+    private static int RunInRepo(string[] args, TextWriter output, string workingDirectory) =>
+        CommandDispatcher.Run(args, output, TextReader.Null, TextWriter.Null, isInputRedirected: true, workingDirectory: workingDirectory);
 
     private sealed class ThrowsOnFirstWriteLine : TextWriter
     {
@@ -192,5 +411,31 @@ public sealed class CommandDispatcherTests
         }
 
         public override string ToString() => _written.ToString();
+    }
+
+    private sealed class TempDirectory : IDisposable
+    {
+        internal string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"callboard-test-{Guid.NewGuid():N}");
+
+        internal TempDirectory() => Directory.CreateDirectory(Path);
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+        }
+    }
+
+    private sealed class TempGitRepo : IDisposable
+    {
+        private readonly TempDirectory _directory = new();
+
+        internal string Path => _directory.Path;
+
+        internal TempGitRepo() => Directory.CreateDirectory(System.IO.Path.Combine(_directory.Path, ".git"));
+
+        public void Dispose() => _directory.Dispose();
     }
 }

@@ -57,7 +57,9 @@ internal static class IndexPopulator
 
         WriteDatabase(databasePath, successes);
 
-        return new IndexPopulationResult(successes.Count, failures);
+        var indexedCommentCount = successes.Sum(static success => success.Card.Comments.Count);
+
+        return new IndexPopulationResult(successes.Count, indexedCommentCount, failures);
     }
 
     private static IReadOnlyList<string> ResolveCardSources(string cardsRoot)

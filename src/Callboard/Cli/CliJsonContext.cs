@@ -15,4 +15,6 @@ namespace Callboard.Cli;
 [JsonSerializable(typeof(CliEnvelope))]
 [JsonSerializable(typeof(CliRefusal))]
 [JsonSerializable(typeof(VersionResult))]
+[JsonSerializable(typeof(IndexRebuildResult))]
+[JsonSerializable(typeof(IndexRebuildFailure))]
 internal sealed partial class CliJsonContext : JsonSerializerContext;
