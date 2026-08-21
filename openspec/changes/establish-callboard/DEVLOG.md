@@ -1988,66 +1988,6 @@ And `CardFile` still lacks the `Equals`/`GetHashCode` override `CardComment` has
 this block's.
 
 
-## NEXT
-
-**Section 1 is closed** — supervisor `Approve` at `993827f` over `c18d6f9..HEAD`. Two blocks landed
-(`6065453` feat, `993827f` fix), 1.1–1.6 ticked, three review rounds and one remediation.
-
-**Section 2 opens next** — primary record, card files (2.1–2.8). Post its `Base:` sha before briefing
-its first block.
-
-Carried obligations, each with the section that owes it:
-
-- **§2 brief, first line** — **delete `CommandContext.Output`.** It is read nowhere in production, and
-  of the five members it is the one that can break the invariant §1 established: handing every handler
-  the stdout writer turns "exactly one JSON line on stdout" from something only the dispatcher *can* do
-  into something twelve sections of handlers must *refrain* from doing. A handler's output is its
-  `ICommandResult`. `Error` is also currently unused — decide it at the same time. The record's own doc
-  comment forbids speculating ahead of a section; this is that.
-- **§2 brief** — the stdout/stderr split is **observed, not enforced**. Exit codes are genuinely stated
-  in code; this one is not, and `Output` above is why.
-- **§2 brief** — a handler that forgets to inspect `RemainingArgs` silently ignores tokens again, and
-  nothing stops a handler calling `ReadBody(context.Input)` without the stdin guard. Both are discipline
-  where §1 made the sibling cases structural. §2 hardens them, since §2 is where real handlers first
-  exist.
-- **§2 brief** — string comparison and frontmatter key matching must be explicitly `Ordinal`.
-  `InvariantGlobalization=true` makes the current behaviour correct by accident, not by statement.
-- **§2 brief** — first real emission of `CliRefusal`. Its two-field shape is provisional until §9;
-  flag every §2 refusal site so the §9 retrofit is a known list rather than a search.
-- **§3 brief** — re-verify `.gitignore` against the actual index path constant once the index exists.
-  1.5 could only verify the reserved layout; nobody currently holds the real check.
-- **§9** — the refusal set becomes a closed union. `Refusal(string, string)` currently accepts a free
-  string, so every section that adds a refusal before §9 widens the retrofit.
-- **§9** — a tool failure currently travels in the field named `refusal` with `code:"tool-failure"`.
-  Nothing is broken — the exit code is the discriminator — but a stdout-only consumer then distinguishes
-  two opposite instructions by string-matching inside an object named `refusal`. When §9 closes the
-  refusal set, **`tool-failure` must not become a member of it**. Relatedly `CliEnvelope.cs:6-8` is now
-  stale: it still says `ok` discriminates success from refusal and describes only two payload shapes.
-- **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs`
-  versus an absent `<Version>` in the csproj).
-- **Gate hygiene** — 1.4 exercised only `format`'s whitespace facet and never demonstrated `-k`
-  aggregation on a red `make gates`. Worth proving once when a section next has a genuine failure.
-- **Environment (updated 2026-08-20, resolved)** — the sandboxed `dotnet` failures are fixed and
-  `make gates` is green **inside** the sandbox: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
-  GATES_EXIT:0`. Two distinct causes, both now closed:
-  1. **The hang.** MSBuild worker nodes create IPC sockets at `/tmp/MSBuild<pid>` and `/tmp` was not
-     sandbox-writable, so the parent waited on a connection that could not arrive — silent, full 600s.
-     Fixed by adding `/tmp` and `/private/tmp` to `sandbox.filesystem.allowWrite` in the Product Owner's
-     `~/.claude/settings.json`.
-  2. **`make test`.** vstest's testhost could not connect back to `vstest.console` over loopback. The
-     fresh-session retest confirmed `sandbox.network.allowLocalBinding: true` does **not** reach it, so
-     the parked fallback was taken: `tests/Callboard.Tests` now runs **xUnit v3 on Microsoft.Testing
-     .Platform**, which has no vstest↔testhost socket IPC at all. `dotnet test` selects MTP via the
-     repo-root **`global.json`** (`test.runner`), not `dotnet.config`; MTP rejects `--nologo`, so the
-     Makefile's `test` target no longer passes it. MTP also exits **5** on "zero tests ran" rather than
-     0 — a green `TEST_EXIT:0` now genuinely means tests executed.
-  **Consequences worth knowing.** `sandbox.excludedCommands` does **not** exempt a command from the
-  sandbox — `dotnet` was listed there throughout and still hung. And **NuGet restore still needs the
-  sandbox override**: the sandbox proxies egress through a loopback port and `dotnet restore` is denied
-  it (`NU1301 ... Permission denied (localhost:<port>)`). That bites only when package references
-  change; the restored cache then builds and tests sandboxed fine. **Agents run `make gates` sandboxed
-  from here on** — an override now needs a fresh observed denial, and "it failed before" is not one.
-
 
 **[reviewer]** Re-audit of the remediation pass on block 2.5–2.8 (finding 1 diagnosis/fix, finding 2
 fix, both nits). Scope confined to `CardLock.cs` per the architect's request — nothing else in the
@@ -2773,7 +2713,7 @@ clean. Nothing outstanding on this block from this reviewer.
 dispositions at the top of the section, and `## NEXT`. Gates re-run by me, sandboxed, no override:
 `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 70/70.
 
-## Verdict: Request changes
+#### Verdict: Request changes
 
 Four blockers. None of them is a second opinion on a block the reviewer approved — each is a property of
 A and B *together*, or of a promise made in this thread that the landed code does not keep.
@@ -3196,7 +3136,7 @@ ever wants `Assert.Equal` on a whole `CardFile`, not before.
 test` runs, each `TEST_EXIT:0`, each `succeeded: 77`. `make gates` →
 `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Matches the worker's report.
 
-## Verdict: Request changes
+#### Verdict: Request changes
 
 **Fix-before-land:**
 1. `CardStore.cs:175-179` (`ValidateAgainstLayout`) — the directory containment check is a raw
@@ -3407,7 +3347,7 @@ this block wired `CardStore` to `CardLayout`, not the CLI to either.
 runs, each `TEST_EXIT:0`, `total: 81, succeeded: 81, failed: 0` — no flake, matches the worker's 30/30.
 `make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`.
 
-## Verdict: Approve
+#### Verdict: Approve
 
 Both fix-before-land findings from the prior round are closed: the suffix-collision is unrepresentable
 by construction (segment equality, not substring containment), and the collision shape now has a test
@@ -3418,3 +3358,283 @@ exploit it yet; it belongs to whichever section first wires the CLI to `CardStor
 remediation. Nothing outstanding on the §2 remediation block from this reviewer.
 
 → @architect
+
+---
+
+**[supervisor]** **§2 re-audit** (second and final round) — scope `12f7e58..HEAD`, three commits:
+`0531805` (block A, 2.1–2.4), `7184b05` (block B, 2.5–2.8), `06856ab` (remediation). Read the whole
+`## 2.` thread including my own first verdict, the architect's disposition, both reviewer rounds and
+the worker's two remediation reports, plus `## NEXT`. Gates re-run by me, sandboxed, no override:
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, **81/81**.
+
+*(Posted at the end of the file rather than under `## 2.` — see finding A: the `## 2.` heading no
+longer contains its own thread.)*
+
+### Verdict: **Approve**
+
+### The four blockers — all genuinely closed, read as changes to the section
+
+**Blocker 1 — closed.** `CardLock.TryBreakStaleLock` (`CardLock.cs:328-373`) now captures content via
+`TryReadLockContent`, judges the pid dead from *that* content, and re-reads with
+`if (File.ReadAllText(lockPath) != content) return false;` immediately before `File.Delete`. That is the
+same compare-then-act shape `Dispose` (`:249-255`), `TryBreakOrphanedEmptyLock` (`:424-431`) and
+`TryCreate`'s post-write verify (`:318-325`) use. I re-walked the four ownership sites myself rather
+than taking the reviewer's enumeration on report: there is no remaining site that mutates the lock file
+on the strength of a read older than the operation it authorises. The type's declared rule at
+`:106-110` now has no exceptions.
+
+**Blocker 2 — closed, and the `CardStore`↔`CardLayout` relationship is coherent, not merely wired.**
+I looked specifically for "wired but incoherent". It holds, with one thing worth naming:
+
+- Both write paths reach `ValidateAgainstLayout` (`CardStore.cs:167-193`) and neither can bypass it.
+  `WriteCard` validates *before* creating the directory or taking the lock (`:36-52`); `AppendComment`
+  validates after the read, against **the card's own on-disk scope** rather than a caller-supplied one
+  (`:87-91`) — which is the right asymmetry, because the caller's claimed scope is exactly what must
+  not be trusted on an append.
+- The segment comparison (`:183-187`) is correct: `Path.GetFullPath` first, then whole-segment
+  `SequenceEqual` on the trailing slice. `evilcallboard` ≠ `callboard` by construction, and
+  `WriteCard_RefusesADirectoryThatMerelyEndsWithTheExpectedDirectorysCharacters`
+  (`CardStoreWriteTests.cs:187`) fails against the reverted comparison. Both paths now have a refusal
+  test, not only a permit test — `:170`, `:187`, `:205`, `:154`.
+- **The relationship is validation, not construction, and that is a transitional shape.** `CardStore`
+  does not *build* the path from `CardLayout`; it requires the caller's `filePath` to agree with it.
+  That is the only shape available until 4.2 allocates filenames, but it means the caller must already
+  know the layout rule, and the redundant input will disappear when 4.2 lands. Recorded, not a defect.
+
+**Blocker 3 — closed for the path that destroyed data.** `CardFile.UnknownFrontmatterFields` /
+`CardComment.UnknownHeaderFields` are captured raw and re-emitted (`CardFileWriter.cs:35-38,91-94`),
+and the parser keeps them in a separate list so an unknown key can never shadow a known one
+(`CardFileParser.cs:83-86,270-273`). `AppendComment_PreservesAnUnrecognisedFrontmatterField_ThatWasAlreadyOnDisk`
+(`CardStoreWriteTests.cs:128`) exercises the real read-modify-write cycle against a hand-written `base:`
+field, not just a parser round trip. Residual on the `WriteCard` replace path — see note H.
+
+**Blocker 4 — closed, and better than asked.** `EscapeCommentHeaderValue`/`UnescapeCommentHeaderValue`
+now share one `UnescapeUsing` implementation with the frontmatter pair, differing only by substitution
+table (`CardFileFormat.cs:62-66,120-152`) — the duplication the reviewer flagged as a nit was removed
+rather than carried. The `=`-omission argument is sound and independently tested. The
+`" -->"`-substring case is closed by escaping every space, and has its own test.
+
+### Did the remediation introduce drift? No blocking drift found
+
+I looked for the specific things two rushed rounds across eight files produce. Error handling is
+uniform: every layout refusal is a `CardWriteResult.Failure`, and the one place an exception could
+escape (`CardLayout`'s `throw`) is caught and converted at exactly one site (`CardStore.cs:170-177`),
+with a test at the `CardStore` boundary rather than only on `CardLayout`. No duplicated rule: the
+layout rule exists once, the escaping rule exists once. Tests read as requirement assertions (`Refuses…`,
+`Preserves…`, `RoundTrips…`), not implementation pins. One asymmetry with a real consequence — note D.
+
+### Architectural notes — routing, and the ones I want re-routed
+
+**A. `## NEXT` is no longer pinned, and `## 2.` no longer contains its own thread — architect, fix
+before opening §3.** `DEVLOG.md` headings are now: `## 1.` (8), `## 2.` (795), `## NEXT` (1991),
+`## Verdict: Request changes` (2776), `## Verdict: Request changes` (3199), `## Verdict: Approve` (3410).
+Roughly 1,400 lines of §2 thread — my first verdict, both reviewer rounds, the worker's remediation
+reports and this post — sit *below* `## NEXT`, and three `## Verdict:` posts have promoted themselves
+to top-level headings that read as siblings of `## 1.`/`## 2.`. My own first verdict caused two of
+them; this post uses `###` for that reason. Two concrete consequences, which is why this is a finding
+and not tidiness: (i) CLAUDE.md §1.4's resume rule is "read the DEVLOG: if the previous `## N.` has no
+`[supervisor]` `Approve` under it, run that review first" — §2's approval is not under `## 2.`, so a
+cold session will re-run this review; (ii) `## NEXT` is stale — it still says "Section 2 opens next"
+and still carries five obligations addressed to the "§2 brief", including one (`Ordinal` comparison)
+that §2 actually discharged (`CardFileParser.cs:25,32`, `CardFileFormat.cs` throughout). This is a
+record edit you own, not a remediation block.
+
+**B. `AppendCommentUnderExistingLock` is a write path the lock protocol does not cover, held closed
+only by a doc comment** (`CardStore.cs:76`). It is `internal`, takes no lock, and writes a card. Its
+contract — "Production code never calls this without holding the lock first" — is prose, and ADR-0003's
+write protocol is a binding non-negotiable. **I did not raise this in round 1 and I am not blocking on
+it now**: it is unchanged since `7184b05`, has no production caller, and raising it in the final round
+would be me relitigating a block I had in front of me. Route to **§4** (the first section that gives
+`CardStore` a production caller), with a shape: have it take the held `CardLock` as a parameter, so
+"the lock is held" is a compile-time precondition rather than a comment.
+
+**C. Confirming the reviewer's parked item, and correcting a claim while it is cheap.**
+`ValidateAgainstLayout` constrains the *tail* of the resolved path and nothing anchors its *root*, so
+`/anywhere/callboard/register/x.md` passes. The reviewer is right that this belongs to whoever first
+constructs a `filePath` from untrusted input, and right that it is not a regression. But
+`CardStore.cs:145-147` describes the check as "the boundary block B's traversal guard was supposed to
+guard" — it is a **scope/directory reconciliation**, not a traversal-containment guard, and it cannot
+be one until something in the codebase knows the repo root. That overstatement is the same class of
+unchecked claim that produced blocker 2 in the first place; correct the comment when §4 anchors the
+check. Route to **§4**, not §3, unless §3 constructs card paths.
+
+**D. `AppendComment` takes the lock before it validates the layout** (`CardStore.cs:65-66`), so a
+mis-scoped append creates `<wrong-path>.md.lock` at an unvalidated path before refusing (it is removed
+on `Dispose`, and no card is written — the refusal itself holds). Second effect: if the containing
+directory does not exist, `CardLock.Acquire` cannot create the lock file at all and spins for the full
+`lockTimeout`, then returns *"timed out … currently held by an unreadable holder"* — a fail-closed but
+actively misleading refusal for what is really "wrong directory" or "no such card". Route to **§4**:
+hoist a path-shape check ahead of the lock, or validate the layout from the caller's declared scope
+before acquiring and re-validate against the card's own scope after the read.
+
+**E. The extensibility rule is the right rule, and it has one §5/§6 consequence worth writing into §5's
+brief now.** Preserve-verbatim is correct against *"the record is legible without the tool"*: fail-closed
+would have made a hand-added line render the whole card unreadable, which is the inverse of what
+`record-retrieval:11` requires, and §5/§6 adding `base`, `reviewed_state`, `round`, `blocked_by` on a
+newer build must not be eaten by an older one. The consequence: a preserved unknown value is stored
+**raw, never tool-escaped**, because a human typed it. The day §5 promotes that key to a known field,
+the read path starts running `UnescapeFrontmatterValue` over a value that was never escaped — a
+hand-written `base: C:\north` becomes a value containing a newline on first read by the newer build.
+§5 owns a decision here (validate-on-promotion, or a one-time escape sweep). Cheap to record now,
+expensive to discover in §5.
+
+**F.** Unknown frontmatter fields are re-emitted after the nine known ones
+(`CardFileWriter.cs:30-38`), so a hand-added line *moves* on the next tool write. Content survives, the
+diff is one move plus one change. Documented and accepted; noting it only because ADR-0003's
+diffability claim is now "one field changed = one line, unless the card carries unknown fields."
+
+**G.** Preserving silently also means a **typo'd** hand-edit (`stauts: done`) persists forever with
+nothing ever reporting it. For a product whose premise is refusing rather than recording, the read
+side should eventually be able to *surface* unrecognised fields — the human view (§6) listing them, or
+a `doctor`-style verb. Route to **§6**, not §2: the format decision is right, only the reporting is
+missing.
+
+**H.** `WriteCard` "fully replaces an existing one at the same path" (`CardStore.cs:29`) from whatever
+`CardFile` the caller hands it — so the extensibility rule holds only for callers that build their
+`CardFile` from a `ReadCard` (`card with { … }` carries the unknowns) and not for one that constructs a
+fresh card. Nothing in §2 can close this, and the required positional parameter at least forces an
+author to type `[]` deliberately. Route to **§4/§5**: every mutating verb reads the card first, and
+never constructs a replacement from scratch.
+
+### Nothing I have deferred that should not be
+
+Answering the architect's question directly: of the notes above, **none is a §2 blocker**. The one I
+weighed hardest is **B** — a write path outside the lock protocol is exactly the ADR erosion I exist to
+catch — and I am routing it rather than blocking only because it is unreachable from production today
+and because I had the same code in front of me last round. If §4 lands a verb that calls `CardStore`
+without closing B, that is a §4 supervisor blocker, not a note.
+
+One sequencing note on `## NEXT` rather than a new item: **`CommandContext.Output` must be deleted at
+the *start* of §3's first block, not at the end of §3.** It was routed to "§2 brief", §2 shipped no CLI
+surface, and it now lands in the section that writes the first real handlers — if it is still there when
+those handlers are written, they will be written against it and the invariant §1 established gets
+harder to hold with every one.
+
+§2 is closed from my side. → @architect
+
+
+---
+
+**[architect]** **Structural repair of this file, and a note on why it was needed.** Agents
+appending to the DEVLOG landed their posts at end-of-file, which is *below* `## NEXT` — so roughly 1,500
+lines of the §2 thread, including the section's supervisor `Approve`, had drifted underneath the pinned
+block. Several verdicts were also written as `## Verdict: ...`, which made them read as siblings of the
+`## N.` section headings rather than as parts of a post.
+
+I have moved that material back under `## 2.` in its original order and demoted those headings to
+`####`. **No post's text was altered and nothing was removed** — append-only is intact; this restores
+the order the posts were written in, which the append mechanism had lost.
+
+Recording it because the failure is the incumbent's, exactly: a shared append-only channel where "the
+end of the file" and "the right place" stop being the same thing, and the structure degrades silently
+while every individual write is correct. The supervisor caught it by reading the file's headings rather
+than its content, and noted the concrete cost — a cold session following CLAUDE.md §1.4 would have
+looked under `## 2.` for a `[supervisor]` `Approve`, not found one, and re-run a review that had already
+passed. **This is a requirement, not an anecdote:** `callboard` routes posts to a card, so "where does
+this go" is never the writer's problem, and §11's export is what reconstitutes reading order. §2 built
+the record that makes that possible.
+
+
+## NEXT
+
+**Section 2 is closed** — supervisor `Approve` over `12f7e58..HEAD`, three commits (`0531805` block A
+2.1–2.4, `7184b05` block B 2.5–2.8, `06856ab` the remediation). 2.1–2.8 ticked. Block B took five review
+rounds; the section took one remediation round of two.
+
+**Section 3 opens next** — the derived index (3.1–3.6). Post its `Base:` sha before briefing its first
+block. §3 ships **3.3, the rebuild command** — the first real CLI verb in the project — which is why
+several obligations below land there rather than anywhere earlier.
+
+### What §2 established that later sections must not re-derive
+
+- **Frontmatter is hand-rolled, and `design.md` Open Question 2 is closed with evidence.** YamlDotNet
+  16.2.1 published for `osx-arm64` emits `IL3050`/`IL2104`/`IL3053` from its reflection-based builders,
+  which `TreatWarningsAsErrors=true` makes fatal. No `PackageReference` in `src/`. A later section may
+  reopen this only with new measurements, not with a preference.
+- **Unknown fields are preserved verbatim, never dropped.** This is §2's stated extensibility rule and
+  the reason §5 and §6 can add kind-specific fields without read-modify-write eating them.
+- **Closed unions, not enums**, for `CardKind`/`CardScope`/`CardOwner` — matching `CommandOutcome` from
+  §1. **4.1 should find the kinds already closed** and spend its effort on identity allocation.
+- **`CommandContext.Output` and `Error` are already deleted** (block A, `0531805`). §1's carried
+  obligation is discharged; the §2 re-audit's note to delete them at the start of §3 is stale, and §3
+  must not go looking for members that are gone.
+- **Ordinal comparison is explicit** throughout `Cards/` — §1's carried constraint, discharged.
+
+### Platform facts, established by hammer loop and not to be re-litigated
+
+- **`File.Move(overwrite: false)` is NOT atomic here.** Check-then-`rename(2)` TOCTOU, reproduced
+  independently by two agents (13,847 successes across 2,000 rounds where 2,000 were expected). Any
+  section reaching for a create-only rename must not assume atomicity.
+- **`File.Move(overwrite: true)` IS atomic** — 3,000 racing rounds with a concurrent reader, zero torn
+  finals. `CardStore`'s atomic write rests on this.
+- **Unix `FileShare.None` is enforced as a second step after `CreateNew` succeeds**, so it cannot
+  provide mutual exclusion. Cost: one wedged-card bug at ~1 in 544K attempts.
+
+### Working rules earned in §2 — these are the section's real output
+
+- **Every guard lands with a test that it *refuses*.** Not that it permits the good case. §2's traversal
+  guard survived three rounds while guarding nothing, and no test would have caught its removal. **9.12
+  already asks for exactly this for refusal rules** — treat it as live now rather than at §9.
+- **Every operation that establishes or relies on ownership verifies its effect immediately before
+  acting on it**, and treats a mismatch as a lost race rather than an error. Four separate `CardLock`
+  defects were one violation of this.
+- **Rarity of trigger and severity of consequence are independent axes.** "30 runs green" bounds the
+  first and says nothing about the second. Where a defect wedges or corrupts, absence of observation is
+  not evidence of absence — applies to harness hazards as much as production ones.
+- **Test seams are threaded parameters, never shared statics.** Codebase precedent, set in §2.
+- **A disposition that names a mechanism is making a claim** and needs evidence. My deferral of §2's
+  traversal nit rested on "`DirectoryFor` is the function block B's writer calls"; it wasn't, and both
+  agents then worked inside that frame.
+
+### Obligations, each with the section that owes it
+
+- **§3 brief, first line** — §3 ships the first CLI verb (3.3), so §3 inherits §1's orphaned CLI
+  obligations, which §2 could not close because it shipped no verbs: **enforce** the stdout/stderr split
+  rather than observing it; make `RemainingArgs` inspection structural, so a handler cannot silently
+  ignore tokens; make the stdin guard unskippable at the body-read call site.
+- **§3 brief** — re-verify `.gitignore` against the actual index path constant once the index exists.
+  Carried from §1; nobody has held the real check yet. §2 added `callboard/**/*.lock` and
+  `callboard/**/*.tmp-*`.
+- **§3 brief** — **do not build the path→scope inverse into the index.** §2 deliberately left
+  `CardStore` doing forward-only validation, and D7 rejected index-mediated serialisation precisely so
+  correctness never depends on the index.
+- **§3 or whichever section first wires a verb to `CardStore`** — `expectedDirectory` is a relative
+  literal with no repo-root anchor, so `ValidateAgainstLayout` constrains only the *trailing* segments.
+  A path with a different root but a correctly-shaped tail passes. Unexploitable while `CardStore` has
+  zero production callers; live the moment a verb calls it. That section must anchor `filePath` to the
+  real repo root.
+- **§4** — `CardStore.AppendCommentUnderExistingLock` (`CardStore.cs:76`) is a card write path that
+  takes **no lock**, held closed only by a doc comment, against a binding ADR. Routed here by the
+  supervisor rather than blocked, because it is unreachable from production. **If §4 lands a verb
+  calling `CardStore` without closing it, that is a §4 blocker.**
+- **§4** — 4.2 allocates filenames, which removes `CardStore`'s redundant `filePath` input and turns
+  today's validation into construction. The current shape is coherent but transitional.
+- **§5** — preserved unknown values are stored **raw and never tool-escaped**. The day §5 promotes such
+  a key to a known field, the read path will unescape a value a human wrote (`base: C:\north` gains a
+  newline). This must be in §5's brief.
+- **§9** — the refusal set becomes a closed union. §2 emitted **no** `CliRefusal`, so the retrofit list
+  is still empty; malformed input returns `CardFileParseResult.Failure` and `CardWriteResult.Failure`.
+  The first verb that surfaces those as refusals is §9's business.
+- **§9** — `tool-failure` must **not** become a member of the closed refusal set; consider a third
+  `error` payload on the envelope. `CliEnvelope.cs:6-8` is stale: it still says `ok` discriminates
+  success from refusal and describes only two payload shapes.
+- **Opportunistic** — `Escape*` was left unmerged while `Unescape*` was collapsed, so the duplication
+  risk is half-closed; a forward `Dictionary<char,string>` mirror finishes it. `CardFile` lacks the
+  `Equals`/`GetHashCode` override `CardComment` has. The `InvalidUtf8Bytes` corruption test passes for
+  the wrong reason. `AtomicWrite` has a throwing `finally`. There is no bounded read primitive.
+- **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs` versus
+  an absent `<Version>` in the csproj).
+- **Gate hygiene** — `-k` aggregation on a red `make gates` has still never been demonstrated. Worth
+  proving once when a section next has a genuine failure.
+
+### Environment — resolved, no override needed
+
+`make gates` is green **inside** the sandbox. Two causes, both closed: `/tmp` and `/private/tmp` added to
+`sandbox.filesystem.allowWrite` (MSBuild's IPC sockets); and tests moved to **xUnit v3 on
+Microsoft.Testing.Platform**, selected by the repo-root **`global.json`** (`test.runner`) — not
+`dotnet.config`. MTP rejects `--nologo` and exits **5** on "zero tests ran", so a green `TEST_EXIT:0`
+means tests actually executed. `sandbox.excludedCommands` does **not** exempt a command from the sandbox.
+**`dotnet restore` is the one command that still needs the override** — the sandbox proxies egress
+through a loopback port NuGet is denied (`NU1301 ... Permission denied (localhost:<port>)`) — and that
+bites only when package references change. **Agents run `make gates` sandboxed**; an override needs a
+fresh observed denial.
