@@ -1885,6 +1885,108 @@ Two habits from this block that §3 onwards should inherit:
 - **A seam threaded as a parameter, never as a shared static.** The reviewer recommends this as the
   codebase's precedent for making concurrency deterministic in tests, and I am adopting it as one.
 
+**[architect]** Supervisor `Request changes` on §2 accepted in full — all four blockers. Carving a
+remediation block; no new `N.M` numbers and nothing ticked, per the workflow. This is §2's first
+remediation round.
+
+**Blocker 1 is the one that justifies the supervisor's existence.** `TryBreakStaleLock` is the single
+ownership site that does not follow the compare-then-act rule `CardLock` declares for itself at
+`:106-110`. Round 1 wrote that code and it was correct then. Round 5 stated the rule and enumerated the
+sites — and the enumeration explicitly *cleared* this one, on the argument that break sites are not
+trusted downstream. Each round was individually right; **only their sum is wrong**, and that sum is
+invisible from inside either round's diff. Five block-level reviews could not see it, and the section
+lens did. Note also that it reaches two-holders through acquisition in the crash-recovery case ADR-0003
+calls *expected*, so it is not a corner.
+
+**Blocker 2 is my error, and I am recording it as mine.** I deferred block A's path-traversal nit to
+block B on the stated ground that `CardLayout.DirectoryFor` "is the function block B's writer calls."
+It is not. `CardLayout` has **zero production callers**; the guard landed on a dormant helper while
+`CardStore` still accepts an arbitrary unvalidated path. I asserted a code fact to justify a deferral
+and did not check it, and both the worker and the reviewer then worked inside the frame I set. A
+disposition that names a mechanism is making a claim, and it needs the same standard of evidence this
+section spent five rounds demanding of everyone else.
+
+**Blockers 3 and 4 are the section's format decisions made by accident rather than stated.** Read-modify-write
+silently eating unknown frontmatter keys is an *extensibility policy* — and one that quietly damages the
+hand-editability half of "legible without the tool", while specifically naming the §5/§6 fields it will
+eat. Comment-header `id`/`reply-to` written raw into a space-split format is the same escaping argument
+block B already accepted for frontmatter values, left half-applied in the same commit. Both get decided
+here, in §2, rather than discovered in §5.
+
+**Architect answer to the supervisor's question — the orphaned CLI obligations go to §3.** §2 shipped no
+verbs, so §1's `§2 brief`-addressed items (enforcing the stdout/stderr split, making `RemainingArgs`
+inspection structural, making the stdin guard unskippable) never had a surface to attach to. §3 ships
+the first real verb — **3.3, the rebuild command** — so §3 inherits them, and I will write them into
+§3's brief rather than leave them drifting in `## NEXT`. They are not §2's to close and were never
+deliverable here.
+
+`## NEXT` gets rewritten once this remediation lands, so the §2 obligations that are now discharged stop
+being carried and the architectural notes the supervisor parked are recorded against the section that
+owes each.
+
+**[architect]** Reviewer `Request changes` on the §2 remediation block. Blocker 1 is confirmed closed
+— and the reviewer re-walked *every* ownership site against the stated rule, not just the reported
+route, finding nothing else cleared on an argument that no longer holds. That was the check I most
+wanted, because it is what would have caught the supervisor's blocker 1 a round earlier. Blockers 3 and
+4 also hold under append-including round-trips, collision and shadowing checks, and an independently
+tested `=` argument.
+
+**Blocker 2's fix is wrong, and it is wrong twice over in a way worth naming.**
+
+`ValidateAgainstLayout` (`CardStore.cs:175-179`) uses `actualDirectory.EndsWith(expectedDirectory)` — a
+raw string suffix match with no path-segment anchoring. `"/repo/evilcallboard/register/"` ends with
+`"callboard/register/"`, so it passes. The scope/directory disagreement blocker 2 exists to make
+unrepresentable is still representable.
+
+**And no test exercises the refusal path.** Every existing test writes to a directory that legitimately
+matches, so deleting the check outright — or shipping the suffix bug — passes the entire suite green.
+
+Follow the shape of this across three rounds now, because it is one mistake wearing three faces. Block A
+wrote a traversal guard. Block B's disposition (mine) put it on a helper with no callers, so it guarded
+nothing. This block wired it up, but wrote a check that does not check. **At every step there was a
+guard, and at no step was there a test that the guard ever refuses anything.** A guard whose refusal
+path is untested is indistinguishable from no guard, and the suite cannot tell you which one you have.
+
+So the standing rule from here, and §9.12 already asks for exactly this for refusals — **every guard
+lands with a test that it refuses.** Not that it permits the good case; that the bad case is turned
+away. @worker: fix the containment check with proper path-segment anchoring, and cover the refusal path
+— including the `evilcallboard` suffix-collision case specifically, so this exact regression cannot
+return silently.
+
+The four nits are non-blocking and I am taking them now rather than carrying them, except one: the
+duplicated escape/unescape shape between frontmatter and comment-header is worth collapsing while the
+file is open, since two implementations of one rule is how they drift apart. `CardFile`'s missing
+`Equals`/`GetHashCode` is pre-existing, not this block's, and goes to `## NEXT`.
+
+**[architect]** Reviewer `Approve` on the §2 remediation block. Gates re-run by me, sandboxed, no
+override: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 81/81. Committed as a
+fix; nothing ticked, per the remediation rules. Supervisor re-runs next on the same `12f7e58..HEAD`
+range, now including this block.
+
+Two things in the reviewer's post are worth keeping, because both are it declining to overstate its own
+work — which is the habit this section has been trying to build:
+
+- It named that **only one of the four new tests is a genuine regression pin.** The suffix-collision
+  test would have failed under the old `EndsWith`; the other three are legitimate new refusal coverage
+  but do not distinguish old comparison logic from new. "Four regression tests" would have been an
+  overclaim, and it said so unprompted.
+- It could not revert-and-run to prove the pin, because its write boundary is DEVLOG-only, so it
+  hand-traced instead **and said that is what it did.** That is the right shape: the limitation is
+  stated rather than papered over, which is exactly what §6's blind-spot requirement is going to ask of
+  every finding.
+
+Carrying to `## NEXT`, owed by whichever section first wires the CLI to `CardStore`: **`expectedDirectory`
+is a relative literal with no repo-root anchor**, so `ValidateAgainstLayout` can only ever constrain the
+*trailing* segments. A path with an entirely different root but a correctly-shaped tail still passes.
+Not a regression — it was true of the old check too — and not exploitable while `CardStore` has zero
+production callers, which is the same fact that made blocker 2 possible in the first place. It becomes
+live the moment a verb calls it, and that section must anchor `filePath` to the real repo root itself.
+
+Also to `## NEXT`: `Escape*` was left unmerged while `Unescape*` was collapsed, so the drift risk my
+disposition aimed at is only half-closed; a forward `Dictionary<char,string>` mirror would finish it.
+And `CardFile` still lacks the `Equals`/`GetHashCode` override `CardComment` has — pre-existing, not
+this block's.
+
 
 ## NEXT
 
@@ -2661,5 +2763,658 @@ round's test-harness shared-static — each fixed, each re-verified, and none re
 pass. The production lock logic (`CardLock.cs`) and its test coverage
 (`CardLockTests.cs`,`CardStoreConcurrencyTests.cs`, corruption/write tests from earlier rounds) are
 clean. Nothing outstanding on this block from this reviewer.
+
+→ @architect
+
+---
+
+**[supervisor]** Section 2 review — scope `12f7e58..HEAD`, two commits (`0531805` block A 2.1–2.4,
+`7184b05` block B 2.5–2.8). Read the whole §2 thread including all five block-B rounds, the block-A nit
+dispositions at the top of the section, and `## NEXT`. Gates re-run by me, sandboxed, no override:
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 70/70.
+
+## Verdict: Request changes
+
+Four blockers. None of them is a second opinion on a block the reviewer approved — each is a property of
+A and B *together*, or of a promise made in this thread that the landed code does not keep.
+
+### What genuinely holds — stated first, because most of the section does
+
+- **"Concurrent work does not corrupt the record"** holds on all four of its obligations, including the
+  one with no task number. `CardLockTests.Acquire_TwoDistinctCards_IsContentionFree` is a real test of
+  *"acting on distinct cards SHALL be contention-free"*, not a restatement: it holds card A's lock for
+  the whole test and asserts card B acquires in under a second, so a shared lock would fail it by
+  timing out rather than by a tautology. The lock being keyed off the card's own path is what makes it
+  true, and D7's rejection of index-mediated serialisation is respected — `CardLock` touches nothing
+  but `<card>.lock`.
+- **Damage containment (2.8)** is genuine: `ReadAllCards` isolates each file's outcome and the tests
+  wreck bytes rather than values.
+- **Atomicity (2.5)** is real — temp file beside the target, fsync before rename, `File.Move` on the
+  same filesystem, temp suffix outside the `*.md` glob, locks and temps both gitignored.
+- **Diffable per card** holds: fixed frontmatter order, one field per line, comments appended, tested.
+- **The AOT verdict (2.2)** closes `design.md` Open Question 2 with measurement. Nothing in the section
+  reflects or dynamically loads.
+- **`CardLock`'s final shape is defensible as a whole**, not just as five fixes. Each layer earns its
+  place and none is now redundant: the `File.Exists` fast path is an optimisation that can only
+  false-negative; the PID check recovers a clean crash; the grace window recovers a kill inside the
+  create-then-write window; the nonce plus compare-on-release closes the gap the grace window itself
+  opens; the post-write self-verify closes the same gap one step earlier. A reader coming to it cold
+  can follow that chain. The one thing that does **not** cohere is Blocker 1.
+
+### Blocker 1 — the stale-lock break is the one ownership site that ignores the rule the type declares for itself (`src/Callboard/Cards/CardLock.cs:298-325`) — block B
+
+`CardLock.cs:106-110` states the rule the last three rounds arrived at: *"verify a file operation's
+effect immediately before acting on it, rather than assuming the effect persisted... the general rule
+this type now applies everywhere it establishes or relies on ownership of the lock file."*
+`Dispose` (`:219-224`) follows it. `TryBreakOrphanedEmptyLock` (`:365-383`) follows it, and says so.
+`TryBreakStaleLock` does not: it reads a pid at `:300`, calls `IsProcessAlive` at `:309` — a
+`Process.GetProcessById`, not a cheap call — and then deletes **whatever is at the path** at `:316`,
+on the strength of a read that is by then several file and process operations old.
+
+That is a route to two live holders, reached entirely through the crash-recovery path ADR-0003 calls
+the expected case:
+
+1. `<card>.lock` holds dead pid `P`; waiters `C1`, `C2`, `C3` all read `P` and all find it dead.
+2. `C1` deletes, loops, wins `CreateNew`, writes, self-verifies — `C1` legitimately holds the card.
+3. `C2`, still between its own `IsProcessAlive(P)` and its `File.Delete`, deletes **`C1`'s live lock**.
+4. `C3` wins `CreateNew` at the now-free path. `C1` and `C3` are both inside the write section.
+
+Nothing downstream catches it: the post-write self-verify has already returned for `C1`, and `Dispose`'s
+compare-and-delete correctly declines to delete `C3`'s file — it prevents the *release* half of this
+bug while the *acquisition* half runs. Two writers on one card is the single thing per-card locking
+exists to prevent, and this is the one route no round looked at, because rounds 3–5 were each scoped to
+the site the reviewer had just traced.
+
+No block diff could show this. Round 1's code and round 5's stated rule are both individually fine.
+
+**Fix shape:** re-read the lock file immediately before `File.Delete` at `:316` and delete only if the
+content still matches what `TryReadHolderPid` read — the same compare-then-delete `:365-383` already
+applies, with the same honestly-stated residual. Do not widen the block beyond that site; the rest of
+the type is sound.
+
+### Blocker 2 — `CardLayout` has no production caller, so 2.4 shipped as a helper nothing can reach, and block B's traversal fix guards a dead path (`src/Callboard/Cards/CardLayout.cs:29-73`, `src/Callboard/Cards/CardStore.cs:29,52`) — blocks A and B
+
+`CardLayout`'s only callers in the repository are `CardLayoutTests`. `CardStore.WriteCard` and
+`AppendComment` take a fully-formed `string filePath` and validate nothing about it.
+
+This matters for three reasons that only show up across the two blocks:
+
+1. **The block-A nit disposition in this thread (above, "Dispositions on the two nits") justified
+   deferring the traversal fix on the ground that `CardLayout.DirectoryFor` "is the function block B's
+   writer calls."** It is not. B's writer never mentions `CardLayout`. The guard landed on a function
+   with no production caller while the function that actually reaches disk still accepts
+   `callboard/register/../../anything.md` unchallenged. The same post said *"If B lands without them,
+   that is a supervisor finding at section close"* — this is that finding, in the shape of a guard that
+   is nominally present and actually dormant.
+2. **Nothing reconciles `frontmatter.Scope` with the directory the card is written into.** A card
+   carrying `scope: change` can be written to `callboard/register/` and both blocks are happy. The
+   section therefore ships two independent statements of a card's scope with no invariant between them,
+   which is the "record disagrees with itself" case 3.5 has no answer for (see §3 notes below).
+3. **The archive-as-directory-move property card-model's "Scope determines lifetime" depends on is
+   asserted only by `CardLayoutTests`,** never by anything that writes a file.
+
+**Fix shape (deliberately small):** put the validation at the boundary that actually reaches disk —
+`CardStore`'s two entry points — rather than only on the dormant helper, and either wire `CardStore` to
+resolve its directory through `CardLayout.DirectoryFor(card.Frontmatter.Scope, changeName)` or record
+explicitly in the DEVLOG that the helper stays dormant until 4.2 allocates filenames, with the
+scope/directory reconciliation named as 4.2's obligation. What must not stand is a guard everyone
+believes is live.
+
+### Blocker 3 — every write silently discards anything the parser does not know about (`src/Callboard/Cards/CardFileParser.cs:63-65,225-244`; `src/Callboard/Cards/CardFileWriter.cs:19-29`; `src/Callboard/Cards/CardStore.cs:70-78`) — blocks A and B together
+
+`AppendComment` is a read-parse-serialise-write cycle over the whole file. The parser collects
+frontmatter into a dictionary and reads nine known keys; the writer emits those nine. Any other key —
+and any comment-header field other than the five it knows — is parsed, ignored, and **deleted from the
+record on the next comment**.
+
+Block A alone could not corrupt anything with this, because block A never wrote a file. Block B alone
+looks fine, because it round-trips everything block A's tests supply. The two together give a write path
+that destroys data:
+
+- `CardFrontmatter`'s own doc comment (`CardFrontmatter.cs:5-7`) names the fields §5 and §6 will add —
+  `base`, `reviewed_state`, `tasks`, `round`, `blocked_by`, the finding fields. On today's code, a §5
+  card that receives a comment loses all of them.
+- It erodes the ADR-0003 promise directly. "Legible without the tool" is paired with a record humans are
+  expected to hand-edit; a hand-added line silently vanishing on the next tool write makes the tool a
+  precondition for *retaining* comprehension, which is the inverse of what `record-retrieval` requires.
+
+The format's extensibility rule is a §2 decision — §2 owns the format — and right now it is an accident
+rather than a decision.
+
+**Fix shape:** pick one and state it. Either (a) preserve unknown frontmatter lines and unknown
+comment-header fields verbatim on `CardFile` and re-emit them in order, which keeps hand edits alive and
+lets §5 add fields without touching §2; or (b) fail closed — an unrecognised key is a
+`CardFileParseResult.Failure`, consistent with "refusals fail closed", at the cost of making a
+hand-added note unreadable. (a) is the better fit for degraded mode; either is acceptable, silence is
+not. Add a test that a card with an unknown frontmatter key survives an `AppendComment` intact (or is
+refused, per the choice made).
+
+### Blocker 4 — the escaping story is two patches, not one design: comment-header field values are written unescaped and parsed by splitting on spaces (`src/Callboard/Cards/CardFileWriter.cs:64-69` vs `src/Callboard/Cards/CardFileParser.cs:231-240`) — block B
+
+Block B added `EscapeFrontmatterValue` with an explicit rationale (`CardFileFormat.cs:62-69`): a
+line-based `key: value` format means an unescaped literal in a value "would otherwise split it across
+lines and the next read would hit 'malformed frontmatter line' on the fragment."
+
+The comment header is a space-separated `key=value` format in the same commit, and the identical
+argument was not applied to it. `BuildHeaderFields` writes `id=` + `comment.Id` and
+`reply-to=` + `replyTo` raw; `ParseCommentHeaderFields` splits the header on `' '`. A comment id of
+`C 1` serialises to `... id=C 1 author=worker ...` and parses back as
+`malformed comment header field: '1'` — a successful write that produces an unreadable card, from the
+one field in the header that is free text rather than a closed enum. Same for `reply-to`, and for any
+id containing ` -->`.
+
+Not user-reachable today (no verb constructs a comment), and by the precedent set for the block-A nits
+that would argue for deferring it to §4/§5. I am raising it as a blocker anyway for one reason: it is
+the *same decision*, in the *same file pair*, in the *same commit* as the frontmatter half, and leaving
+half of it done is exactly the drift a section review exists to catch. It also shares a fix site with
+Blocker 3, so it costs almost nothing to close now and gets progressively more expensive once §4
+allocates ids and §5/§6 add header fields.
+
+**Fix shape:** one escaping rule for header field values — escape space, `=`, backslash and the suffix
+sequence on write, reverse on read — or, if ids are to be constrained instead, validate `Id`/`ReplyTo`
+against that constraint at construction and say so. Symmetric writer/parser tests for both, alongside
+the delimiter tests that already exist for body content.
+
+### Suggested remediation shape — one block
+
+Touches four files, no new task numbers, ticks nothing:
+
+- `CardLock.cs` — compare-then-delete at `TryBreakStaleLock`'s delete site only.
+- `CardStore.cs` — validate the path at the two entry points that reach disk; wire or explicitly
+  dormant-ise `CardLayout`, with the scope/directory reconciliation named as §4's obligation.
+- `CardFileParser.cs` / `CardFileWriter.cs` / `CardFileFormat.cs` — the unknown-field decision
+  (Blocker 3) and header-field escaping (Blocker 4), which are adjacent edits.
+- Tests: a stale-lock-with-two-waiters test if it can be made deterministic (a fabricated dead-pid lock
+  plus a seam like the one `testOnlyAfterWriteHook` already established); unknown-field survival;
+  header-field escaping round trips.
+
+### Architectural notes — for `## NEXT`, not the fix block
+
+- **§3 will be tempted to duplicate two things §2 did not provide.** `CardLayout` is one-way
+  (scope → directory); the index's populate, and later archive and export, all need the inverse
+  (path → scope + change name) and will each grow their own. And `ReadAllCards` is
+  `TopDirectoryOnly` over one directory, so whole-board enumeration is unwritten. Put both on
+  `CardLayout`/`CardStore` in §3 rather than in `IndexPopulator`, or D7's "correctness never depends on
+  the index" starts leaking the other way — the index becoming the only component that knows the
+  layout.
+- **3.5 has no well-defined answer while Blocker 2 stands.** "Where index and record disagree, the
+  record governs" presumes the record agrees with itself. With `scope:` in frontmatter and scope in the
+  path unreconciled, §3 must pick one as canonical; that choice belongs in the DEVLOG before 3.2, not
+  inside the populate code.
+- **The budget guarantee has no bounded read primitive yet.** `ReadCard` reads and parses the whole
+  file, comments included, and it is the only read path §2 offers. §3's populate would read every full
+  narrative to index metadata, and §10's working-context path must not touch it at all. A
+  frontmatter-only read that stops at the closing fence is the missing piece; cheap to add, and worth
+  adding before §3 builds on the unbounded one.
+- **A green corruption test that does not establish what it appears to.** `ReadCard` decodes with
+  `new UTF8Encoding(false)`, whose fallback *replaces* invalid bytes with U+FFFD rather than throwing.
+  `InvalidUtf8Bytes_LeavesEveryOtherCardReadable` therefore passes because the wrecked bytes do not
+  start with `---`, not because invalid UTF-8 was detected. The live consequence: a card with intact
+  structure but invalid bytes mid-body parses successfully with silent substitution, and the next
+  `AppendComment` writes the substitution back permanently. `throwOnInvalidBytes: true` folded into
+  `CardFileParseResult.Failure` fixes both the behaviour and the test's honesty. Not blocking — no
+  current path produces such a file — but it is this section's one instance of a green run standing in
+  for a property it does not establish.
+- **`AtomicWrite`'s `finally` can throw past its own result contract** (`CardStore.cs:170-176`): the
+  `File.Delete` is outside the `catch`, so an `IOException` there escapes as an exception from a method
+  whose whole point is returning `CardWriteResult.Failure`.
+- **The lock's grace window sets an undocumented minimum timeout.** A caller passing a `lockTimeout`
+  below `EmptyLockGraceWindow` (1s) can never recover an orphaned zero-byte lock. Every current caller
+  passes 5s or more; state the minimum on `Acquire` before a verb picks a short one.
+- **`CardLock`'s doc comment is now ~100 lines of five rounds' archaeology in front of a 330-line
+  class.** The mechanism is right and the residuals deserve to be recorded; the rejected-alternative
+  measurements (the `File.Move` hammer loop, the `FileShare.None` diagnosis) already live in this
+  DEVLOG, which is where they belong. Condensing the comment to the invariant plus the residuals is a
+  later cleanup, not a change to behaviour.
+- **`## NEXT` is no longer pinned at the bottom** — it sits at line ~1889 with 700 lines of block-B
+  review rounds after it — and three of its obligations addressed to "§2 brief" are unmet because their
+  premise did not survive the carving: §2 added no CLI verbs at all, so the `RemainingArgs` and stdin
+  guard hardening, the enforcement of the stdout/stderr split, and "the first real emission of
+  `CliRefusal`" have no home. They need re-homing to the first section that adds a verb, or they will
+  quietly become nobody's. ❓ @architect — which section takes them? §4 is the first that plausibly
+  ships a verb, but that is your call, not mine.
+
+→ @architect
+
+**[worker]** §2 remediation block implemented — all four blockers closed. Four files touched
+per the suggested shape, plus five test files.
+
+**Blocker 1 — `TryBreakStaleLock` now obeys its own type's rule.** Split the old
+`TryReadHolderPid` into `TryReadLockContent` + `TryParsePid` so `TryBreakStaleLock` can capture the
+exact content it judged dead, then re-read the file immediately before `File.Delete` and refuse
+(return `false`) on any mismatch — the same compare-then-delete discipline `Dispose` and
+`TryBreakOrphanedEmptyLock` already apply. Re-checked the round-5 enumeration against the same lens
+per the brief: items 5/6 (`TryBreakStaleLock`'s delete, `TryBreakOrphanedEmptyLock`'s delete) were
+cleared on the argument that break sites are "not trusted downstream" by their own callers — true,
+but blind to a bystander (a third waiter) trusting the *result on disk*, which is exactly the gap
+this fix closes. No other site needed a change; `Dispose`, `TryBreakOrphanedEmptyLock`, and
+`TryCreate`'s post-write verify were already sound and are untouched.
+
+**Blocker 2 — `CardStore` now resolves the write directory through `CardLayout`, so `frontmatter.Scope`
+and the directory a card lives in cannot disagree.** `WriteCard` and `AppendComment` both gained an
+optional `changeName` parameter and now call `CardLayout.DirectoryFor(scope, changeName)` — which
+itself validates `changeName` via `RequireSafePathSegment` — then require the caller's `filePath`
+to actually resolve (via `Path.GetFullPath`, so a `..` segment is canonicalised away before the
+comparison, not after) into that directory. `AppendComment` validates after the read/parse, once it
+knows the card's real scope, and before the write — a mismatch is a `CardWriteResult.Failure`, never
+a silent write to the wrong place. This is genuine wiring, not a note: I chose it over "declare
+`CardLayout` dormant until 4.2" because the brief asked for it explicitly and because a helper with a
+real caller is a stronger fix than a documented gap. Cost: every `CardStore` test now writes under a
+real `callboard/changes/<name>/`-shaped path instead of an arbitrary temp directory, and passes a
+`changeName` — mechanical but real churn across `CardStoreWriteTests`, `CardStoreConcurrencyTests`,
+`CardStoreCorruptionTests`. `WriteCard_CreatesTheContainingDirectory_WhenItDoesNotYetExist` needed a
+different case entirely (a fresh, not-yet-created change directory) since nesting a subdirectory
+below the scope directory is now correctly refused. Did **not** touch the path→scope inverse — every
+check here is forward-only (scope + changeName → expected directory, then a string comparison
+against the actual path), which is what the architect's post and the supervisor's parked note both
+asked me to stay clear of.
+
+**Blockers 3 and 4 — one shared fix site, `CardFileFormat`/`CardFileParser`/`CardFileWriter`, as the
+supervisor predicted.**
+
+*Extensibility rule chosen: (a), preserve.* `CardFile` gained `UnknownFrontmatterFields` and
+`CardComment` gained `UnknownHeaderFields` — both `IReadOnlyList<(string Key, string RawValue)>`,
+captured verbatim (raw, still-escaped) in read order and re-emitted the same way. Frontmatter
+unknowns are re-emitted after the nine known fields, before the closing fence — not interleaved back
+into their original position, since the parser only records the value at each known key, not a full
+line ordering; stated as a residual in the doc comment rather than silently approximated. Comment
+header unknowns are appended after the known fields on that line, same reasoning. `CardFrontmatter`
+itself carries none of this — kept off that type so block A's equality-by-known-fields tests stay
+meaningful, matching its own doc comment's existing framing. This is a §2-owned decision, not
+deferred to §5/§6 the way the supervisor asked.
+
+*Escaping: comment-header `id`/`reply-to` now go through `EscapeCommentHeaderValue`/
+`UnescapeCommentHeaderValue`* — backslash-then-space substitution (`\\` → `\\\\`, ` ` → `\s`),
+mirroring `EscapeFrontmatterValue`'s structure and invertibility discipline. One deliberate
+deviation from the fix shape's literal wording: I did **not** escape `=`. The parser splits each
+header token on its *first* `=` only, and the fixed key literal (`id`, `reply-to`, …) never itself
+contains one, so a `=` inside the value can never be mistaken for the key/value boundary regardless
+of how many further `=` characters follow — escaping it would be motion without effect. Escaping
+every space closes the header-terminator lookalike (`" -->"`) for free too, since its load-bearing
+first character is the space that no longer survives unescaped in any value. Flagging this deviation
+explicitly rather than silently matching the letter of the suggested fix over its actual purpose —
+happy to add the `=` escape back if the reviewer or architect wants literal symmetry with the fix
+shape regardless.
+
+**Tests added** (77 total, was 70): the two-waiters-on-a-stale-lock case
+(`CardLockTests.Acquire_DoesNotDeleteALiveLock_WonByAnotherWaiterBetweenJudgingTheHolderDeadAndDeleting`)
+via a new call-scoped `testOnlyBeforeStaleDeleteHook` on `Acquire`/`TryBreakStaleLock` — same
+threaded-parameter seam as `testOnlyAfterWriteHook`, never a shared static, per the codebase's own
+stated precedent; unknown-frontmatter-field and unknown-comment-header-field survival through a
+parse→serialize cycle; `AppendComment_PreservesAnUnrecognisedFrontmatterField_ThatWasAlreadyOnDisk`
+exercising the real `CardStore` write path end to end; comment id/reply-to round trips containing
+spaces, backslashes, and the header-terminator lookalike as a substring; a direct
+escape/unescape symmetry test.
+
+**Verification.** `make build` → `BUILD_EXIT:0`. **30/30 consecutive sandboxed `make test` runs, all
+`TEST_EXIT:0`, each `total: 77, failed: 0, succeeded: 77`** (exceeds the 30 asked for). `make gates`
+→ `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`.
+
+**Not touched**, per the brief: contention-freedom, damage containment, atomicity, diffability, the
+AOT verdict, `CardLock`'s overall shape, the bounded-read primitive, §3's layout inverse, the
+`InvalidUtf8Bytes` test, `AtomicWrite`'s `finally`. `git status --short` confirms the diff is
+confined to the four production files named in the brief (`CardLock.cs`, `CardStore.cs`,
+`CardFileParser.cs`/`CardFileWriter.cs`/`CardFileFormat.cs`), plus `CardComment.cs`/`CardFile.cs`/
+`CardFrontmatter.cs` for the new fields the extensibility rule required, plus five test files and
+this DEVLOG.
+
+→ @reviewer
+
+**[reviewer]** Audit of the §2 remediation block (all four supervisor blockers). Working tree read
+directly (block is uncommitted; `HEAD` is `7184b05`). Scope: `CardLock.cs`, `CardStore.cs`,
+`CardFileFormat.cs`, `CardFileParser.cs`, `CardFileWriter.cs`, `CardComment.cs`, `CardFile.cs`,
+`CardFrontmatter.cs`, plus the five test files named in the brief.
+
+**Blocker 1 (`TryBreakStaleLock`) — closed, and I re-checked the enumeration under the same lens the
+brief asked for, not just the reported route.** The fix captures the exact content the delete site
+judged dead (`TryReadLockContent`/`TryParsePid` split), re-reads immediately before `File.Delete`,
+and refuses on mismatch — structurally identical to `Dispose`'s and `TryBreakOrphanedEmptyLock`'s own
+compare-then-delete (`CardLock.cs:249-263`, `:412-431`, `:326-369`). I re-walked every site that
+establishes or relies on ownership of the lock file against `:106-110`'s stated rule
+(`TryCreate`'s post-write self-verify, `Dispose`, `TryBreakOrphanedEmptyLock`, and this site) and
+found no other clearance built on an argument that no longer holds — the "not trusted downstream"
+argument the round-5 enumeration used to clear this site is specifically addressed in the new doc
+comment as blind to a bystander trusting the result on disk, and that is the only place that argument
+was ever applied. The new test
+(`CardLockTests.Acquire_DoesNotDeleteALiveLock_WonByAnotherWaiterBetweenJudgingTheHolderDeadAndDeleting`)
+is a genuine regression guard, not a restatement: it substitutes a live lock (this process's own pid,
+unconditionally alive for the test's duration) via the threaded `testOnlyBeforeStaleDeleteHook` seam
+— never a shared static — between the liveness check and the delete, then asserts the substituted
+content survives untouched and the caller times out. Reverting the fix (deleting unconditionally)
+would delete that live lock and fail the assertion. Confirmed by inspection that the hook is
+call-scoped, matching the precedent `testOnlyAfterWriteHook` already set.
+
+**Blocker 2 (`CardStore` ↔ `CardLayout` wiring) — the wiring itself is right, but the containment
+check it lands with does not actually contain, and nothing tests that it does.**
+
+`ValidateAgainstLayout` (`CardStore.cs:156-179`) is now called from both entry points that reach disk
+(`WriteCard` before the write, `AppendCommentUnderExistingLock` after the read, once the card's real
+on-disk scope is known — correctly using `success.Card.Frontmatter.Scope`, not any caller-supplied
+value, so a caller cannot lie about scope on an existing card). `AtomicWrite` itself is private with
+no other production caller, so the guard is genuinely on every write path, not the two named
+incidentally.
+
+The bug is in the comparison itself, at `CardStore.cs:175-179`:
+
+```csharp
+return actualDirectory.EndsWith(expectedDirectory, StringComparison.Ordinal)
+    ? null
+    : new CardWriteResult.Failure(...);
+```
+
+This is a raw string suffix match, not a path-segment-anchored one — the exact "string prefix ≠
+directory prefix" pathology the brief named, just at the tail instead of the head.
+`expectedDirectory` is `"callboard/register/"` (no leading separator); `EndsWith` only requires that
+substring appear at the end of `actualDirectory`, with nothing constraining what character precedes
+it. Confirmed directly (identical `Ordinal`/`EndsWith` semantics to .NET's):
+
+```
+"/repo/evilcallboard/register/".EndsWith("callboard/register/", Ordinal) → true
+```
+
+A card written to `/repo/evilcallboard/register/b-0001.md` — a directory that is not
+`callboard/register/` at all, merely one whose name happens to end in the same characters — passes
+`ValidateAgainstLayout` for a `Repository`-scoped card. The same shape applies to every scope: any
+directory whose trailing segment sequence happens to match `expectedDirectory`'s suffix satisfies the
+check regardless of what comes before it. This is precisely the "record disagrees with itself" case
+Blocker 2 was meant to make unrepresentable, and as landed it is still representable — just harder to
+hit by accident than before, not impossible by construction.
+
+**And there is no test proving the refusal path fires at all.** Every test that exercises
+`ValidateAgainstLayout` (all of `CardStoreWriteTests`, `CardStoreConcurrencyTests`,
+`CardStoreCorruptionTests`, after their constructors were updated to write under a real
+`callboard/changes/<name>/`-shaped path) exercises only the accepting path — a directory that
+genuinely is the expected one. I searched the diff and the untouched parts of the suite: nothing
+constructs a `filePath` outside the scope's directory and asserts `CardWriteResult.Failure`, and
+nothing probes the suffix-collision shape above. Per the review standard for a refusal rule, that
+makes this genuinely untested — a regression that reverted the whole check (not just weakened it)
+would pass every currently-green test.
+
+Fix-before-land, both together: anchor the comparison to an actual directory boundary — e.g. require
+the character immediately before the matched suffix to be `/` or the start of the string (or, more
+robustly, resolve both sides to a common root and compare the directory as a whole rather than by
+suffix) — and add a test that a mismatched directory is refused, including at minimum one case
+exercising the suffix-collision shape above so this exact defect can't come back silently.
+
+Two things I checked and found sound: `changeName` validation (empty/null throws inside
+`RequireChangeName`, caught and returned as `CardWriteResult.Failure`, never an unhandled exception);
+`Path.GetFullPath` resolving `..` before the comparison, so a traversal segment can't pass by looking
+right before resolution. One non-blocking note: the comparison is `StringComparison.Ordinal`, so on a
+case-insensitive filesystem (macOS default, Windows) a real match with different casing would be
+wrongly *refused* — fails closed, not open, so I'm not blocking on it, but worth knowing before §3
+builds more on this exact function per the supervisor's parked note.
+
+**Blockers 3 & 4 (unknown-field preservation, header escaping) — closed, held to the format-decision
+standard the brief asked for.**
+
+- **Full round-trip including append:** `CardStoreWriteTests.AppendComment_PreservesAnUnrecognisedFrontmatterField_ThatWasAlreadyOnDisk`
+  writes a card with an unmodelled `base:` field directly (bypassing `CardFile`), appends a comment
+  through the real `CardStore.AppendComment` path, and asserts the field survives. This is the actual
+  read-modify-write cycle Blocker 3 was about, not just a parser-level round trip.
+- **Collision/shadowing:** unknown fields are captured into a separate list (`UnknownFrontmatterFields`
+  / `UnknownHeaderFields`), never merged into the known-field dictionary, so an unknown key can't
+  forge or shadow a known one on re-parse — confirmed by inspection of `CardFileParser.cs:79-84` and
+  `:265-271`. A hand-added line whose key happens to collide with a *future* known key would parse as
+  that build's known field once the schema catches up, which is exactly the extensibility rule's
+  stated purpose, not an accident.
+- **Delimiter/newline/escape-character content:** a frontmatter value physically cannot contain `\n`
+  (lines are already split on `\n` before a key/value pair is extracted), so that case is closed by
+  construction rather than by escaping. Values containing the escape character itself, and comment
+  IDs containing a literal space, backslash, or the header terminator `" -->"` as a substring, are all
+  covered (`RoundTrips_CommentIdAndReplyToContainingSpacesAndBackslashes`,
+  `RoundTrips_CommentIdContainingTheHeaderTerminatorAsASubstring`).
+- **Escaping symmetry:** confirmed by inspection that unknown-field raw values are carried through
+  verbatim in their already-escaped on-disk form and never re-escaped or unescaped — consistent with
+  how a known field's raw value is escaped once, on write, and unescaped once, on the read side that
+  needs the plain value (`CardFileParser.cs:177,194,201,224`). No double-escaping risk because
+  unknown values are never round-tripped through both operations.
+
+**Blocker 4's `=` deviation — the argument holds, tested rather than accepted on report.** The parser
+splits each header token on its *first* `=` only (`CardFileParser.cs:258-273`); a key is always the
+substring before that first `=`, so a key containing `=` cannot exist by construction — there's no
+way to reach that state to test it, which is itself part of why the argument is sound rather than a
+gap. `EscapeCommentHeaderValue_IsReversedExactlyByUnescapeCommentHeaderValue` covers a value
+containing `=` directly and confirms the round trip. The one case the brief asked for that isn't
+explicitly tested is an *empty* value (`id=`) — by inspection this is safe (empty string escapes and
+unescapes to itself, and the split still finds the same key), but it's untested; I'm calling it a nit,
+not a blocker, since nothing about the `=`-omission argument depends on emptiness.
+
+**Coherence across the four fixes (point 5) — mostly consistent; two small things worth naming.**
+`EscapeFrontmatterValue`/`UnescapeFrontmatterValue` and `EscapeCommentHeaderValue`/
+`UnescapeCommentHeaderValue` (`CardFileFormat.cs`) are structurally identical scan-and-substitute
+implementations differing only in their substitution table (`\n`/`\r` vs space) — a shared generic
+helper parameterised by the table would remove real duplication; not blocking, since the two formats'
+delimiter sets genuinely differ and the duplication is small and mechanical. Second: `CardComment`
+gained a hand-written `Equals`/`GetHashCode` override for its new `UnknownHeaderFields` list
+(compiler-generated record equality compares `IReadOnlyList<T>` by reference); `CardFile` gained the
+equivalent kind of field (`UnknownFrontmatterFields`) but no equivalent override — though this is not
+a regression, since `CardFile.Comments` had exactly the same by-reference-equality gap before this
+block and no test relies on whole-`CardFile` equality either way. Worth normalizing if a later section
+ever wants `Assert.Equal` on a whole `CardFile`, not before.
+
+**Verification, reproduced independently.** `make build` → `BUILD_EXIT:0`. 20/20 sandboxed `make
+test` runs, each `TEST_EXIT:0`, each `succeeded: 77`. `make gates` →
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Matches the worker's report.
+
+## Verdict: Request changes
+
+**Fix-before-land:**
+1. `CardStore.cs:175-179` (`ValidateAgainstLayout`) — the directory containment check is a raw
+   string suffix match (`EndsWith`), not anchored to a path-segment boundary, so a directory that
+   merely ends with the expected directory's characters (e.g. `.../evilcallboard/register/` against
+   expected `callboard/register/`) passes. Anchor the comparison to an actual boundary, or compare
+   full resolved directories rather than by suffix.
+2. Same site — add at least one test asserting `ValidateAgainstLayout` actually refuses a mismatched
+   write, including the suffix-collision shape above. Currently every test exercises only the
+   accepting path, so nothing would catch this defect, or a full regression of the check, coming back.
+
+**Nits (non-blocking):**
+- `CardFileFormat.cs` — `EscapeFrontmatterValue`/`UnescapeFrontmatterValue` and
+  `EscapeCommentHeaderValue`/`UnescapeCommentHeaderValue` duplicate the same scan-and-substitute
+  shape; consider a shared parameterised helper when next touching this file.
+- `CardFile` has no `Equals`/`GetHashCode` override for its list-typed fields the way `CardComment`
+  now does for `UnknownHeaderFields` — pre-existing gap (`Comments` already had it), not new, but
+  worth normalizing together if it's ever touched.
+- No explicit test for an empty comment-header value (`id=`) under the `=`-escaping deviation; safe by
+  inspection, asked for in the brief, cheap to add.
+- `CardStore.cs`'s directory-containment comparison is `StringComparison.Ordinal`, so a
+  case-different-but-real match on a case-insensitive filesystem is refused rather than accepted —
+  fails closed, not a blocker, but worth a decision before §3 relies on this function more heavily.
+
+**What's confirmed closed:** Blocker 1 (stale-lock two-waiters race, re-checked against the whole
+enumeration, not just the reported site) and Blockers 3/4 (unknown-field preservation and
+comment-header escaping, both held to a full-round-trip-including-append standard with the `=`
+deviation independently tested). Blocker 2's wiring (both write paths now resolve through
+`CardLayout`, using the card's own on-disk scope for `AppendComment`) is the right shape; only the
+comparison it ends on is wrong, in a way its own test suite cannot see.
+
+→ @architect
+
+**[worker]** Both fix-before-land findings on blocker 2's fix closed.
+
+- **`ValidateAgainstLayout` (`CardStore.cs:156-180`) — comparison is now path-segment anchored,
+  not a raw string suffix match.** Both `actualDirectory` and `expectedDirectory` are split on
+  `/` into segments (`StringSplitOptions.RemoveEmptyEntries`); the check requires the actual
+  directory's trailing segments to equal the expected directory's segments one-for-one
+  (`StringComparer.Ordinal`), rather than testing whether the raw string ends with the expected
+  substring. `"evilcallboard"` is never equal to the segment `"callboard"`, no matter how their
+  characters overlap at the tail, so the collision the reviewer found no longer passes. This also
+  drops the old manual trailing-slash bookkeeping (`EndsWith('/') ? … : … += "/"`), since
+  segment-splitting makes it moot. Considered the full family named in the brief: string-prefix
+  vs directory-prefix (closed by segment comparison, not substring), trailing separators (dropped
+  by `RemoveEmptyEntries`), relative/empty `changeName` (already refused upstream by
+  `CardLayout.RequireChangeName`/`RequireSafePathSegment`, unchanged), normalisation
+  (`Path.GetFullPath` still resolves `..` before segmenting, unchanged from the prior fix).
+- **Refusal-path tests added** — four, all against the real `CardStore.WriteCard`/`AppendComment`
+  entry points, none reflection-based:
+  - `WriteCard_RefusesAChangeScopedCard_WhenNoChangeNameIsSupplied` — the
+    `ArgumentException`-to-`Failure` catch/convert at the `CardStore` boundary (only
+    `CardLayoutTests` exercised `CardLayout.DirectoryFor` throwing in isolation before; nothing
+    proved `CardStore` actually catches it).
+  - `WriteCard_RefusesWhenTheFilePathDoesNotLiveInTheScopesLayoutDirectory` — the ordinary
+    wrong-directory case (Repository-scoped card written into the change-scoped directory).
+  - `WriteCard_RefusesADirectoryThatMerelyEndsWithTheExpectedDirectorysCharacters` — the exact
+    `evilcallboard`/`register` suffix-collision shape named in the brief; reverting to
+    `EndsWith(expectedDirectory)` makes this fail.
+  - `AppendComment_RefusesWhenTheFilePathDoesNotLiveInTheDirectoryTheCardsOwnScopeRequires` —
+    the second call site (`AppendCommentUnderExistingLock`), copying a legitimately-written card
+    to a mismatched path and appending from there.
+
+**Guard-refusal-test audit across the whole remediation block, per the standard.** Walked every
+guard the four blockers touch:
+- **Blocker 1 (`TryBreakStaleLock`)** — already carries a dedicated refusal test
+  (`Acquire_DoesNotDeleteALiveLock_WonByAnotherWaiterBetweenJudgingTheHolderDeadAndDeleting`),
+  confirmed by the reviewer's own re-audit that reverting the fix fails it. Nothing to add.
+- **Blocker 2 (`ValidateAgainstLayout`)** — this was the actual gap; closed above with four tests
+  covering both call sites, the ordinary mismatch, the adversarial suffix collision, and the
+  upstream `ArgumentException` conversion.
+- **Blockers 3/4 (unknown-field preservation, header escaping)** — these are round-trip
+  invariants, not refusal guards (nothing here refuses a write; a malformed value on disk is
+  preserved verbatim or escaped/unescaped symmetrically). The standard doesn't apply directly, but
+  checked anyway: `AppendComment_PreservesAnUnrecognisedFrontmatterField_ThatWasAlreadyOnDisk` and
+  the escaping round-trip tests already assert the actual preserved/reversed content, not just
+  "didn't throw" — the equivalent of a refusal-fires test for a format guarantee.
+- Also checked `CardLock`'s and `CardLayout`'s other guards while auditing (outside the four
+  blockers but adjacent): `Acquire_TimesOut…`, `Dispose_DoesNotDeleteALockFile…`,
+  `Acquire_DoesNotBreakAFreshEmptyLock…`, `Acquire_DoesNotBreakALock_WhoseContentIsNonEmpty…`,
+  `RequireChangeName`'s and `RequireSafePathSegment`'s `Assert.Throws<ArgumentException>` cases —
+  all assert the refusal actually fires (a lock stays un-deleted, a value stays un-broken), not
+  just that a happy path passes. No further gap found in this block.
+
+**Nit taken: escape/unescape duplication collapsed.** `CardFileFormat.cs` — the two `Unescape*`
+methods now both route through one private `UnescapeUsing(string, IReadOnlyDictionary<char,char>)`
+that reverses a leading-backslash escape by table lookup (`\\` always maps to `\`, the second
+character otherwise looked up in a per-format table: `n`→`\n`/`r`→`\r` for frontmatter, `s`→` `
+for the comment header). The two `Escape*` methods stay separate — their substitution *tables*
+genuinely differ in the forward direction only by which characters need escaping, and collapsing
+those too would need a differently-shaped abstraction (a set of forward substitutions vs. a
+reverse lookup table) for no real gain. Behaviour unchanged; existing round-trip tests (not
+touched) still pass unmodified — this was a pure internal refactor.
+
+**Left alone per the brief:** `CardFile`'s missing `Equals`/`GetHashCode` (→ `## NEXT`, pre-existing),
+the empty comment-header-value test and the `Ordinal`/case-sensitivity nit (routed by @architect).
+
+**Verification.** `make build` → `BUILD_EXIT:0`. 30/30 sandboxed `make test` runs, each
+`TEST_EXIT:0`, each `total: 81 succeeded: 81 failed: 0` — no flake across the sweep. `make gates` →
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the §2 remediation block — the round closing my two prior fix-before-land
+findings on blocker 2's fix. Scope confined to `CardStore.cs`, `CardFileFormat.cs` (nit), and
+`CardStoreWriteTests.cs`, per the brief; blockers 1, 3 and 4 not reopened.
+
+**1. The segment-anchored check — attacked directly, not read.** `ValidateAgainstLayout`
+(`CardStore.cs:156-192`) now splits both `actualDirectory` (post-`Path.GetFullPath`) and
+`expectedDirectory` (the literal relative string `CardLayout.DirectoryFor` returns) into `/`-segments
+with `RemoveEmptyEntries`, and requires the actual directory's *trailing* `expectedSegments.Length`
+segments to `SequenceEqual` the expected ones under `StringComparer.Ordinal`. Traced each case named in
+the brief:
+- `evilcallboard/register/` — segments `[…, "evilcallboard", "register"]` vs expected
+  `["callboard", "register"]`. `"evilcallboard" != "callboard"` as a whole segment → refused. The
+  original collision is closed.
+- Legitimate nested directory (`.../callboard/changes/<name>/`) — matches by construction, since
+  `CardLayout.ChangesDirectory` is exactly what's compared against.
+- Trailing separators on either side — absorbed by `RemoveEmptyEntries`; `Path.GetFullPath` doesn't
+  emit one on the actual side and the literal expected strings' trailing `/` produces one empty entry
+  that's dropped. No effect on segment count either way.
+- `.`/`..` surviving normalisation — `Path.GetFullPath` resolves them before segmenting; nothing to
+  survive.
+- Absolute vs relative `expectedDirectory` — `expectedDirectory` is always the bare relative string
+  `CardLayout` returns (e.g. `"callboard/register/"`); the comparison never makes it absolute, and
+  doesn't need to, since it only ever reads the actual side's tail.
+- Empty/whitespace `changeName` — empty throws via `RequireChangeName`/`RequireSafePathSegment` before
+  reaching the comparison (covered by the new `WriteCard_RefusesAChangeScopedCard_WhenNoChangeNameIsSupplied`
+  test). A pure-whitespace name (e.g. `" "`) is *not* rejected by `RequireSafePathSegment` — it contains
+  no separator, no `..`, isn't literally `.`/`..` — so it would resolve to a directory literally named
+  `" "`. That's `CardLayout`'s pre-existing behaviour, untouched by this round and outside blocker 2's
+  scope; noting it as a nit, not reopening it here.
+- **The trailing-slice question, answered plainly.** Because `expectedDirectory` is always a *relative*
+  literal with no repo-root anchor, the check can only ever constrain the tail — it has no way to
+  object to whatever precedes those segments, by design, not by this fix's omission. A path like
+  `/anywhere/outside/the/repo/callboard/register/x.md` would still pass, same as it would have passed
+  (modulo the boundary bug) under the old `EndsWith` check. That is **not** a regression this round
+  introduced and **not** the collision blocker 2 named — the named attack (a same-length, wrong-name
+  sibling directory) is now unrepresentable. What remains representable — an entirely different root
+  with a correctly-shaped tail — is a property of `CardLayout` never carrying a root at all, and matters
+  only once something outside this block starts constructing `filePath` from untrusted input.
+  `CardStore` still has **zero production callers** (confirmed: no `CardStore.WriteCard`/
+  `AppendComment` call site outside `CardStore.cs` itself), so this isn't exploitable today. Flagging it
+  as an architectural note for whichever section first wires the CLI to `CardStore` — that caller needs
+  to anchor `filePath` to the real repo root itself, since this check will not do it for them.
+
+**2. The four new tests — checked against the old `EndsWith` logic by hand-tracing, not by reverting the
+file (this agent's DEVLOG-only write boundary doesn't permit a working revert-and-run).**
+- `WriteCard_RefusesADirectoryThatMerelyEndsWithTheExpectedDirectorysCharacters` — the load-bearing one.
+  Under the old code (`actualDirectory.EndsWith(expectedDirectory)`, with the trailing-slash bookkeeping
+  the worker's report says the old code did), `".../evilcallboard/register/"` ends with
+  `"callboard/register/"` character-for-character, so the old check would have returned a match and the
+  write would have **succeeded** — the test's `AssertFailure` would fail. This test genuinely pins the
+  regression.
+- `WriteCard_RefusesAChangeScopedCard_WhenNoChangeNameIsSupplied` — exercises the pre-existing
+  `ArgumentException`→`Failure` catch, unrelated to the suffix-vs-segment comparison; would pass under
+  either implementation. Still a legitimate addition — it's the first test proving that catch fires at
+  the `CardStore` boundary rather than only on `CardLayout.DirectoryFor` in isolation.
+- `WriteCard_RefusesWhenTheFilePathDoesNotLiveInTheScopesLayoutDirectory` and
+  `AppendComment_RefusesWhenTheFilePathDoesNotLiveInTheDirectoryTheCardsOwnScopeRequires` — both use an
+  actual directory whose tail shares no characters with the expected one at all (`.../changes/<name>/`
+  vs `callboard/register/`), so both would also refuse under the old `EndsWith` check. Legitimate
+  coverage of the ordinary-mismatch case and the second call site, but neither distinguishes old from
+  new comparison logic.
+  So: one of the four is the actual regression pin; the other three are genuine, previously-missing
+  refusal coverage the standing rule asked for, not padding. That matches what "every guard lands with a
+  test that it refuses" calls for across both call sites, not just the one collision shape.
+
+**3. The guard-refusal-test audit's conclusion on blockers 3/4 — holds.** Checked
+`CardFileParser.cs` for anything resembling a refusal in the unknown-field-preservation or
+comment-header-escaping paths and found none: the parser's `Failure` returns there are pre-existing
+format-level malformed-input cases (missing delimiters, unparseable lines), not anything blockers 3/4
+introduced. Preserving an unrecognised frontmatter key and escaping/unescaping a header value are both
+pure data transformations with no branch that refuses — there's nothing for a refusal test to target.
+The worker's characterisation is correct and the existing round-trip assertions (asserting the actual
+preserved/reversed content, not merely "didn't throw") are the right standard for this kind of
+guarantee.
+
+**4. `UnescapeUsing` — read against the pre-refactor `UnescapeFrontmatterValue`/
+`UnescapeCommentHeaderValue` bodies (diffed against `7184b05`) rather than taken on the worker's word.**
+The old per-format methods checked `next == 'n'`, then `'r'`, then `'\\'`, in that order, before falling
+through to append the literal backslash unchanged. The new shared method checks `'\\'` first, then the
+table. Since neither table maps any key to `'\\'` itself, the two orderings can never disagree — result
+is identical for every case: a recognised escape (`\n`, `\r`, `\s` per format), an escaped backslash
+(`\\`), an unrecognised escape character (backslash passed through literally, next character handled on
+its own next iteration — same in both), a trailing lone backslash (`i + 1 < value.Length` false in both,
+appended unchanged), and an empty input (`IndexOf('\\') < 0` short-circuit in both, unchanged). This is
+a pure refactor as claimed, not just claimed.
+
+Leaving `Escape*` unmerged is defensible but not fully argued. The stated reason — the forward tables
+"differ in shape" — is weaker than it looks: both `EscapeFrontmatterValue` and
+`EscapeCommentHeaderValue` are the same shape, a backslash-first `Replace` chain over a small
+char→string table, and a forward-direction mirror of `UnescapeUsing` (`Dictionary<char,string>`, scan
+and substitute) would unify them with no more contortion than `UnescapeUsing` itself needed. So the
+drift risk the original disposition wanted removed is only half-closed: the two `Unescape*` methods can
+no longer drift from each other, but the two `Escape*` methods still can. Non-blocking — this was
+explicitly a nit in the prior round, not a fix-before-land — but worth naming rather than accepting the
+"no real gain" framing at face value.
+
+**5. Nothing left inconsistent across `CardStore`, `CardFileFormat`, and the tests.** The doc comment
+on `ValidateAgainstLayout` correctly describes the segment-anchored comparison it now implements; the
+four new tests exercise both call sites (`WriteCard` and `AppendComment`/
+`AppendCommentUnderExistingLock`) the guard actually protects; and `CardStore.cs`'s zero-caller status
+(confirmed by grep) means the earlier "CardLayout had no production caller" framing is still accurate —
+this block wired `CardStore` to `CardLayout`, not the CLI to either.
+
+**Verification, reproduced independently.** `make build` → `BUILD_EXIT:0`. 20/20 sandboxed `make test`
+runs, each `TEST_EXIT:0`, `total: 81, succeeded: 81, failed: 0` — no flake, matches the worker's 30/30.
+`make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`.
+
+## Verdict: Approve
+
+Both fix-before-land findings from the prior round are closed: the suffix-collision is unrepresentable
+by construction (segment equality, not substring containment), and the collision shape now has a test
+that fails against the reverted comparison. Blockers 1, 3 and 4 remain closed, unchanged, not reopened.
+The one remaining item — the trailing-slice comparison's lack of a repo-root anchor — is real but is a
+property of `CardLayout`'s relative-path design, pre-dates this round, and has no production caller to
+exploit it yet; it belongs to whichever section first wires the CLI to `CardStore`, not to this
+remediation. Nothing outstanding on the §2 remediation block from this reviewer.
 
 → @architect

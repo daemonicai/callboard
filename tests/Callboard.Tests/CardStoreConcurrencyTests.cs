@@ -20,16 +20,27 @@ public sealed class CardStoreConcurrencyTests : IDisposable
 {
     private static readonly DateTimeOffset Created = new(2026, 8, 20, 9, 0, 0, TimeSpan.Zero);
 
-    private readonly string _directory =
+    private const string ChangeName = "establish-callboard";
+
+    private readonly string _root =
         Path.Combine(Path.GetTempPath(), "callboard-concurrency-tests-" + Guid.NewGuid().ToString("N"));
 
-    public CardStoreConcurrencyTests() => Directory.CreateDirectory(_directory);
+    private readonly string _directory;
+
+    public CardStoreConcurrencyTests()
+    {
+        // Cards written under a change name, not directly under the temp root — CardStore now
+        // validates every write against the scope-shaped directory CardLayout resolves, so a
+        // test's own paths have to be real ones (record-retrieval / D3), not an arbitrary temp dir.
+        _directory = Path.Combine(_root, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(_directory);
+    }
 
     public void Dispose()
     {
-        if (Directory.Exists(_directory))
+        if (Directory.Exists(_root))
         {
-            Directory.Delete(_directory, recursive: true);
+            Directory.Delete(_root, recursive: true);
         }
     }
 
@@ -39,20 +50,20 @@ public sealed class CardStoreConcurrencyTests : IDisposable
         var path = Path.Combine(_directory, "card.md");
         WriteInitialCard(path);
 
-        var commentA = new CardComment("C-A", CardOwner.Worker, Created, "First to acquire the lock.", null, null, false);
-        var commentB = new CardComment("C-B", CardOwner.Reviewer, Created, "Waits for A, then appends after.", null, null, false);
+        var commentA = new CardComment("C-A", CardOwner.Worker, Created, "First to acquire the lock.", null, null, false, []);
+        var commentB = new CardComment("C-B", CardOwner.Reviewer, Created, "Waits for A, then appends after.", null, null, false, []);
 
         // Hold the lock ourselves first, so B is guaranteed to still be waiting on it — the
         // ordering this test asserts is forced by that hold, not by timing luck.
         var held = AssertAcquired(CardLock.Acquire(path, TimeSpan.FromSeconds(5)));
 
         var appendBTask = Task.Run(
-            () => CardStore.AppendComment(path, commentB, TimeSpan.FromSeconds(10)),
+            () => CardStore.AppendComment(path, commentB, TimeSpan.FromSeconds(10), ChangeName),
             TestContext.Current.CancellationToken);
 
         // B cannot possibly have acquired the lock yet — we are still holding it — so appending A
         // now, still under our hold, is guaranteed to land first regardless of scheduling.
-        var resultA = CardStore.AppendCommentUnderExistingLock(path, commentA);
+        var resultA = CardStore.AppendCommentUnderExistingLock(path, commentA, ChangeName);
         AssertSuccess(resultA);
 
         held.Dispose();
@@ -74,7 +85,7 @@ public sealed class CardStoreConcurrencyTests : IDisposable
 
         const int appendCount = 20;
         var comments = Enumerable.Range(0, appendCount)
-            .Select(i => new CardComment($"C-{i:D3}", CardOwner.Worker, Created, $"Comment {i}.", null, null, false))
+            .Select(i => new CardComment($"C-{i:D3}", CardOwner.Worker, Created, $"Comment {i}.", null, null, false, []))
             .ToList();
 
         // Dedicated threads, not the thread pool: CardLock.Acquire's retry loop blocks on
@@ -87,7 +98,7 @@ public sealed class CardStoreConcurrencyTests : IDisposable
             {
                 try
                 {
-                    AssertSuccess(CardStore.AppendComment(path, comment, TimeSpan.FromSeconds(30)));
+                    AssertSuccess(CardStore.AppendComment(path, comment, TimeSpan.FromSeconds(30), ChangeName));
                 }
                 catch (Exception ex)
                 {
@@ -124,7 +135,7 @@ public sealed class CardStoreConcurrencyTests : IDisposable
     {
         var frontmatter = new CardFrontmatter(
             "B-0200", CardKind.Block, "Concurrent appends", "open", CardOwner.Worker, CardScope.Change, "2", Created, Created);
-        AssertSuccess(CardStore.WriteCard(path, new CardFile(frontmatter, "Body.", []), TimeSpan.FromSeconds(5)));
+        AssertSuccess(CardStore.WriteCard(path, new CardFile(frontmatter, "Body.", [], []), TimeSpan.FromSeconds(5), ChangeName));
     }
 
     private static CardLock AssertAcquired(CardLockResult result) =>

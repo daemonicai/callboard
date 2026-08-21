@@ -109,6 +109,24 @@ namespace Callboard.Cards;
 /// everywhere it establishes or relies on ownership of the lock file: verify a file operation's
 /// effect immediately before acting on it, rather than assuming the effect persisted.
 /// </para>
+///
+/// <para>
+/// <b>The stale-holder break was the one site the rule above did not reach (§2 remediation,
+/// recorded for the DEVLOG):</b> <see cref="TryBreakStaleLock(string, Action{string}?)"/> reads a
+/// dead holder's recorded pid, confirms it via <see cref="Process.GetProcessById(int)"/> — not a
+/// cheap call — and, before this fix, deleted whatever file was then at the path on the strength
+/// of that now-stale read. Reached entirely through the crash-recovery path ADR-0003 calls
+/// expected: waiters <c>C1</c>, <c>C2</c>, <c>C3</c> all read the same dead pid; <c>C1</c> wins the
+/// delete-then-<see cref="TryCreate(string, out string, Action{string}?)"/> race and legitimately
+/// holds the card; <c>C2</c>, still between its own liveness check and its own delete, deletes
+/// <c>C1</c>'s live lock; <c>C3</c> then wins the now-free path — two holders, reached without
+/// either the release-by-content or the acquisition-by-verified-write fix above ever seeing
+/// anything wrong, because both are sound for the site each one guards and this was a third, only
+/// visible once every prior round's fix was assumed complete. The fix applies the same discipline
+/// as both prior fixes, at this one remaining site: re-read the file immediately before deleting
+/// and compare against the exact content this call itself judged dead, refusing to delete on any
+/// mismatch.
+/// </para>
 /// </summary>
 internal sealed class CardLock : IDisposable
 {
@@ -153,8 +171,20 @@ internal sealed class CardLock : IDisposable
     /// type's own doc comments spent several rounds closing in production code. Never passed outside
     /// tests; <see langword="null"/> (the default) makes this a no-op.
     /// </param>
+    /// <param name="testOnlyBeforeStaleDeleteHook">
+    /// Test-only seam, same discipline as <paramref name="testOnlyAfterWriteHook"/>: threaded
+    /// through to the private stale-lock-break helper, invoked immediately after it judges a
+    /// lock's recorded holder dead and before its own compare-then-delete re-read, given the lock
+    /// path. Lets a test deterministically stand in for a second waiter racing ahead of this call
+    /// between the (not cheap) liveness check and the delete — substituting the file with a live
+    /// lock a faster waiter has already won — without an actual multi-thread race. Never passed
+    /// outside tests; <see langword="null"/> (the default) makes this a no-op.
+    /// </param>
     internal static CardLockResult Acquire(
-        string cardPath, TimeSpan timeout, Action<string>? testOnlyAfterWriteHook = null)
+        string cardPath,
+        TimeSpan timeout,
+        Action<string>? testOnlyAfterWriteHook = null,
+        Action<string>? testOnlyBeforeStaleDeleteHook = null)
     {
         var lockPath = cardPath + ".lock";
         var deadline = DateTimeOffset.UtcNow + timeout;
@@ -172,7 +202,7 @@ internal sealed class CardLock : IDisposable
             // than looping past it. ADR-0003 makes the timeout load-bearing: a crashed agent must
             // not leave a card unwritable forever, but a caller waiting on this one must not wait
             // longer than it asked to either.
-            TryBreakStaleLock(lockPath);
+            TryBreakStaleLock(lockPath, testOnlyBeforeStaleDeleteHook);
 
             if (DateTimeOffset.UtcNow >= deadline)
             {
@@ -295,9 +325,9 @@ internal sealed class CardLock : IDisposable
         }
     }
 
-    private static bool TryBreakStaleLock(string lockPath)
+    private static bool TryBreakStaleLock(string lockPath, Action<string>? testOnlyBeforeStaleDeleteHook = null)
     {
-        if (!TryReadHolderPid(lockPath, out var pid))
+        if (!TryReadLockContent(lockPath, out var content) || !TryParsePid(content, out var pid))
         {
             // Content that fails to parse is either a live holder mid-write of a real pid, or an
             // orphaned zero-byte file left by a holder killed before it ever wrote one — those two
@@ -311,8 +341,26 @@ internal sealed class CardLock : IDisposable
             return false;
         }
 
+        testOnlyBeforeStaleDeleteHook?.Invoke(lockPath);
+
         try
         {
+            // Compare-then-delete against the exact content just judged dead, not delete-by-path:
+            // Process.GetProcessById above is not cheap, and by the time it returns, another
+            // waiter can have raced through this same branch ahead of us, deleted this same dead
+            // holder's file, won CreateNew, written, and self-verified — a live lock now sits at
+            // lockPath that belongs to that waiter, not to the dead pid we just judged. A blind
+            // File.Delete here would release that waiter's live lock out from under it, letting a
+            // third contender acquire while the second still believes it holds the card — the
+            // same "two writers on one card" shape Dispose's and TryBreakOrphanedEmptyLock's own
+            // compare-then-delete already exist to prevent, reached here via the one ownership
+            // site that used to delete on the strength of a read that was, by now, several file
+            // and process operations old.
+            if (File.ReadAllText(lockPath) != content)
+            {
+                return false;
+            }
+
             File.Delete(lockPath);
             return true;
         }
@@ -390,21 +438,38 @@ internal sealed class CardLock : IDisposable
 
     private static bool TryReadHolderPid(string lockPath, out int pid)
     {
-        pid = 0;
+        if (TryReadLockContent(lockPath, out var content))
+        {
+            return TryParsePid(content, out pid);
+        }
 
+        pid = 0;
+        return false;
+    }
+
+    private static bool TryReadLockContent(string lockPath, out string content)
+    {
         try
         {
-            // Content is "pid\nnonce" for a lock this build created, but a lock written before
-            // this nonce existed (or fabricated by a test) is still just a bare pid — reading
-            // only the first line handles both without caring which shape produced it.
-            var text = File.ReadAllText(lockPath);
-            var firstLine = text.Split('\n', 2)[0].Trim();
-            return int.TryParse(firstLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out pid);
+            content = File.ReadAllText(lockPath);
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            content = string.Empty;
             return false;
         }
+    }
+
+    /// <summary>
+    /// Content is "pid\nnonce" for a lock this build created, but a lock written before this
+    /// nonce existed (or fabricated by a test) is still just a bare pid — reading only the first
+    /// line handles both without caring which shape produced it.
+    /// </summary>
+    private static bool TryParsePid(string content, out int pid)
+    {
+        var firstLine = content.Split('\n', 2)[0].Trim();
+        return int.TryParse(firstLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out pid);
     }
 
     private static bool IsProcessAlive(int pid)

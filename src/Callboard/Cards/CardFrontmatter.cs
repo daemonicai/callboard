@@ -10,6 +10,14 @@ namespace Callboard.Cards;
 /// 4.2's job; this type only carries the value.</param>
 /// <param name="Section">The section a card was raised within, or <see cref="string.Empty"/> when
 /// the card is not tied to one.</param>
+/// <remarks>
+/// A field this build's parser does not recognise — a §5/§6 field on a card written by a newer
+/// build, or a line a human hand-added — is <b>not</b> modelled here: it is carried on
+/// <see cref="CardFile.UnknownFrontmatterFields"/> instead, verbatim, and re-emitted on the next
+/// write rather than silently dropped. Keeping it off this type (rather than, say, a catch-all
+/// dictionary here) keeps <see cref="CardFrontmatter"/> equality meaningful for known fields only —
+/// exactly what block A's tests already compare it by.
+/// </remarks>
 internal sealed record CardFrontmatter(
     string Id,
     CardKind Kind,

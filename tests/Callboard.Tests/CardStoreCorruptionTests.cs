@@ -15,16 +15,24 @@ public sealed class CardStoreCorruptionTests : IDisposable
 {
     private static readonly DateTimeOffset Created = new(2026, 8, 20, 9, 0, 0, TimeSpan.Zero);
 
-    private readonly string _directory =
+    private const string ChangeName = "establish-callboard";
+
+    private readonly string _root =
         Path.Combine(Path.GetTempPath(), "callboard-corruption-tests-" + Guid.NewGuid().ToString("N"));
 
-    public CardStoreCorruptionTests() => Directory.CreateDirectory(_directory);
+    private readonly string _directory;
+
+    public CardStoreCorruptionTests()
+    {
+        _directory = Path.Combine(_root, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(_directory);
+    }
 
     public void Dispose()
     {
-        if (Directory.Exists(_directory))
+        if (Directory.Exists(_root))
         {
-            Directory.Delete(_directory, recursive: true);
+            Directory.Delete(_root, recursive: true);
         }
     }
 
@@ -106,10 +114,10 @@ public sealed class CardStoreCorruptionTests : IDisposable
         var frontmatter = new CardFrontmatter(
             id.ToUpperInvariant(), CardKind.Block, "Title " + id, "open", CardOwner.Worker, CardScope.Change, "2", Created, Created);
         var comments = withComment
-            ? new[] { new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, false) }
+            ? new[] { new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, false, []) }
             : [];
 
-        var write = CardStore.WriteCard(path, new CardFile(frontmatter, "Body.", comments), TimeSpan.FromSeconds(5));
+        var write = CardStore.WriteCard(path, new CardFile(frontmatter, "Body.", comments, []), TimeSpan.FromSeconds(5), ChangeName);
         write.Match<object?>(
             onSuccess: static _ => null,
             onFailure: failure => throw new Xunit.Sdk.XunitException($"setup write failed: {failure.Reason}"));

@@ -19,6 +19,21 @@ internal static class CardFileParser
 {
     private static readonly string[] LineSplitSeparators = ["\n"];
 
+    // The nine frontmatter keys 2.1's schema defines. Anything else is an unknown field — carried
+    // verbatim on CardFile.UnknownFrontmatterFields rather than dropped; see that member's doc
+    // comment for the extensibility rule this implements.
+    private static readonly HashSet<string> KnownFrontmatterKeys = new(StringComparer.Ordinal)
+    {
+        "id", "kind", "title", "status", "owner", "scope", "section", "created", "updated",
+    };
+
+    // The six comment-header fields this build recognises. Same rule, same reason, applied to the
+    // per-comment header instead of the frontmatter block.
+    private static readonly HashSet<string> KnownCommentHeaderKeys = new(StringComparer.Ordinal)
+    {
+        "id", "author", "reply-to", "to", "resolved", "timestamp",
+    };
+
     internal static CardFileParseResult Parse(string rawText)
     {
         // CardFileWriter.Serialize always terminates its output with exactly one trailing '\n'
@@ -38,6 +53,7 @@ internal static class CardFileParser
         cursor++;
 
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        var unknownFrontmatterFields = new List<(string Key, string RawValue)>();
 
         while (true)
         {
@@ -63,6 +79,12 @@ internal static class CardFileParser
             var key = line[..separatorIndex];
             var value = line[(separatorIndex + 2)..];
             fields[key] = value;
+
+            if (!KnownFrontmatterKeys.Contains(key))
+            {
+                unknownFrontmatterFields.Add((key, value));
+            }
+
             cursor++;
         }
 
@@ -126,8 +148,10 @@ internal static class CardFileParser
 
             cursor++; // consume the footer line
 
-            // headerFieldsResult.Failure is null here, so Fields is guaranteed non-null by BuildComment's own contract.
-            var commentResult = BuildComment(headerFieldsResult.Fields!, string.Join('\n', commentBodyLines));
+            // headerFieldsResult.Failure is null here, so Fields/UnknownFields are guaranteed
+            // non-null by ParseCommentHeaderFields's own contract.
+            var commentResult = BuildComment(
+                headerFieldsResult.Fields!, headerFieldsResult.UnknownFields!, string.Join('\n', commentBodyLines));
             if (commentResult.Failure is { } commentFailure)
             {
                 return Failure(commentFailure);
@@ -138,7 +162,8 @@ internal static class CardFileParser
         }
 
         // frontmatterResult.Failure is null here, so Frontmatter is guaranteed non-null by BuildFrontmatter's own contract.
-        return new CardFileParseResult.Success(new CardFile(frontmatterResult.Frontmatter!, body, comments));
+        return new CardFileParseResult.Success(
+            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields));
     }
 
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
@@ -222,9 +247,11 @@ internal static class CardFileParser
         return (new CardFrontmatter(id, kind, title, status, owner, scope, section, created, updated), null);
     }
 
-    private static (IReadOnlyDictionary<string, string>? Fields, string? Failure) ParseCommentHeaderFields(string headerFieldsText)
+    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
+        ParseCommentHeaderFields(string headerFieldsText)
     {
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        var unknownFields = new List<(string Key, string RawValue)>();
 
         if (headerFieldsText.Length > 0)
         {
@@ -233,24 +260,34 @@ internal static class CardFileParser
                 var equalsIndex = token.IndexOf('=');
                 if (equalsIndex < 0)
                 {
-                    return (null, $"malformed comment header field: '{token}'");
+                    return (null, null, $"malformed comment header field: '{token}'");
                 }
 
-                fields[token[..equalsIndex]] = token[(equalsIndex + 1)..];
+                var key = token[..equalsIndex];
+                var rawValue = token[(equalsIndex + 1)..];
+                fields[key] = rawValue;
+
+                if (!KnownCommentHeaderKeys.Contains(key))
+                {
+                    unknownFields.Add((key, rawValue));
+                }
             }
         }
 
-        return (fields, null);
+        return (fields, unknownFields, null);
     }
 
     private static (CardComment? Comment, string? Failure) BuildComment(
         IReadOnlyDictionary<string, string> fields,
+        IReadOnlyList<(string Key, string RawValue)> unknownFields,
         string body)
     {
-        if (!fields.TryGetValue("id", out var id))
+        if (!fields.TryGetValue("id", out var rawId))
         {
             return (null, "comment missing required field: id");
         }
+
+        var id = CardFileFormat.UnescapeCommentHeaderValue(rawId);
 
         if (!fields.TryGetValue("author", out var authorText))
         {
@@ -272,7 +309,9 @@ internal static class CardFileParser
             return (null, $"comment '{id}' has invalid timestamp: '{timestampText}'");
         }
 
-        string? replyTo = fields.TryGetValue("reply-to", out var replyToText) ? replyToText : null;
+        string? replyTo = fields.TryGetValue("reply-to", out var replyToText)
+            ? CardFileFormat.UnescapeCommentHeaderValue(replyToText)
+            : null;
 
         CardOwner? to = null;
         if (fields.TryGetValue("to", out var toText))
@@ -302,7 +341,7 @@ internal static class CardFileParser
             }
         }
 
-        return (new CardComment(id, author, timestamp, body, replyTo, to, resolved), null);
+        return (new CardComment(id, author, timestamp, body, replyTo, to, resolved, unknownFields), null);
     }
 
     private static bool TryParseTimestamp(string value, out DateTimeOffset timestamp) =>

@@ -59,6 +59,12 @@ internal static class CardFileFormat
     internal static bool IsCommentFooter(string line) =>
         string.Equals(line, CommentFooter, StringComparison.Ordinal);
 
+    private static readonly IReadOnlyDictionary<char, char> FrontmatterEscapeTable =
+        new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r' };
+
+    private static readonly IReadOnlyDictionary<char, char> CommentHeaderEscapeTable =
+        new Dictionary<char, char> { ['s'] = ' ' };
+
     /// <summary>
     /// Escapes a free-text frontmatter field value (<c>id</c>/<c>title</c>/<c>status</c>/
     /// <c>section</c>) so it always occupies exactly one physical line. Frontmatter is
@@ -74,7 +80,44 @@ internal static class CardFileFormat
             .Replace("\r", "\\r", StringComparison.Ordinal);
 
     /// <summary>Reverses <see cref="EscapeFrontmatterValue"/>.</summary>
-    internal static string UnescapeFrontmatterValue(string value)
+    internal static string UnescapeFrontmatterValue(string value) => UnescapeUsing(value, FrontmatterEscapeTable);
+
+    /// <summary>
+    /// Escapes a free-text comment-header field value (<c>id</c>/<c>reply-to</c> — the only two
+    /// fields in the header that are free text rather than a closed enum or a fixed-format
+    /// timestamp) so it can never be misread by the parser's own space-split tokenising of the
+    /// header. The header is <c>key=value</c> tokens joined by a single literal
+    /// space (see <see cref="CardFileWriter"/>), so the one character that would otherwise split a
+    /// value across tokens on the read side is the space itself — a backslash is escaped first, the same
+    /// invertibility discipline <see cref="EscapeFrontmatterValue"/> already applies, then every
+    /// space becomes <c>\s</c>. A literal <c>=</c> inside a value needs no escaping: the parser
+    /// splits each token on its <em>first</em> <c>=</c> only, and the fixed key literal
+    /// (<c>id</c>/<c>reply-to</c>) never itself contains one, so that first match is always the
+    /// true key/value boundary regardless of how many further <c>=</c> characters the value holds.
+    /// Escaping every space this way also closes the header-terminator lookalike the reviewer's
+    /// argument named: the terminator is <c>" -->"</c>, and its leading character is a literal
+    /// space — once every space in an escaped value has become the two-character <c>\s</c>, no
+    /// unescaped space (and so no literal <c>" -->"</c>) can ever occur inside it.
+    /// </summary>
+    internal static string EscapeCommentHeaderValue(string value) =>
+        value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace(" ", "\\s", StringComparison.Ordinal);
+
+    /// <summary>Reverses <see cref="EscapeCommentHeaderValue"/>.</summary>
+    internal static string UnescapeCommentHeaderValue(string value) => UnescapeUsing(value, CommentHeaderEscapeTable);
+
+    /// <summary>
+    /// The one unescape shape both <see cref="UnescapeFrontmatterValue"/> and
+    /// <see cref="UnescapeCommentHeaderValue"/> reduce to: scan for a backslash, and if the
+    /// character after it is a key in <paramref name="table"/>, substitute the mapped character
+    /// and consume both; an escaped backslash (<c>\\</c>) is always reversed regardless of the
+    /// table, since both escapers escape a literal backslash the same way first. Anything else
+    /// (an unescaped run, or a backslash the table doesn't recognise) passes through verbatim.
+    /// Kept as one implementation so the two formats' escaping can never drift apart from each
+    /// other by accident — only their substitution tables genuinely differ.
+    /// </summary>
+    private static string UnescapeUsing(string value, IReadOnlyDictionary<char, char> table)
     {
         if (value.IndexOf('\\') < 0)
         {
@@ -87,23 +130,16 @@ internal static class CardFileFormat
             if (value[i] == '\\' && i + 1 < value.Length)
             {
                 var next = value[i + 1];
-                if (next == 'n')
-                {
-                    builder.Append('\n');
-                    i++;
-                    continue;
-                }
-
-                if (next == 'r')
-                {
-                    builder.Append('\r');
-                    i++;
-                    continue;
-                }
-
                 if (next == '\\')
                 {
                     builder.Append('\\');
+                    i++;
+                    continue;
+                }
+
+                if (table.TryGetValue(next, out var mapped))
+                {
+                    builder.Append(mapped);
                     i++;
                     continue;
                 }

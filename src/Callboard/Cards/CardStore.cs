@@ -25,9 +25,20 @@ namespace Callboard.Cards;
 /// </summary>
 internal static class CardStore
 {
-    /// <summary>Writes a new card file, or fully replaces an existing one at the same path.</summary>
-    internal static CardWriteResult WriteCard(string filePath, CardFile card, TimeSpan lockTimeout)
+    /// <summary>
+    /// Writes a new card file, or fully replaces an existing one at the same path.
+    /// <paramref name="changeName"/> is required exactly when <c>card.Frontmatter.Scope</c> is
+    /// <see cref="CardScope.Change"/> or <see cref="CardScope.Section"/> — see
+    /// <see cref="ValidateAgainstLayout"/>.
+    /// </summary>
+    internal static CardWriteResult WriteCard(string filePath, CardFile card, TimeSpan lockTimeout, string? changeName = null)
     {
+        var layoutFailure = ValidateAgainstLayout(filePath, card.Frontmatter.Scope, changeName);
+        if (layoutFailure is not null)
+        {
+            return layoutFailure;
+        }
+
         // The containing directory has to exist before the lock file beside the target can be
         // created — done here, ahead of acquiring the lock, rather than only inside AtomicWrite,
         // or a brand-new card's first write would spend its whole lock-acquire loop retrying a
@@ -47,10 +58,12 @@ internal static class CardStore
     /// Appends <paramref name="comment"/> to the card at <paramref name="filePath"/>: reads the
     /// current file, parses it, adds the comment, and writes the result back — all under the
     /// card's lock, so two concurrent appends serialise rather than racing (record-retrieval:
-    /// "the thread's order is preserved").
+    /// "the thread's order is preserved"). <paramref name="changeName"/> is passed through to the
+    /// same layout reconciliation <see cref="WriteCard"/> applies, checked against the scope the
+    /// card itself declares once it has been read — see <see cref="ValidateAgainstLayout"/>.
     /// </summary>
-    internal static CardWriteResult AppendComment(string filePath, CardComment comment, TimeSpan lockTimeout) =>
-        WithLock(filePath, lockTimeout, () => AppendCommentUnderExistingLock(filePath, comment));
+    internal static CardWriteResult AppendComment(string filePath, CardComment comment, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(filePath, lockTimeout, () => AppendCommentUnderExistingLock(filePath, comment, changeName));
 
     /// <summary>
     /// The read-modify-write step of <see cref="AppendComment"/>, exposed separately so a test can
@@ -60,7 +73,7 @@ internal static class CardStore
     /// Production code never calls this without holding the lock first; <see cref="AppendComment"/>
     /// is the only production caller.
     /// </summary>
-    internal static CardWriteResult AppendCommentUnderExistingLock(string filePath, CardComment comment)
+    internal static CardWriteResult AppendCommentUnderExistingLock(string filePath, CardComment comment, string? changeName = null)
     {
         if (!File.Exists(filePath))
         {
@@ -71,6 +84,12 @@ internal static class CardStore
         return current.Match<CardWriteResult>(
             onSuccess: success =>
             {
+                var layoutFailure = ValidateAgainstLayout(filePath, success.Card.Frontmatter.Scope, changeName);
+                if (layoutFailure is not null)
+                {
+                    return layoutFailure;
+                }
+
                 var updated = success.Card with { Comments = [.. success.Card.Comments, comment] };
                 return AtomicWrite(filePath, CardFileWriter.Serialize(updated));
             },
@@ -120,6 +139,57 @@ internal static class CardStore
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Both writes reach disk only through this: the boundary block B's traversal guard was
+    /// supposed to guard, and did not, because <see cref="CardLayout"/> had no production caller
+    /// until this. Resolves the directory <paramref name="scope"/> belongs in via
+    /// <see cref="CardLayout.DirectoryFor"/> — which itself validates <paramref name="changeName"/>
+    /// via <see cref="CardLayout.RequireSafePathSegment"/> — and requires <paramref name="filePath"/>
+    /// to actually resolve into it. This is what reconciles the record's two independent
+    /// statements of a card's scope: <c>frontmatter.Scope</c> and the directory the file lives in
+    /// can no longer disagree without the write being refused. <see cref="Path.GetFullPath(string)"/>
+    /// resolves away any <c>..</c> segments before the comparison, so a path that only looks
+    /// correct before resolution cannot pass by construction.
+    ///
+    /// <para>
+    /// The comparison itself is <b>path-segment anchored</b>, not a raw string suffix match: both
+    /// sides are split into segments and the actual directory's trailing segments must equal the
+    /// expected directory's segments exactly, one for one. A raw <c>string.EndsWith</c> would let
+    /// a directory whose name merely *ends with* the same characters (e.g.
+    /// <c>.../evilcallboard/register/</c> against an expected <c>callboard/register/</c>) pass,
+    /// because nothing constrains what precedes the matched substring. Comparing whole segments
+    /// closes that: <c>"evilcallboard"</c> is never equal to <c>"callboard"</c> as a segment, no
+    /// matter how their characters overlap at the boundary.
+    /// </para>
+    /// </summary>
+    private static CardWriteResult.Failure? ValidateAgainstLayout(string filePath, CardScope scope, string? changeName)
+    {
+        string expectedDirectory;
+        try
+        {
+            expectedDirectory = CardLayout.DirectoryFor(scope, changeName);
+        }
+        catch (ArgumentException ex)
+        {
+            return new CardWriteResult.Failure(ex.Message);
+        }
+
+        var directory = Path.GetDirectoryName(filePath);
+        var actualDirectory = Path.GetFullPath(string.IsNullOrEmpty(directory) ? "." : directory)
+            .Replace(Path.DirectorySeparatorChar, '/');
+
+        var actualSegments = actualDirectory.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var expectedSegments = expectedDirectory.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        var matches = actualSegments.Length >= expectedSegments.Length
+            && actualSegments[^expectedSegments.Length..].SequenceEqual(expectedSegments, StringComparer.Ordinal);
+
+        return matches
+            ? null
+            : new CardWriteResult.Failure(
+                $"'{filePath}' does not live in the directory a '{scope.ToWireString()}'-scoped card belongs in ('{expectedDirectory}').");
     }
 
     private static CardWriteResult WithLock(string filePath, TimeSpan lockTimeout, Func<CardWriteResult> action)

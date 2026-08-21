@@ -20,7 +20,7 @@ public sealed class CardFileRoundTripTests
             Section: "2",
             Created: Created,
             Updated: Updated);
-        var card = new CardFile(frontmatter, "The frontmatter schema and the delimited comment format.", []);
+        var card = new CardFile(frontmatter, "The frontmatter schema and the delimited comment format.", [], []);
 
         var serialized = CardFileWriter.Serialize(card);
         var result = CardFileParser.Parse(serialized);
@@ -44,7 +44,7 @@ public sealed class CardFileRoundTripTests
             Section: string.Empty,
             Created,
             Updated);
-        var card = new CardFile(frontmatter, "Not raised within any particular section.", []);
+        var card = new CardFile(frontmatter, "Not raised within any particular section.", [], []);
 
         var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
 
@@ -74,7 +74,8 @@ public sealed class CardFileRoundTripTests
             "This switch has no compile-time closure.",
             ReplyTo: null,
             To: CardOwner.Architect,
-            Resolved: false);
+            Resolved: false,
+            UnknownHeaderFields: []);
         var reply = new CardComment(
             "C-0002",
             CardOwner.Architect,
@@ -82,7 +83,8 @@ public sealed class CardFileRoundTripTests
             "Agreed — fix before land.",
             ReplyTo: "C-0001",
             To: CardOwner.Worker,
-            Resolved: true);
+            Resolved: true,
+            UnknownHeaderFields: []);
         var unaddressed = new CardComment(
             "C-0003",
             CardOwner.Worker,
@@ -90,9 +92,10 @@ public sealed class CardFileRoundTripTests
             "Done — ICommandResult closes it at compile time.",
             ReplyTo: null,
             To: null,
-            Resolved: false);
+            Resolved: false,
+            UnknownHeaderFields: []);
 
-        var card = new CardFile(frontmatter, "Body text.", [first, reply, unaddressed]);
+        var card = new CardFile(frontmatter, "Body text.", [first, reply, unaddressed], []);
 
         var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
 
@@ -131,9 +134,10 @@ public sealed class CardFileRoundTripTests
             "A comment body that also looks like a footer: <!-- /callboard:comment -->",
             null,
             null,
-            false);
+            false,
+            []);
 
-        var card = new CardFile(frontmatter, trickyBody, [comment]);
+        var card = new CardFile(frontmatter, trickyBody, [comment], []);
 
         var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
 
@@ -147,7 +151,7 @@ public sealed class CardFileRoundTripTests
     {
         var frontmatter = new CardFrontmatter(
             "B-0001", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "1", Created, Updated);
-        var card = new CardFile(frontmatter, "Body.", []);
+        var card = new CardFile(frontmatter, "Body.", [], []);
 
         var serialized = CardFileWriter.Serialize(card);
         var lines = serialized.Split('\n');
@@ -178,7 +182,7 @@ public sealed class CardFileRoundTripTests
             "2",
             Created,
             Updated);
-        var card = new CardFile(frontmatter, "Body.", []);
+        var card = new CardFile(frontmatter, "Body.", [], []);
 
         var serialized = CardFileWriter.Serialize(card);
 
@@ -203,7 +207,7 @@ public sealed class CardFileRoundTripTests
             "2",
             Created,
             Updated);
-        var card = new CardFile(frontmatter, "Body.", []);
+        var card = new CardFile(frontmatter, "Body.", [], []);
 
         var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
 
@@ -223,12 +227,117 @@ public sealed class CardFileRoundTripTests
             "---not-a-fence---",
             Created,
             Updated);
-        var card = new CardFile(frontmatter, "Body.", []);
+        var card = new CardFile(frontmatter, "Body.", [], []);
 
         var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
 
         Assert.Equal(frontmatter.Id, parsed.Frontmatter.Id);
         Assert.Equal(frontmatter.Section, parsed.Frontmatter.Section);
+    }
+
+    [Fact]
+    public void Parse_AnUnrecognisedFrontmatterField_IsCarriedVerbatimAndSurvivesASerializeParseCycle()
+    {
+        const string raw =
+            "---\n" +
+            "id: X-0001\n" +
+            "kind: block\n" +
+            "title: t\n" +
+            "status: open\n" +
+            "owner: worker\n" +
+            "scope: change\n" +
+            "section: 1\n" +
+            "created: 2026-08-19T09:00:00+00:00\n" +
+            "updated: 2026-08-19T09:00:00+00:00\n" +
+            "base: B-0099\n" + // a §5 field this build's schema does not model
+            "---\n" +
+            "body\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+        Assert.Equal(("base", "B-0099"), Assert.Single(parsed.UnknownFrontmatterFields));
+
+        // Not dropped on the next write — the extensibility rule this remediation states: a
+        // read-modify-write cycle (what AppendComment does at the CardStore layer) must not
+        // silently destroy a field this build does not itself understand.
+        var reparsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(parsed)));
+        Assert.Equal(("base", "B-0099"), Assert.Single(reparsed.UnknownFrontmatterFields));
+        Assert.Equal(parsed.Frontmatter, reparsed.Frontmatter);
+        Assert.Equal(parsed.Body, reparsed.Body);
+    }
+
+    [Fact]
+    public void Parse_AnUnrecognisedCommentHeaderField_IsCarriedVerbatimAndSurvivesASerializeParseCycle()
+    {
+        const string raw =
+            "---\n" +
+            "id: X-0002\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 1\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
+            "---\n" +
+            "body\n" +
+            "<!-- callboard:comment id=C-0001 author=worker round=2 resolved=false timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "hello\n" +
+            "<!-- /callboard:comment -->\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+        var comment = Assert.Single(parsed.Comments);
+        Assert.Equal(("round", "2"), Assert.Single(comment.UnknownHeaderFields));
+
+        var reparsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(parsed)));
+        var reparsedComment = Assert.Single(reparsed.Comments);
+        Assert.Equal(comment, reparsedComment);
+    }
+
+    [Fact]
+    public void RoundTrips_CommentIdAndReplyToContainingSpacesAndBackslashes()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0103", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "2", Created, Updated);
+
+        var comment = new CardComment(
+            @"C 1\odd",
+            CardOwner.Worker,
+            Updated,
+            "Body.",
+            ReplyTo: @"C \1 with spaces",
+            To: null,
+            Resolved: false,
+            UnknownHeaderFields: []);
+
+        var card = new CardFile(frontmatter, "Body.", [comment], []);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
+        var parsedComment = Assert.Single(parsed.Comments);
+
+        Assert.Equal(comment.Id, parsedComment.Id);
+        Assert.Equal(comment.ReplyTo, parsedComment.ReplyTo);
+    }
+
+    [Fact]
+    public void RoundTrips_CommentIdContainingTheHeaderTerminatorAsASubstring()
+    {
+        // " -->" is the header's own terminator (CardFileFormat.CommentHeaderSuffix). Before the
+        // escaping fix, an id containing it as a substring would serialise successfully and then
+        // fail to parse back — the same "writes but can't be read back" failure the frontmatter
+        // escaping already guards against, applied here to the comment header.
+        var frontmatter = new CardFrontmatter(
+            "B-0104", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "2", Created, Updated);
+        var comment = new CardComment("weird -->id", CardOwner.Worker, Updated, "Body.", null, null, false, []);
+        var card = new CardFile(frontmatter, "Body.", [comment], []);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
+
+        Assert.Equal(comment.Id, Assert.Single(parsed.Comments).Id);
+    }
+
+    [Fact]
+    public void EscapeCommentHeaderValue_IsReversedExactlyByUnescapeCommentHeaderValue()
+    {
+        const string value = @"has spaces, a \backslash\, and an = sign";
+
+        var escaped = CardFileFormat.EscapeCommentHeaderValue(value);
+
+        Assert.DoesNotContain(' ', escaped);
+        Assert.Equal(value, CardFileFormat.UnescapeCommentHeaderValue(escaped));
     }
 
     [Fact]

@@ -238,6 +238,54 @@ public sealed class CardLockTests : IDisposable
     }
 
     [Fact]
+    public void Acquire_DoesNotDeleteALiveLock_WonByAnotherWaiterBetweenJudgingTheHolderDeadAndDeleting()
+    {
+        var cardPath = Path.Combine(_directory, "two-waiters.md");
+        var lockPath = cardPath + ".lock";
+        var deadPid = FindAlmostCertainlyDeadPid();
+        File.WriteAllText(lockPath, deadPid.ToString(CultureInfo.InvariantCulture));
+
+        // This process's own pid, not a fabricated one — Process.GetProcessById(Environment.ProcessId)
+        // is trivially, unconditionally alive for as long as the test runs, so once substituted this
+        // content is protected from every later loop iteration's own liveness check too, not only the
+        // one iteration the hook fires on. That is what lets a single deterministic assertion at the
+        // end of a short timeout stand in for "never deleted", not just "not deleted on this one pass".
+        var anotherWaitersLiveContent =
+            Environment.ProcessId.ToString(CultureInfo.InvariantCulture) + "\nanother-waiters-nonce";
+        var hookFired = false;
+
+        // Stand in for a second waiter racing this call between it reading the dead pid (and
+        // judging it dead via Process.GetProcessById, which is not cheap) and this call's own
+        // delete: substitute the file with a live lock a faster waiter has already won — the exact
+        // shape the DEVLOG's two-waiters trace describes for the crash-recovery path ADR-0003 calls
+        // expected. Fires once, scoped to this call's stack via the threaded parameter — the same
+        // seam pattern as TestOnlyAfterWriteHook, never a shared static.
+        var result = CardLock.Acquire(
+            cardPath,
+            TimeSpan.FromMilliseconds(200),
+            testOnlyBeforeStaleDeleteHook: path =>
+            {
+                if (hookFired)
+                {
+                    return;
+                }
+
+                hookFired = true;
+                File.WriteAllText(path, anotherWaitersLiveContent);
+            });
+
+        AssertTimedOut(result);
+        Assert.True(hookFired, "expected the before-delete hook to have fired");
+
+        // The other waiter's live lock must survive untouched — deleting it would be exactly the
+        // "two writers on one card" bug this fix closes: a third contender could then acquire while
+        // the second still believed it held the card.
+        Assert.Equal(anotherWaitersLiveContent, File.ReadAllText(lockPath));
+
+        File.Delete(lockPath);
+    }
+
+    [Fact]
     public void Acquire_DoesNotBreakALock_WhoseContentIsNonEmptyButUnparseable()
     {
         var cardPath = Path.Combine(_directory, "garbage.md");
