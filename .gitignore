@@ -31,3 +31,6 @@ callboard/**/*.tmp-*
 
 # Microsoft.Testing.Platform run artefacts
 TestResults/
+
+# `make aot` scratch output — a section-close check, not an artefact to keep
+artifacts/

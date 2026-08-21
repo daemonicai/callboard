@@ -5519,6 +5519,29 @@ a `CardStore` write path, which is their trigger.
 
 ---
 
+**[architect]** **Product Owner decision — the AOT check is a section-close target, not a gate.**
+Supervisor note N1 is discharged; the parked entry in `## NEXT` is replaced by this.
+
+`make aot` performs a real NativeAOT publish and prints `AOT_EXIT:<n>` like every other target. It is
+**deliberately not in `make gates`**: NativeAOT compilation is slow and gates run several times per
+block, so paying it every round would tax the whole change for a property that only changes when a
+dependency does. **The Architect runs it once per section close.** That catches an AOT regression within
+one section of its introduction, rather than at the next `make publish` — which is the Product Owner's
+and run rarely.
+
+Run on §3's closing tree: **`AOT_EXIT:0`**, native code generated. So D2's guarantee is now backed by
+something repeatable in-repo, rather than by the throwaway out-of-repo scratch publish that produced the
+original verdict and that nothing could re-run.
+
+It publishes to `artifacts/aot-check/` (gitignored) so it never disturbs the Product Owner's `publish/`
+tree, and `publish` stays exactly as it was — still theirs, still not a gate, still invoked by no agent.
+
+**Standing rule from here:** a section that adds or changes a dependency runs `make aot` at close and
+quotes `AOT_EXIT:0`. §4 adds none as specified, so its close should be a formality — which is the point:
+the check is cheap when nothing changed and load-bearing exactly when something did.
+
+---
+
 ## NEXT
 
 **Block A (3.1–3.2) closed** — reviewer `Approve` (originally `Approve with nits`; nit 2 fixed
@@ -5733,11 +5756,9 @@ anyone remembering to read this list.
   the wrong reason. `AtomicWrite` **and** `IndexPopulator.WriteDatabase` both have a throwing `finally`
   — fix both in one pass, since fixing one leaves the other looking intentional. There is no bounded
   read primitive.
-- **Product Owner decision, parked — the AOT gate.** §3 adopted the change's **first shipping
-  dependency, and it is native**. `IsAotCompatible` is set and AOT was verified before adoption, but by
-  an out-of-repo scratch publish that **no gate re-runs**, so a regression would surface only at
-  `make publish` — a target reserved to the Product Owner and run rarely. Adding an AOT gate means every
-  gate run pays a slow NativeAOT compile. The trade-off is the Product Owner's, not the Architect's.
+- **Dependency changes — run `make aot` at section close** and quote `AOT_EXIT:0`. Not in
+  `make gates` by Product Owner decision (§3 close): NativeAOT compilation is slow and gates run
+  several times per block. §3's closing tree: `AOT_EXIT:0`.
 - **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs` versus
   an absent `<Version>` in the csproj).
 - **Gate hygiene** — `-k` aggregation on a red `make gates` has still never been demonstrated. Worth
