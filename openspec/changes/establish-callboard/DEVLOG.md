@@ -5544,91 +5544,45 @@ the check is cheap when nothing changed and load-bearing exactly when something 
 
 ## NEXT
 
-**Block A (3.1–3.2) closed** — reviewer `Approve` (originally `Approve with nits`; nit 2 fixed
-and re-confirmed, nit 1 deliberately deferred to the carried `AtomicWrite`/`WriteDatabase`
-throwing-`finally` cleanup, nit 3 routed to block B below). Note: this file's structure drifted a
-second time — the worker's nit-2 fix post again landed after `## NEXT` instead of before it. Moved
-it and the reviewer's sign-off above this heading, same as the first drift; no content altered, only
-relocated. Worth a standing habit check before any future post: confirm placement above `## NEXT`
-before writing, not after.
+**Resume point: 4.1.** §3 is closed; §4 has not been opened. Nothing is in flight — working tree clean,
+no uncommitted WIP, no part-built block.
 
-**Block B (3.3 + §1's four carried CLI obligations) — reviewer `Approve`, fourth pass, ready
-to commit.** Obligation 3 rebuilt: the per-arm `WithNoFurtherArguments` wrapper is gone, replaced
-by `EnforceNoUnconsumedArguments` called once in `Run` after `Dispatch` returns, against the same
-`ArgumentCursor` every handler drew from — no dispatch arm has a way to opt out any more, confirmed
-by three independent reviewer probe rounds now, the last covering the `Peek`/`TryTake` split too.
-The funnel overrides only `Success`; a `Refusal` passes through untouched via `CommandOutcome
-.Match`, so a handler's own domain-specific refusal is never masked by the generic
-`unrecognised-argument` message when a trailing token happens to also be present. **Envelope-level
-gap found by the architect running the binary, now closed:** the emitted `command` field used to
-be just `args[0]`, so `index rebuild` reported `"command":"index"` — invisible to every test so far
-because none asserted on the JSON itself. Fixed via `ArgumentCursor.Peek()`/`ConsumedTokens` and a
-`RecognisedCommand` helper computed once in `Run`; five envelope-level tests plus reviewer
-verification against the built binary confirm all five shapes. Obligation 1 stays as the architect
-ruled: `CardStore.ValidateAgainstLayout` untouched, owed by §4's first write verb, not this block.
-`RepoRootResolverTests.cs` closes the worktree-branch nit. 109/109 green.
+**§3 "Derived index" — CLOSED.** Supervisor `Approve` over `6f8d07d..9801c3a` (second and final round;
+the first requested changes and the remediation landed as `9801c3a`). 3.1–3.6 ticked. Six commits:
 
-**Working rule for the rest of this change, earned here:** assert on the emitted JSON envelope
-itself, not just outcome/exit code — outcome-level tests can all pass while the `command` field (or
-any other envelope surface) is silently wrong. Applies to every verb §4 onward adds.
+| commit | what | review rounds |
+|---|---|---|
+| `26e48e9` | block A — schema + population (3.1–3.2) | 2 |
+| `ccf7e5a` | block B — `index rebuild` verb + §1's CLI obligations (3.3) | 4 |
+| `a841745` | block C — the three invariants (3.4–3.6) | 1 |
+| `9801c3a` | remediation — supervisor findings | 1 |
+| `4aa293c` | section close, obligations rolled into this block | — |
+| `be4fa37` | `make aot` section-close target (Product Owner decision) | — |
 
-**Recorded decision — the architect's call on the post-hoc-refusal trade-off, reviewer concurred.**
-Because the funnel check now runs *after* `Dispatch`, `index rebuild extra-token` performs the
-index rebuild (the SQLite write) before the outcome is overridden to a refusal — a refusal that
-lands after the side effect it should have prevented. Accepted for §3: D4 makes the index
-disposable and rebuildable, so the write is not just harmless but *correct* regardless of why it
-ran. **Binding §4 obligation:** the first verb whose side effect touches the primary record must
-split its handler into a parse phase (fully draws from the cursor, can refuse, no side effects) and
-an execute phase, with the funnel check enforced between them — before any write. Reviewer's
-suggested shape for that seam: keep it a single funnel point, the same pattern obligation 3
-established, rather than trading "one place checks this" for two places that both have to get it
-right.
+Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (117/117) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, and
+`AOT_EXIT:0`.
 
-**Block C (3.4–3.6) — reviewer `Approve`, ready to commit.** The three index-invariant tests,
-proving what blocks A and B built rather than merely exercising it: rebuild is deterministic across
-three destroy-and-rebuild cycles; the index has exactly one input, so hand-mutated/fabricated
-database content and stale rows are discarded on rebuild (the honest, §3-reachable slice of "the
-record governs" — a live index/record disagreement is §10's property, not demonstrated here,
-stated explicitly in the worker's post); the index is deletable without loss (mid-session, under a
-held `CardLock`) and never a lock (record path works with it absent entirely, concurrency identical
-across present/absent/deleted-mid-run). No production code touched — reviewer confirmed
-`git diff --stat ccf7e5a -- src/` empty independently. Reviewer ran three mutations of its own,
-each chosen differently from the worker's, against all three properties; all three caught the
-defect. `Pooling=false` classification (a stale pooled `SqliteConnection` handle across a
-delete-then-rebuild cycle, test-harness-only) scrutinised and confirmed: `IndexPopulator` is the
-only production code that ever opens a `SqliteConnection`, and it only ever opens one against a
-fresh per-call `tempPath`, never the stable `databasePath` — blocks A and B cannot hit this today.
-Carried to §10 as recorded.
+**§1 and §2 are also closed**, each with a `[supervisor]` `Approve` posted under its own `## N.` heading.
+All three sections' approvals are in place; **no section is awaiting a review.**
 
-**Supervisor section review — Request changes (two blockers), then a remediation block —
-reviewer `Approve`.** Blocker 1: the three obligations §3 routed to §4 were conditioned on an
-event (`tasks.md` scheduling verb-wiring) that never occurs anywhere in the plan — restated
-unconditionally as **O-1** (anchor `CardStore` to the repo root, trigger: first production caller
-of `WriteCard`/`AppendComment`), **O-2** (close `AppendCommentUnderExistingLock`, same trigger),
-and **O-3** (a refusal must prevent the side effect it refuses, trigger: first CLI verb whose side
-effect writes the primary record) — all three to be carried verbatim into every section brief from
-§4 onward until discharged, not left to survive a `## NEXT` rewrite. Blocker 2: superseded
-scaffolding (`ArgumentCursor.cs`, two `CommandDispatcherTests.cs` comments) still named the
-deleted `WithNoFurtherArguments` and asserted the pre-hoc ordering block B gave up — fixed to state
-the actual post-hoc contract, plus a new characterisation test,
-`IndexRebuild_WithTrailingToken_RefusesButHasAlreadyWrittenTheIndex`, pinning O-3's accepted
-trade-off so the section that discharges it must come here and invert the assertion (reviewer
-mutated the dispatcher to simulate O-3 fixed and confirmed the test genuinely fails then, not
-merely passes regardless). `Callboard.csproj`'s AOT-verification pointer corrected from a
-nonexistent in-repo record to the DEVLOG account that actually exists. Scope held exactly to the
-four items — `CardStore.cs` and `Index/` untouched, confirmed by diff.
+### Starting §4 — read this before carving blocks
 
-**Up next: §3 closes.** Architect commits the remediation, then re-runs the supervisor on
-`6f8d07d..HEAD` for confirmation per the workflow. §4's brief must carry O-1/O-2/O-3 verbatim, plus
-the parked architectural notes: the AOT gate question (N1, parked for the Product Owner), the
-duplicated atomic-swap-with-throwing-`finally` primitive (N2), the untested mid-run-failure claim
-in `WriteDatabase` (N3), the refusal-set depth-0/1 asymmetry (N4), hand-maintained known-command
-lists that will drift (N5), `.index/` created in a record-free repo (N6), orphaned WAL/SHM files on
-swap (N7), and the `SQLitePCLRaw` version-pairing re-check (N8) — plus the §10 obligations already
-carried: the connection-pooling hazard against `databasePath`, and the DEVLOG-tooling
-line-start-heading-match requirement.
+§4 is the card model: 4.1 the closed union over seven kinds, 4.2 kind-prefixed identity allocation,
+4.3 identity survives archive, 4.4 scope with `section`-on-`rule` refused, 4.5 ownership handover,
+4.6 append-only comments, 4.7 mention-versus-address routing, 4.8 appended comments immutable.
 
-### What §2 established that later sections must not re-derive
+**O-1 and O-2 belong in §4's brief's first line.** 4.5 and 4.6 land the first production callers of a
+`CardStore` write path, which is precisely their trigger — see the obligations list below. They are
+**§4 blockers**, not notes: if §4 lands those callers without closing them, the section does not close.
+
+**§4 adds no dependency as specified**, so `make aot` at its close should be a formality. That is the
+point of the target, not a reason to skip it.
+
+**Verb vocabulary is settled**: noun-then-verb subcommands (`index rebuild`, and later `card show`,
+`context get`). §3 landed the two-token dispatch; §4 should not invent verbs beyond what its tasks ask
+for, and `tasks.md` does not schedule verb wiring in §4 at all — the model is the deliverable.
+
+### What §2–§3 established that later sections must not re-derive
 
 - **Frontmatter is hand-rolled, and `design.md` Open Question 2 is closed with evidence.** YamlDotNet
   16.2.1 published for `osx-arm64` emits `IL3050`/`IL2104`/`IL3053` from its reflection-based builders,
@@ -5643,6 +5597,24 @@ line-start-heading-match requirement.
   must not go looking for members that are gone.
 - **Ordinal comparison is explicit** throughout `Cards/` — §1's carried constraint, discharged.
 
+**From §3 — the derived index.**
+
+- **The index is provably derived, and provably not a lock.** Destroyed and rebuilt three times with
+  identical answers; hand-mutated rows, a fabricated row for a non-existent file, and a deleted card all
+  discarded on rebuild; the record path works with the index **absent entirely** and never creates one;
+  concurrent writes behave identically present, absent, or deleted mid-flight under a held `CardLock`.
+  Rebuild is **replace, never merge**. Do not re-derive any of this — `IndexInvariantTests` holds it.
+- **No narrative reaches the database**, asserted against the file's **bytes**, not against the writer.
+- **The CLI's enforcement points are structural**, not conventional: argument consumption checked once
+  past `Dispatch`'s single exit; `System.Console` banned outside `Program.cs` by analyzer; the stdin
+  guard a precondition of *obtaining* the reader.
+- **Refusal, tool-failure and reported-failure are three different things.** Refusal = stop.
+  Tool-failure = enforcement unavailable, proceed unenforced. A corrupt card = **neither** — a reported
+  failure inside a *successful* rebuild, because degraded mode is what `record-retrieval` requires the
+  loop to survive.
+- **Enforcement overrides a `Success`, never a `Refusal`** — the handler's domain reason is always more
+  specific, and a refusal naming the wrong problem sends an agent to fix the wrong thing.
+
 ### Platform facts, established by hammer loop and not to be re-litigated
 
 - **`File.Move(overwrite: false)` is NOT atomic here.** Check-then-`rename(2)` TOCTOU, reproduced
@@ -5653,7 +5625,7 @@ line-start-heading-match requirement.
 - **Unix `FileShare.None` is enforced as a second step after `CreateNew` succeeds**, so it cannot
   provide mutual exclusion. Cost: one wedged-card bug at ~1 in 544K attempts.
 
-### Working rules earned in §2 — these are the section's real output
+### Working rules earned in §2–§3 — these are the sections' real output
 
 - **Every guard lands with a test that it *refuses*.** Not that it permits the good case. §2's traversal
   guard survived three rounds while guarding nothing, and no test would have caught its removal. **9.12
@@ -5668,6 +5640,23 @@ line-start-heading-match requirement.
 - **A disposition that names a mechanism is making a claim** and needs evidence. My deferral of §2's
   traversal nit rested on "`DirectoryFor` is the function block B's writer calls"; it wasn't, and both
   agents then worked inside that frame.
+
+**From §3.**
+
+- **If you can write the mistake and it compiles, it is a convention, not a guarantee.** A mechanism a
+  caller must remember to invoke is documentation with better ergonomics. Test the claim by *writing the
+  mistake* — that is how the per-arm argument wrapper was disproved.
+- **Two independent mutations of one property beat two readings of one test.** A reviewer who re-runs the
+  worker's probe confirms the worker's imagination, not the test's coverage. Block C converged in one
+  round on this; block B took four because its early evidence was agreement.
+- **Green tests do not exercise the machine contract.** `index rebuild` mislabelled its own JSON envelope
+  through 104 passing tests and two approvals, because everything asserted on outcomes and exit codes and
+  nothing on the artefact. Assert against emitted output directly.
+- **An obligation conditioned on an unscheduled event is already lost** — indistinguishable from one
+  discharged. Name a trigger the plan actually contains, or hold it in code that fails when the trigger
+  arrives.
+- **Hold an accepted trade-off in a must-be-inverted test**, not a bullet in a rewritten file. Standing
+  pattern, adopted at §3 close on the supervisor's recommendation.
 
 ### Obligations, each with the section that owes it
 
