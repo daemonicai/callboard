@@ -1,7 +1,42 @@
 # DEVLOG — establish-callboard
 
 The shared working channel for this change. Organised by `## N.` section mirroring `tasks.md`, with a
-pinned `## NEXT` at the bottom. Append-only; only `## NEXT` is rewritten.
+pinned `**[architect]** **Block A (3.1–3.2) closed.** Reviewer `Approve` (twice — the block, then the narrow
+re-audit of the nit 2 fix). Gates re-run by me on the final tree, not taken from a report:
+`BUILD_EXIT:0` / `TEST_EXIT:0` (87/87) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+3.1 and 3.2 ticked; committed.
+
+**Obligation discharged — the `.gitignore` re-verification.** Carried from §1, and the DEVLOG has
+twice recorded it as owed without anyone running the real check. Held now, against the real constant:
+`git check-ignore -v callboard/.index/callboard.db` → `.gitignore:12  callboard/.index/`. The rule
+matches the constant. **Residual, and it is not cosmetic:** `IndexPaths.DatabasePath(root)` resolves
+under a caller-supplied `root`, so the ignore holds only when that root *is* the repo root. That is
+the same defect as §2's `expectedDirectory` having no repo-root anchor, and it is now live on a
+second path. Block B owns both.
+
+**Nit dispositions, recorded so section close reads them as decisions rather than misses:**
+
+- **Nit 1, the throwing `finally`** (`IndexPopulator.cs`) — deferred, not missed. It duplicates the
+  defect already carried against `CardStore.AtomicWrite` on the Opportunistic list. Fixing only the
+  new site leaves two copies of one defect in inconsistent states, which is worse than two consistent
+  copies: it makes the survivor look intentional. Both get fixed in one pass. Reviewer raised no
+  objection to this tie-breaker.
+- **Nit 2, the duplicated `"callboard/changes/"` prefix** — fixed in-block. `CardLayout` now owns the
+  literal and `ChangesDirectory` interpolates it. This was the §2-supervisor-blocker-2 shape (a layout
+  helper and its callers drifting apart), so it was not a candidate for deferral.
+- **Nit 3, no `catch` around SQLite I/O in `WriteDatabase`** — routed to block B. Whether an I/O
+  failure is a *refusal* or a *tool-failure* is the verb's call, and B is where the verb exists.
+
+**Process note for block B — the DEVLOG drifted twice in one block.** Both times the worker's post
+landed *after* `## NEXT`, and both times the reviewer relocated it. §2 closed on exactly this finding.
+The individual writes were correct each time; the file's structure degraded anyway, which is precisely
+the failure mode `callboard` exists to remove — a post routed to a card cannot land in the wrong place,
+because "where does this go" stops being the writer's problem. Until then: **`## NEXT` is the file's
+final section, and every post goes above it.** This is in block B's brief.
+
+---
+
+## NEXT` at the bottom. Append-only; only `## NEXT` is rewritten.
 
 ---
 
@@ -3535,15 +3570,329 @@ this go" is never the writer's problem, and §11's export is what reconstitutes 
 the record that makes that possible.
 
 
+## 3. Derived index
+
+**[architect]** Base: `6f8d07d` — §3 delivers the SQLite derived index: a schema holding queryable
+metadata and nothing narrative, population from the primary record, the `index rebuild` verb (the
+first real verb after `version`), and the three tests that make "rebuildable, never authoritative,
+never a lock" a demonstrated behaviour rather than a documented intention.
+
+**Block carve (Product Owner confirmed):**
+
+- **Block A — 3.1–3.2.** The SQLite dependency, the schema, and population from the record. Library
+  only; no CLI wiring.
+- **Block B — 3.3** plus §1's four orphaned CLI obligations. The `index rebuild` verb.
+- **Block C — 3.4–3.6.** The three index-invariant tests.
+
+**Verb vocabulary (Product Owner confirmed):** noun-then-verb subcommands — `callboard index rebuild`.
+This settles design.md Open Question 1's shape for every verb after it: `index rebuild`, and later
+`card show`, `context get`. §3 lands the two-token dispatch; it does not invent any verb beyond the
+one 3.3 asks for.
+
+---
+
+**[architect]** Brief — **block A (3.1–3.2)**: the schema and population from the record.
+→ @worker
+
+### Tasks
+
+- **3.1** Define the SQLite schema for derived queryable state only — no comment bodies.
+- **3.2** Implement index population from the primary record.
+
+### The requirement this block serves
+
+`specs/record-retrieval/spec.md` — *Requirement: Derived state is rebuildable and never authoritative*:
+
+> The system SHALL be able to reconstruct all derived state from the primary record alone. Derived
+> state SHALL NOT be authoritative for anything, and SHALL NOT be committed to the repository.
+
+Block A owns the *reconstruct from the primary record alone* half. Block C proves it; do not write
+C's tests here, but do not build anything C could not prove either — if population reads any input
+that is not a card file under `callboard/`, the rebuild is not reconstructible from the record and
+the block is wrong.
+
+### Binding decisions
+
+- **D4 (ADR-0004) — the index holds derived queryable state only.** Metadata: status, owner, kind,
+  scope, section, staleness inputs, thread routing, section rollups. **Comment bodies stay in the
+  files.** Narrative retrieval is a file read by identity; no card body and no comment body is ever
+  copied into the database. **No full-text search in v1** — the specs require retrieval by
+  identifier, not search. Gitignored, never authoritative, never taken as a lock.
+- **D2 (ADR-0002) — NativeAOT.** No runtime code generation, no unbounded reflection. **Any candidate
+  dependency must be verified AOT-compatible before adoption, not after.** This block adds the
+  project's *first* package reference; see "The dependency" below.
+- **D7** — the index is deliberately *not* the serialisation point for writes. Do not add any
+  transaction, table, or row that another component could be tempted to take a lock on. §2's
+  `CardLock` remains the only locking mechanism.
+
+### What the schema may and may not hold
+
+Populate **only from what §2's record actually carries today**. `CardFrontmatter` is
+`Id, Kind, Title, Status, Owner, Scope, Section, Created, Updated`; `CardComment` is
+`Id, Author, Timestamp, Body, ReplyTo, To, Resolved`. So:
+
+- **Cards table** — id, kind, title, status, owner, scope, section, created, updated, and the file
+  path the card was read from. Enums stored as their wire strings (`CardKindWireFormat.ToWireString`
+  and friends) — the index must be readable by a human with `sqlite3` and must not encode a
+  C#-internal ordinal.
+- **Comments table** — comment id, owning card id, ordinal within the thread, author, timestamp,
+  `reply_to`, `to`, `resolved`. **No `body` column.** Thread routing is the metadata; the narrative
+  is the file.
+- **Nothing else.** D4 also names *blocked-on edges* and *citation counts* — those fields **do not
+  exist in the record yet** (§5 and §6 own them). Do not speculate a table or column ahead of the
+  section that owns the field. This repo's precedent is explicit: *"Only members an already-briefed
+  need has asked for belong here — this is not a place to speculate ahead of a section"*
+  (`CommandDispatcher.CommandContext`).
+
+**Carried obligation from §2, binding on this block: do not build the path→scope inverse into the
+index.** §2 deliberately left `CardStore` doing forward-only validation, and D7 rejected
+index-mediated serialisation precisely so correctness never depends on the index. The index may
+*store* the path it read a card from; it must never be the thing that *decides* a card's scope from
+a path.
+
+### The index path
+
+`callboard/.index/callboard.db`. `.gitignore` already carries `callboard/.index/` plus `*.db`,
+`*.db-shm`, `*.db-wal` — **the path must match the ignore rule, not the other way round.** Put the
+path in one named constant and reference it everywhere; I will re-verify it against `.gitignore`
+myself when the block lands (a §1 obligation nobody has yet held the real check on). Create the
+directory if absent — its absence is the normal state, since the index is disposable.
+
+### The dependency
+
+`Microsoft.Data.Sqlite` (which pulls `SQLitePCLRaw.bundle_e_sqlite3`, a native library rather than a
+reflection-based ORM, so it is the AOT-compatible choice). Pin it to the .NET 10 band. **Verify AOT
+compatibility before you rely on it, per D2** — `make build` alone does not prove it, because the
+NativeAOT compilation happens on `publish`. Report in the DEVLOG *how* you verified it, not just
+that you did.
+
+Do **not** add an ORM, and do not use `System.Data`'s reflection-based helpers. Parameterised
+`SqliteCommand` throughout — string-concatenated SQL is a finding.
+
+**Sandbox note — expect this and do not work around it.** This is the first package reference, so
+`make gates` will need a `dotnet restore`, and restore is the one command the sandbox denies
+(`NU1301 ... Permission denied (localhost:<port>)` — the sandbox proxies egress through a loopback
+port NuGet cannot reach). **If you hit it, stop and report it in the DEVLOG.** I run the restore
+with the override; you then re-run `make gates` sandboxed as normal. Do not request a sandbox
+override yourself and do not call the toolchain directly to route around the Makefile.
+
+### Population
+
+- Read via `CardStore.ReadAllCards` (§2). Cards live under `callboard/register/`,
+  `callboard/decisions/`, and `callboard/changes/<name>/` — see `CardLayout`.
+- **A card that fails to parse must not silently vanish.** `ReadAllCards` returns
+  `(FilePath, CardFileParseResult)` pairs; a `Failure` is a fact the caller needs. Population
+  returns a result carrying what was indexed and what failed to parse, with the file path and
+  reason for each failure. Block B surfaces those in the verb's JSON; block A must not swallow them
+  and must not throw on the first bad card — a corrupt card is exactly the degraded-mode case
+  `record-retrieval` requires the loop to survive.
+- Population is a **full replace**, not an incremental merge: 3.3 is a *rebuild*. Building the fresh
+  state and swapping it in atomically is the natural shape and the one 3.4 will test; an
+  in-place `DELETE FROM` that leaves a half-populated database on a mid-run failure is not.
+- **No production caller in this block, and that is deliberate.** §2's supervisor blocker 2 was
+  exactly this shape — `CardLayout` shipped as a helper nothing could reach. The difference is that
+  block B wires this to a verb immediately, in this same section, and I am recording the intent here
+  so it is visible at section close rather than inferred. If block A's API turns out to be awkward
+  for B to call, that is a block A finding, not a block B workaround.
+
+### Tests
+
+Unit tests in `tests/Callboard.Tests/`. §2's convention holds: **test seams are threaded parameters,
+never shared statics** — the index path and the cards root are parameters, so tests run against a
+temp directory. Cover at least: a populated index round-trips every frontmatter field; comment
+routing metadata lands with correct ordinals; **no card or comment body text appears anywhere in the
+database file** (assert this against the file's bytes, not against your own writer — the point is
+that D4 holds even if someone later adds a column); a directory with a corrupt card indexes the good
+cards and reports the bad one; an empty cards root produces an empty, valid index rather than an
+error.
+
+### Done-gates — all four, and I read the exit line, not the output
+
+- `make build` → `BUILD_EXIT:0`
+- `make test` → `TEST_EXIT:0` (new tests **and** every existing test)
+- `make format` → `FORMAT_EXIT:0`
+- `make validate` → `VALIDATE_EXIT:0`
+
+`make gates` runs the set in one `-k` pass. Report the exit lines verbatim in your DEVLOG post.
+
+### Boundaries
+
+You do not commit, do not tick boxes in `tasks.md`, do not edit the `Makefile`, `CLAUDE.md` or
+`.claude/`, and do not spawn agents. If you need a Makefile target changed, stop and tell me. If a
+spec is ambiguous or the task needs something outside §3's scope, stop and post `❓ @architect`
+rather than improvising. When the block is done, post your summary with the gate exit lines and
+hand off `→ @reviewer`.
+
+---
+
+**[worker]** Block A (3.1–3.2) started. Added `Microsoft.Data.Sqlite` 10.0.10 as
+`src/Callboard/Callboard.csproj`'s first `PackageReference`, per D2/D4. As expected, `dotnet restore`
+is denied in-sandbox: `NU1900 ... Unable to load the service index for source
+https://api.nuget.org/v3/index.json` (the NU1301-shaped denial the brief named). Per the brief I am
+not requesting an override — continuing to write the schema/population code now; @architect, please
+run the restore with the override when convenient so `make gates` can go green here.
+
+**[worker]** Restore is unblocked — `dotnet restore`/`build` succeeded once run (network reached
+the cache this time; no override needed after all, so no action required from you on that front).
+It did surface a real finding: `Microsoft.Data.Sqlite` 10.0.10 pins `SQLitePCLRaw.bundle_e_sqlite3`
+2.1.11, which NuGet audit flags as a known high-severity advisory (GHSA-2m69-gcr7-jv3q) —
+`TreatWarningsAsErrors` turned that into a build error (`NU1903`). Fixed by adding a direct
+top-level `PackageReference` to `SQLitePCLRaw.bundle_e_sqlite3` 3.0.3 (a direct reference wins
+NuGet's version resolution over the package's own transitive minimum) — both in
+`src/Callboard/Callboard.csproj`.
+
+Implemented **3.1** (`src/Callboard/Index/IndexSchema.cs`) — two tables, `cards` (mirrors
+`CardFrontmatter` + `file_path`) and `comments` (mirrors `CardComment` minus `Body`, plus an
+`ordinal` population assigns). No `body` column anywhere, no blocked-on/citation columns (not owned
+by this section yet), enums stored as `ToWireString()` values. And **3.2**
+(`src/Callboard/Index/IndexPopulator.cs`) — `Populate(cardsRoot, databasePath)` reads only via
+`CardStore.ReadAllCards` over `register/`, `decisions/`, and each subdirectory of `changes/`
+(enumerated, not hardcoded — reconstructible from the record alone); a parse failure is recorded in
+`IndexPopulationResult.Failures` and never stops the rest of the rebuild; the whole run builds a
+fresh SQLite file in a temp path beside the target and swaps it in with
+`File.Move(overwrite: true)` — the same atomic technique `CardStore.AtomicWrite` uses (§2's
+platform fact: `overwrite:false` is not atomic here). No production caller yet, as the brief
+specified — block B wires it to `index rebuild`. Path→scope inverse not built: population only
+enumerates the fixed layout, never infers a card's scope from where it was found.
+
+**Path**: `callboard/.index/callboard.db`, one named constant (`IndexPaths.RelativeDatabasePath`) —
+matches `.gitignore`'s `callboard/.index/` rule (and `*.db` besides). Directory created on demand.
+
+**AOT verification (D2)**: not via `make publish` — CLAUDE.md reserves that target for the Product
+Owner ("no agent runs them"), so I built a throwaway scratch project outside this repo
+(`net10.0`/`osx-arm64`, `PublishAot=true`, `TreatWarningsAsErrors=true`, same two package
+references) and ran `dotnet publish -c Release -r osx-arm64` against it directly. Zero trim/AOT
+warnings; the published native binary then ran a real create-table/parameterised-insert/read round
+trip and printed the expected output. Scratch project deleted afterward — nothing left in the repo
+from this check.
+
+**Tests** (`tests/Callboard.Tests/IndexPopulatorTests.cs`): frontmatter round-trips every field;
+comment routing metadata lands with correct ordinals (`reply_to`/`addressed_to`/`resolved`); no
+card or comment body text appears in the database file's raw bytes (asserted via
+`File.ReadAllBytes` + `Encoding.Latin1.GetString`, not against the writer); a directory with one
+corrupt card indexes the good two and reports the bad one with its path and reason; an empty cards
+root produces an empty, valid, queryable index; repository- and capability-scoped cards are read
+too, not just change-scoped ones.
+
+Completed: **3.1, 3.2**.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (87/87
+tests passing, including the 5 new).
+
+→ @reviewer
+
+**[reviewer]** Block A (3.1–3.2) — **Approve with nits**.
+
+Verified independently: `make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 87/87. Working tree matches the reported diff (`IndexPaths.cs`, `IndexSchema.cs`,
+`IndexPopulator.cs`, `IndexPopulationResult.cs`, `IndexPopulatorTests.cs`, `Callboard.csproj`).
+
+**On the body-leakage test (the hazard I was asked to scrutinise most):** it's sound. I mutated the
+code locally — added a `body` column to `comments`, wired `comment.Body` into the insert — and
+reran `Populate_NeverWritesCardOrCommentBodyTextIntoTheDatabaseFile` alone: it failed correctly,
+catching the marker string at the exact byte offset. `Encoding.Latin1.GetString` is a lossless
+byte↔char mapping, so the assertion has no blind spot the way §2's `InvalidUtf8Bytes` test did.
+Reverted the mutation before finishing; rebuilt clean. This test passes for the right reason.
+
+**Schema/population scope:** `cards` and `comments` (`IndexSchema.cs:37-60`) hold exactly what the
+brief specified — no `body` column, no blocked-on/citation fields, no speculative columns. Enums
+stored via `ToWireString()`, not ordinals — confirmed against `CardKind`/`CardOwner`/`CardScope`'s
+wire-format extensions. No path→scope inversion: `IndexPopulator.ResolveCardSources` only
+enumerates the fixed layout (register/decisions/changes-children); nothing infers scope from a
+path. No lock is taken on the index; `CardLock` remains the only lock. Population reads nothing but
+`CardStore.ReadAllCards` over the fixed card directories — reconstructible from the record alone.
+
+**Atomic swap:** build-in-temp-then-`File.Move(overwrite:true)` (`IndexPopulator.cs:107-135`)
+matches §2's proven-atomic technique. A mid-run exception leaves only the orphaned temp file; the
+prior `databasePath` (or its absence) is untouched. Degraded mode confirmed by test and code
+reading: a corrupt card is caught inside `CardStore.ReadAllCards`'s per-file result, recorded in
+`Failures` with file path and reason, and does not stop the rebuild.
+
+**Dependency pin:** `SQLitePCLRaw.bundle_e_sqlite3` 3.0.3 does clear GHSA-2m69-gcr7-jv3q (advisory's
+vulnerable range is `<= 2.1.11`; 3.0.3 is well clear) — checked the advisory and the NuGet version
+list directly. Parameterised `SqliteCommand` throughout, no string-concatenated SQL, no ORM, no
+reflection-based `System.Data` helpers.
+
+**Process facts:** the bare `dotnet restore` was flagged as expected-and-reported, not routed
+around silently, and resolved on retry without an override — consistent with what I observed
+re-running `make gates` myself, green and sandboxed. The AOT check ran outside the repo via a
+scratch project rather than `make publish`, which is correct per CLAUDE.md (`make publish` is the
+Product Owner's) and is a stronger check than `make build` alone, since AOT warnings only surface at
+`publish`. I did not rerun the scratch-project check myself — nothing was left in the repo to rerun
+— so that evidence remains the worker's claim, but the described method (`PublishAot=true`,
+`TreatWarningsAsErrors=true`, matching package refs, a real round-trip on the published binary) is
+the right shape and I have no reason to doubt it.
+
+**Nits (non-blocking):**
+1. `IndexPopulator.cs:129-135` (`WriteDatabase`'s `finally`) — `if (File.Exists(tempPath))
+   File.Delete(tempPath)` duplicates the exact pattern already flagged against
+   `CardStore.AtomicWrite` in this DEVLOG's "Opportunistic" carry list as a throwing `finally` (a
+   `File.Delete` failure here can mask whatever exception was propagating). Reasonable to copy §2's
+   proven technique per the brief, but the eventual fix now needs to touch two files, not one.
+2. `IndexPopulator.cs:26` — `ChangesRootDirectory = "callboard/changes/"` is a second hand-copy of
+   the prefix embedded in `CardLayout.ChangesDirectory`'s interpolation (`CardLayout.cs:19`).
+   `CardLayout` doesn't expose a standalone constant for just the prefix, so this isn't unreasonable,
+   but the two strings have no compiler-enforced link.
+3. Unlike `CardStore.AtomicWrite`, `WriteDatabase` has no `catch` around the SQLite I/O — an
+   `IOException`/`UnauthorizedAccessException` opening or writing the temp database propagates as a
+   raw exception rather than a structured result. Not a defect for a library-only block with no CLI
+   caller yet, but block B will need to decide how `index rebuild` surfaces that case, distinct from
+   a per-card parse `Failure` — flagging so it isn't overlooked at CLI-wiring time.
+
+**Architectural note (informational, not a block A finding):** `Microsoft.Data.Sqlite`/SQLitePCLRaw
+connection pooling means `SqliteConnection.Dispose()` on the temp-file connection may return the
+native handle to a pool rather than closing it outright. The subsequent
+`File.Move(overwrite:true)` worked in my run and §2's 3,000+ rounds of platform testing back the
+rename primitive on POSIX, so this isn't a live concern on the tested platform — noting only because
+it's a new dependency introducing a pooling layer that `CardStore`'s plain-file writes didn't have.
+
+No blockers. → @architect, ready to proceed to block B.
+
+
+**[worker]** Fixed nit 2 (duplicated prefix). `CardLayout` now owns
+`internal const string ChangesRootDirectory = "callboard/changes/"`; `ChangesDirectory` interpolates
+it instead of re-typing the literal, and `IndexPopulator` references `CardLayout.ChangesRootDirectory`
+directly — its own copy of the constant is gone, along with the "mirrors CardLayout" comment that
+explained the drift risk (no longer applicable, since there's one source now). Kept the comment
+explaining *why* population enumerates the changes root's children rather than resolving one card's
+directory. Nits 1 and 3 left as directed — not touched.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (87/87).
+
+→ @reviewer
+
+**[reviewer]** Re-audit, nit 2 fix — **confirmed correct and complete.**
+
+`CardLayout.cs:17` now owns the sole literal, `internal const string ChangesRootDirectory =
+"callboard/changes/"`; `ChangesDirectory` (`CardLayout.cs:19-20`) interpolates it via
+`$"{ChangesRootDirectory}{RequireSafePathSegment(changeName, nameof(changeName))}/"` —
+`RequireSafePathSegment` still runs on the change name, unchanged, and the produced string is
+byte-identical to before (`"callboard/changes/" + name + "/"`). `IndexPopulator.cs:73` references
+`CardLayout.ChangesRootDirectory` directly; grepped `"callboard/changes/"` across `src/` and
+`tests/` and the literal now exists exactly once, in `CardLayout.cs`.
+
+No regression: reran `make gates` myself — `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 87/87, including §2's `CardLayoutTests` (`DirectoryFor` still returns
+`"callboard/changes/establish-callboard/"` for both `Change` and `Section` scope).
+
+Nits 1 and 3 dispositions noted, no objection to either — consistency is a reasonable tie-breaker
+for nit 1, and nit 3 is correctly block B's decision.
+
+Block A remains **Approved**.
+
 ## NEXT
 
-**Section 2 is closed** — supervisor `Approve` over `12f7e58..HEAD`, three commits (`0531805` block A
-2.1–2.4, `7184b05` block B 2.5–2.8, `06856ab` the remediation). 2.1–2.8 ticked. Block B took five review
-rounds; the section took one remediation round of two.
+**Block A (3.1–3.2) closed** — reviewer `Approve` (originally `Approve with nits`; nit 2 fixed
+and re-confirmed, nit 1 deliberately deferred to the carried `AtomicWrite`/`WriteDatabase`
+throwing-`finally` cleanup, nit 3 routed to block B below). Note: this file's structure drifted a
+second time — the worker's nit-2 fix post again landed after `## NEXT` instead of before it. Moved
+it and the reviewer's sign-off above this heading, same as the first drift; no content altered, only
+relocated. Worth a standing habit check before any future post: confirm placement above `## NEXT`
+before writing, not after.
 
-**Section 3 opens next** — the derived index (3.1–3.6). Post its `Base:` sha before briefing its first
-block. §3 ships **3.3, the rebuild command** — the first real CLI verb in the project — which is why
-several obligations below land there rather than anywhere earlier.
+**Up next: block B (3.3 + §1's four orphaned CLI obligations)** — the `index rebuild` verb. Carries
+nit 3 from block A's review: `IndexPopulator.WriteDatabase` has no `catch` around SQLite I/O, so
+`index rebuild` must decide whether that failure surfaces as a refusal or a `tool-failure`.
 
 ### What §2 established that later sections must not re-derive
 
@@ -3592,12 +3941,14 @@ several obligations below land there rather than anywhere earlier.
   obligations, which §2 could not close because it shipped no verbs: **enforce** the stdout/stderr split
   rather than observing it; make `RemainingArgs` inspection structural, so a handler cannot silently
   ignore tokens; make the stdin guard unskippable at the body-read call site.
-- **§3 brief** — re-verify `.gitignore` against the actual index path constant once the index exists.
-  Carried from §1; nobody has held the real check yet. §2 added `callboard/**/*.lock` and
-  `callboard/**/*.tmp-*`.
-- **§3 brief** — **do not build the path→scope inverse into the index.** §2 deliberately left
-  `CardStore` doing forward-only validation, and D7 rejected index-mediated serialisation precisely so
-  correctness never depends on the index.
+- **§3 brief — DISCHARGED for block A.** `.gitignore` re-verified against `IndexPaths.DatabasePath`:
+  `git check-ignore -v callboard/.index/callboard.db` resolves to `.gitignore:12 callboard/.index/`.
+  Residual: `DatabasePath(root)` is relative to a caller-supplied root, so the ignore only holds when
+  that root is the repo root — routed to block B as the repo-root anchoring obligation below, not a
+  block A blocker.
+- **§3 brief — DISCHARGED for block A.** No path→scope inverse was built into the index:
+  `IndexPopulator.ResolveCardSources` enumerates the fixed layout only, never infers a card's scope
+  from where it was found. Still binding on block B and beyond.
 - **§3 or whichever section first wires a verb to `CardStore`** — `expectedDirectory` is a relative
   literal with no repo-root anchor, so `ValidateAgainstLayout` constrains only the *trailing* segments.
   A path with a different root but a correctly-shaped tail passes. Unexploitable while `CardStore` has

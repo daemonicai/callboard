@@ -14,9 +14,10 @@ internal static class CardLayout
 {
     internal const string RegisterDirectory = "callboard/register/";
     internal const string DecisionsDirectory = "callboard/decisions/";
+    internal const string ChangesRootDirectory = "callboard/changes/";
 
     internal static string ChangesDirectory(string changeName) =>
-        $"callboard/changes/{RequireSafePathSegment(changeName, nameof(changeName))}/";
+        $"{ChangesRootDirectory}{RequireSafePathSegment(changeName, nameof(changeName))}/";
 
     /// <summary>
     /// Resolves the directory a card of the given <paramref name="scope"/> lives in.

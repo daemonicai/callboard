@@ -20,4 +20,18 @@
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- D2/D4 (ADR-0002/ADR-0004): the derived index's only dependency. A native SQLite
+         binding, not a reflection-based ORM, so it is the AOT-compatible choice — see
+         src/Callboard/Index/IndexSchema.cs for the verification record. Pinned to the .NET 10
+         band. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+
+    <!-- Microsoft.Data.Sqlite 10.0.10 pins SQLitePCLRaw.bundle_e_sqlite3 2.1.11, which carries a
+         known high-severity advisory (GHSA-2m69-gcr7-jv3q) that NuGet audit turns into a build
+         error under TreatWarningsAsErrors. Pinned up to the first patched line explicitly; a
+         direct top-level reference wins NuGet's version resolution over the transitive minimum. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+  </ItemGroup>
+
 </Project>
