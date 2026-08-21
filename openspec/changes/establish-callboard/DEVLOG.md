@@ -1,300 +1,7 @@
 # DEVLOG — establish-callboard
 
 The shared working channel for this change. Organised by `## N.` section mirroring `tasks.md`, with a
-pinned `**[architect]** **Block A (3.1–3.2) closed.** Reviewer `Approve` (twice — the block, then the narrow
-re-audit of the nit 2 fix). Gates re-run by me on the final tree, not taken from a report:
-`BUILD_EXIT:0` / `TEST_EXIT:0` (87/87) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
-3.1 and 3.2 ticked; committed.
-
-**Obligation discharged — the `.gitignore` re-verification.** Carried from §1, and the DEVLOG has
-twice recorded it as owed without anyone running the real check. Held now, against the real constant:
-`git check-ignore -v callboard/.index/callboard.db` → `.gitignore:12  callboard/.index/`. The rule
-matches the constant. **Residual, and it is not cosmetic:** `IndexPaths.DatabasePath(root)` resolves
-under a caller-supplied `root`, so the ignore holds only when that root *is* the repo root. That is
-the same defect as §2's `expectedDirectory` having no repo-root anchor, and it is now live on a
-second path. Block B owns both.
-
-**Nit dispositions, recorded so section close reads them as decisions rather than misses:**
-
-- **Nit 1, the throwing `finally`** (`IndexPopulator.cs`) — deferred, not missed. It duplicates the
-  defect already carried against `CardStore.AtomicWrite` on the Opportunistic list. Fixing only the
-  new site leaves two copies of one defect in inconsistent states, which is worse than two consistent
-  copies: it makes the survivor look intentional. Both get fixed in one pass. Reviewer raised no
-  objection to this tie-breaker.
-- **Nit 2, the duplicated `"callboard/changes/"` prefix** — fixed in-block. `CardLayout` now owns the
-  literal and `ChangesDirectory` interpolates it. This was the §2-supervisor-blocker-2 shape (a layout
-  helper and its callers drifting apart), so it was not a candidate for deferral.
-- **Nit 3, no `catch` around SQLite I/O in `WriteDatabase`** — routed to block B. Whether an I/O
-  failure is a *refusal* or a *tool-failure* is the verb's call, and B is where the verb exists.
-
-**Process note for block B — the DEVLOG drifted twice in one block.** Both times the worker's post
-landed *after* `**[architect]** Brief — **block B (3.3)**: the `index rebuild` verb, plus §1's four orphaned CLI
-obligations. → @worker
-
-Block A landed as `26e48e9`. Read it first — you are wiring `IndexPopulator.Populate` to a verb.
-
-### Tasks
-
-- **3.3** Implement the full rebuild command.
-
-That is one task box, and it is the smallest part of this block. §3 ships the **first real verb after
-`version`**, and §1's CLI obligations were parked precisely because §2 shipped no verbs to hang them
-on. They are due here. A block that lands the verb and leaves them is not this block.
-
-### The verb
-
-`callboard index rebuild` — noun-then-verb, confirmed by the Product Owner. This is the first
-two-token command, so it settles the dispatch shape for every verb after it (`card show`,
-`context get`). Land **only** `index rebuild`; do not invent a second verb to prove the pattern.
-
-- `index` with no subcommand → refusal naming the subcommands it does have.
-- `index rebuild` with any trailing token → refusal, per the boundary convention `version` set.
-- Success result JSON: the database path, the count of cards indexed, the count of comments indexed,
-  and the parse failures as an array of `{filePath, reason}`. **A rebuild that indexed 40 cards and
-  failed to parse 3 is a success with 3 failures reported, not a refusal** — degraded mode is the
-  case `record-retrieval` requires the loop to survive, and a corrupt card must not make the tool
-  refuse to work.
-- Register `IndexRebuildResult` in `CliJsonContext`. `ICommandResult` exists so a missing JSON mapping
-  is a compile error rather than a runtime `NotSupportedException`; keep that true.
-
-### Refusal versus tool-failure — decide this deliberately, it is the block's sharpest edge
-
-These are **opposite instructions to the caller** (`CommandDispatcher`'s own doc comment says so): a
-refusal means the board is working and the caller must stop; a tool failure means enforcement is
-unavailable and the loop proceeds unenforced rather than blocked. Assign each case:
-
-- **Repo root not found** → refusal. The caller invoked the tool somewhere it cannot work; it must stop.
-- **SQLite I/O failure while writing the index** (reviewer's nit 3 from block A, routed here) →
-  **tool-failure**, not refusal. The board is not saying no; the index is unavailable. Block A's
-  `WriteDatabase` has no `catch` around its SQLite I/O — deliberately, because a library block had
-  nowhere to surface it. You have somewhere now.
-- **A card that fails to parse** → neither. It is reported in a successful result, as above.
-
-Do **not** add a `CliRefusal` case for a tool failure. `tool-failure` is already riding on the
-refusal shape at `CommandDispatcher.WriteToolFailureEnvelope`, and §9 owns fixing that (its brief
-carries "`tool-failure` must **not** become a member of the closed refusal set"). Your job is to not
-make it worse: route your I/O failure through the existing tool-failure path rather than minting a
-refusal code for it.
-
-### The four carried obligations — all four, and they are the substance of this block
-
-**1. Anchor to the real repo root.** Carried from §2, and block A doubled it. `CardStore`'s
-`expectedDirectory` is a relative literal with no repo-root anchor, so `ValidateAgainstLayout`
-constrains only the *trailing* segments — a path with a different root but a correctly-shaped tail
-passes. §2's supervisor routed this to "whichever section first wires a verb to `CardStore`". **That
-is this block.** Block A added a second instance: `IndexPaths.DatabasePath(root)` resolves under a
-caller-supplied root, so `.gitignore`'s `callboard/.index/` rule only holds when that root is the repo
-root. I verified the ignore rule matches the constant; the anchoring is what is missing.
-
-Resolve the repo root once, by walking up from the current directory for a `.git` entry, and refuse
-with a clear message if there is none. Both the cards root and the index path derive from it. One
-resolver, not two.
-
-**2. Enforce the stdout/stderr split rather than observing it.** Today `CommandDispatcher.Run` is the
-only thing that writes to stdout, and `CommandContext` deliberately carries no writers — but that is
-a convention a future handler can break by reaching for `Console.Out` directly, and "exactly one JSON
-line on stdout" is a promise machine callers parse against. Make it structural. The shape I have in
-mind is a banned-API analyzer (`Microsoft.CodeAnalysis.BannedApiAnalyzers`) forbidding `System.Console`
-members everywhere except `Program.cs`, so a violation is a build error under
-`TreatWarningsAsErrors` — build-time only, so no AOT implication. If you find a better structural
-mechanism, take it and say why; what I will not accept is a doc comment asking future authors to
-behave.
-
-**3. Make `RemainingArgs` inspection structural.** `RunVersion` checks `RemainingArgs.Length == 0` by
-hand. Nothing forces the next handler to check at all — a handler that ignores an argument the caller
-passed silently does the wrong thing, which is the exact failure mode ADR-0001's "any token it does
-not consume is a refusal" exists to prevent. Restructure so a handler **cannot** receive tokens it did
-not declare: the command declares what it accepts, and the dispatcher refuses unconsumed tokens
-*before* the handler runs. `version` should then have no argument check in its body at all — if it
-still does, the mechanism is not structural. `index rebuild` is your second caller and the proof the
-shape generalises.
-
-**4. Make the stdin guard unskippable at the body-read call site.** `RequireStdinRedirected` exists
-and nothing forces a body-reading verb to call it before `StdinBodyReader.ReadBody`; the guard is a
-doc comment away from being skipped. Make the check a precondition of *obtaining* the reader: have
-the body reader accept a type that can only be constructed by passing the redirect check — so
-"forgot the guard" stops compiling rather than blocking on a TTY at runtime. **No verb in this block
-reads a body**, so this ships with tests and no production caller; that is the §1 obligation being
-paid, not scope creep. Say so in your post.
-
-### Binding decisions
-
-- **ADR-0001 / D1** — non-interactive, JSON on stdout, bodies on stdin, non-zero exit on refusal.
-- **D4** — the index is never authoritative and **never taken as a lock**. `index rebuild` takes no
-  `CardLock`, and no other command may be made to wait on the index.
-- **D2** — NativeAOT. Source-generated JSON only; no reflection-based `JsonSerializer` overloads.
-
-### Tests
-
-Extend `CommandDispatcherTests`. Cover: `index` alone refuses and names its subcommands; `index rebuild`
-succeeds on an empty cards root; it reports parse failures in a successful result; a trailing token
-refuses; the refusal exits non-zero and the success exits zero; exactly one JSON line reaches stdout on
-every path including tool-failure; and the structural mechanisms from obligations 3 and 4 actually
-fail closed — a test that proves the guard cannot be skipped, not merely that it works when called.
-§2's convention holds: **test seams are threaded parameters, never shared statics.**
-
-### Done-gates — I read the exit line, not the output
-
-`make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0` (new **and** all 87 existing);
-`make format` → `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. `make gates` runs the set in one
-`-k` pass. Quote the exit lines verbatim in your post.
-
-Note obligation 2 may add an analyzer package — a package reference change means `dotnet restore`, and
-the sandbox denies it (`NU1301 ... Permission denied (localhost:<port>)`). Block A hit it once and a
-retry succeeded from cache. **If a retry does not clear it, stop and report** rather than requesting an
-override or calling the toolchain around the Makefile.
-
-### DEVLOG placement — read this before you post
-
-**`**[architect]** Answering the reviewer's `❓` and routing the blocker. Verdict accepted in full —
-**Request changes**, one blocker, and the `CardStore` question is mine to answer, not the worker's.
-
-### The blocker — obligation 3. The reviewer is right, and the mechanism I specified was the wrong one.
-
-A per-arm wrapper cannot be structural, and I should have seen that when I wrote the brief: anything a
-switch arm has to *remember to call* is a convention with better ergonomics, not a guarantee. The
-reviewer's probe — a third arm calling its handler directly, trailing token accepted, exit 0 — is the
-proof, and it is exactly the case the brief said it would not accept.
-
-**Fix the mechanism, not the arms.** Move the unconsumed-token check out of the switch entirely and into
-the single point every command funnels through, *after* the handler returns:
-
-- Handlers consume what they declare via `ArgumentCursor`. `index` consumes `rebuild`; `version`
-  consumes nothing.
-- After `Dispatch` returns — in `Run`, or at `Dispatch`'s single exit — whatever the cursor still holds
-  unconsumed becomes an `unrecognised-argument` refusal, **overriding a `Success` the handler may have
-  returned**. A handler that ignored a token cannot have its success stand.
-- **Delete `WithNoFurtherArguments`.** Its existence is the bypass. While a per-arm wrapper is available,
-  a future arm can use it or not, and "not" is the silent failure.
-
-Then re-run the reviewer's own probe: add an arm that calls its handler directly, confirm the trailing
-token still refuses, and delete the probe. If it passes, the mechanism is structural — the check no
-longer lives on the path a new arm chooses to take.
-
-### The `❓` — obligation 1 is half-closed, and my brief mis-assigned it
-
-The reviewer is right that `CardStore.ValidateAgainstLayout` is still unanchored, and right to flag that
-this does not match what I assigned. **The brief overreached; the worker's disposition is correct.**
-
-§2's supervisor routed the anchor to "whichever section first wires a verb to `CardStore`". I read that
-as §3 because §3 ships the first verb. But the defect is in `ValidateAgainstLayout`, which is on the
-**write** path, and block B's only `CardStore` caller is `ReadAllCards` — a read that never reaches it.
-The trigger condition has not fired. Anchoring a function with no production caller would be building
-a guard for a path nothing takes, which is the §2-blocker-2 shape I have twice told workers to avoid.
-
-**Restating the trigger precisely, because "first verb" was the imprecision that caused this:** the
-anchor is owed by **the first section that wires a verb to a `CardStore` write path** —
-`WriteCard` or `AppendComment`. On the current breakdown that is **§4**. It joins §4's existing
-`AppendCommentUnderExistingLock` obligation, and both are §4 blockers if §4 lands a write verb without
-closing them. I am recording it in `**[architect]** **Block B (3.3) closed.** Reviewer `Approve` after three rounds — one blocker, then two
-Architect-initiated changes. Gates re-run by me on the final tree: `BUILD_EXIT:0` / `TEST_EXIT:0`
-(109/109) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, `GATES_EXIT:0`. 3.3 ticked; committed.
-
-I also ran the binary against this repo and confirmed all five envelope shapes by hand — `index rebuild`
-→ `"index rebuild"`, `index` → `"index"`, `index bogus` → `"index"`, `bogus extra` → `"bogus"`,
-`version` → `"version"` — plus a real database written to `callboard/.index/callboard.db` and correctly
-ignored by git.
-
-### Obligations closed, and the one that was mis-assigned
-
-- **Obligation 2, the stdout/stderr split — closed structurally.** `BannedApiAnalyzers` bans `System.Console`
-  outside `Program.cs`; a stray `Console.WriteLine` is `RS0030` at build time under `TreatWarningsAsErrors`.
-  Verified live by both the worker and the reviewer, the reviewer checking four distinct `Console` members
-  rather than the one the worker tried.
-- **Obligation 3, argument consumption — closed structurally, on the second attempt.** See below; this is
-  the section's most instructive failure.
-- **Obligation 4, the stdin guard — closed structurally.** `ReadBody` takes a `RedirectedStdin` whose only
-  construction path runs the redirect check. Ships with tests and no production caller, because no verb in
-  §3 reads a body; that is the §1 obligation being paid, not scope creep.
-- **Obligation 1, the repo-root anchor — half closed, and my brief mis-assigned the other half.**
-  `RepoRootResolver` is one resolver feeding both the cards root and the index path, so block A's
-  `.gitignore` residual is closed. `CardStore.ValidateAgainstLayout` is untouched and still owed: the
-  defect is on the **write** path, block B's only `CardStore` caller is `ReadAllCards`, and the trigger
-  never fired. Restated in `## NEXT` as owed by the first section wiring a verb to a `CardStore` **write**
-  path — §4.
-
-### What this block should teach the sections after it
-
-**1. A mechanism a caller must remember to invoke is not structural, however well documented.** I briefed
-obligation 3 as a per-arm `WithNoFurtherArguments` wrapper. The reviewer disproved it in the most direct
-way available — added a dispatch arm that skipped the wrapper, built clean, and the binary accepted a
-trailing token with exit 0. The fix was to move the check past `Dispatch`'s single exit where nothing can
-opt out, and to **delete the wrapper**, because its continued existence was the bypass. The general rule,
-which §4 onwards should apply to every "enforced" claim: *if you can write the mistake and it compiles,
-it is a convention.*
-
-**2. Green tests and two review rounds did not exercise the machine contract.** `index rebuild` emitted
-`{"command":"index"}` for four rounds. 104 tests passed, and two reviewer approvals stood, because every
-test asserted on outcomes and exit codes and none asserted on what the envelope *says*. I found it by
-running the binary. **The emitted JSON is a surface with its own tests**, and later sections must assert
-against it directly rather than against the outcome that precedes it.
-
-**3. A refusal must name the right problem.** I overruled the reviewer's "benign, not worth chasing" on
-`bogus extra` reporting `unrecognised-argument` instead of `unknown-command`. This tool's product is
-refusals and its callers are agents that act on the message; a refusal naming the wrong problem sends an
-agent to fix the wrong thing. The rule that came out of it is narrower and better than the one I first
-specified: **enforcement overrides a `Success`, never a `Refusal`** — the handler's domain reason is
-always the more specific one.
-
-### New obligation for §4 — a refusal that lands after its side effect
-
-Enforcement now runs *after* the handler, so `index rebuild extra-token` **writes the database and then
-refuses**. Harmless here and accepted deliberately: D4 makes the index disposable, and the rebuild is a
-faithful reconstruction from the same record whatever caused it — the reviewer confirmed there is no path
-where the discarded `Success` leaves state a caller could act on.
-
-But the shape is *a refusal landing after the side effect it should have prevented*, and **"refusals must
-bind" is the product**. The first verb whose side effect touches the **primary record** must move argument
-validation ahead of side effects: a parse phase that draws fully from the cursor and may refuse, then an
-execute phase that runs only after. The reviewer's shape note, which I endorse: keep it **one** funnel
-point rather than two places that both have to be right — the property obligation 3 just established.
-
-I deferred this rather than building it now because §4's verbs are the first that actually *take*
-arguments, so the parse/execute seam has a real shape to design against; building it against two verbs,
-one of which consumes nothing, would be speculating ahead of the section that owns it. The reviewer
-independently agreed and could not find a cheap interim fix that was not just the bypassable-convention
-shape again.
-
----
-
-## NEXT` in those terms.
-
-**What block B does keep:** `RepoRootResolver` is genuinely one resolver feeding both the cards root and
-the index path, so the `.gitignore` residual I recorded at block A close **is** closed — the index path
-now resolves under a real repo root rather than a caller-supplied one. That was the half of obligation 1
-whose trigger had fired.
-
-### The nit — take it
-
-Add the `RepoRootResolver` worktree test (`.git` as a file, not a directory). It is cheap, and a
-resolver that both the record path and the index path now depend on should not have an untested branch.
-
-→ @worker for the blocker and the nit; everything else in block B stands as reviewed.
-
----
-
-## NEXT` is the file's final section. Every post goes above it.** Block A drifted this way twice and
-the reviewer had to relocate the posts both times; §2 closed on the same finding. Check where your post
-landed after you write it.
-
-### Boundaries
-
-No commits, no ticking boxes, no edits to `tasks.md`, the `Makefile`, `CLAUDE.md` or `.claude/`, no
-spawning agents. Need a Makefile target changed — stop and tell me. Spec ambiguous, or the work reaches
-outside §3 — stop and post `❓ @architect` rather than improvising. Finish with your gate exit lines and
-`→ @reviewer`.
-
----
-
-## NEXT`, and both times the reviewer relocated it. §2 closed on exactly this finding.
-The individual writes were correct each time; the file's structure degraded anyway, which is precisely
-the failure mode `callboard` exists to remove — a post routed to a card cannot land in the wrong place,
-because "where does this go" stops being the writer's problem. Until then: **`## NEXT` is the file's
-final section, and every post goes above it.** This is in block B's brief.
-
----
-
-## NEXT` at the bottom. Append-only; only `## NEXT` is rewritten.
+pinned `## NEXT` at the bottom. Append-only; only `## NEXT` is rewritten.
 
 ---
 
@@ -4638,6 +4345,673 @@ gap — noted for later blocks: assert the emitted JSON, not just outcome/exit c
 
 Clean. → @architect, ready to commit.
 
+**[worker]** ⚠️ **Placement note before I start:** the block C brief (`Brief — **block C (3.4–3.6)**`)
+landed mid-sentence inside an earlier §3 post (around the obligation-1 discussion, well above this
+point in the file), not appended at the section's end — it splits "Restated in `## NEXT` as owed by
+the first section wiring a verb to a `CardStore` **write** path — §4." into two unrelated halves.
+I read the brief in full off `git diff HEAD` since the rendered file is broken there; the content itself
+is intact and unambiguous. Flagging per the standing `## NEXT` placement rule rather than repairing it
+myself — it isn't my post and isn't in this block's scope. My own post below is above `## NEXT`, verified.
+
+---
+
+**[worker]** Block C (3.4–3.6) — the three index-invariant tests. New file:
+`tests/Callboard.Tests/IndexInvariantTests.cs`, seven `[Fact]`s against blocks A/B's code, none of it
+touched. No production code changes ship with this block.
+
+**3.4 — `Rebuild_ProducesIdenticalAnswers_AcrossThreeConsecutiveDestroyAndRebuildCycles`.** A corpus
+across `register/`, `decisions/` and two `changes/<name>/` directories (7 cards, multiple kinds/scopes/
+owners, a multi-comment thread with a reply and a resolved flag) is indexed, the database destroyed and
+rebuilt three times, and every dump compared. Per the brief: **answers, not bytes** — `DumpDatabase`
+reads every column of every row via `SELECT ... ORDER BY id` / `ORDER BY card_id, ordinal` and joins
+each row into one string; two databases with the same rows in different physical page layouts still
+compare equal, and the ordering fixes what would otherwise be enumeration-order flake.
+
+**3.5 — the architect's ruling, taken as written.** §3 has no query path, so I built exactly what the
+ruling scoped: the index has exactly one input, so nothing else can move a rebuild's answer.
+- `Rebuild_DiscardsAnyHandMutationMadeDirectlyToTheDatabase_TheRecordIsUntouched` — hand-mutates a row
+  (title/status/owner), wipes the comments table, and inserts a fabricated card row directly via SQL,
+  confirms the mutated DB actually disagrees with the record first (or the test would prove nothing),
+  then rebuilds and asserts the result matches the record exactly, fabricated row gone.
+- `Rebuild_ReflectsAFileMutation_EvenWhenTheIndexWasStale` — indexes a card, then edits the **file**
+  (through `CardStore.WriteCard`, no `Populate` in between so the index is deliberately left stale),
+  rebuilds, asserts the new title is what the index now reports.
+- `Rebuild_IsAFullReplace_ACardDeletedFromTheRecordDisappearsFromTheIndex` — deletes a card file after
+  indexing it, rebuilds, asserts it is gone from the index rather than merely unrefreshed.
+
+I did **not** build a query verb, and I'm saying explicitly what §3.5's brief asked me to say: this is
+the part of "the record governs" that §3 can reach — the index has one input and no other. Whether a
+future reader that finds index and record disagreeing (rather than rebuilding first) resolves it
+correctly is a §10 property, not demonstrated here, because no code in this section reads the index to
+answer a question. I read this as within the architect's ruling, not a gap I'm leaving quietly — flagging
+it in case that boundary needs to become an explicit obligation carried into §10's brief.
+
+**3.6 — never a lock, deletable without loss.**
+- `DeletingTheIndex_BetweenTwoCardWrites_AndWhileACardLockIsHeld_LosesNoDataAndRebuildRecovers` — holds
+  a real `CardLock` on an unrelated card (so a write is genuinely in flight), deletes the index under it,
+  writes a second card, asserts both card files intact and a subsequent rebuild recovers exactly 2 cards.
+- `CardWrites_SucceedWithTheIndexAbsentEntirely_AndNeverCreateOne` — write, append-comment and read all
+  run against a cards root where `.index/` never existed; asserts success throughout and that neither
+  the database file nor its directory ever gets created as a side effect.
+- `ConcurrentCardWrites_BehaveIdentically_WhetherTheIndexExistsIsAbsentOrIsDeletedUnderneath` — the
+  `CardStoreConcurrencyTests` 20-thread real-contention shape, run three times against one fresh scenario
+  root each (index absent / present / deleted mid-run, the last deleting the file after threads start
+  but before they finish), same assertion each time: all 20 comments land exactly once.
+
+**Each test was run against a deliberately broken implementation and confirmed to fail, then the break
+was reverted before this report — none of the three properties is a test that has never failed:**
+
+1. **3.4 and 3.5 (full-replace):** temporarily changed `IndexPopulator.WriteDatabase` to write directly
+   into the live `databasePath` (skipping the temp-file-then-rename swap) and to call `IndexSchema.Create`
+   only when the file didn't already exist — a merge instead of a full replace. Result: **5 of my 7 new
+   tests failed** — the two hand-mutation/full-replace tests failed on the assertions directly, and the
+   three tests that call `Populate` more than once against the same root (3.4's own test, and 3.6's index-
+   delete-and-rebuild test) failed with a live `SqliteException: UNIQUE constraint failed: cards.id` or
+   `table cards already exists` — the merge defect surfacing as a hard crash, not a silent divergence.
+   Reverted; confirmed byte-identical to blocks A/B's shipped file via `git diff` (no diff).
+2. **3.6:** temporarily added a guard to `CardStore.WriteCard` refusing every write unless the index
+   database file already existed at a hardcoded relative path — simulating the record becoming
+   load-bearing on the index. Result: the three 3.6 tests failed as expected (`expected write success,
+   got failure: PROBE: index database missing...`), and it cascaded into 16 more failures across
+   `CardStoreWriteTests`, `CardStoreConcurrencyTests`, `CardStoreCorruptionTests` and `IndexPopulatorTests`
+   — everything in the suite that writes a card at all — which is itself a data point: the record path
+   has no other route to disk than this one method, so a defect here is maximally visible, not something
+   a narrower test could miss. Reverted; `grep -rn "REVIEWER-PROBE|PROBE:" src/ tests/` clean.
+
+One incidental finding while writing 3.4/3.5, not a code defect: `Microsoft.Data.Sqlite`'s connection
+pooling (default `Pooling=true`) served a stale cached native handle across a delete-then-rebuild cycle
+in my *test harness* the first time I wrote these — a read connection opened on `databasePath` before
+the delete kept answering from the old file after `File.Move` swapped in the new one at the same path.
+`IndexPopulator` itself never opens a connection on `databasePath` (only on the temp path, then renames),
+so this was never a production bug — but it would have made a real defect invisible to a same-string-
+reused test connection. Fixed by adding `Pooling=false` to every read/write `SqliteConnection` this file
+opens directly against `databasePath`. Worth a line in `## NEXT` for whoever writes §10's read path
+against the same file, since that code will open connections against a database that a concurrent
+`index rebuild` can rename out from under it in exactly this shape.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (116/116: 109
+prior + 7 new). No production code changed by this block.
+
+→ @reviewer
+
+**[architect]** **Block A (3.1–3.2) closed.** Reviewer `Approve` (twice — the block, then the narrow
+re-audit of the nit 2 fix). Gates re-run by me on the final tree, not taken from a report:
+`BUILD_EXIT:0` / `TEST_EXIT:0` (87/87) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+3.1 and 3.2 ticked; committed.
+
+**Obligation discharged — the `.gitignore` re-verification.** Carried from §1, and the DEVLOG has
+twice recorded it as owed without anyone running the real check. Held now, against the real constant:
+`git check-ignore -v callboard/.index/callboard.db` → `.gitignore:12  callboard/.index/`. The rule
+matches the constant. **Residual, and it is not cosmetic:** `IndexPaths.DatabasePath(root)` resolves
+under a caller-supplied `root`, so the ignore holds only when that root *is* the repo root. That is
+the same defect as §2's `expectedDirectory` having no repo-root anchor, and it is now live on a
+second path. Block B owns both.
+
+**Nit dispositions, recorded so section close reads them as decisions rather than misses:**
+
+- **Nit 1, the throwing `finally`** (`IndexPopulator.cs`) — deferred, not missed. It duplicates the
+  defect already carried against `CardStore.AtomicWrite` on the Opportunistic list. Fixing only the
+  new site leaves two copies of one defect in inconsistent states, which is worse than two consistent
+  copies: it makes the survivor look intentional. Both get fixed in one pass. Reviewer raised no
+  objection to this tie-breaker.
+- **Nit 2, the duplicated `"callboard/changes/"` prefix** — fixed in-block. `CardLayout` now owns the
+  literal and `ChangesDirectory` interpolates it. This was the §2-supervisor-blocker-2 shape (a layout
+  helper and its callers drifting apart), so it was not a candidate for deferral.
+- **Nit 3, no `catch` around SQLite I/O in `WriteDatabase`** — routed to block B. Whether an I/O
+  failure is a *refusal* or a *tool-failure* is the verb's call, and B is where the verb exists.
+
+**Process note for block B — the DEVLOG drifted twice in one block.** Both times the worker's post
+landed *after* `## NEXT`, and both times the reviewer relocated it. §2 closed on exactly this finding.
+The individual writes were correct each time; the file's structure degraded anyway, which is precisely
+the failure mode `callboard` exists to remove — a post routed to a card cannot land in the wrong place,
+because "where does this go" stops being the writer's problem. Until then: **`## NEXT` is the file's
+final section, and every post goes above it.** This is in block B's brief.
+
+---
+
+**[architect]** Brief — **block B (3.3)**: the `index rebuild` verb, plus §1's four orphaned CLI
+obligations. → @worker
+
+Block A landed as `26e48e9`. Read it first — you are wiring `IndexPopulator.Populate` to a verb.
+
+### Tasks
+
+- **3.3** Implement the full rebuild command.
+
+That is one task box, and it is the smallest part of this block. §3 ships the **first real verb after
+`version`**, and §1's CLI obligations were parked precisely because §2 shipped no verbs to hang them
+on. They are due here. A block that lands the verb and leaves them is not this block.
+
+### The verb
+
+`callboard index rebuild` — noun-then-verb, confirmed by the Product Owner. This is the first
+two-token command, so it settles the dispatch shape for every verb after it (`card show`,
+`context get`). Land **only** `index rebuild`; do not invent a second verb to prove the pattern.
+
+- `index` with no subcommand → refusal naming the subcommands it does have.
+- `index rebuild` with any trailing token → refusal, per the boundary convention `version` set.
+- Success result JSON: the database path, the count of cards indexed, the count of comments indexed,
+  and the parse failures as an array of `{filePath, reason}`. **A rebuild that indexed 40 cards and
+  failed to parse 3 is a success with 3 failures reported, not a refusal** — degraded mode is the
+  case `record-retrieval` requires the loop to survive, and a corrupt card must not make the tool
+  refuse to work.
+- Register `IndexRebuildResult` in `CliJsonContext`. `ICommandResult` exists so a missing JSON mapping
+  is a compile error rather than a runtime `NotSupportedException`; keep that true.
+
+### Refusal versus tool-failure — decide this deliberately, it is the block's sharpest edge
+
+These are **opposite instructions to the caller** (`CommandDispatcher`'s own doc comment says so): a
+refusal means the board is working and the caller must stop; a tool failure means enforcement is
+unavailable and the loop proceeds unenforced rather than blocked. Assign each case:
+
+- **Repo root not found** → refusal. The caller invoked the tool somewhere it cannot work; it must stop.
+- **SQLite I/O failure while writing the index** (reviewer's nit 3 from block A, routed here) →
+  **tool-failure**, not refusal. The board is not saying no; the index is unavailable. Block A's
+  `WriteDatabase` has no `catch` around its SQLite I/O — deliberately, because a library block had
+  nowhere to surface it. You have somewhere now.
+- **A card that fails to parse** → neither. It is reported in a successful result, as above.
+
+Do **not** add a `CliRefusal` case for a tool failure. `tool-failure` is already riding on the
+refusal shape at `CommandDispatcher.WriteToolFailureEnvelope`, and §9 owns fixing that (its brief
+carries "`tool-failure` must **not** become a member of the closed refusal set"). Your job is to not
+make it worse: route your I/O failure through the existing tool-failure path rather than minting a
+refusal code for it.
+
+### The four carried obligations — all four, and they are the substance of this block
+
+**1. Anchor to the real repo root.** Carried from §2, and block A doubled it. `CardStore`'s
+`expectedDirectory` is a relative literal with no repo-root anchor, so `ValidateAgainstLayout`
+constrains only the *trailing* segments — a path with a different root but a correctly-shaped tail
+passes. §2's supervisor routed this to "whichever section first wires a verb to `CardStore`". **That
+is this block.** Block A added a second instance: `IndexPaths.DatabasePath(root)` resolves under a
+caller-supplied root, so `.gitignore`'s `callboard/.index/` rule only holds when that root is the repo
+root. I verified the ignore rule matches the constant; the anchoring is what is missing.
+
+Resolve the repo root once, by walking up from the current directory for a `.git` entry, and refuse
+with a clear message if there is none. Both the cards root and the index path derive from it. One
+resolver, not two.
+
+**2. Enforce the stdout/stderr split rather than observing it.** Today `CommandDispatcher.Run` is the
+only thing that writes to stdout, and `CommandContext` deliberately carries no writers — but that is
+a convention a future handler can break by reaching for `Console.Out` directly, and "exactly one JSON
+line on stdout" is a promise machine callers parse against. Make it structural. The shape I have in
+mind is a banned-API analyzer (`Microsoft.CodeAnalysis.BannedApiAnalyzers`) forbidding `System.Console`
+members everywhere except `Program.cs`, so a violation is a build error under
+`TreatWarningsAsErrors` — build-time only, so no AOT implication. If you find a better structural
+mechanism, take it and say why; what I will not accept is a doc comment asking future authors to
+behave.
+
+**3. Make `RemainingArgs` inspection structural.** `RunVersion` checks `RemainingArgs.Length == 0` by
+hand. Nothing forces the next handler to check at all — a handler that ignores an argument the caller
+passed silently does the wrong thing, which is the exact failure mode ADR-0001's "any token it does
+not consume is a refusal" exists to prevent. Restructure so a handler **cannot** receive tokens it did
+not declare: the command declares what it accepts, and the dispatcher refuses unconsumed tokens
+*before* the handler runs. `version` should then have no argument check in its body at all — if it
+still does, the mechanism is not structural. `index rebuild` is your second caller and the proof the
+shape generalises.
+
+**4. Make the stdin guard unskippable at the body-read call site.** `RequireStdinRedirected` exists
+and nothing forces a body-reading verb to call it before `StdinBodyReader.ReadBody`; the guard is a
+doc comment away from being skipped. Make the check a precondition of *obtaining* the reader: have
+the body reader accept a type that can only be constructed by passing the redirect check — so
+"forgot the guard" stops compiling rather than blocking on a TTY at runtime. **No verb in this block
+reads a body**, so this ships with tests and no production caller; that is the §1 obligation being
+paid, not scope creep. Say so in your post.
+
+### Binding decisions
+
+- **ADR-0001 / D1** — non-interactive, JSON on stdout, bodies on stdin, non-zero exit on refusal.
+- **D4** — the index is never authoritative and **never taken as a lock**. `index rebuild` takes no
+  `CardLock`, and no other command may be made to wait on the index.
+- **D2** — NativeAOT. Source-generated JSON only; no reflection-based `JsonSerializer` overloads.
+
+### Tests
+
+Extend `CommandDispatcherTests`. Cover: `index` alone refuses and names its subcommands; `index rebuild`
+succeeds on an empty cards root; it reports parse failures in a successful result; a trailing token
+refuses; the refusal exits non-zero and the success exits zero; exactly one JSON line reaches stdout on
+every path including tool-failure; and the structural mechanisms from obligations 3 and 4 actually
+fail closed — a test that proves the guard cannot be skipped, not merely that it works when called.
+§2's convention holds: **test seams are threaded parameters, never shared statics.**
+
+### Done-gates — I read the exit line, not the output
+
+`make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0` (new **and** all 87 existing);
+`make format` → `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. `make gates` runs the set in one
+`-k` pass. Quote the exit lines verbatim in your post.
+
+Note obligation 2 may add an analyzer package — a package reference change means `dotnet restore`, and
+the sandbox denies it (`NU1301 ... Permission denied (localhost:<port>)`). Block A hit it once and a
+retry succeeded from cache. **If a retry does not clear it, stop and report** rather than requesting an
+override or calling the toolchain around the Makefile.
+
+### DEVLOG placement — read this before you post
+
+**`## NEXT` is the file's final section. Every post goes above it.** Block A drifted this way twice and
+the reviewer had to relocate the posts both times; §2 closed on the same finding. Check where your post
+landed after you write it.
+
+### Boundaries
+
+No commits, no ticking boxes, no edits to `tasks.md`, the `Makefile`, `CLAUDE.md` or `.claude/`, no
+spawning agents. Need a Makefile target changed — stop and tell me. Spec ambiguous, or the work reaches
+outside §3 — stop and post `❓ @architect` rather than improvising. Finish with your gate exit lines and
+`→ @reviewer`.
+
+---
+
+**[architect]** Answering the reviewer's `❓` and routing the blocker. Verdict accepted in full —
+**Request changes**, one blocker, and the `CardStore` question is mine to answer, not the worker's.
+
+### The blocker — obligation 3. The reviewer is right, and the mechanism I specified was the wrong one.
+
+A per-arm wrapper cannot be structural, and I should have seen that when I wrote the brief: anything a
+switch arm has to *remember to call* is a convention with better ergonomics, not a guarantee. The
+reviewer's probe — a third arm calling its handler directly, trailing token accepted, exit 0 — is the
+proof, and it is exactly the case the brief said it would not accept.
+
+**Fix the mechanism, not the arms.** Move the unconsumed-token check out of the switch entirely and into
+the single point every command funnels through, *after* the handler returns:
+
+- Handlers consume what they declare via `ArgumentCursor`. `index` consumes `rebuild`; `version`
+  consumes nothing.
+- After `Dispatch` returns — in `Run`, or at `Dispatch`'s single exit — whatever the cursor still holds
+  unconsumed becomes an `unrecognised-argument` refusal, **overriding a `Success` the handler may have
+  returned**. A handler that ignored a token cannot have its success stand.
+- **Delete `WithNoFurtherArguments`.** Its existence is the bypass. While a per-arm wrapper is available,
+  a future arm can use it or not, and "not" is the silent failure.
+
+Then re-run the reviewer's own probe: add an arm that calls its handler directly, confirm the trailing
+token still refuses, and delete the probe. If it passes, the mechanism is structural — the check no
+longer lives on the path a new arm chooses to take.
+
+### The `❓` — obligation 1 is half-closed, and my brief mis-assigned it
+
+The reviewer is right that `CardStore.ValidateAgainstLayout` is still unanchored, and right to flag that
+this does not match what I assigned. **The brief overreached; the worker's disposition is correct.**
+
+§2's supervisor routed the anchor to "whichever section first wires a verb to `CardStore`". I read that
+as §3 because §3 ships the first verb. But the defect is in `ValidateAgainstLayout`, which is on the
+**write** path, and block B's only `CardStore` caller is `ReadAllCards` — a read that never reaches it.
+The trigger condition has not fired. Anchoring a function with no production caller would be building
+a guard for a path nothing takes, which is the §2-blocker-2 shape I have twice told workers to avoid.
+
+**Restating the trigger precisely, because "first verb" was the imprecision that caused this:** the
+anchor is owed by **the first section that wires a verb to a `CardStore` write path** —
+`WriteCard` or `AppendComment`. On the current breakdown that is **§4**. It joins §4's existing
+`AppendCommentUnderExistingLock` obligation, and both are §4 blockers if §4 lands a write verb without
+closing them. I am recording it in `## NEXT` in those terms.
+
+**What block B does keep:** `RepoRootResolver` is genuinely one resolver feeding both the cards root and
+the index path, so the `.gitignore` residual I recorded at block A close **is** closed — the index path
+now resolves under a real repo root rather than a caller-supplied one. That was the half of obligation 1
+whose trigger had fired.
+
+### The nit — take it
+
+Add the `RepoRootResolver` worktree test (`.git` as a file, not a directory). It is cheap, and a
+resolver that both the record path and the index path now depend on should not have an untested branch.
+
+→ @worker for the blocker and the nit; everything else in block B stands as reviewed.
+
+---
+
+**[architect]** **Block B (3.3) closed.** Reviewer `Approve` after three rounds — one blocker, then two
+Architect-initiated changes. Gates re-run by me on the final tree: `BUILD_EXIT:0` / `TEST_EXIT:0`
+(109/109) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, `GATES_EXIT:0`. 3.3 ticked; committed.
+
+I also ran the binary against this repo and confirmed all five envelope shapes by hand — `index rebuild`
+→ `"index rebuild"`, `index` → `"index"`, `index bogus` → `"index"`, `bogus extra` → `"bogus"`,
+`version` → `"version"` — plus a real database written to `callboard/.index/callboard.db` and correctly
+ignored by git.
+
+### Obligations closed, and the one that was mis-assigned
+
+- **Obligation 2, the stdout/stderr split — closed structurally.** `BannedApiAnalyzers` bans `System.Console`
+  outside `Program.cs`; a stray `Console.WriteLine` is `RS0030` at build time under `TreatWarningsAsErrors`.
+  Verified live by both the worker and the reviewer, the reviewer checking four distinct `Console` members
+  rather than the one the worker tried.
+- **Obligation 3, argument consumption — closed structurally, on the second attempt.** See below; this is
+  the section's most instructive failure.
+- **Obligation 4, the stdin guard — closed structurally.** `ReadBody` takes a `RedirectedStdin` whose only
+  construction path runs the redirect check. Ships with tests and no production caller, because no verb in
+  §3 reads a body; that is the §1 obligation being paid, not scope creep.
+- **Obligation 1, the repo-root anchor — half closed, and my brief mis-assigned the other half.**
+  `RepoRootResolver` is one resolver feeding both the cards root and the index path, so block A's
+  `.gitignore` residual is closed. `CardStore.ValidateAgainstLayout` is untouched and still owed: the
+  defect is on the **write** path, block B's only `CardStore` caller is `ReadAllCards`, and the trigger
+  never fired. Restated in `## NEXT` as owed by the first section wiring a verb to a `CardStore` **write**
+  path — §4.
+
+### What this block should teach the sections after it
+
+**1. A mechanism a caller must remember to invoke is not structural, however well documented.** I briefed
+obligation 3 as a per-arm `WithNoFurtherArguments` wrapper. The reviewer disproved it in the most direct
+way available — added a dispatch arm that skipped the wrapper, built clean, and the binary accepted a
+trailing token with exit 0. The fix was to move the check past `Dispatch`'s single exit where nothing can
+opt out, and to **delete the wrapper**, because its continued existence was the bypass. The general rule,
+which §4 onwards should apply to every "enforced" claim: *if you can write the mistake and it compiles,
+it is a convention.*
+
+**2. Green tests and two review rounds did not exercise the machine contract.** `index rebuild` emitted
+`{"command":"index"}` for four rounds. 104 tests passed, and two reviewer approvals stood, because every
+test asserted on outcomes and exit codes and none asserted on what the envelope *says*. I found it by
+running the binary. **The emitted JSON is a surface with its own tests**, and later sections must assert
+against it directly rather than against the outcome that precedes it.
+
+**3. A refusal must name the right problem.** I overruled the reviewer's "benign, not worth chasing" on
+`bogus extra` reporting `unrecognised-argument` instead of `unknown-command`. This tool's product is
+refusals and its callers are agents that act on the message; a refusal naming the wrong problem sends an
+agent to fix the wrong thing. The rule that came out of it is narrower and better than the one I first
+specified: **enforcement overrides a `Success`, never a `Refusal`** — the handler's domain reason is
+always the more specific one.
+
+### New obligation for §4 — a refusal that lands after its side effect
+
+Enforcement now runs *after* the handler, so `index rebuild extra-token` **writes the database and then
+refuses**. Harmless here and accepted deliberately: D4 makes the index disposable, and the rebuild is a
+faithful reconstruction from the same record whatever caused it — the reviewer confirmed there is no path
+where the discarded `Success` leaves state a caller could act on.
+
+But the shape is *a refusal landing after the side effect it should have prevented*, and **"refusals must
+bind" is the product**. The first verb whose side effect touches the **primary record** must move argument
+validation ahead of side effects: a parse phase that draws fully from the cursor and may refuse, then an
+execute phase that runs only after. The reviewer's shape note, which I endorse: keep it **one** funnel
+point rather than two places that both have to be right — the property obligation 3 just established.
+
+I deferred this rather than building it now because §4's verbs are the first that actually *take*
+arguments, so the parse/execute seam has a real shape to design against; building it against two verbs,
+one of which consumes nothing, would be speculating ahead of the section that owns it. The reviewer
+independently agreed and could not find a cheap interim fix that was not just the bypassable-convention
+shape again.
+
+---
+
+**[architect]** Brief — **block C (3.4–3.6)**: the three index invariants, as demonstrated behaviour.
+→ @worker
+
+Blocks A (`26e48e9`) and B (`ccf7e5a`) are in. Read both before starting — you are proving properties of
+code you did not write, which is deliberate: a test written by the author of the mechanism tends to test
+the mechanism the author had in mind.
+
+### Tasks
+
+- **3.4** Test that destroying the index and rebuilding produces identical answers.
+- **3.5** Test that where index and record disagree, the record governs and the index is rebuilt.
+- **3.6** Verify the index is never taken as a lock — deleting it mid-session loses no data.
+
+### Why this block exists as its own block
+
+design.md names this exactly: *"Index and record diverging → the record governs and the index is rebuilt;
+**this must be a tested behaviour, not a documented intention**."* Blocks A and B wrote code that is
+*supposed* to have these properties. This block is the evidence. Treat a property you cannot actually
+demonstrate as a finding to report, not a test to soften until it passes.
+
+**The standard for this block, set by two things that already happened in §3:** block A's
+no-body-in-the-database test earned its keep only because the reviewer mutated the schema to add a `body`
+column and confirmed the test failed. Block B's envelope defect survived 104 green tests because they
+asserted on outcomes rather than on the artefact. So: **for each of your three tests, break the property
+deliberately and confirm the test fails.** Report that you did, and what you broke. A test that has never
+failed is a claim, not evidence.
+
+### 3.4 — rebuild produces identical answers
+
+*Answers*, not bytes. Do not compare the database file byte-for-byte: SQLite is free to differ in page
+layout, and a byte comparison would be both flaky and stronger than the requirement. Compare the
+**derived state** — every row of every table, in a deterministic order, dumped canonically.
+
+Build a corpus with enough shape to be worth comparing: cards of several kinds, scopes and owners, across
+`register/`, `decisions/` and at least two `changes/<name>/` directories, with multi-comment threads
+including replies, `to` routing and resolved flags. Index it, capture the answers, destroy the database
+entirely, rebuild, capture again, assert equality. Then do it a third time to catch anything that is
+stable between two runs but not three.
+
+### 3.5 — the record governs. Read this before you write it; there is a real question here.
+
+**§3 has no query path.** Nothing reads the index to answer a question yet — that is §10's working
+context. So "where index and record disagree, the record governs" cannot be tested the way it eventually
+will be, and I want you to know that before you go looking for a verb that does not exist.
+
+**My ruling on what 3.5 means in §3**, so you do not have to invent it: the record governs because the
+index has exactly one input and no other. Demonstrate that:
+
+- Hand-mutate an indexed database directly — change a card's status, rename an owner, delete a row, insert
+  a card row for a file that does not exist. Rebuild. Assert the index matches the **record** in every
+  case, including that the fabricated row is gone. The mutation leaves no trace; the record wins by
+  construction.
+- Mutate a **card file** instead, leaving the index stale. Rebuild. Assert the index now reflects the
+  file. The record is the only thing that can change an answer.
+- Rebuild is a full replace, not a merge: a card deleted from the record must disappear from the index.
+
+**If you conclude a genuine "record governs" test needs a read path §3 does not have — stop and post
+`❓ @architect` rather than building one.** Inventing a query verb to make a test expressible would be
+§10's work done blind, and I would rather carry a precisely-worded obligation into §10 than accept a
+speculative verb here. Say so explicitly in your post either way: whether what you built is the full
+property or the part of it §3 can reach.
+
+### 3.6 — never a lock, and deletable without loss
+
+Two distinct claims; test both.
+
+- **Deleting it loses no data.** Delete the database mid-session — between two card writes, and while a
+  `CardLock` is held — and assert every card write still succeeds and every card file is intact. Then
+  rebuild and assert the answers are the ones 3.4 established. The record is untouched by anything that
+  happens to the index.
+- **Nothing takes a lock on it.** The record path must work with the index **absent entirely** — no
+  database file, no `.index/` directory. Assert `CardStore` writes and reads succeed with no index
+  present and never create one. D7 rejected index-mediated serialisation precisely so correctness never
+  routes through it; §2's `CardLock` remains the only locking mechanism.
+- Concurrency: two concurrent card writes must behave identically whether the index exists, is absent, or
+  is deleted underneath them. §2 has concurrency-test precedent in `CardStoreConcurrencyTests` — follow
+  its shape rather than inventing one.
+
+### Binding decisions
+
+**D4** — derived, disposable, never authoritative, never a lock, gitignored. **D7** — per-card advisory
+lock plus atomic rename is the locking mechanism; the index is not. **`record-retrieval`** — *"Derived
+state is rebuildable and never authoritative"*, both scenarios.
+
+### Conventions
+
+Test seams are threaded parameters, never shared statics (§2, and A and B both hold to it). Temp
+directories, not the repo's own `callboard/`. Follow the existing test files' shape — `IndexPopulatorTests`,
+`CardStoreConcurrencyTests`, `CommandDispatcherTests`.
+
+Where a test is best expressed through the verb rather than the library, use the verb — block B made
+`index rebuild` real, and a test that goes through the CLI exercises the machine contract as well as the
+mechanism. That is the gap that let block B's envelope defect survive four rounds.
+
+### Done-gates — I read the exit line, not the output
+
+`make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0` (new **and** all 109 existing);
+`make format` → `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Quote them verbatim.
+
+### DEVLOG placement
+
+**`## NEXT` is the file's final section. Every post goes above it.** Check where yours landed after you
+write it.
+
+### Boundaries
+
+No commits, no ticking boxes, no `Makefile`/`CLAUDE.md`/`.claude/` edits, no spawning agents. If a
+property cannot be demonstrated with what §3 has, **stop and post `❓ @architect`** — do not weaken the
+test to make it pass, and do not build a verb to make it expressible. Finish with the gate exit lines and
+`→ @reviewer`.
+
+---
+
+**[architect]** **The block C worker's structural finding was mine, and it was worse than it looked.**
+Recording it in full, because §3 has now produced three separate instances of this file degrading while
+every individual post was correct, and the pattern is the requirement.
+
+**What happened.** My tooling inserted each `[architect]` post immediately before the *first literal
+occurrence* of the string `## NEXT` in the file. That occurrence is not the pinned heading — it is the
+preamble's own sentence describing the convention: *"…with a pinned `## NEXT` at the bottom."* So block
+A's closing post was spliced into the middle of that sentence, above `## 1.`, and every subsequent post
+was spliced into the first `## NEXT` mention inside the post before it. Five posts ended up **nested
+inside one another**, in reverse chronological order, in the file's preamble.
+
+The block C worker saw the symptom (`git diff` showing its brief spliced mid-sentence), correctly
+identified it as another author's post rather than its own to repair, flagged it, and worked from the
+content in full regardless. That is the right call on all three counts.
+
+**Repaired**: preamble sentence restored, all five posts extracted and re-appended under `## 3.` in
+chronological order, verified against their pristine sources, `## NEXT` confirmed as the file's only
+`## NEXT` heading and its final section. `VALIDATE_EXIT:0`.
+
+**Why this belongs in the record rather than in a quiet fix.** §2 closed on this exact finding. §3 has
+now hit it three times: twice the worker's posts landed below `## NEXT` and the reviewer relocated them,
+and once — this one — the Architect's own tooling nested five posts inside the preamble while every post
+was individually well-formed and correctly authored. **I wrote "check where your post landed" into three
+consecutive briefs and then did not check my own.**
+
+This is the incumbent's failure mode stated precisely, and it is worth being exact about what it is *not*:
+it is not carelessness, and it is not fixable by asking people to be careful — the instruction was
+present, explicit, repeated, and authored by the party that then broke it. It is that **an append-only
+Markdown file makes "where does this go" a question every writer must answer correctly on every write,
+using a text match against prose that can contain the very marker being matched.** `callboard` removes
+the question: a post is routed to a card, ordering is a property of the record, and `§11`'s export
+reconstitutes reading order. There is no placement for a writer to get wrong.
+
+**Carried to `## NEXT`, and it is not a nit:** the `/devlog` skill and any tooling that appends to this
+file must anchor on a **line-start heading match**, never a substring search — and must verify the file
+still has exactly one `## NEXT` heading, in final position, after every write. Until `callboard` is
+dogfooding its own record, that check is the only thing standing between this file and silent structural
+drift.
+
+**Also carried, from the block C worker (a real finding, not a nit):** `Microsoft.Data.Sqlite` connection
+pooling served a **stale cached handle** across a delete-then-rebuild cycle, and the worker had to set
+`Pooling=false` on read connections to get correct behaviour in its own tests. It flagged this for §10.
+It is right to: §10's read path opens connections against a database that `index rebuild` renames out
+from under it, which is exactly this shape. **A read path that silently answers from a pooled handle to a
+deleted database is the index being authoritative over the record by accident** — the precise failure D4
+and §3 exist to prevent, arriving through a connection-pool default rather than a design decision.
+
+---
+
+
+**[reviewer]** Block C (3.4–3.6, the index-invariant tests) — **Approve.**
+
+Verified independently: `git diff --stat ccf7e5a -- src/` is empty — **no production code changed**,
+confirmed by diff, not by the worker's claim. Reran `make gates` myself —
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 116/116.
+
+**I ran my own mutations against all three properties, chosen differently from the worker's, and
+watched all three fail correctly, then reverted every one and reconfirmed the tree byte-identical
+to `ccf7e5a`:**
+
+1. **3.4.** Worker's break was merge-not-replace. Mine: left `WriteDatabase` as a full
+   temp-then-swap replace, but made one column value nondeterministic across separate `Populate()`
+   calls (`file_path` suffixed with a fresh `Guid.NewGuid()` per call) — a defect class the
+   worker's probe doesn't reach, since a merge defect is deterministic-but-wrong rather than
+   actually varying between rebuilds. `Rebuild_ProducesIdenticalAnswers...` failed immediately,
+   first vs. second dump disagreeing on `file_path`. This confirms 3.4 is testing reproducibility
+   across separate rebuilds, not merely "the schema round-trips."
+2. **3.5.** Worker's break skipped the temp-file swap entirely. Mine: kept the real temp-then-swap
+   replace, but changed the `cards` insert to `INSERT OR IGNORE` and reused the *existing*
+   database file in place (instead of a fresh temp file) whenever one was already present — a
+   narrower, more surgical way to make an old row survive a "rebuild" without touching the
+   full-replace mechanics the worker's mutation broke. All three 3.5 tests failed correctly: the
+   hand-mutated title/status/owner survived, the fabricated `B-9999` row survived, and the
+   deleted card's row survived. This is a materially different code path than the worker's break
+   and it's caught just as cleanly.
+3. **3.6.** Worker's break required the database *file* to exist. Mine: required the `.index`
+   *directory* to exist instead (walking up from the card's path for a `callboard` segment and
+   checking `.index` beside it) — a distinct condition that would survive a fix aimed narrowly at
+   "check the file, not the directory." All three 3.6 tests failed correctly, including the
+   concurrency test (which failed on its very first `WriteCard` inside the thread body, before any
+   contention even started) — confirming the guard is caught regardless of which of the two things
+   (file vs. directory) a future regression checks.
+
+None of my mutations left residue: `git diff --stat ccf7e5a -- src/` empty again after each
+revert, `grep -rn "REVIEWER-PROBE" src/ tests/` clean.
+
+**3.4 — dump coverage confirmed exhaustive and corpus shape confirmed as claimed, not just
+asserted.** `DumpDatabase`'s two `SELECT` column lists match `IndexSchema.cs`'s `cards` (10
+columns) and `comments` (8 columns) exactly — checked column-for-column against the schema, not
+taken on the doc comment's word. `BuildCorpus` genuinely delivers what's claimed: 7 kinds
+(`Rule`/`Obligation`/`Decision`/`Block`/`Finding`/`Hazard`/`Question`), all four `CardScope`
+values (`Repository`/`Capability`/`Change`/`Section`), 5 owners, two distinct `changes/<name>/`
+directories (`establish-callboard`, `another-change`), a reply (`C-0002` → `C-0001`) with
+`resolved: true`, and `to`-routing on two separate comments. Three destroy-and-rebuild cycles, not
+two, as specified.
+
+**3.5 — I agree with the architect's ruling, and the worker's post says explicitly which part of
+the property is proven, as required.** The tests demonstrate "the index has exactly one input" —
+hand-mutated/fabricated database content is discarded, a file edit is the only thing that changes
+an answer, deletion from the record is a full replace not a merge. The worker's post states in as
+many words that whether a reader resolving a *live* index/record disagreement gets it right is
+§10's property, not demonstrated here — this is the honest boundary, not an overclaim, and no test
+or doc comment in the file asserts more than that.
+
+**3.6 — both distinct claims tested, concurrency test genuinely follows precedent rather than
+inventing one.** Deletable-without-loss and never-a-lock are two separate `[Fact]`s, each testing
+what it claims (confirmed above by mutation). The concurrency test's shape —
+`const int appendCount = 20`, real `Thread` objects with `Thread.Start()`/`Join()`, a
+`ConcurrentBag<Exception>`, uniqueness/count assertions on the final comment set — matches
+`CardStoreConcurrencyTests.cs` structurally, not just in spirit; checked side by side.
+
+**The `Pooling=false` classification — scrutinised and confirmed correct, not taken on trust.**
+Grepped every `SqliteConnection` construction in `src/Callboard`: there is exactly one production
+call site (`IndexPopulator.cs:110`), and it opens against `tempPath` — a fresh
+`Guid.NewGuid()`-suffixed filename generated inside every single `WriteDatabase` call, never
+`databasePath` itself. `databasePath` is used only as a `File.Move` target and as the string
+returned in `IndexRebuildResult` — never opened as a connection anywhere in production code today
+(grepped `DatabasePath`/`databasePath` across all of `src/Callboard`, confirmed). Since the pool
+keys on connection string and the temp path is unique per call, there is no reused string for a
+stale handle to attach to — **blocks A and B cannot hit this today**, confirmed by absence of any
+production connection against a stable, reused path, not merely by absence of a reported symptom.
+The classification is right, and the finding is exactly as serious as recorded for §10: the moment
+a read path opens a connection against `databasePath` — which is what querying the index requires
+— this becomes live. Test-side, all eight `SqliteConnection` constructions in
+`IndexInvariantTests.cs` consistently carry `Pooling=false`; no gap.
+
+No blockers, no nits. This is the strongest evidence-quality block in §3 so far — every property
+was actually broken and watched to fail, twice now (worker's break, my independent one), before
+being trusted.
+
+→ @architect, ready to commit. Separately: the DEVLOG splice/repair account is a good catch and a
+sound repair; nothing further to add on my end there — it's your tooling's finding to close, not
+mine to audit.
+
+**[architect]** **Block C (3.4–3.6) closed.** Reviewer `Approve`, no blockers, no nits — the only
+single-round block in §3. Gates re-run by me on the final tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (116/116)
+/ `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, `GATES_EXIT:0`. `git diff --stat ccf7e5a -- src/` is empty, so the
+"no production code changed" claim is verified rather than reported. 3.4–3.6 ticked; committed.
+
+**Why this block converged in one round when B took four.** Both the worker and the reviewer broke each
+property deliberately before trusting the test that asserts it — and, critically, **they broke it
+differently**. The worker's 3.4 probe was merge-not-replace, deterministic-but-wrong; the reviewer kept
+the real full-replace swap and made one value nondeterministic *across calls*, a defect class the
+worker's probe structurally cannot reach. Same for 3.5 (skip-the-swap versus `INSERT OR IGNORE` against
+an existing file) and 3.6 (missing database *file* versus missing `.index` *directory*).
+
+That is the generalisable part, and §4 onwards should adopt it: **two independent mutations of the same
+property are worth more than two readings of the same test.** A reviewer who re-runs the worker's probe
+confirms the worker's imagination, not the test's coverage.
+
+**The `Pooling=false` finding — classification confirmed, and the reasoning is the useful part.** The
+reviewer grepped every `SqliteConnection` construction in `src/Callboard`: exactly one production call
+site, and it opens only against a fresh per-call `tempPath`, never the stable `databasePath`. So blocks A
+and B cannot hit it. It goes to §10 as a live hazard, not a note — see `## NEXT`.
+
+### §3 is complete as tasks. What the section actually established
+
+- **The index is provably derived.** Not asserted in a doc comment: destroyed and rebuilt three times
+  with identical answers, hand-mutated rows discarded on rebuild, a fabricated row for a non-existent
+  file gone, a card deleted from the record gone. Rebuild is replace, never merge.
+- **The index is provably not a lock.** The record path works with the index absent entirely and never
+  creates one; concurrent card writes behave identically whether it exists, is absent, or is deleted
+  underneath them — including while a real `CardLock` is held.
+- **No narrative reaches the database**, verified against the file's bytes and confirmed by a reviewer
+  mutation that added a `body` column and watched the test fail.
+- **Three of §1's four CLI obligations are closed structurally**, and the fourth is precisely re-routed
+  rather than quietly dropped.
+
+→ supervisor review next, over `6f8d07d..HEAD`.
+
+---
+
 ## NEXT
 
 **Block A (3.1–3.2) closed** — reviewer `Approve` (originally `Approve with nits`; nit 2 fixed
@@ -4680,8 +5054,26 @@ suggested shape for that seam: keep it a single funnel point, the same pattern o
 established, rather than trading "one place checks this" for two places that both have to get it
 right.
 
-**Up next:** §3 is closed pending the supervisor's section review (block A, block B, both landed
-and approved). §4's brief must carry the parse/execute-split obligation above.
+**Block C (3.4–3.6) — reviewer `Approve`, ready to commit.** The three index-invariant tests,
+proving what blocks A and B built rather than merely exercising it: rebuild is deterministic across
+three destroy-and-rebuild cycles; the index has exactly one input, so hand-mutated/fabricated
+database content and stale rows are discarded on rebuild (the honest, §3-reachable slice of "the
+record governs" — a live index/record disagreement is §10's property, not demonstrated here,
+stated explicitly in the worker's post); the index is deletable without loss (mid-session, under a
+held `CardLock`) and never a lock (record path works with it absent entirely, concurrency identical
+across present/absent/deleted-mid-run). No production code touched — reviewer confirmed
+`git diff --stat ccf7e5a -- src/` empty independently. Reviewer ran three mutations of its own,
+each chosen differently from the worker's, against all three properties; all three caught the
+defect. `Pooling=false` classification (a stale pooled `SqliteConnection` handle across a
+delete-then-rebuild cycle, test-harness-only) scrutinised and confirmed: `IndexPopulator` is the
+only production code that ever opens a `SqliteConnection`, and it only ever opens one against a
+fresh per-call `tempPath`, never the stable `databasePath` — blocks A and B cannot hit this today.
+Carried to §10 as recorded.
+
+**Up next:** §3 is closed pending the supervisor's section review (blocks A, B, and C, all landed
+and approved). §4's brief must carry the parse/execute-split obligation and the §10 obligations
+recorded above (the `CardStore.ValidateAgainstLayout` write-path anchor, the DEVLOG-tooling
+line-start-heading-match requirement, and the connection-pooling hazard against `databasePath`).
 
 ### What §2 established that later sections must not re-derive
 

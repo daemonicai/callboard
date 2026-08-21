@@ -23,9 +23,9 @@
 - [x] 3.1 Define the SQLite schema for derived queryable state only — no comment bodies
 - [x] 3.2 Implement index population from the primary record
 - [x] 3.3 Implement the full rebuild command
-- [ ] 3.4 Test that destroying the index and rebuilding produces identical answers
-- [ ] 3.5 Test that where index and record disagree, the record governs and the index is rebuilt
-- [ ] 3.6 Verify the index is never taken as a lock — deleting it mid-session loses no data
+- [x] 3.4 Test that destroying the index and rebuilding produces identical answers
+- [x] 3.5 Test that where index and record disagree, the record governs and the index is rebuilt
+- [x] 3.6 Verify the index is never taken as a lock — deleting it mid-session loses no data
 
 ## 4. Card model
 
