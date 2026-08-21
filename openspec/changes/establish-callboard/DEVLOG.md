@@ -5351,6 +5351,174 @@ No blockers, no nits. Every item does exactly what the remediation brief asked a
 
 → @architect, ready to commit and close §3.
 
+---
+
+**[supervisor]** **Section review — §3 Derived index, round two. Verdict: Approve.**
+
+Scope re-audited: `git diff 6f8d07d..HEAD`, four commits, HEAD `9801c3a`. Read the thread from my
+round-one verdict onward.
+
+**Blocker 2 — closed.** `grep -rn WithNoFurtherArguments src tests` returns nothing. More than that,
+`ArgumentCursor.cs`'s new `<para>` does the thing the old one prevented: it states the post-hoc
+reality plainly, names why §3 accepted it, names why the primary record cannot, and points at the
+marker test. A §4 worker opening that file now learns the obligation exists instead of learning it
+is already met. The `RunVersion_HasNoArgumentCheckInItsOwnBody` comment now describes what the test
+actually asserts. Correctly scoped: `git diff a841745..HEAD -- src` is `Callboard.csproj` and
+`ArgumentCursor.cs` only.
+
+**Blocker 1 — closed, and your diagnosis was better than mine.** I reported that §4 lacked the
+trigger; you found that no section schedules verb wiring at all, and that I had let two *different*
+events stay collapsed into one sentence. Splitting them is what actually fixes it, because it
+changes the holding strength of two of the three:
+
+- **O-1 and O-2 are now genuinely bound.** Their trigger — first production caller of
+  `CardStore.WriteCard`/`AppendComment` — is an event `tasks.md` *does* schedule (4.5, 4.6). An
+  obligation whose trigger appears in the plan is held by the plan, not by a promise.
+- **O-3's trigger is still unscheduled**, and honestly so — you say as much and defer naming the
+  section to the point you carve its blocks. That is the correct disposition; the unschedulability
+  is a `tasks.md` shape problem, not something this section could fix.
+
+**On the two things you asked me to judge hardest.**
+
+*Is a must-be-inverted test a better obligation-holder than a `## NEXT` bullet?* **Yes, and not
+marginally.** It lives in the file the discharging worker is already editing; it fails loudly at the
+moment of discharge rather than depending on anyone remembering; and the reviewer's mutation — a
+pre-check simulating the split, marker test red, plain refusal test still green — proves it pins the
+*ordering*, which is the property, not the outcome, which would have been theatre. This is the right
+pattern and I would like to see it become the standing one: an accepted trade-off gets a
+characterisation test naming its obligation, not a bullet.
+
+*Is the carry-into-every-brief promise strong enough?* For O-1/O-2, the promise is now redundant —
+the trigger carries them. For O-3, the promise is backstopped by code. That combination holds. One
+residual, below.
+
+*Does the marker have a gap?* One, worth writing down rather than fixing. It pins `index rebuild`,
+whose side effect is the index, while O-3's trigger is a verb writing the *record*. It fires on
+discharge only if the split is implemented as **one global funnel** — the shape the reviewer
+prescribed. If a future implementer instead scopes the split to just the record-writing verb (two
+check sites, the shape the reviewer rejected), the marker stays green and O-3 reads as discharged
+while `index rebuild` still refuses after writing. Add one sentence to the test's doc comment and to
+O-3: *discharging O-3 with a per-verb check rather than by moving the funnel leaves this test
+passing and the hole open — that is the two-places-must-both-be-right shape, and it is not a
+discharge.*
+
+### [supervisor] One residual — an Architect edit, not a third block
+
+**`## NEXT`'s obligations list was not updated.** Your restatement says it replaces "every previous
+wording", but the *"Obligations, each with the section that owes it"* list still carries both
+original conditionals verbatim:
+
+- *"**§3 or whichever section first wires a verb to `CardStore`**"* — the exact indeterminate
+  trigger blocker 1 was about, now superseded by O-1.
+- *"**If §4 lands a verb calling `CardStore` without closing it**, that is a §4 blocker"* — the
+  conditional whose condition is false, now superseded by O-2.
+- **O-3 has no entry in that list at all** — it exists only in the mid-thread post and the "Up next"
+  paragraph.
+
+The restatement is correct where it was written; it just was not carried to the surface §4's brief
+gets assembled from. Since the thread is append-only and `## NEXT` is the one part you rewrite, the
+old wordings will sit above the new ones forever unless the pinned list is the thing that carries
+them.
+
+This does **not** need a remediation block and I am not requesting changes for it: `## NEXT` is
+yours, and rolling the section's obligations into it is what section close already is. **Before
+opening §4:** replace those two bullets with O-1, O-2 and O-3 verbatim, each with its named trigger,
+and delete the superseded pair so there is exactly one live wording per obligation.
+
+### [supervisor] Standing notes for `## NEXT`
+
+- N1 is correctly parked for the Product Owner — an AOT gate is a genuine cost trade-off and not
+  yours to decide silently. The csproj pointer is now honest: it names the DEVLOG, says no gate
+  re-runs the check, and cites the note. That is the right shape for an unverifiable-by-gate claim.
+- N2–N8 from round one stand unchanged and are not §3's to fix: two copies of the atomic-swap
+  primitive (`IndexPopulator.WriteDatabase` / `CardStore.AtomicWrite`, both with a throwing
+  `finally`); `WriteDatabase`'s untested mid-run-failure claim; the depth-0/depth-1 refusal
+  asymmetry (`missing-subcommand` versus `unknown-command: "no such command: ''"`) for §9; the
+  hand-maintained known-command strings; `callboard/.index/` created in a repo with no record;
+  stale `-wal`/`-shm` beside a swapped database for §10/§11's first index read path; and the
+  `SQLitePCLRaw` major-version pin to re-check whenever `Microsoft.Data.Sqlite` moves.
+
+**§3 is closed.** Every requirement the section claims is satisfied and demonstrated; the blocks read
+as one design; no superseded scaffolding ships; the one accepted hole is documented at the code, held
+by a test, and owned by a named obligation. 117/117, `GATES_EXIT:0`.
+
+→ @architect
+**[architect]** **§3 is closed** — supervisor `Approve` over `6f8d07d..9801c3a`, four commits
+(`26e48e9` block A 3.1–3.2, `ccf7e5a` block B 3.3, `a841745` block C 3.4–3.6, `9801c3a` the
+remediation). 3.1–3.6 ticked. Gates on the closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (117/117) /
+`FORMAT_EXIT:0` / `VALIDATE_EXIT:0`.
+
+**The supervisor's residual is discharged before §4 opens, not after.** `## NEXT`'s obligations list
+now carries **exactly one live wording per obligation**: the two superseded conditionals are deleted,
+O-1/O-2/O-3 are stated verbatim with named triggers, and O-3 — which had no entry at all — is now pinned
+with its marker test and the gap the supervisor identified in it. The thread keeps the history; the
+pinned list is what §4's brief gets assembled from, so a superseded wording surviving there is not a
+tidiness question.
+
+**The marker's gap, recorded in O-3 rather than patched:** the characterisation test pins
+`index rebuild`, whose side effect is the *index*, while O-3's trigger is a *record*-writing verb. It
+therefore fires on discharge **only if the split is one global funnel** — the shape the reviewer
+prescribed. Built as a per-verb check instead, the marker stays green while `index rebuild` still
+refuses after writing. So the discharging section must confirm the marker actually goes red, and treat
+it staying green as evidence the split was built in the rejected shape. That inverts the usual reading
+of a green test, which is exactly why it belongs in the obligation's text.
+
+### What §3 established that later sections must not re-derive
+
+- **The index is provably derived, and provably not a lock.** Not asserted — destroyed and rebuilt three
+  times with identical answers; hand-mutated rows, a fabricated row for a non-existent file, and a
+  deleted card all discarded on rebuild; the record path works with the index absent entirely and never
+  creates one; concurrent writes behave identically present, absent, or deleted mid-flight under a held
+  `CardLock`. Rebuild is replace, never merge.
+- **No narrative reaches the database**, verified against the file's bytes and confirmed by a reviewer
+  mutation that added a `body` column and watched the test fail.
+- **The CLI's enforcement points are structural**, not conventional. Argument consumption is checked once
+  past `Dispatch`'s single exit; `System.Console` is banned outside `Program.cs` by analyzer; the stdin
+  guard is a precondition of *obtaining* the reader.
+- **Refusal, tool-failure and reported-failure are three different things.** A refusal means stop; a
+  tool-failure means enforcement is unavailable and the loop proceeds unenforced; a corrupt card is
+  neither — it is a reported failure inside a successful rebuild, because degraded mode is the case
+  `record-retrieval` requires the loop to survive.
+
+### Working rules earned in §3 — the section's real output
+
+- **If you can write the mistake and it compiles, it is a convention, not a guarantee.** A mechanism a
+  caller must remember to invoke is documentation with better ergonomics. Test the claim by writing the
+  mistake.
+- **Two independent mutations of one property beat two readings of one test.** A reviewer who re-runs the
+  worker's probe confirms the worker's imagination, not the test's coverage. Block C converged in a
+  single round because worker and reviewer each broke every property in a *different* way; block B took
+  four because its early evidence was agreement rather than independent attack.
+- **Green tests do not exercise the machine contract.** `index rebuild` mislabelled its own envelope
+  through 104 passing tests and two approvals, because everything asserted on outcomes and exit codes and
+  nothing on the artefact. Assert against emitted output directly.
+- **A refusal must name the right problem.** The callers are agents that act on the message; a refusal
+  naming the wrong cause sends one to fix the wrong thing. Enforcement overrides a `Success`, never a
+  `Refusal` — the handler's domain reason is always more specific.
+- **An obligation conditioned on an unscheduled event is already lost.** It cannot be distinguished from
+  one discharged. Name a trigger the plan actually contains, or hold it in code that fails when the
+  trigger arrives.
+- **Prefer holding an accepted trade-off in a must-be-inverted test** over a bullet in a rewritten file.
+  Adopted as the standing pattern at the supervisor's recommendation.
+
+### An honest note about the section's own process
+
+§3 broke the DEVLOG's structure three times, once by my own tooling, which nested five architect posts
+inside the preamble's *description* of the `## NEXT` convention. The instruction "check where your post
+landed" was present, explicit, and repeated in three consecutive briefs — by the party that then broke
+it. §3 was, at the time, busy proving an index that cannot drift from its record.
+
+That is not an anecdote and it is not carelessness. It is the requirement, demonstrated on the people who
+wrote it down: an append-only Markdown file makes *"where does this go"* a question every writer must
+answer correctly on every write, by text-matching against prose that can contain the marker being
+matched. `callboard` deletes the question — a post is routed to a card, ordering is a property of the
+record, and §11's export reconstitutes reading order.
+
+→ **§4 next.** O-1 and O-2 go in its brief's first line: 4.5 and 4.6 land the first production callers of
+a `CardStore` write path, which is their trigger.
+
+---
+
 ## NEXT
 
 **Block A (3.1–3.2) closed** — reviewer `Approve` (originally `Approve with nits`; nit 2 fixed
@@ -5480,42 +5648,96 @@ line-start-heading-match requirement.
 
 ### Obligations, each with the section that owes it
 
-- **§3 brief, first line** — §3 ships the first CLI verb (3.3), so §3 inherits §1's orphaned CLI
-  obligations, which §2 could not close because it shipped no verbs: **enforce** the stdout/stderr split
-  rather than observing it; make `RemainingArgs` inspection structural, so a handler cannot silently
-  ignore tokens; make the stdin guard unskippable at the body-read call site.
-- **§3 brief — DISCHARGED for block A.** `.gitignore` re-verified against `IndexPaths.DatabasePath`:
-  `git check-ignore -v callboard/.index/callboard.db` resolves to `.gitignore:12 callboard/.index/`.
-  Residual: `DatabasePath(root)` is relative to a caller-supplied root, so the ignore only holds when
-  that root is the repo root — routed to block B as the repo-root anchoring obligation below, not a
-  block A blocker.
-- **§3 brief — DISCHARGED for block A.** No path→scope inverse was built into the index:
-  `IndexPopulator.ResolveCardSources` enumerates the fixed layout only, never infers a card's scope
-  from where it was found. Still binding on block B and beyond.
-- **§3 or whichever section first wires a verb to `CardStore`** — `expectedDirectory` is a relative
-  literal with no repo-root anchor, so `ValidateAgainstLayout` constrains only the *trailing* segments.
-  A path with a different root but a correctly-shaped tail passes. Unexploitable while `CardStore` has
-  zero production callers; live the moment a verb calls it. That section must anchor `filePath` to the
-  real repo root.
-- **§4** — `CardStore.AppendCommentUnderExistingLock` (`CardStore.cs:76`) is a card write path that
-  takes **no lock**, held closed only by a doc comment, against a binding ADR. Routed here by the
-  supervisor rather than blocked, because it is unreachable from production. **If §4 lands a verb
-  calling `CardStore` without closing it, that is a §4 blocker.**
+**The three carried obligations, restated unconditionally at §3 close.** Each names a trigger and
+contains no `if`. Superseded wordings have been deleted from this list rather than left alongside — the
+thread is append-only and keeps the history; this pinned list carries **exactly one live wording per
+obligation**, because it is the surface a section's brief gets assembled from.
+
+- **O-1 — anchor `CardStore` to the repo root.** Owed by **§4**. Trigger: **the first production code
+  path that calls `CardStore.WriteCard` or `CardStore.AppendComment`** — a *caller*, not a verb. On the
+  current breakdown that is 4.5 (ownership handover) and 4.6 (append-only comments).
+  `expectedDirectory` is a relative literal with no repo-root anchor, so `ValidateAgainstLayout`
+  constrains only the *trailing* segments: a path with a different root but a correctly-shaped tail
+  passes. §3 closed the index-path half via `RepoRootResolver`; this is the record half.
+- **O-2 — close `CardStore.AppendCommentUnderExistingLock`** (`CardStore.cs:76`). Owed by **§4**, same
+  trigger as O-1. A card write path that takes **no lock**, held closed only by a doc comment, against a
+  binding ADR. Unreachable from production today; live the moment a caller reaches it.
+- **O-3 — a refusal must prevent the side effect it refuses.** Owed by **the first CLI verb whose side
+  effect writes the primary record**; `tasks.md` schedules verb wiring nowhere, so the Architect names
+  the section when carving its blocks and records it here at that point. Today enforcement runs *after*
+  the handler: `index rebuild extra-token` writes the index and *then* refuses. Accepted for §3 because
+  D4 makes the index disposable and the discarded `Success` leaves no actionable state; **not**
+  acceptable once the side effect is a card. Fix: a parse phase that draws fully from the cursor and may
+  refuse, then an execute phase — kept as **one global funnel**, never a per-verb check.
+  - **Held in code, not only here:**
+    `CommandDispatcherTests.IndexRebuild_WithTrailingToken_RefusesButHasAlreadyWrittenTheIndex` pins
+    today's ordering and must be **inverted** on discharge. Verified by reviewer mutation to fail when
+    O-3 is discharged, so it pins the *ordering*, not the outcome.
+  - **Gap in the marker, recorded by the supervisor:** it pins `index rebuild`, whose side effect is the
+    *index*, while O-3's trigger is a *record*-writing verb. It therefore fires on discharge **only if
+    the split is one global funnel**. A per-verb check would leave the marker green while
+    `index rebuild` still refuses after writing — so whoever discharges O-3 must confirm the marker
+    actually goes red, and treat it staying green as evidence the split was built in the rejected shape.
+
+**O-1 and O-2 no longer depend on an Architect promise**: their trigger is an event `tasks.md` already
+schedules, so the plan holds them. O-3's trigger is genuinely unscheduled, which is why it is backstopped
+by a test rather than by recall.
+
+**Standing pattern, adopted at §3 close on the supervisor's recommendation:** an accepted trade-off is
+held by a **test that must be inverted on discharge**, not by a bullet in this file. It lives where the
+discharging worker is already editing, and it fails at the moment of discharge rather than depending on
+anyone remembering to read this list.
+
+- **§3 — DISCHARGED.** §1's three orphaned CLI obligations, all closed **structurally** rather than by
+  convention: `BannedApiAnalyzers` bans `System.Console` outside `Program.cs` (stdout/stderr split);
+  `EnforceNoUnconsumedArguments` runs once in `Run` past `Dispatch`'s single exit, with the bypassable
+  per-arm wrapper **deleted** because its existence was the bypass; `StdinBodyReader.ReadBody` takes a
+  `RedirectedStdin` whose only construction path runs the redirect check.
+- **§3 — DISCHARGED.** `.gitignore` re-verified against the real constant:
+  `git check-ignore -v callboard/.index/callboard.db` → `.gitignore:12 callboard/.index/`, and
+  `RepoRootResolver` now anchors `IndexPaths.DatabasePath` so the rule holds rather than depending on a
+  caller-supplied root.
+- **§3 — DISCHARGED.** No path→scope inverse was built into the index: `IndexPopulator` enumerates the
+  fixed layout only and never infers a card's scope from where a file was found. Still binding on every
+  later section.
 - **§4** — 4.2 allocates filenames, which removes `CardStore`'s redundant `filePath` input and turns
   today's validation into construction. The current shape is coherent but transitional.
 - **§5** — preserved unknown values are stored **raw and never tool-escaped**. The day §5 promotes such
   a key to a known field, the read path will unescape a value a human wrote (`base: C:\north` gains a
   newline). This must be in §5's brief.
-- **§9** — the refusal set becomes a closed union. §2 emitted **no** `CliRefusal`, so the retrofit list
-  is still empty; malformed input returns `CardFileParseResult.Failure` and `CardWriteResult.Failure`.
-  The first verb that surfaces those as refusals is §9's business.
+- **§9** — the refusal set becomes a closed union. §3 minted the first members —
+  `unknown-command`, `missing-subcommand`, `unknown-subcommand`, `unrecognised-argument`,
+  `repo-root-not-found` — and the supervisor judged the set coherent rather than accreted. That is the
+  retrofit list.
 - **§9** — `tool-failure` must **not** become a member of the closed refusal set; consider a third
-  `error` payload on the envelope. `CliEnvelope.cs:6-8` is stale: it still says `ok` discriminates
-  success from refusal and describes only two payload shapes.
+  `error` payload on the envelope. §3 routed its SQLite I/O failure through the existing tool-failure
+  path rather than minting a refusal code, so the masquerade was not deepened. `CliEnvelope.cs:6-8` is
+  stale: it still says `ok` discriminates success from refusal and describes only two payload shapes.
+- **§10** — **`Microsoft.Data.Sqlite` connection pooling served a stale cached handle** across a
+  delete-then-rebuild cycle; §3's tests needed `Pooling=false`. §3 has exactly one production
+  `SqliteConnection` call site and it opens only against a fresh per-call temp path, so nothing can hit
+  this today. §10's read path opens against the stable `databasePath`, which `index rebuild` renames out
+  from under it — the same shape. **A pooled handle answering from a deleted database is the index
+  becoming authoritative over the record by accident**, arriving through a connection-pool default
+  rather than a design decision.
+- **Tooling — any writer that appends to this file must anchor on a line-start heading match**, never a
+  substring search, and must verify the file still has exactly **one** `## NEXT` heading in final
+  position after every write. §3 broke this file's structure three times: twice a worker's post landed
+  below `## NEXT`, and once the Architect's own tooling matched the preamble's *description* of the
+  convention and nested five posts inside it. The instruction "check where your post landed" was
+  present, explicit, and repeated in three consecutive briefs by the party that then broke it — which is
+  the argument for the tool, not for more care.
 - **Opportunistic** — `Escape*` was left unmerged while `Unescape*` was collapsed, so the duplication
   risk is half-closed; a forward `Dictionary<char,string>` mirror finishes it. `CardFile` lacks the
   `Equals`/`GetHashCode` override `CardComment` has. The `InvalidUtf8Bytes` corruption test passes for
-  the wrong reason. `AtomicWrite` has a throwing `finally`. There is no bounded read primitive.
+  the wrong reason. `AtomicWrite` **and** `IndexPopulator.WriteDatabase` both have a throwing `finally`
+  — fix both in one pass, since fixing one leaves the other looking intentional. There is no bounded
+  read primitive.
+- **Product Owner decision, parked — the AOT gate.** §3 adopted the change's **first shipping
+  dependency, and it is native**. `IsAotCompatible` is set and AOT was verified before adoption, but by
+  an out-of-repo scratch publish that **no gate re-runs**, so a regression would surface only at
+  `make publish` — a target reserved to the Product Owner and run rarely. Adding an AOT gate means every
+  gate run pays a slow NativeAOT compile. The trade-off is the Product Owner's, not the Architect's.
 - **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs` versus
   an absent `<Version>` in the csproj).
 - **Gate hygiene** — `-k` aggregation on a red `make gates` has still never been demonstrated. Worth
