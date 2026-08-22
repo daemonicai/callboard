@@ -58,12 +58,12 @@ public sealed class CardStoreConcurrencyTests : IDisposable
         var held = AssertAcquired(CardLock.Acquire(path, TimeSpan.FromSeconds(5)));
 
         var appendBTask = Task.Run(
-            () => CardStore.AppendComment(path, commentB, TimeSpan.FromSeconds(10), ChangeName),
+            () => CardStore.AppendComment(_root, path, commentB, TimeSpan.FromSeconds(10), ChangeName),
             TestContext.Current.CancellationToken);
 
         // B cannot possibly have acquired the lock yet — we are still holding it — so appending A
         // now, still under our hold, is guaranteed to land first regardless of scheduling.
-        var resultA = CardStore.AppendCommentUnderExistingLock(path, commentA, ChangeName);
+        var resultA = CardStore.AppendCommentUnderExistingLock(held, _root, commentA, ChangeName);
         AssertSuccess(resultA);
 
         held.Dispose();
@@ -98,7 +98,7 @@ public sealed class CardStoreConcurrencyTests : IDisposable
             {
                 try
                 {
-                    AssertSuccess(CardStore.AppendComment(path, comment, TimeSpan.FromSeconds(30), ChangeName));
+                    AssertSuccess(CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(30), ChangeName));
                 }
                 catch (Exception ex)
                 {
@@ -131,11 +131,11 @@ public sealed class CardStoreConcurrencyTests : IDisposable
         Assert.Equal(final.Comments.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count(), final.Comments.Count);
     }
 
-    private static void WriteInitialCard(string path)
+    private void WriteInitialCard(string path)
     {
         var frontmatter = new CardFrontmatter(
             "B-0200", CardKind.Block, "Concurrent appends", "open", CardOwner.Worker, CardScope.Change, "2", Created, Created);
-        AssertSuccess(CardStore.WriteCard(path, new CardFile(frontmatter, "Body.", [], []), TimeSpan.FromSeconds(5), ChangeName));
+        AssertSuccess(CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body.", [], []), TimeSpan.FromSeconds(5), ChangeName));
     }
 
     private static CardLock AssertAcquired(CardLockResult result) =>

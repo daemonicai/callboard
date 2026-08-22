@@ -209,7 +209,7 @@ public sealed class IndexPopulatorTests : IDisposable
             onCapability: () => null,
             onRepository: () => null);
 
-        var result = CardStore.WriteCard(path, card, TimeSpan.FromSeconds(5), changeName);
+        var result = CardStore.WriteCard(_root, path, card, TimeSpan.FromSeconds(5), changeName);
         result.Match<object?>(
             onSuccess: static _ => null,
             onFailure: failure => throw new Xunit.Sdk.XunitException($"setup write failed: {failure.Reason}"));

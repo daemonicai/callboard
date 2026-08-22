@@ -127,7 +127,7 @@ public sealed class IndexInvariantTests : IDisposable
 
         // Mutate the card file directly, leaving the index stale — no Populate call in between.
         var mutated = GoodCard("B-0002", "After edit");
-        var writeResult = CardStore.WriteCard(path, mutated, TimeSpan.FromSeconds(5), ChangeName);
+        var writeResult = CardStore.WriteCard(_root, path, mutated, TimeSpan.FromSeconds(5), ChangeName);
         AssertWriteSuccess(writeResult);
 
         IndexPopulator.Populate(_root, databasePath);
@@ -226,9 +226,10 @@ public sealed class IndexInvariantTests : IDisposable
         Assert.False(Directory.Exists(Path.GetDirectoryName(databasePath)));
 
         var path = WriteCard("b-0007", GoodCard("B-0007", "Written with no index anywhere"));
-        AssertWriteSuccess(CardStore.WriteCard(path, GoodCard("B-0007", "Rewritten"), TimeSpan.FromSeconds(5), ChangeName));
+        AssertWriteSuccess(CardStore.WriteCard(_root, path, GoodCard("B-0007", "Rewritten"), TimeSpan.FromSeconds(5), ChangeName));
 
         var appendResult = CardStore.AppendComment(
+            _root,
             path,
             new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, false, []),
             TimeSpan.FromSeconds(5),
@@ -259,7 +260,7 @@ public sealed class IndexInvariantTests : IDisposable
         var path = Path.Combine(directory, "stress.md");
         var frontmatter = new CardFrontmatter(
             "B-0800", CardKind.Block, "Concurrent", "open", CardOwner.Worker, CardScope.Change, "3", Created, Created);
-        AssertWriteSuccess(CardStore.WriteCard(path, new CardFile(frontmatter, "Body.", [], []), TimeSpan.FromSeconds(5), ChangeName));
+        AssertWriteSuccess(CardStore.WriteCard(scenarioRoot, path, new CardFile(frontmatter, "Body.", [], []), TimeSpan.FromSeconds(5), ChangeName));
 
         var databasePath = IndexPaths.DatabasePath(scenarioRoot);
         if (indexState is "present" or "deleted-mid-run")
@@ -279,7 +280,7 @@ public sealed class IndexInvariantTests : IDisposable
             {
                 try
                 {
-                    AssertWriteSuccess(CardStore.AppendComment(path, comment, TimeSpan.FromSeconds(30), ChangeName));
+                    AssertWriteSuccess(CardStore.AppendComment(scenarioRoot, path, comment, TimeSpan.FromSeconds(30), ChangeName));
                 }
                 catch (Exception ex)
                 {
@@ -345,27 +346,27 @@ public sealed class IndexInvariantTests : IDisposable
     {
         var path = Path.Combine(_root, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
         var frontmatter = new CardFrontmatter(id, kind, "Title " + id, "open", owner, CardScope.Repository, string.Empty, Created, Updated);
-        AssertWriteSuccess(CardStore.WriteCard(path, new CardFile(frontmatter, "Body for " + id + ".", [], []), TimeSpan.FromSeconds(5)));
+        AssertWriteSuccess(CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body for " + id + ".", [], []), TimeSpan.FromSeconds(5)));
     }
 
     private void WriteDecisionCard(string fileStem, string id, CardKind kind, CardOwner owner)
     {
         var path = Path.Combine(_root, CardLayout.DecisionsDirectory.Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
         var frontmatter = new CardFrontmatter(id, kind, "Title " + id, "open", owner, CardScope.Capability, string.Empty, Created, Updated);
-        AssertWriteSuccess(CardStore.WriteCard(path, new CardFile(frontmatter, "Body for " + id + ".", [], []), TimeSpan.FromSeconds(5)));
+        AssertWriteSuccess(CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body for " + id + ".", [], []), TimeSpan.FromSeconds(5)));
     }
 
     private void WriteCardInChange(string changeName, string fileStem, string id, CardKind kind, CardOwner owner, CardScope scope, IReadOnlyList<CardComment> comments)
     {
         var path = Path.Combine(_root, CardLayout.ChangesDirectory(changeName).Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
         var frontmatter = new CardFrontmatter(id, kind, "Title " + id, "open", owner, scope, "3", Created, Updated);
-        AssertWriteSuccess(CardStore.WriteCard(path, new CardFile(frontmatter, "Body for " + id + ".", comments, []), TimeSpan.FromSeconds(5), changeName));
+        AssertWriteSuccess(CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body for " + id + ".", comments, []), TimeSpan.FromSeconds(5), changeName));
     }
 
     private string WriteCard(string fileStem, CardFile card)
     {
         var path = Path.Combine(_root, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
-        AssertWriteSuccess(CardStore.WriteCard(path, card, TimeSpan.FromSeconds(5), ChangeName));
+        AssertWriteSuccess(CardStore.WriteCard(_root, path, card, TimeSpan.FromSeconds(5), ChangeName));
         return path;
     }
 

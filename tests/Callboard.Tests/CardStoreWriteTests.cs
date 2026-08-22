@@ -33,7 +33,7 @@ public sealed class CardStoreWriteTests : IDisposable
         var path = Path.Combine(_directory, "b-0001.md");
         var card = SampleCard("B-0001");
 
-        var result = CardStore.WriteCard(path, card, TimeSpan.FromSeconds(5), ChangeName);
+        var result = CardStore.WriteCard(_root, path, card, TimeSpan.FromSeconds(5), ChangeName);
 
         AssertSuccess(result);
         var read = AssertParseSuccess(CardStore.ReadCard(path));
@@ -44,7 +44,7 @@ public sealed class CardStoreWriteTests : IDisposable
     public void WriteCard_LeavesNoTempFileBehindOnSuccess()
     {
         var path = Path.Combine(_directory, "b-0002.md");
-        AssertSuccess(CardStore.WriteCard(path, SampleCard("B-0002"), TimeSpan.FromSeconds(5), ChangeName));
+        AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0002"), TimeSpan.FromSeconds(5), ChangeName));
 
         var entries = Directory.GetFiles(_directory);
         Assert.Equal([path], entries);
@@ -60,7 +60,7 @@ public sealed class CardStoreWriteTests : IDisposable
         var path = Path.Combine(directory, "b-0003.md");
         Assert.False(Directory.Exists(directory));
 
-        AssertSuccess(CardStore.WriteCard(path, SampleCard("B-0003"), TimeSpan.FromSeconds(5), freshChangeName));
+        AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0003"), TimeSpan.FromSeconds(5), freshChangeName));
 
         Assert.True(File.Exists(path));
     }
@@ -69,7 +69,7 @@ public sealed class CardStoreWriteTests : IDisposable
     public async Task WriteCard_OverwritingRepeatedly_NeverExposesAPartiallyWrittenFileToAConcurrentReader()
     {
         var path = Path.Combine(_directory, "b-0004.md");
-        AssertSuccess(CardStore.WriteCard(path, SampleCard("B-0004", body: new string('x', 20_000)), TimeSpan.FromSeconds(5), ChangeName));
+        AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0004", body: new string('x', 20_000)), TimeSpan.FromSeconds(5), ChangeName));
 
         var readerFailures = new List<string>();
         var stop = false;
@@ -102,7 +102,7 @@ public sealed class CardStoreWriteTests : IDisposable
 
         for (var i = 0; i < 50; i++)
         {
-            AssertSuccess(CardStore.WriteCard(path, SampleCard("B-0004", body: new string((char)('a' + (i % 26)), 20_000)), TimeSpan.FromSeconds(5), ChangeName));
+            AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0004", body: new string((char)('a' + (i % 26)), 20_000)), TimeSpan.FromSeconds(5), ChangeName));
         }
 
         Volatile.Write(ref stop, true);
@@ -115,10 +115,10 @@ public sealed class CardStoreWriteTests : IDisposable
     public void AppendComment_AddsToAnExistingCard()
     {
         var path = Path.Combine(_directory, "b-0005.md");
-        AssertSuccess(CardStore.WriteCard(path, SampleCard("B-0005"), TimeSpan.FromSeconds(5), ChangeName));
+        AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0005"), TimeSpan.FromSeconds(5), ChangeName));
 
         var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
-        AssertSuccess(CardStore.AppendComment(path, comment, TimeSpan.FromSeconds(5), ChangeName));
+        AssertSuccess(CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName));
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(comment, Assert.Single(read.Comments));
@@ -143,7 +143,7 @@ public sealed class CardStoreWriteTests : IDisposable
         File.WriteAllText(path, raw, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
-        AssertSuccess(CardStore.AppendComment(path, comment, TimeSpan.FromSeconds(5), ChangeName));
+        AssertSuccess(CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName));
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(("base", "B-0001"), Assert.Single(read.UnknownFrontmatterFields));
@@ -160,7 +160,7 @@ public sealed class CardStoreWriteTests : IDisposable
         // in isolation, since that catch-and-convert is exactly what this block wired up.
         var path = Path.Combine(_directory, "b-0099.md");
 
-        var result = CardStore.WriteCard(path, SampleCard("B-0099"), TimeSpan.FromSeconds(5), changeName: null);
+        var result = CardStore.WriteCard(_root, path, SampleCard("B-0099"), TimeSpan.FromSeconds(5), changeName: null);
 
         AssertFailure(result);
         Assert.False(File.Exists(path));
@@ -176,7 +176,7 @@ public sealed class CardStoreWriteTests : IDisposable
         var path = Path.Combine(_directory, "r-0001.md");
         var card = RepositoryScopedCard("R-0001");
 
-        var result = CardStore.WriteCard(path, card, TimeSpan.FromSeconds(5));
+        var result = CardStore.WriteCard(_root, path, card, TimeSpan.FromSeconds(5));
 
         var failure = AssertFailure(result);
         Assert.Contains("does not live in the directory", failure, StringComparison.Ordinal);
@@ -194,11 +194,47 @@ public sealed class CardStoreWriteTests : IDisposable
         var path = Path.Combine(evilDirectory, "r-0002.md");
         var card = RepositoryScopedCard("R-0002");
 
-        var result = CardStore.WriteCard(path, card, TimeSpan.FromSeconds(5));
+        var result = CardStore.WriteCard(_root, path, card, TimeSpan.FromSeconds(5));
 
         var failure = AssertFailure(result);
         Assert.Contains("does not live in the directory", failure, StringComparison.Ordinal);
         Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void WriteCard_RefusesACorrectlyShapedTail_UnderTheWrongRepositoryRoot()
+    {
+        // O-1: the pre-4.5 guard compared only CardLayout.DirectoryFor's relative, trailing
+        // segments — a directory that genuinely ends "callboard/register/" passed regardless of
+        // which repository root it actually lived under. This card's directory is shaped exactly
+        // right; what makes it wrong is that it sits under a different root than the one this
+        // call declares.
+        var wrongRoot = Path.Combine(Path.GetTempPath(), "callboard-wrong-root-" + Guid.NewGuid().ToString("N"));
+        var correctlyShapedDirectory = Path.Combine(wrongRoot, "callboard", "register");
+        Directory.CreateDirectory(correctlyShapedDirectory);
+        var path = Path.Combine(correctlyShapedDirectory, "r-0004.md");
+        var card = RepositoryScopedCard("R-0004");
+
+        try
+        {
+            var result = CardStore.WriteCard(_root, path, card, TimeSpan.FromSeconds(5));
+
+            var failure = AssertFailure(result);
+            Assert.Contains("does not live in the directory", failure, StringComparison.Ordinal);
+            Assert.Contains(_root, failure, StringComparison.Ordinal);
+            Assert.False(File.Exists(path));
+
+            // Confirms the directory really was shaped correctly and it was the root that made
+            // the difference: the identical path succeeds once cardsRoot names its true root.
+            AssertSuccess(CardStore.WriteCard(wrongRoot, path, card, TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            if (Directory.Exists(wrongRoot))
+            {
+                Directory.Delete(wrongRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -210,13 +246,13 @@ public sealed class CardStoreWriteTests : IDisposable
         var registerDirectory = Path.Combine(_root, "callboard", "register");
         Directory.CreateDirectory(registerDirectory);
         var realPath = Path.Combine(registerDirectory, "r-0003.md");
-        AssertSuccess(CardStore.WriteCard(realPath, RepositoryScopedCard("R-0003"), TimeSpan.FromSeconds(5)));
+        AssertSuccess(CardStore.WriteCard(_root, realPath, RepositoryScopedCard("R-0003"), TimeSpan.FromSeconds(5)));
 
         var wrongPath = Path.Combine(_directory, "r-0003.md");
         File.Copy(realPath, wrongPath);
 
         var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
-        var result = CardStore.AppendComment(wrongPath, comment, TimeSpan.FromSeconds(5));
+        var result = CardStore.AppendComment(_root, wrongPath, comment, TimeSpan.FromSeconds(5));
 
         var failure = AssertFailure(result);
         Assert.Contains("does not live in the directory", failure, StringComparison.Ordinal);
@@ -228,7 +264,7 @@ public sealed class CardStoreWriteTests : IDisposable
         var path = Path.Combine(_directory, "missing.md");
         var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
 
-        var result = CardStore.AppendComment(path, comment, TimeSpan.FromSeconds(5), ChangeName);
+        var result = CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
 
         var failure = AssertFailure(result);
         Assert.Contains(path, failure, StringComparison.Ordinal);
@@ -241,10 +277,70 @@ public sealed class CardStoreWriteTests : IDisposable
         File.WriteAllText(path, "not a card file at all");
 
         var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
-        var result = CardStore.AppendComment(path, comment, TimeSpan.FromSeconds(5), ChangeName);
+        var result = CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
 
         AssertFailure(result);
         Assert.Equal("not a card file at all", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void AppendCommentUnderExistingLock_RequiresAHeldLock_NullBypassIsRejectedAtRuntime()
+    {
+        // O-2: the parameter's own non-nullable type is the compile-time half of "you must hold
+        // a lock to call this" — writing the mistake (calling with no CardLock at all) is exactly
+        // the CS7036 "there is no argument given" this signature now forces, which this test
+        // cannot itself express as a passing xUnit case since it would fail to compile at all.
+        // What a nullable-reference-types signature cannot stop is a caller defeating the compile
+        // hint with `null!`; ArgumentNullException.ThrowIfNull is what closes that residual gap,
+        // asserted here directly.
+        var path = Path.Combine(_directory, "b-0007.md");
+        AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0007"), TimeSpan.FromSeconds(5), ChangeName));
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
+
+        Assert.Throws<ArgumentNullException>(() =>
+            CardStore.AppendCommentUnderExistingLock(null!, _root, comment, ChangeName));
+    }
+
+    [Fact]
+    public void TransferOwnershipUnderExistingLock_RequiresAHeldLock_NullBypassIsRejectedAtRuntime()
+    {
+        var path = Path.Combine(_directory, "b-0008.md");
+        AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0008"), TimeSpan.FromSeconds(5), ChangeName));
+
+        Assert.Throws<ArgumentNullException>(() =>
+            CardStore.TransferOwnershipUnderExistingLock(null!, _root, CardOwner.Reviewer, CardOwner.Architect, Created, ChangeName));
+    }
+
+    [Fact]
+    public void AppendCommentUnderExistingLock_ActsOnlyOnTheLockedCard_ThereIsNoSeparatePathToDisagreeWith()
+    {
+        // Reviewer round 1, finding 1: the first shape took CardLock heldLock *and* a separate
+        // filePath, so a lock held for card X and a filePath naming card Y both compiled — "lock
+        // X, write Y" ran clean. The fix removed the second parameter entirely; the target is
+        // heldLock.CardPath, so the mismatched-path probe the reviewer wrote by hand can no longer
+        // even be expressed as a call — there is nothing left to pass a mismatched path as. This
+        // test is the positive half: append under a lock acquired for `path` lands on `path`.
+        var path = Path.Combine(_directory, "b-0009.md");
+        AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0009"), TimeSpan.FromSeconds(5), ChangeName));
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
+
+        var lockResult = CardLock.Acquire(path, TimeSpan.FromSeconds(5));
+        var held = lockResult.Match(
+            onAcquired: acquired => acquired.Lock,
+            onTimedOut: timedOut => throw new Xunit.Sdk.XunitException($"expected to acquire the lock, timed out: {timedOut.Message}"));
+
+        try
+        {
+            Assert.Equal(path, held.CardPath);
+            AssertSuccess(CardStore.AppendCommentUnderExistingLock(held, _root, comment, ChangeName));
+        }
+        finally
+        {
+            held.Dispose();
+        }
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(comment, Assert.Single(read.Comments));
     }
 
     private static CardFile SampleCard(string id, string body = "Body.") =>

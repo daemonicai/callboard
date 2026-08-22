@@ -5899,6 +5899,676 @@ were consistent; the worker was right to surface the tension rather than resolve
 
 ---
 
+**[architect]** Block B (4.5) briefed → @worker. Base for the block: `c8c3a2b`.
+
+**O-1 and O-2 discharge in this block. They are blockers, not notes** — if 4.5 lands its `CardStore`
+callers without closing them, §4 does not close. Read this section first; the ownership feature is the
+smaller half of the work.
+
+### Tasks in this block
+
+- 4.5 Implement ownership with attributed, timestamped handover
+
+That is one task. It is a block on its own because it is **the first production code path that calls
+`CardStore.WriteCard`**, and that caller is precisely the trigger both carried obligations name.
+
+### Spec — card-model, verbatim
+
+> ### Requirement: Ownership names whose turn it is
+>
+> Every card SHALL carry an `owner` naming the single role whose turn it is to act — `architect`,
+> `worker`, `reviewer`, `supervisor` or `product-owner`. Ownership SHALL be queryable, so that any role
+> can be told what is assigned to it without reading prose.
+>
+> Every ownership change SHALL record the acting role and the time it occurred.
+>
+> #### Scenario: Role queries its own assignments
+> - **WHEN** a role asks what is assigned to it
+> - **THEN** the system returns every card whose `owner` is that role, and nothing owned by another role
+>
+> #### Scenario: Ownership handover is attributed
+> - **WHEN** a role transfers a card's ownership to another role
+> - **THEN** the system records the acting role and the timestamp against that card
+
+Two readings to get right:
+
+1. **"the acting role"** is the role performing the handover, which is not necessarily either the
+   outgoing or the incoming owner. Do not collapse it into "the previous owner" — the architect
+   reassigning a card from worker to reviewer is the ordinary case, and all three roles are distinct.
+2. **"records ... against that card"** means the record, not the index. The index is derived (ADR-0004)
+   and a handover that exists only there is lost on the next rebuild. Where the attribution lives in the
+   card file is your call to propose — an appended thread entry and a frontmatter field are both
+   defensible — but say which you chose and why in this thread. §3's rule applies: **a disposition that
+   names a mechanism is making a claim** and needs evidence.
+
+**Queryability is satisfied by the record plus the existing index population**, not by a new CLI verb.
+§4 wires no verbs; `tasks.md` schedules none. If you conclude 4.5 genuinely cannot be demonstrated
+without one, stop and post here rather than adding one.
+
+### O-1 — anchor `CardStore` to the repo root
+
+`CardStore.ValidateAgainstLayout` compares against `CardLayout.DirectoryFor(...)`, which returns a
+**relative literal** (`callboard/register/`). With no repo-root anchor, the comparison constrains only
+the *trailing* segments: a path with an entirely different root but a correctly-shaped tail passes
+validation. §3 closed the index half of this — `IndexPaths.DatabasePath(root)` takes a root and
+`RepoRootResolver` supplies it. **This is the record half, and it is the half that guards the primary
+record rather than a disposable derived file.**
+
+- `RepoRootResolver.Resolve` already exists (`src/Callboard/RepoRootResolver.cs`) and returns `null`
+  rather than throwing, deliberately: turning a missing root into a refusal is a command handler's job.
+  §3 already minted `repo-root-not-found` for that. Do not mint a second refusal code.
+- **Structural, not conventional.** §3's standard: if a caller can still construct an unanchored path
+  and it compiles, you have written a convention. The §3 precedent to copy is `StdinBodyReader.ReadBody`
+  taking a `RedirectedStdin` whose only construction path runs the redirect check — the guarantee is in
+  the type, not in a caller remembering. Apply the same shape here; test it by **writing the mistake**
+  and confirming it does not compile.
+- **Lands with a test that it refuses**: a correctly-shaped tail under a wrong root must be refused.
+  A test that a correct path passes does not discharge this.
+
+### O-2 — close `CardStore.AppendCommentUnderExistingLock`
+
+`CardStore.cs:76`. A card write path that takes **no lock**, public to the assembly, held closed only by
+a doc comment saying production never calls it — against a binding ADR. It exists so a test can hold a
+`CardLock` itself and drive the read-modify-write directly, establishing a deterministic append order to
+prove §2.7's ordering guarantee rather than relying on chance timing. **That test's need is legitimate
+and its coverage must survive** — do not discharge this by deleting the test.
+
+Discharge it the way §3 discharged the per-arm argument wrapper: **the bypassable shape was deleted,
+because its existence was the bypass.** Make holding the lock a precondition of *reaching* the
+read-modify-write — an acquired-lock value the method requires as a parameter, obtainable only from
+`CardLock.Acquire`, is the shape that fits both this and §3's precedent. Then the test constructs its
+proof by holding a real lock, and no caller can reach the path without one.
+
+Check the whole surface while you are in it, not just line 76: if a second method has the same property,
+it has the same defect.
+
+### Carried from block A's review — the identities path
+
+`callboard/identities/<kind>.count` is not registered in `CardLayout`, so `Cards/` now has two places
+that know a root-level `callboard/<x>/` path. **Fix it here**, because O-1 is the same question — *who
+is entitled to state where the record lives* — and answering it twice independently leaves two answers.
+Not a cosmetic move of a constant: if `CardLayout` gains the identities path, it should gain it as **the**
+statement of it, such that `CardIdentityAllocator` cannot construct a counter path any other way.
+
+### Binding decisions
+
+- **ADR-0003 / D3** — the Markdown card is the primary record; layout is scope-shaped. **ADR-0004 / D4** —
+  the index is derived, never authoritative, never a lock. **ADR-0002** — NativeAOT: no runtime codegen,
+  no unbounded reflection, `System.Text.Json` source-generated contexts, no new `PackageReference`.
+- **§2's platform facts, established by hammer loop and not to be re-litigated:**
+  `File.Move(overwrite: false)` is **not** atomic here (check-then-`rename(2)` TOCTOU, 13,847 successes
+  across 2,000 rounds where 2,000 were expected). `File.Move(overwrite: true)` **is** atomic (3,000
+  racing rounds, zero torn finals) — `CardStore`'s atomic write rests on it. Unix `FileShare.None` is
+  enforced as a *second step* after `CreateNew` succeeds and so cannot provide mutual exclusion.
+- **Every operation that establishes or relies on ownership verifies its effect immediately before
+  acting on it**, and treats a mismatch as a **lost race**, not an error. §2 earned this from four
+  separate `CardLock` defects. This block is called "ownership" in a different sense, but the rule is
+  about lock ownership and applies directly to both obligations.
+
+### Done-gates
+
+`make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0` (164 existing plus yours); `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Run sandboxed. Quote the exit lines — a gate
+passed only if you saw its `LABEL_EXIT:0`; never conclude it passed from reading its output.
+
+### Working rules
+
+- **Every guard lands with a test that it *refuses*.** Not that the good case passes.
+- **If you can write the mistake and it compiles, it is a convention, not a guarantee.** Both obligations
+  turn on this. Test each by writing the mistake.
+- **Green tests do not exercise the machine contract.** Assert against the emitted artefact — the card
+  file's bytes — not only against return values.
+- **No narrative reaches the database** (§3, asserted against the file's bytes). A handover attribution
+  is metadata; if any part of it is prose, it stays in the file.
+- **Test seams are threaded parameters, never shared statics.**
+- **Do not touch the Makefile, `tasks.md`, `CLAUDE.md`, `.claude/`, or git.**
+- **Post above `## NEXT`**, anchored on a line-start `^## ` heading match, and confirm after every write
+  that exactly one `## NEXT` remains and it is the last heading.
+
+### Not in this block
+
+- **No comments work.** Append-only threads, structural addressing, replies and resolution are block C
+  (4.6–4.8). O-2 makes `AppendCommentUnderExistingLock` unbypassable; it does not build on it.
+- **No verbs**, no parse/execute split (that is O-3, owed by §5).
+- No kind-specific frontmatter fields — §5 and §6 own those.
+
+---
+
+**[worker]** Block B (4.5) implemented — O-1, O-2 and the identities-path cohesion fix all discharge here.
+
+- **O-1 — `CardStore` anchored to the repo root, structurally.** New type `AnchoredCardPath`
+  (`Cards/AnchoredCardPath.cs`): a private-constructor reference type whose only construction path,
+  `TryCreate(cardsRoot, filePath, scope, changeName, out failure)`, combines `cardsRoot` with
+  `CardLayout.DirectoryFor`'s relative directory into one full path and requires the target's own
+  directory to equal it **exactly** (`Path.GetFullPath` on both sides, trailing separator trimmed,
+  `Ordinal` equality) — not a suffix match. `CardStore.AtomicWrite` (the one place bytes reach disk)
+  now takes only an `AnchoredCardPath`, never a raw `string` — there is no overload that skips the
+  check, mirroring `StdinBodyReader.ReadBody`/`RedirectedStdin`'s shape as briefed. `WriteCard`,
+  `AppendComment` and the new `TransferOwnership` (below) all take a mandatory `cardsRoot` and go
+  through this. Landed with `WriteCard_RefusesACorrectlyShapedTail_UnderTheWrongRepositoryRoot`
+  (`CardStoreWriteTests.cs`) and its `TransferOwnership` counterpart: a directory genuinely shaped
+  `callboard/register/` is refused when it sits under a different root than the call declares, and
+  the identical path then succeeds once `cardsRoot` names its true root — proving the root, not the
+  shape, was what changed. Every existing `CardStore` caller (test-only, still — no production
+  caller before this block) now threads its own `_root` field through as `cardsRoot`.
+- **O-2 — `AppendCommentUnderExistingLock` (and the new `TransferOwnershipUnderExistingLock`) now
+  require a held `CardLock`, not a documented convention.** Both take `CardLock heldLock` as their
+  first parameter — the only way to obtain a `CardLock` instance is `CardLock.Acquire` succeeding, so
+  a caller cannot reach the read-modify-write without having actually taken the card's lock.
+  `ArgumentNullException.ThrowIfNull(heldLock)` closes the one gap NRT can't: `null!`. Verified the
+  "does not compile" half directly — wrote the mistake (a call with no `CardLock` argument at all) in
+  a throwaway file under `src/Callboard/`, built it, got `CS1503`/CS7036-shaped errors, deleted it,
+  confirmed `make build` clean again. Verified the `null!` half as two runtime tests
+  (`AppendCommentUnderExistingLock_RequiresAHeldLock_NullBypassIsRejectedAtRuntime`,
+  `TransferOwnershipUnderExistingLock_RequiresAHeldLock_NullBypassIsRejectedAtRuntime`). Checked the
+  whole surface per the brief: no other lockless read-modify-write method exists on `CardStore`.
+  `CardStoreConcurrencyTests`'s existing lock-ordering test now passes its own held `CardLock`
+  through explicitly rather than relying on the old implicit-trust shape.
+- **4.5 — ownership handover.** `CardStore.TransferOwnership`/`TransferOwnershipUnderExistingLock`:
+  reassigns `Owner` and records the acting role and timestamp. Chose the **frontmatter field**
+  option the brief offered (`CardFrontmatter.HandoverBy`/`HandoverAt`, both nullable, both set only
+  together), not an appended comment — the brief was explicit that O-2 does not mean 4.5 builds on
+  `AppendCommentUnderExistingLock`. `HandoverBy` is the **acting** role, never collapsed into the
+  outgoing or incoming owner — tested with all three roles distinct
+  (`TransferOwnership_ChangesOwner_AndRecordsTheActingRoleAndTimestamp`: architect hands worker's
+  card to reviewer). A card that has never been handed over carries neither field on disk at all
+  (omitted, not written empty) — `TransferOwnership_OnACardNeverHandedOver_...` asserts the raw bytes
+  directly, not just the parsed nulls. `CardFileParser`/`CardFileWriter` extended for the two new
+  optional frontmatter keys (`handover_by`, `handover_at`), same optional-field convention as
+  comment's `to`/`reply-to`; round-tripped in `CardFileRoundTripTests.cs` including an
+  unrecognised-value refusal test. **Queryability**: satisfied by the record plus the existing index
+  population — `owner` was already an indexed column from §3, no CLI verb added, no index schema
+  change (not required: the scenario needs "who owns X" queryable, which the existing column already
+  answers).
+- **Cohesion fix carried from block A's review.** `callboard/identities/` is now `CardLayout.
+  IdentitiesDirectory` plus `CardLayout.IdentityCounterPath(kind)` — the one statement of that path.
+  `CardIdentityAllocator` no longer carries its own copy of the constant and cannot construct a
+  counter path any other way; its `CounterPath` now calls `CardLayout.IdentityCounterPath`.
+- **New production types**: `AnchoredCardPath`. **Modified**: `CardStore` (rewritten write surface:
+  `WriteCard`/`AppendComment`/`AppendCommentUnderExistingLock` take `cardsRoot`; `WithLock` now
+  hands its held `CardLock` to the action so `AppendComment`/`TransferOwnership` can pass it through;
+  `TransferOwnership`/`TransferOwnershipUnderExistingLock` added), `CardFrontmatter` (two new
+  optional trailing fields, default `null`, so every pre-existing positional 9-arg construction still
+  compiles), `CardFileParser`/`CardFileWriter` (the two new keys), `CardLayout` (identities path),
+  `CardIdentityAllocator` (uses `CardLayout` for its counter path). No new `PackageReference`, no CLI
+  surface change, no comments/thread work.
+- Mechanical fallout: every existing test call site of `CardStore.WriteCard`/`AppendComment` now
+  passes its own `_root` (or, in `IndexInvariantTests`'s multi-root scenario helper, `scenarioRoot`)
+  as `cardsRoot` — six test files touched for signature-only changes, no test's asserted behaviour
+  changed. `CardStoreConcurrencyTests.WriteInitialCard` dropped `static` (needs instance `_root`).
+
+**Gates (sandboxed):** `BUILD_EXIT:0` / `TEST_EXIT:0` (176/176, up from 164 — 12 new tests) /
+`FORMAT_EXIT:0` / `VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Block B (4.5) — **Request changes.**
+
+Re-ran `make gates` independently in the sandbox: `BUILD_EXIT:0` / `TEST_EXIT:0` (176/176) /
+`FORMAT_EXIT:0` / `VALIDATE_EXIT:0` — matches the worker's report. Findings below are numbered against
+the audit brief; two are blockers.
+
+**1. O-1 (root anchoring) — sound, independently verified. No action needed.**
+I did not take the worker's compile-failure claim on trust. I wrote the mistake myself: added a
+throwaway file calling `new AnchoredCardPath("/tmp/whatever/x.md")` directly (bypassing `TryCreate`)
+under `src/Callboard/Cards/`, ran `make build`, and got `CS0122: 'AnchoredCardPath.AnchoredCardPath
+(string)' is inaccessible due to its protection level` — then deleted the file and confirmed `make
+build` clean again. The private constructor plus `AtomicWrite` taking only `AnchoredCardPath` (never a
+raw `string`) genuinely closes the bypass at the write boundary — there is no accessible path from
+outside `AnchoredCardPath.cs` to an unvalidated instance. I also re-ran
+`WriteCard_RefusesACorrectlyShapedTail_UnderTheWrongRepositoryRoot`
+(`CardStoreWriteTests.cs:204-234`) and its `TransferOwnership` counterpart
+(`CardOwnershipTransferTests.cs:99-110`) by inspection: both write a directory genuinely shaped
+`callboard/register/` under a *different* root than the call declares, assert refusal naming the
+declared root, then prove the identical path succeeds once `cardsRoot` names its true root — a real
+root-only refusal, not a suffix match. O-1 discharges.
+
+**2. O-2 (close the lockless write path) — BLOCKER. The `CardLock` parameter is a token, not a
+precondition, and I demonstrated the bypass.**
+
+`AppendCommentUnderExistingLock(CardLock heldLock, string cardsRoot, string filePath, ...)` and
+`TransferOwnershipUnderExistingLock` (same shape) require *a* `CardLock` instance, obtainable only from
+`CardLock.Acquire`. That much is real — `CardLock`'s constructor is private (`CardLock.cs:150`). But
+neither method ever checks that `heldLock` is the lock for `filePath`. `CardLock` carries its own
+`_lockPath` privately (`CardLock.cs:145`) and exposes no way to compare it against the path a caller is
+about to write — so any lock, for any card, satisfies the parameter.
+
+I wrote and ran a probe test proving this rather than reasoning about it abstractly: wrote two real
+cards X and Y via `CardStore.WriteCard`, acquired `CardLock` for X only (`CardLock.Acquire(pathX, ...)`),
+and while holding *that* lock called `CardStore.AppendCommentUnderExistingLock(lockForX, root, pathY,
+comment, changeName)` — appending to Y using a lock that was never taken on Y. **It succeeded.** No lock
+was ever acquired for Y at any point in the test. I ran this as a real xUnit test
+(`dotnet test --filter`), not a manual trace, then removed the file — this repo's diff is unaffected
+(`git status` confirms only the pre-existing block B files are touched).
+
+This is exactly the brief's own test for the finding: "is `CardLock` obtainable only from a successful
+`CardLock.Acquire`, **and** can a caller hold a lock on card X while driving a write to card Y?" — yes,
+it can. The parameter proves *a* lock was taken; it does not prove *the right* lock was taken. That is
+"a parameter that is merely present," which the brief named as the failure mode to check for. Today
+nothing in this assembly calls these methods that way — both call sites (`CardStore.AppendComment`/
+`TransferOwnership` themselves, and the `CardStoreConcurrencyTests` ordering test) happen to pass the
+matching lock — but O-2's whole premise is that "unreachable from production today" is not "closed";
+the same reasoning that requires closing the doc-comment convention requires this parameter to actually
+constrain what it claims to constrain. Any future in-assembly caller (§5/§6 verb wiring is coming) can
+reach the mismatched-lock shape with no error, no test catching it, and no compiler help — the exact
+shape the brief calls "the same convention in a new costume."
+
+**Suggested fix, not prescriptive:** give `CardLock` an internal accessor for the path it locked
+(`internal string CardPath => ...`, derived from `_lockPath` minus its `.lock` suffix, or store the
+original `cardPath` directly), and have `AppendCommentUnderExistingLock`/
+`TransferOwnershipUnderExistingLock` assert `heldLock`'s path matches `filePath` before proceeding —
+treating a mismatch as a caller defect (this is a lock-identity check, not the lost-race case §2's rule
+covers, so a thrown/refused failure rather than a silent retry is appropriate here). Land it with a test
+that a mismatched lock is rejected, mirroring the null-bypass tests already present.
+
+**3. Handover attribution in two overwritable frontmatter scalars — BLOCKER. I think this is the wrong
+choice, and the worker's own test proves why.**
+
+The spec's second sentence is unconditional: "**Every** ownership change SHALL record the acting role
+and the time it occurred." `HandoverBy`/`HandoverAt` are two nullable scalar fields, both overwritten on
+every `TransferOwnership` call. The worker's own test names the consequence in its title:
+`TransferOwnership_TwiceInARow_LeavesOnlyTheMostRecentHandoverOnTheFrontmatter`
+(`CardOwnershipTransferTests.cs:53-68`). For a card handed over more than once — which is the *ordinary*
+lifecycle of a work card moving architect → worker → reviewer → supervisor, not an edge case — every
+handover before the most recent one has its acting role and timestamp overwritten to nothing recoverable
+from the record. That is not "every ownership change SHALL record," it is "the most recent ownership
+change SHALL record and the rest are gone." The doc comment on `CardFrontmatter.HandoverBy`
+(`CardFrontmatter.cs:13`) says as much plainly — "the card's **most recent** ownership handover" — which
+tells me this was a conscious trade-off, not an oversight, but I don't think the trade-off is one the
+spec's wording permits.
+
+Weighing the brief's own considerations: this tool's stated reason for existing is that the incumbent
+DEVLOG "served the audit trail well and routing badly" — losing per-handover attribution regresses
+exactly the property the append-only incumbent got right, in exchange for improving the property
+(routing/queryability) that was already broken. §2's unknown-field-preservation rule exists so the
+record never silently loses what it was told; scalar overwrite silently loses what it was told about a
+handover the instant a second one lands, which is the same failure shape that rule was built to prevent,
+just applied to a first-class field the tool itself writes rather than an unrecognised one. I don't find
+a queryability argument that rescues it either — "who transferred this to me" for anything but the
+current holder is unanswerable from the record as shipped.
+
+I read the brief as deliberately leaving room for either an appended-comment-shaped answer or a
+frontmatter one ("both are defensible") — my independent judgment is that only a shape preserving every
+handover satisfies "every," which frontmatter scalars structurally cannot do no matter how they're
+tuned. That likely means either: an appended, append-only handover record distinct from the ordinary
+comment thread (so O-2's "not building on `AppendCommentUnderExistingLock`" instruction is honoured
+while still being append-only and in the record), or a `HandoverHistory` list on the frontmatter that is
+only ever appended to, never replaced. Either keeps `Owner` itself as the queryable current-state scalar
+index population already reads; only the *history* needs to stop being overwritten.
+
+I'm flagging this as a blocker rather than routing it straight to `❓ @architect`, because I think it's a
+correctness question the spec text already answers ("every"), not an ambiguity between two readings —
+but if the Product Owner reads "every ownership change SHALL record" differently, that's worth surfacing
+explicitly before the worker builds the fix, since it changes what block B needs to relitigate.
+
+**4. Acting role as a third party — correct, verified.**
+`TransferOwnership_ChangesOwner_AndRecordsTheActingRoleAndTimestamp`
+(`CardOwnershipTransferTests.cs:36-50`) drives architect handing worker's card to reviewer — all three
+roles distinct — and asserts `HandoverBy == Architect`, not `Worker` (outgoing) or `Reviewer`
+(incoming). `TransferOwnershipUnderExistingLock` (`CardStore.cs:158-181`) never derives `HandoverBy`
+from `Owner`'s old or new value; it is threaded straight from the caller's own `actingRole` argument. The
+attribution is written to the card file itself (frontmatter, part of the primary record per ADR-0003),
+not only to the derived index — `IndexPopulator` is untouched in this diff, so nothing about handover
+survives only in a structure ADR-0004 forbids being authoritative. This finding stands independent of
+finding 3: the *shape* (frontmatter, third-party role) is right; the *retention* (scalar overwrite) is
+what I'm asking to be fixed.
+
+**5. Concurrency against §2's platform facts — clean.**
+`AtomicWrite` (`CardStore.cs:275`) still rests on `File.Move(tempPath, filePath, overwrite: true)`
+(`CardStore.cs:293`) as the only exclusion/publish primitive; the `FileMode.CreateNew` on the temp file
+(`CardStore.cs:284`) is only ever used against a GUID-suffixed name to avoid colliding with itself, never
+as a claimed exclusion mechanism, and `FileShare.None` is not used as a lock substitute anywhere in this
+diff. No new code path introduces `File.Move(overwrite: false)`. On "verify the effect immediately
+before acting on it": `TransferOwnershipUnderExistingLock` reads the current card under the held lock,
+then writes the merged result under the same lock — no stale-read-then-write gap — but as finding 2
+shows, the *lock* itself is never verified to correspond to the file being acted on, which is exactly
+this rule applied one layer up. Fixing finding 2 closes this too.
+
+**6. Blast radius — mechanical, confirmed by diff read plus a spot mutation.**
+All six touched test files (`CardFileRoundTripTests`, `CardIdentityArchiveSurvivalTests`,
+`CardStoreConcurrencyTests`, `CardStoreCorruptionTests`, `CardStoreWriteTests`, `IndexInvariantTests`,
+`IndexPopulatorTests`) change only call-site signatures — a `_root`/`scenarioRoot` argument threaded
+through unchanged `CardStore.WriteCard`/`AppendComment` calls. No assertion body changed in any of them.
+Re-ran the full suite (176/176) after independently re-verifying two of the block A guards were still
+enforced (unrelated to this block, done as part of my normal gate re-run) and after my own O-1/O-2
+probes — no regression. `IndexInvariantTests` still proves derivation: its "index absent/present/deleted
+mid-flight" scenarios (`IndexInvariantTests.cs:220-345`) are untouched apart from the `_root`/
+`scenarioRoot` argument, and I did not need to mutate production code to find a hidden weakening — the
+diff is exactly what "mechanical" claims.
+
+**7. Scope — clean.**
+No comments work (block C's territory) — the only `CardStore` write callers in production remain
+`WriteCard`/`AppendComment`/`TransferOwnership` themselves; `AppendCommentUnderExistingLock` gained no
+new caller. No new CLI verb, no dispatch arm — `git diff HEAD --stat` shows no `CommandDispatcher.cs` or
+`Program.cs` change. No parse/execute split. No new `PackageReference` — no `.csproj` in the diff. No
+kind-specific frontmatter fields beyond `HandoverBy`/`HandoverAt`, which are ownership fields every kind
+shares, not kind-specific. `callboard/identities/` is now stated once: `CardLayout.IdentitiesDirectory`
+and `CardLayout.IdentityCounterPath(kind)` are the sole statement, and `CardIdentityAllocator.CounterPath`
+(`CardIdentityAllocator.cs:171-172`) calls through `CardLayout.IdentityCounterPath` with its own
+duplicate constant deleted — confirmed by diff, not by description.
+
+**Summary: two blockers (2, 3), everything else discharges as briefed.** O-1 and finding 4 are solid
+and need no rework. Findings 5 and 6 are clean confirmations, not open items. Please address 2 and 3 and
+I'll re-audit; 3 in particular I'd like a considered response to rather than a silent fix, since it's a
+judgment call and the worker may see a consideration I've missed.
+
+→ @worker
+
+---
+
+**[architect]** Block B review round 1 — `Request changes` accepted in full. Both findings stand, and
+both were established by **running the mistake** rather than by reading the code, which is the standard
+§3 set. → @worker, fix both; @reviewer re-audits after.
+
+**On finding 1 — this is the more important of the two, because it is a near miss on a rule we already
+had.** O-2's whole point was that a mechanism a caller must remember to invoke is a convention with
+better ergonomics. The fix reproduced the defect one level up: `heldLock` proves *a* lock was taken, not
+*the* lock for the file being written, so "hold the lock for card X, write card Y" compiles and runs
+clean. A parameter that is merely present is the same convention in a new costume — the brief said so,
+and the shape still landed. That is not a criticism of the attempt; it is why the reviewer was asked to
+probe it rather than read it.
+
+**Direction — do not add an accessor and an equality check.** Exposing `CardLock.Path` so the callee can
+compare it against `filePath` leaves two parameters that *can* disagree, and a guard that must run. Take
+the stronger shape: **the lock is the only source of the path.** The `*UnderExistingLock` methods should
+derive the target from the lock they are handed and stop taking a separate `filePath` at all, so there is
+no second value to disagree with. If the lock must therefore carry an `AnchoredCardPath` rather than a
+bare string, that is the right direction of travel — `AnchoredCardPath` is already the type that proves a
+path is rooted, and a lock over an unanchored path is a gap we would only find later.
+
+Test it the way finding 1 was found: **write the mistake** — acquire a lock for X, attempt to write Y —
+and confirm it does not compile. A runtime refusal is second best here; prefer the compile error.
+
+**On finding 2 — the frontmatter scalars go.** I agree with the reviewer's independent reading and it
+matches the concern I raised when routing the review, so treat the question as settled: two overwritable
+fields cannot satisfy "**Every** ownership change SHALL record the acting role and the time it occurred",
+and no amount of tuning changes that. The worker's own test
+(`CardOwnershipTransferTests.cs:53-68`) names the defect precisely — a test asserting that the record
+loses information is a test that the requirement is unmet.
+
+**Direction — a dedicated append-only handover sequence on the card, not a comment.** D3 already
+establishes the pattern: "comments appended as delimited blocks". Handovers get their own append-only
+delimited sequence alongside that one.
+
+- **Not a comment.** A handover has no author writing prose and no addressee; routing reads a comment's
+  `to` field, and a handover landing in the thread would put it in a role's queue as though someone had
+  asked that role a question. Comments also carry semantics that block C (4.6–4.8) is still defining —
+  block B must not take a dependency on work that has not landed.
+- **`owner` stays in frontmatter** as the current owner. The spec requires the field and queryability
+  reads it; the sequence is the history, the field is the state. Say in your post how the two are kept
+  from disagreeing — a derived value that can drift from its own history is the index problem moved into
+  the record.
+- Unknown-field preservation applies to the new sequence exactly as it does to comments and frontmatter
+  (§2's extensibility rule). A newer build's handover field must survive this build's read-modify-write.
+- **Append-only must be structural at the write boundary**, not just at the format layer — that was the
+  block A finding in §2 that produced `CardStore` in the first place. Nothing you add may expose a way to
+  rewrite or drop a recorded handover.
+
+### Not in scope for this fix
+
+Everything the reviewer verified clean stays as built: O-1's `AnchoredCardPath` anchoring (confirmed by
+writing the bypass and getting `CS0122`), the third-party acting-role modelling, the concurrency
+handling, the six mechanical test-file updates, and the `callboard/identities/` centralisation. Do not
+revisit them. No CLI verbs, no parse/execute split, no `PackageReference`.
+
+Re-run all four gates and quote the exit lines. The 176 existing tests stay green.
+
+---
+
+**[worker]** Block B review round 1 findings — both fixed.
+
+**Finding 1 (O-2, mismatched lock) — the `filePath` parameter is gone; the lock is the only source
+of the path.** `CardLock` now carries `internal string CardPath { get; }` — the original path passed
+to `Acquire`, not the `.lock`-suffixed path — set once at construction, no setter.
+`AppendCommentUnderExistingLock`/`TransferOwnershipUnderExistingLock` no longer take `filePath` at
+all: they read `heldLock.CardPath`. Not the reviewer's own suggested shape (expose `CardLock.Path`
+plus a runtime equality guard) — per your direction, removing the second parameter instead of
+comparing two removes the thing that could disagree, so there's nothing left to check at runtime.
+Verified the "does not compile" claim by literally writing the reviewer's probe: acquired a lock for
+one card, then tried to pass a *different* path into `AppendCommentUnderExistingLock` — `CS1501: No
+overload... takes 5 arguments`, because the parameter the mismatch needs to land in no longer
+exists. Did this in a throwaway file under `src/Callboard/` exactly as the O-1 mistake was proven
+last round, deleted it, confirmed `make build` clean again. Landed as a permanent regression test too
+(`AppendCommentUnderExistingLock_ActsOnlyOnTheLockedCard_ThereIsNoSeparatePathToDisagreeWith`,
+`CardStoreWriteTests.cs`) proving the positive: append under a lock acquired for `path` lands on
+exactly `path`, asserted against `heldLock.CardPath` and the file's own bytes. Every existing caller
+of the two `*UnderExistingLock` methods (`CardStore.AppendComment`/`TransferOwnership` themselves,
+`CardStoreConcurrencyTests`'s ordering test, the two null-bypass tests) updated — the lock they
+already held was always the right one, so removing the redundant argument changed no call site's
+behaviour, only its shape.
+
+**Finding 2 (handover retention) — replaced the two frontmatter scalars with an append-only
+`CardHandover` sequence.** New type `CardHandover` (`By`, `To`, `Timestamp`, `UnknownFields`), its
+own delimited block distinct from `CardComment` — a single self-contained line,
+`<!-- callboard:handover by=... to=... timestamp=... -->`, no body and no footer, since a handover
+carries no prose. Not a comment, per your direction: no author writing prose, no addressee, and
+building it on `AppendCommentUnderExistingLock` would both misroute it into a role's queue (routing
+reads a comment's `to`) and take a dependency on block C's still-unbuilt comment semantics.
+`CardFile.Handovers: IReadOnlyList<CardHandover>` is the new sequence, alongside `Comments` —
+`CardFileParser`'s block loop now recognises a handover line or a comment header at each position
+and routes to the matching list, so a hand-edited file with the two interleaved still parses;
+`CardFileWriter` emits every handover before every comment (a fixed, deterministic layout — see the
+doc comment on why that's not a claim about actual chronological interleaving, the same convention
+already applied to unknown-frontmatter-field re-emission). Unknown handover-line fields are captured
+and re-emitted verbatim, same as comments and frontmatter (§2's extensibility rule) —
+`RoundTrips_HandoverWithAnUnrecognisedField_PreservesItVerbatim`.
+
+**How `Owner` and `Handovers` are kept from disagreeing:** `TransferOwnershipUnderExistingLock` sets
+`Frontmatter.Owner` to exactly the `To` of the `CardHandover` it appends, in the same write, under
+the same lock. There is no second code path that ever sets one without the other — `Owner` is not
+independently settable by any other production caller, so it cannot drift from the last entry in its
+own history the way a derived value could. Tested directly:
+`TransferOwnership_OwnerAlwaysMatchesTheMostRecentHandoversTo_ByConstruction` drives four transfers
+and asserts `Owner == Handovers[^1].To` after each. The test the reviewer named,
+`TransferOwnership_TwiceInARow_...`, is now
+`TransferOwnership_TwiceInARow_RetainsBothHandoversInOrder` — both handovers survive, in order, each
+with its own acting role and timestamp intact.
+
+`CardFrontmatter.HandoverBy`/`HandoverAt` are gone entirely (not deprecated, not left dual-written) —
+`CardFileParser`/`CardFileWriter` reverted to the original nine known frontmatter keys.
+`CardOwnershipTransferTests.cs` rewritten against the sequence; the frontmatter-scalar round-trip
+tests in `CardFileRoundTripTests.cs` replaced with sequence round-trips (including one asserting
+`Comments` and `Handovers` survive independently in one file).
+
+**Untouched, as instructed:** O-1's `AnchoredCardPath` anchoring, the third-party acting-role
+modelling (still threaded straight from the caller's `actingRole` argument, now onto `CardHandover.By`
+instead of a frontmatter scalar), the concurrency handling, the `callboard/identities/`
+centralisation. No CLI verb, no parse/execute split, no new `PackageReference`.
+
+**Gates (sandboxed):** `BUILD_EXIT:0` / `TEST_EXIT:0` (182/182, up from 176 — several finding-2 tests
+renamed/rewritten in place against the new sequence rather than counted as separate adds) /
+`FORMAT_EXIT:0` / `VALIDATE_EXIT:0` / `GATES_EXIT:0`.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Block B (4.5) round 2 — **Approve.**
+
+Re-ran `make gates` independently in the sandbox: `BUILD_EXIT:0` / `TEST_EXIT:0` (182/182) /
+`FORMAT_EXIT:0` / `VALIDATE_EXIT:0` / `GATES_EXIT:0` — matches the worker's report. Both round-1
+blockers verified fixed by re-running my own probes against the new code, not by re-reading the
+worker's description of them.
+
+**Finding 1 (O-2, mismatched lock) — fixed, and genuinely eliminated rather than guarded.**
+I wrote the round-1 mistake again against the new signature: a throwaway file passing a `filePath`
+argument alongside `heldLock` to `AppendCommentUnderExistingLock` — `CS1501: No overload for method
+'AppendCommentUnderExistingLock' takes 5 arguments`, because the parameter that mismatch needs no
+longer exists. I then wrote a second probe reproducing the *shape* of my round-1 cross-card bypass
+(acquire a lock for card X, then try to drive a write naming card Y) using only the new API surface —
+there is no argument left in which to name Y at all; the only path available anywhere in the call is
+`acquired.Lock.CardPath`, which is X. It compiles only because it is now forced to act on X. The
+architect's directed shape — remove the second parameter rather than add a comparison — is what
+actually closes this: there is no accessor to forget to check and no equality guard that could itself
+be skipped. `CardLock.CardPath` (`CardLock.cs:150-159`) is set once at construction from `Acquire`'s
+own `cardPath` argument, no setter, so it cannot be pointed at a different file after the fact either.
+The permanent regression test
+(`AppendCommentUnderExistingLock_ActsOnlyOnTheLockedCard_ThereIsNoSeparatePathToDisagreeWith`,
+`CardStoreWriteTests.cs:314-340`) asserts the positive case against `held.CardPath` directly. I did not
+find a second lockless or mismatched-target write path anywhere in `CardStore.cs` — both
+`*UnderExistingLock` methods have the same shape now.
+
+One non-blocking note: the architect's direction floated `CardLock` carrying an `AnchoredCardPath`
+rather than a bare `string` ("if the lock must therefore..." — conditional, not a directive). The
+worker kept `CardPath` as a bare `string`. I checked whether that reopens anything: it doesn't — the
+lock is acquired on the raw path *before* `AnchoredCardPath.TryCreate` runs inside
+`AppendCommentUnderExistingLock`/`TransferOwnershipUnderExistingLock` (`CardStore.cs:106-108,
+188-190`), and `AtomicWrite` still only accepts an `AnchoredCardPath` — O-1's guarantee is unchanged
+because the anchoring check still runs, just after the lock is taken rather than encoded in the lock's
+own type. A card whose directory doesn't validate simply fails after acquiring (and releasing) a lock
+it didn't need, which is a wasted lock acquisition, not a correctness gap. Fine to leave as is.
+
+**Finding 2 (handover retention) — fixed, with the coupling and the extensibility rule both actually
+demonstrated.**
+
+- **`Owner`/`Handovers` coupling is structural, not two statements that could drift, for every
+  production path that exists today.** `TransferOwnershipUnderExistingLock` sets both in one object
+  construction under one lock (`CardStore.cs:187-193`: `Frontmatter with { Owner = newOwner, ... }`
+  and `Handovers = [.. success.Card.Handovers, handover]` built from the same `newOwner`/`actingRole`
+  arguments) — there is exactly one production writer of `Handovers`, and it is also the only
+  production writer that sets `Owner` after creation. Read the worker's own framing carefully, though:
+  this is true because nothing *else* in this diff writes `Owner` outside creation, not because the
+  type system forbids constructing a mismatched pair — `CardFile`'s constructor and `CardStore.WriteCard`
+  (a full create-or-replace, unchanged by this block) would accept a `CardFile` with `Frontmatter.Owner`
+  disagreeing with `Handovers[^1].To` if a caller built one by hand. I checked whether that is a new
+  gap this block introduces: it is not — it is the exact same shape `Comments` has always had against
+  `WriteCard` (a full replace has always been able to write any `Comments` list, consistent or not),
+  and O-1/O-2's obligations were scoped to the *append* paths, not to `WriteCard`'s pre-existing
+  create/replace authority. `TransferOwnership_OwnerAlwaysMatchesTheMostRecentHandoversTo_ByConstruction`
+  (`CardOwnershipTransferTests.cs:82-100`) drives four transfers and checks the invariant after each —
+  I read this as adequate given the scope, not as proof no future writer could ever violate it; that
+  remains true of every other field on this record and isn't new risk this block created.
+- **Append-only is structural at the write boundary for the paths that exist.** The only production
+  caller of `Handovers` is `TransferOwnershipUnderExistingLock`, and it only ever does
+  `[.. success.Card.Handovers, handover]` — spread-then-append, never a filter, never an index
+  assignment. `AppendCommentUnderExistingLock`'s `success.Card with { Comments = [...] }` and
+  `TransferOwnershipUnderExistingLock`'s `success.Card with { Frontmatter = ..., Handovers = [...] }`
+  each rely on record `with` to carry the *other* sequence through untouched, and
+  `TransferOwnership_AndAppendComment_EachPreserveTheOtherSequenceUntouched`
+  (`CardOwnershipTransferTests.cs:132-148`) proves both directions rather than assuming `with`'s
+  semantics hold.
+- **Unknown-field preservation applies to the new block, verified by mutation-style probe, not just
+  reading the test.** I wrote and ran an independent test (`dotnet test`, then removed — working tree
+  confirmed clean of it) constructing a raw card file with a handover line carrying an extra
+  `round=2` field, parsing it, and re-serialising: the field survived. This matches the worker's own
+  `RoundTrips_HandoverWithAnUnrecognisedField_PreservesItVerbatim`
+  (`CardFileRoundTripTests.cs:434-451`), which I also read and agree is sound — `ParseKeyValueTokens`
+  is now shared between comment headers and handover lines (`CardFileParser.cs:307-330`) specifically
+  so the two block kinds cannot drift apart on this rule.
+- **I also independently probed the one round-trip gap I didn't find a worker test for**: a card body
+  containing a line that looks exactly like a `<!-- callboard:handover ... -->` delimiter. I wrote and
+  ran a test constructing such a body plus a real handover, serialised and re-parsed it, and got the
+  original body back verbatim with the real handover still recognised — `CardFileFormat.
+  IsStructurallySignificantLine` was extended to include `HandoverLinePrefix`
+  (`CardFileFormat.cs:35`), and `AppendContent`/`EscapeContentLine`/`UnescapeContentLine` are shared
+  with the existing comment-delimiter-lookalike escaping, so this works by the same mechanism the
+  worker's `RoundTrips_BodyContainingTextThatLooksLikeACommentDelimiter` already covers for comments —
+  but no test in this diff exercises the handover case specifically. Not a blocker: I proved it works
+  and the mechanism is shared, not duplicated, so there's no separate implementation to have gotten
+  wrong. Worth a one-line addition for completeness; your call whether to land it now or park it.
+
+**On the `CardFile.Handovers` nullable constructor parameter — acceptable, and I checked why.**
+The parameter accepts `null` only so the pre-existing four-argument constructor calls across the
+codebase keep compiling, but the property override (`CardFile.cs:31`,
+`public IReadOnlyList<CardHandover> Handovers { get; init; } = Handovers ?? [];`) normalises `null` to
+empty at construction, unconditionally. I checked the two ways this could still lose data despite that
+normalisation: (1) a `with` expression on an existing, parsed `CardFile` — `with` copies every
+untouched init property, including `Handovers`, so `success.Card with { Comments = [...] }` cannot
+drop a history that was already there; confirmed by `TransferOwnership_AndAppendComment_...` above,
+which round-trips a real handover through exactly this path. (2) a fresh four-argument construction —
+that is only ever used for a *brand-new* card, which correctly has no handover history yet, not for
+modifying an existing one. So "forgetting" the parameter never discards a handover that existed; it
+only ever produces the correct empty state for a card that never had one. This is not the same
+"you must remember" shape O-1/O-2 were about — those let a caller skip a check with a live consequence
+on data that already existed; this lets a caller skip an argument with no consequence because there is
+nothing yet to lose. No change requested.
+
+**Everything verified clean in round 1 stands, spot-checked against the larger diff, not just carried
+forward:**
+- **O-1's anchoring** — re-verified `WriteCard`'s and the two `*UnderExistingLock` methods' calls into
+  `AnchoredCardPath.TryCreate` are unchanged in shape (`CardStore.cs:52, 108, 190`); `AtomicWrite`
+  still takes only `AnchoredCardPath`.
+- **Third-party acting-role modelling** — now flows into `CardHandover.By` instead of a frontmatter
+  scalar; `TransferOwnership_ChangesOwner_AndAppendsAHandoverRecordingTheActingRoleAndTimestamp`
+  (`CardOwnershipTransferTests.cs:39-56`) still drives architect → worker's card → reviewer and asserts
+  `handover.By == Architect`, distinct from either endpoint.
+- **Concurrency / §2 platform facts** — `AtomicWrite` unchanged in this round; still
+  `File.Move(overwrite: true)` as the sole publish/exclusion primitive.
+- **Mechanical test-file updates** — re-diffed all seven touched test files; the six from round 1 plus
+  `CardStoreConcurrencyTests.cs` (already reviewed) show only call-site signature changes in this
+  round too (dropping the now-removed `filePath` argument from `*UnderExistingLock` calls). No
+  assertion body changed.
+- **`callboard/identities/` centralisation** — untouched by this round's diff; still sole-stated in
+  `CardLayout`.
+
+**Scope — still clean.** No CLI verb, no dispatch arm, no parse/execute split, no new
+`PackageReference`, no comments-work dependency taken (handover is explicitly not built on
+`AppendCommentUnderExistingLock`, confirmed by reading `TransferOwnershipUnderExistingLock` — it never
+calls it). `CardFileFormat`/`CardFileParser`/`CardFileWriter` changes are additive (a new block kind
+recognised alongside the existing comment one) — I re-read the full comment-parsing branch
+(`CardFileParser.cs:130-183`) to confirm the existing comment behaviour is unchanged, not merely
+adjacent code.
+
+**O-1 and O-2 both discharge. §4's ownership requirement is satisfied by the record, not the index.**
+Block B is done. The one open item (finding 2's escaping test gap) is documentation-grade, not a
+correctness gap I couldn't independently verify — noted for the worker's or architect's discretion,
+not blocking.
+
+→ @architect
+
+---
+
+**[architect]** Block B (4.5) — reviewer `Approve` on round two. Gates re-run at my end:
+`BUILD_EXIT:0` / `TEST_EXIT:0` (182/182) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, `GATES_EXIT:0`. 4.5
+ticked, committing.
+
+**O-1 and O-2 are DISCHARGED**, both structurally, and the manner matters more than the fact:
+
+- **O-1** — `AnchoredCardPath` is the only thing `AtomicWrite` accepts, and it can only be constructed by
+  proving the target resolves under the given root. The bypass gives `CS0122`.
+- **O-2** — closed on the second attempt, and *the first attempt is the lesson*. Round one added a
+  mandatory `CardLock` parameter, which proved *a* lock was held but never *the* lock for the file being
+  written; the reviewer took a lock on card X and wrote card Y with it. **The defect O-2 named
+  reproduced one level up inside its own fix.** The close was to delete the second value rather than
+  guard it: the `*UnderExistingLock` methods no longer take a `filePath` at all and act on
+  `heldLock.CardPath`, so there is nothing left to disagree. `CS1501` on the mistake.
+
+### The rule this block earned, and it is a sharpening of §3's
+
+§3 said: *if you can write the mistake and it compiles, it is a convention, not a guarantee.* Block B
+shows that a fix satisfying that test can still be a convention. The round-one shape passed §3's rule as
+stated — the parameter was mandatory, omitting it did not compile — and was still bypassable, because
+**the guarantee was about the wrong proposition**. `heldLock` proved "a lock exists", where the claim
+needing proof was "this write is under this file's lock".
+
+**When two parameters must agree, the guarantee is not a check that they agree — it is the deletion of
+one of them.** A guard that must run is a convention with a compiler's endorsement. Prefer removing the
+degree of freedom to validating it. This is the same move §3 made when it deleted the per-arm argument
+wrapper because its existence was the bypass, and the same move O-2's own close made — three instances
+now, which makes it a pattern rather than a coincidence.
+
+Corollary for reviewers: **ask what proposition a mechanism proves, not whether a mechanism is present.**
+Both round-one findings were found by execution and neither would have been found by reading.
+
+### Carried to block C
+
+The reviewer probed, and confirmed working, a case **no test covers**: a card body containing a line that
+looks exactly like a `<!-- callboard:handover ... -->` delimiter round-trips correctly, via the escaping
+mechanism shared with comments. Block C is in that format layer for 4.6–4.8 — it lands the test. Recorded
+here rather than on the opportunistic list because block C is a trigger the plan actually contains, and
+it is next.
+
+### Standing note on `CardFile.Handovers`
+
+Accepted as built: the optional nullable parameter normalises `null` to empty in the property, `with`
+always preserves the existing sequence, and a fresh four-argument construction is a brand-new card with
+no history to lose. The reviewer checked both loss paths specifically. Not a convention — there is no
+mistake available to write.
+
+---
+
 ## NEXT
 
 **Resume point: 4.1.** §3 is closed; §4 has not been opened. Nothing is in flight — working tree clean,

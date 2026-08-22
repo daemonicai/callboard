@@ -8,6 +8,14 @@ namespace Callboard.Cards;
 /// </summary>
 /// <param name="Id">The card's stable, kind-prefixed identity (e.g. <c>B-0042</c>). Allocation is
 /// 4.2's job; this type only carries the value.</param>
+/// <param name="Owner">The role whose turn it is to act on this card right now — the
+/// <em>current</em> state, kept from disagreeing with the ownership history
+/// (<see cref="CardFile.Handovers"/>) because <see cref="CardStore.TransferOwnershipUnderExistingLock"/>
+/// sets this, in the same write, to exactly the incoming owner of the <see cref="CardHandover"/> it
+/// appends — there is no second code path that could set one without the other. Every prior
+/// handover's attribution lives in the append-only sequence, not here (card-model: "Every ownership
+/// change SHALL record the acting role and the time it occurred" — reviewer round 1, finding 3: two
+/// overwritable scalars cannot satisfy "every").</param>
 /// <param name="Section">The section a card was raised within, or <see cref="string.Empty"/> when
 /// the card is not tied to one.</param>
 /// <remarks>

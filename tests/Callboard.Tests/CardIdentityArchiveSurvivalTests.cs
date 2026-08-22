@@ -35,12 +35,12 @@ public sealed class CardIdentityArchiveSurvivalTests : IDisposable
         var frontmatter = new CardFrontmatter(
             "B-0001", CardKind.Block, "Archived block", "closed", CardOwner.Architect, CardScope.Change, "4", Created, Created);
         var card = new CardFile(frontmatter, "Original body.", [], []);
-        AssertWriteSuccess(CardStore.WriteCard(cardPath, card, TimeSpan.FromSeconds(5), ChangeName));
+        AssertWriteSuccess(CardStore.WriteCard(_root, cardPath, card, TimeSpan.FromSeconds(5), ChangeName));
 
         var firstComment = new CardComment("C-0001", CardOwner.Worker, Created, "First reply.", null, null, false, []);
         var secondComment = new CardComment("C-0002", CardOwner.Reviewer, Created, "Second reply.", "C-0001", CardOwner.Worker, true, []);
-        AssertWriteSuccess(CardStore.AppendComment(cardPath, firstComment, TimeSpan.FromSeconds(5), ChangeName));
-        AssertWriteSuccess(CardStore.AppendComment(cardPath, secondComment, TimeSpan.FromSeconds(5), ChangeName));
+        AssertWriteSuccess(CardStore.AppendComment(_root, cardPath, firstComment, TimeSpan.FromSeconds(5), ChangeName));
+        AssertWriteSuccess(CardStore.AppendComment(_root, cardPath, secondComment, TimeSpan.FromSeconds(5), ChangeName));
 
         // Archive itself is a directory move on callboard/changes/<name>/ and nothing else (the
         // Product Owner's binding decision) — simulated directly rather than through a verb this

@@ -41,6 +41,20 @@ internal static class CardFileWriter
 
         AppendContent(builder, card.Body);
 
+        // Handovers before comments — a fixed, deterministic layout (like the unknown-frontmatter-
+        // fields convention above), not a claim about the physical order handovers and comments
+        // actually happened in relative to each other. Each sequence's own internal order (oldest
+        // first) is what the append-only guarantee is actually about, and that survives exactly:
+        // CardStore only ever appends to one list or the other under the card's lock, never
+        // reorders either.
+        foreach (var handover in card.Handovers)
+        {
+            builder.Append(CardFileFormat.HandoverLinePrefix)
+                .Append(BuildHandoverFields(handover))
+                .Append(CardFileFormat.HandoverLineSuffix)
+                .Append('\n');
+        }
+
         foreach (var comment in card.Comments)
         {
             builder.Append(CardFileFormat.CommentHeaderPrefix)
@@ -89,6 +103,21 @@ internal static class CardFileWriter
         fields.Append(" timestamp=").Append(FormatTimestamp(comment.Timestamp));
 
         foreach (var (key, rawValue) in comment.UnknownHeaderFields)
+        {
+            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+        }
+
+        return fields.ToString();
+    }
+
+    private static string BuildHandoverFields(CardHandover handover)
+    {
+        var fields = new StringBuilder();
+        fields.Append("by=").Append(handover.By.ToWireString());
+        fields.Append(" to=").Append(handover.To.ToWireString());
+        fields.Append(" timestamp=").Append(FormatTimestamp(handover.Timestamp));
+
+        foreach (var (key, rawValue) in handover.UnknownFields)
         {
             fields.Append(' ').Append(key).Append('=').Append(rawValue);
         }

@@ -17,6 +17,18 @@ internal static class CardLayout
     internal const string ChangesRootDirectory = "callboard/changes/";
 
     /// <summary>
+    /// Where 4.2's per-kind identity counters live — a root-level <c>callboard/&lt;x&gt;/</c>
+    /// directory like the three above, but not scope-shaped, because a counter file is not a card
+    /// (block A's brief). Registered here, rather than left as a constant only
+    /// <see cref="CardIdentityAllocator"/> knows about, so this type is the single statement of
+    /// every root-level path the record uses — block A's review found two independent statements
+    /// of this exact path once <see cref="CardIdentityAllocator"/> shipped its own copy.
+    /// <see cref="IdentityCounterPath"/> is the only way <see cref="CardIdentityAllocator"/>
+    /// constructs a counter's relative path.
+    /// </summary>
+    internal const string IdentitiesDirectory = "callboard/identities/";
+
+    /// <summary>
     /// The reserved live-change name: card-model's archive path is
     /// <c>callboard/changes/archive/&lt;name&gt;/</c> (a directory move within the same tree,
     /// mirroring this repository's own <c>openspec/changes/archive/</c>), so a live change named
@@ -52,6 +64,10 @@ internal static class CardLayout
         onChange: () => ChangesDirectory(RequireChangeName(changeName)),
         onCapability: () => DecisionsDirectory,
         onRepository: () => RegisterDirectory);
+
+    /// <summary>The relative path of <paramref name="kind"/>'s identity counter file under
+    /// <see cref="IdentitiesDirectory"/> — the one place that path is built.</summary>
+    internal static string IdentityCounterPath(CardKind kind) => $"{IdentitiesDirectory}{kind.ToWireString()}.count";
 
     private static string RequireChangeName(string? changeName) =>
         string.IsNullOrEmpty(changeName)

@@ -28,8 +28,6 @@ namespace Callboard.Cards;
 /// </summary>
 internal static class CardIdentityAllocator
 {
-    internal const string IdentitiesDirectory = "callboard/identities/";
-
     /// <summary>
     /// Allocates the next identity for <paramref name="kind"/> under <paramref name="cardsRoot"/>.
     /// A corrupt or unreadable counter file is never guessed at as "start over from zero" — that
@@ -171,10 +169,7 @@ internal static class CardIdentityAllocator
         $"{kind.PrefixFor()}-{number.ToString("D4", CultureInfo.InvariantCulture)}";
 
     private static string CounterPath(string cardsRoot, CardKind kind) =>
-        Path.Combine(
-            cardsRoot,
-            IdentitiesDirectory.Replace('/', Path.DirectorySeparatorChar),
-            $"{kind.ToWireString()}.count");
+        Path.Combine(cardsRoot, CardLayout.IdentityCounterPath(kind).Replace('/', Path.DirectorySeparatorChar));
 
     /// <summary>
     /// A missing counter file reads as 0 — the ordinary state for a kind that has never allocated

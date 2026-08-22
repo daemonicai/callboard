@@ -147,11 +147,21 @@ internal sealed class CardLock : IDisposable
     private readonly string _ownContent;
     private bool _disposed;
 
-    private CardLock(string lockPath, string ownContent)
+    private CardLock(string lockPath, string cardPath, string ownContent)
     {
         _lockPath = lockPath;
+        CardPath = cardPath;
         _ownContent = ownContent;
     }
+
+    /// <summary>
+    /// The path this lock guards — <em>not</em> the <c>.lock</c> file beside it. This is what
+    /// makes a held <see cref="CardLock"/> the sole source of the path a
+    /// <c>*UnderExistingLock</c> write method acts on (card-model 4.5, O-2 remediation): those
+    /// methods no longer take a separate <c>filePath</c> argument that could name a different card
+    /// than the one actually locked — there is exactly one path in play, and it comes from here.
+    /// </summary>
+    internal string CardPath { get; }
 
     /// <summary>
     /// Attempts to acquire the lock for <paramref name="cardPath"/>, retrying until either it
@@ -193,7 +203,7 @@ internal sealed class CardLock : IDisposable
         {
             if (TryCreate(lockPath, out var ownContent, testOnlyAfterWriteHook))
             {
-                return new CardLockResult.Acquired(new CardLock(lockPath, ownContent));
+                return new CardLockResult.Acquired(new CardLock(lockPath, cardPath, ownContent));
             }
 
             // Deadline and sleep are unconditional on every iteration, independent of whether

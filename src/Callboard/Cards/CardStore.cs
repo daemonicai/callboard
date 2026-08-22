@@ -13,6 +13,27 @@ namespace Callboard.Cards;
 /// the format layer but only conventional at the write boundary until this type existed.
 ///
 /// <para>
+/// <b>Anchored to the repository root (4.5, O-1):</b> every write takes a <c>cardsRoot</c> —
+/// the same root every other rooted path in this codebase resolves under
+/// (<see cref="RepoRootResolver"/>, <see cref="Index.IndexPaths"/>) — and the only path that ever
+/// reaches disk is an <see cref="AnchoredCardPath"/>, which can only be constructed by proving the
+/// target file's directory resolves under that exact root. See that type's own doc comment for
+/// what this closes and why it is structural rather than a convention a caller could forget.
+/// </para>
+///
+/// <para>
+/// <b>The lock is the only source of the path it guards (4.5, O-2 remediation):</b> the
+/// <c>*UnderExistingLock</c> methods below take a <see cref="CardLock"/> and never a separate
+/// <c>filePath</c> alongside it — the target is <see cref="CardLock.CardPath"/>, read off the lock
+/// itself. The first shape shipped (a <c>CardLock heldLock</c> parameter <em>plus</em> a
+/// <c>filePath</c> parameter) let a caller hold the lock for one card and act on a different one —
+/// both parameters were individually real, but nothing tied them together, so "lock X, write Y"
+/// compiled and ran clean. Removing the second parameter removes the thing that could disagree
+/// with it: there is exactly one path in play in this method's signature, and it is the one the
+/// lock was actually acquired for.
+/// </para>
+///
+/// <para>
 /// <b>Durability decision:</b> the temp file's content is flushed and <c>fsync</c>'d
 /// (<see cref="FileStream.Flush(bool)"/> with <c>flushToDisk: true</c>) before the rename, so the
 /// bytes being renamed into place are durable against a power loss, not only a process kill. The
@@ -27,16 +48,17 @@ internal static class CardStore
 {
     /// <summary>
     /// Writes a new card file, or fully replaces an existing one at the same path.
-    /// <paramref name="changeName"/> is required exactly when <c>card.Frontmatter.Scope</c> is
-    /// <see cref="CardScope.Change"/> or <see cref="CardScope.Section"/> — see
-    /// <see cref="ValidateAgainstLayout"/>.
+    /// <paramref name="cardsRoot"/> is the repository root every card in this call must live under
+    /// (4.5, O-1) — see <see cref="AnchoredCardPath"/>. <paramref name="changeName"/> is required
+    /// exactly when <c>card.Frontmatter.Scope</c> is <see cref="CardScope.Change"/> or
+    /// <see cref="CardScope.Section"/> — see <see cref="CardLayout.DirectoryFor"/>.
     /// </summary>
-    internal static CardWriteResult WriteCard(string filePath, CardFile card, TimeSpan lockTimeout, string? changeName = null)
+    internal static CardWriteResult WriteCard(string cardsRoot, string filePath, CardFile card, TimeSpan lockTimeout, string? changeName = null)
     {
-        var layoutFailure = ValidateAgainstLayout(filePath, card.Frontmatter.Scope, changeName);
-        if (layoutFailure is not null)
+        var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+        if (anchored is null)
         {
-            return layoutFailure;
+            return layoutFailure!;
         }
 
         // The containing directory has to exist before the lock file beside the target can be
@@ -51,30 +73,44 @@ internal static class CardStore
 
         Directory.CreateDirectory(directory);
 
-        return WithLock(filePath, lockTimeout, () => AtomicWrite(filePath, CardFileWriter.Serialize(card)));
+        return WithLock(filePath, lockTimeout, _ => AtomicWrite(anchored, CardFileWriter.Serialize(card)));
     }
 
     /// <summary>
     /// Appends <paramref name="comment"/> to the card at <paramref name="filePath"/>: reads the
     /// current file, parses it, adds the comment, and writes the result back — all under the
     /// card's lock, so two concurrent appends serialise rather than racing (record-retrieval:
-    /// "the thread's order is preserved"). <paramref name="changeName"/> is passed through to the
-    /// same layout reconciliation <see cref="WriteCard"/> applies, checked against the scope the
-    /// card itself declares once it has been read — see <see cref="ValidateAgainstLayout"/>.
+    /// "the thread's order is preserved"). <paramref name="cardsRoot"/> and
+    /// <paramref name="changeName"/> are passed through to the same layout reconciliation
+    /// <see cref="WriteCard"/> applies, checked against the scope the card itself declares once it
+    /// has been read — see <see cref="AnchoredCardPath"/>.
     /// </summary>
-    internal static CardWriteResult AppendComment(string filePath, CardComment comment, TimeSpan lockTimeout, string? changeName = null) =>
-        WithLock(filePath, lockTimeout, () => AppendCommentUnderExistingLock(filePath, comment, changeName));
+    internal static CardWriteResult AppendComment(string cardsRoot, string filePath, CardComment comment, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(filePath, lockTimeout, heldLock => AppendCommentUnderExistingLock(heldLock, cardsRoot, comment, changeName));
 
     /// <summary>
     /// The read-modify-write step of <see cref="AppendComment"/>, exposed separately so a test can
     /// hold a <see cref="CardLock"/> itself, drive this directly to establish a known append
     /// order, then start a second concurrent <see cref="AppendComment"/> that must wait for the
     /// same lock — proving 2.7's ordering guarantee deterministically rather than by chance timing.
-    /// Production code never calls this without holding the lock first; <see cref="AppendComment"/>
-    /// is the only production caller.
+    ///
+    /// <para>
+    /// <b>Structural, not conventional (O-2):</b> <paramref name="heldLock"/> is mandatory — the
+    /// only way to obtain a <see cref="CardLock"/> instance at all is a successful
+    /// <see cref="CardLock.Acquire"/>, so a caller cannot reach the read-modify-write below without
+    /// having actually taken a card's lock. And it is <em>this</em> card's lock specifically: the
+    /// target is <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c> — see
+    /// this type's own doc comment for why the first shape (both a lock and a path) was not
+    /// enough. <see cref="ArgumentNullException.ThrowIfNull"/> closes the one remaining gap
+    /// nullable reference types cannot: a caller passing <c>null!</c> to defeat the compile-time
+    /// hint.
+    /// </para>
     /// </summary>
-    internal static CardWriteResult AppendCommentUnderExistingLock(string filePath, CardComment comment, string? changeName = null)
+    internal static CardWriteResult AppendCommentUnderExistingLock(CardLock heldLock, string cardsRoot, CardComment comment, string? changeName = null)
     {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
         if (!File.Exists(filePath))
         {
             return new CardWriteResult.Failure($"no card file exists at '{filePath}' to append a comment to.");
@@ -84,17 +120,81 @@ internal static class CardStore
         return current.Match<CardWriteResult>(
             onSuccess: success =>
             {
-                var layoutFailure = ValidateAgainstLayout(filePath, success.Card.Frontmatter.Scope, changeName);
-                if (layoutFailure is not null)
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, success.Card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
                 {
-                    return layoutFailure;
+                    return layoutFailure!;
                 }
 
                 var updated = success.Card with { Comments = [.. success.Card.Comments, comment] };
-                return AtomicWrite(filePath, CardFileWriter.Serialize(updated));
+                return AtomicWrite(anchored, CardFileWriter.Serialize(updated));
             },
             onFailure: failure =>
                 new CardWriteResult.Failure($"cannot append to '{filePath}': the card file is corrupt: {failure.Reason}"));
+    }
+
+    /// <summary>
+    /// Reassigns <paramref name="filePath"/>'s card to <paramref name="newOwner"/> and appends a
+    /// <see cref="CardHandover"/> entry recording the handover (card-model: "Ownership names whose
+    /// turn it is" — "**Every** ownership change SHALL record the acting role and the time it
+    /// occurred"). <paramref name="actingRole"/> is the role performing the transfer, which need
+    /// not be — and ordinarily is not — either the outgoing or incoming owner (an architect
+    /// reassigning worker to reviewer is the common case).
+    ///
+    /// <para>
+    /// <b>Why an append-only sequence, not overwritable frontmatter scalars (reviewer round 1,
+    /// finding 3):</b> the spec's "every" is unconditional, and a card handed over more than
+    /// once — the ordinary lifecycle, not an edge case — needs every prior handover's attribution
+    /// still recoverable, not just the most recent. <see cref="CardFrontmatter.Owner"/> stays the
+    /// queryable <em>current</em> owner; <see cref="CardFile.Handovers"/> is the append-only
+    /// <em>history</em> that can never disagree with it, because <see cref="CardFrontmatter.Owner"/> is set, in this
+    /// same write, to exactly the <see cref="CardHandover.To"/> of the entry this call appends —
+    /// there is no second code path that could set one without the other.
+    /// </para>
+    /// </summary>
+    internal static CardWriteResult TransferOwnership(
+        string cardsRoot, string filePath, CardOwner newOwner, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(filePath, lockTimeout, heldLock => TransferOwnershipUnderExistingLock(heldLock, cardsRoot, newOwner, actingRole, timestamp, changeName));
+
+    /// <summary>
+    /// The read-modify-write step of <see cref="TransferOwnership"/>. Same structural lock
+    /// precondition as <see cref="AppendCommentUnderExistingLock"/> (O-2's fix applied to every
+    /// method on this surface with the same shape, not just the one line the obligation named) —
+    /// the target is <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>.
+    /// </summary>
+    internal static CardWriteResult TransferOwnershipUnderExistingLock(
+        CardLock heldLock, string cardsRoot, CardOwner newOwner, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardWriteResult.Failure($"no card file exists at '{filePath}' to transfer ownership of.");
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardWriteResult>(
+            onSuccess: success =>
+            {
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, success.Card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return layoutFailure!;
+                }
+
+                var handover = new CardHandover(actingRole, newOwner, timestamp, []);
+                var updatedFrontmatter = success.Card.Frontmatter with { Owner = newOwner, Updated = timestamp };
+                var updated = success.Card with
+                {
+                    Frontmatter = updatedFrontmatter,
+                    Handovers = [.. success.Card.Handovers, handover],
+                };
+
+                return AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+            },
+            onFailure: failure =>
+                new CardWriteResult.Failure($"cannot transfer ownership of '{filePath}': the card file is corrupt: {failure.Reason}"));
     }
 
     /// <summary>
@@ -141,58 +241,7 @@ internal static class CardStore
         return results;
     }
 
-    /// <summary>
-    /// Both writes reach disk only through this: the boundary block B's traversal guard was
-    /// supposed to guard, and did not, because <see cref="CardLayout"/> had no production caller
-    /// until this. Resolves the directory <paramref name="scope"/> belongs in via
-    /// <see cref="CardLayout.DirectoryFor"/> — which itself validates <paramref name="changeName"/>
-    /// via <see cref="CardLayout.RequireSafePathSegment"/> — and requires <paramref name="filePath"/>
-    /// to actually resolve into it. This is what reconciles the record's two independent
-    /// statements of a card's scope: <c>frontmatter.Scope</c> and the directory the file lives in
-    /// can no longer disagree without the write being refused. <see cref="Path.GetFullPath(string)"/>
-    /// resolves away any <c>..</c> segments before the comparison, so a path that only looks
-    /// correct before resolution cannot pass by construction.
-    ///
-    /// <para>
-    /// The comparison itself is <b>path-segment anchored</b>, not a raw string suffix match: both
-    /// sides are split into segments and the actual directory's trailing segments must equal the
-    /// expected directory's segments exactly, one for one. A raw <c>string.EndsWith</c> would let
-    /// a directory whose name merely *ends with* the same characters (e.g.
-    /// <c>.../evilcallboard/register/</c> against an expected <c>callboard/register/</c>) pass,
-    /// because nothing constrains what precedes the matched substring. Comparing whole segments
-    /// closes that: <c>"evilcallboard"</c> is never equal to <c>"callboard"</c> as a segment, no
-    /// matter how their characters overlap at the boundary.
-    /// </para>
-    /// </summary>
-    private static CardWriteResult.Failure? ValidateAgainstLayout(string filePath, CardScope scope, string? changeName)
-    {
-        string expectedDirectory;
-        try
-        {
-            expectedDirectory = CardLayout.DirectoryFor(scope, changeName);
-        }
-        catch (ArgumentException ex)
-        {
-            return new CardWriteResult.Failure(ex.Message);
-        }
-
-        var directory = Path.GetDirectoryName(filePath);
-        var actualDirectory = Path.GetFullPath(string.IsNullOrEmpty(directory) ? "." : directory)
-            .Replace(Path.DirectorySeparatorChar, '/');
-
-        var actualSegments = actualDirectory.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        var expectedSegments = expectedDirectory.Split('/', StringSplitOptions.RemoveEmptyEntries);
-
-        var matches = actualSegments.Length >= expectedSegments.Length
-            && actualSegments[^expectedSegments.Length..].SequenceEqual(expectedSegments, StringComparer.Ordinal);
-
-        return matches
-            ? null
-            : new CardWriteResult.Failure(
-                $"'{filePath}' does not live in the directory a '{scope.ToWireString()}'-scoped card belongs in ('{expectedDirectory}').");
-    }
-
-    private static CardWriteResult WithLock(string filePath, TimeSpan lockTimeout, Func<CardWriteResult> action)
+    private static CardWriteResult WithLock(string filePath, TimeSpan lockTimeout, Func<CardLock, CardWriteResult> action)
     {
         var lockResult = CardLock.Acquire(filePath, lockTimeout);
         return lockResult.Match(
@@ -200,14 +249,21 @@ internal static class CardStore
             {
                 using (acquired.Lock)
                 {
-                    return action();
+                    return action(acquired.Lock);
                 }
             },
             onTimedOut: timedOut => new CardWriteResult.Failure(timedOut.Message));
     }
 
-    private static CardWriteResult AtomicWrite(string filePath, string content)
+    /// <summary>
+    /// The one place bytes actually reach disk. Takes an <see cref="AnchoredCardPath"/>, never a
+    /// raw <see cref="string"/> — there is no overload that would let a caller skip the
+    /// root-and-layout check <see cref="AnchoredCardPath.TryCreate"/> performs (O-1: "structural,
+    /// not conventional").
+    /// </summary>
+    private static CardWriteResult AtomicWrite(AnchoredCardPath anchored, string content)
     {
+        var filePath = anchored.FilePath;
         var directory = Path.GetDirectoryName(filePath);
         if (string.IsNullOrEmpty(directory))
         {

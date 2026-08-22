@@ -15,6 +15,14 @@ internal static class CardFileFormat
     internal const string CommentFooter = "<!-- /callboard:comment -->";
 
     /// <summary>
+    /// An ownership-handover entry (card-model 4.5): one self-contained line, no body and no
+    /// separate footer, since a handover carries no prose — <c>by</c>/<c>to</c>/<c>timestamp</c>
+    /// fields only, same <c>key=value</c> token shape as a comment header.
+    /// </summary>
+    internal const string HandoverLinePrefix = "<!-- callboard:handover ";
+    internal const string HandoverLineSuffix = " -->";
+
+    /// <summary>
     /// True for a line that, written unescaped, would be misread as a structural delimiter on
     /// the next parse — the header prefix, the footer, or an already-escaped instance of either
     /// (any number of leading backslashes stripped still matches). Escaping is checked against
@@ -24,7 +32,8 @@ internal static class CardFileFormat
     {
         var unescaped = line.TrimStart('\\');
         return unescaped.StartsWith(CommentHeaderPrefix, StringComparison.Ordinal)
-            || string.Equals(unescaped, CommentFooter, StringComparison.Ordinal);
+            || string.Equals(unescaped, CommentFooter, StringComparison.Ordinal)
+            || unescaped.StartsWith(HandoverLinePrefix, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -58,6 +67,11 @@ internal static class CardFileFormat
     /// <summary>An unescaped line marking the end of an appended comment's body.</summary>
     internal static bool IsCommentFooter(string line) =>
         string.Equals(line, CommentFooter, StringComparison.Ordinal);
+
+    /// <summary>An unescaped, self-contained ownership-handover entry line.</summary>
+    internal static bool IsHandoverLine(string line) =>
+        line.StartsWith(HandoverLinePrefix, StringComparison.Ordinal)
+            && line.EndsWith(HandoverLineSuffix, StringComparison.Ordinal);
 
     private static readonly IReadOnlyDictionary<char, char> FrontmatterEscapeTable =
         new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r' };

@@ -373,6 +373,101 @@ public sealed class CardFileRoundTripTests
         AssertFailure(result);
     }
 
+    [Fact]
+    public void RoundTrips_CardWithAHandoverSequence()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0043", CardKind.Block, "Ownership handover", "in-progress", CardOwner.Supervisor, CardScope.Change, "4", Created, Updated);
+        var first = new CardHandover(CardOwner.Architect, CardOwner.Reviewer, Updated.AddHours(1), []);
+        var second = new CardHandover(CardOwner.Reviewer, CardOwner.Supervisor, Updated.AddHours(2), []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [first, second]);
+
+        var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
+
+        var parsed = AssertSuccess(result);
+        Assert.Equal(frontmatter, parsed.Frontmatter);
+        Assert.Equal(2, parsed.Handovers.Count);
+        Assert.Equal(first, parsed.Handovers[0]);
+        Assert.Equal(second, parsed.Handovers[1]);
+    }
+
+    [Fact]
+    public void RoundTrips_CardWithoutAHandover_LeavesTheSequenceEmpty()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0044", CardKind.Block, "No handover yet", "open", CardOwner.Worker, CardScope.Change, "4", Created, Updated);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+
+        var serialized = CardFileWriter.Serialize(card);
+        Assert.DoesNotContain("callboard:handover", serialized, StringComparison.Ordinal);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(serialized));
+        Assert.Empty(parsed.Handovers);
+    }
+
+    [Fact]
+    public void RoundTrips_CardWithBothHandoversAndComments_EachSequenceIndependent()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0045", CardKind.Block, "Mixed", "open", CardOwner.Reviewer, CardScope.Change, "4", Created, Updated);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Started.", null, null, false, []);
+        var handover = new CardHandover(CardOwner.Architect, CardOwner.Reviewer, Updated, []);
+        var card = new CardFile(frontmatter, "Body.", [comment], [], [handover]);
+
+        var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
+
+        var parsed = AssertSuccess(result);
+        Assert.Equal(comment, Assert.Single(parsed.Comments));
+        Assert.Equal(handover, Assert.Single(parsed.Handovers));
+    }
+
+    [Fact]
+    public void RoundTrips_HandoverWithAnUnrecognisedField_PreservesItVerbatim()
+    {
+        const string raw =
+            "---\nid: X-0002\nkind: block\ntitle: t\nstatus: open\nowner: reviewer\nscope: change\nsection: 4\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "body\n" +
+            "<!-- callboard:handover by=architect to=reviewer timestamp=2026-08-19T09:00:00+00:00 round=2 -->\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+
+        var handover = Assert.Single(parsed.Handovers);
+        Assert.Equal(("round", "2"), Assert.Single(handover.UnknownFields));
+
+        // Re-serialising must not silently drop the field an unrelated append (or an older-build
+        // read-modify-write) would otherwise lose — the same extensibility rule §2 established
+        // for frontmatter and comment headers.
+        var reserialized = CardFileWriter.Serialize(parsed);
+        Assert.Contains("round=2", reserialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_UnrecognisedHandoverByValue_Fails()
+    {
+        const string raw =
+            "---\nid: X-0001\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 1\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            "<!-- callboard:handover by=nobody to=reviewer timestamp=2026-08-19T09:00:00+00:00 -->\n";
+
+        var result = CardFileParser.Parse(raw);
+
+        AssertFailure(result);
+    }
+
+    [Fact]
+    public void Parse_HandoverMissingRequiredToField_Fails()
+    {
+        const string raw =
+            "---\nid: X-0003\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 1\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            "<!-- callboard:handover by=architect timestamp=2026-08-19T09:00:00+00:00 -->\n";
+
+        var result = CardFileParser.Parse(raw);
+
+        AssertFailure(result);
+    }
+
     private static CardFile AssertSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(
             onSuccess: success => success.Card,

@@ -1,10 +1,11 @@
 namespace Callboard.Cards;
 
 /// <summary>
-/// A card as read from, or destined for, one file: frontmatter, a Markdown body, and its
-/// append-only comment thread in order. This is the in-memory shape <see cref="CardFileParser"/>
-/// produces and <see cref="CardFileWriter"/> consumes — the ADR-0003 record, not yet touching how
-/// it reaches disk (atomic rename and locking are 2.5–2.6, block B).
+/// A card as read from, or destined for, one file: frontmatter, a Markdown body, its append-only
+/// comment thread, and its append-only ownership-handover sequence, in order. This is the
+/// in-memory shape <see cref="CardFileParser"/> produces and <see cref="CardFileWriter"/> consumes —
+/// the ADR-0003 record, not yet touching how it reaches disk (atomic rename and locking are
+/// 2.5–2.6, block B).
 /// </summary>
 /// <param name="UnknownFrontmatterFields">
 /// Frontmatter lines this build's parser does not recognise, captured verbatim (raw key, raw —
@@ -17,8 +18,22 @@ namespace Callboard.Cards;
 /// "legible without the tool" pairs with a record humans are expected to hand-edit). Always empty
 /// for a card this build itself constructs from scratch.
 /// </param>
+/// <param name="Handovers">
+/// The card's append-only ownership-handover history (card-model 4.5), one <see cref="CardHandover"/>
+/// per <see cref="CardStore.TransferOwnership"/> call, oldest first — its own sequence, not part of
+/// <paramref name="Comments"/> (see <see cref="CardHandover"/>'s own doc comment for why). The
+/// constructor parameter accepts <see langword="null"/> only so a pre-existing four-argument
+/// construction of this type still compiles (a default value must be a compile-time constant, which
+/// an empty collection expression is not); the property itself, declared below to override the
+/// positional auto-property, is never null — <see langword="null"/> normalises to empty once, here,
+/// rather than every reader having to guard against it.
+/// </param>
 internal sealed record CardFile(
     CardFrontmatter Frontmatter,
     string Body,
     IReadOnlyList<CardComment> Comments,
-    IReadOnlyList<(string Key, string RawValue)> UnknownFrontmatterFields);
+    IReadOnlyList<(string Key, string RawValue)> UnknownFrontmatterFields,
+    IReadOnlyList<CardHandover>? Handovers = null)
+{
+    public IReadOnlyList<CardHandover> Handovers { get; init; } = Handovers ?? [];
+}

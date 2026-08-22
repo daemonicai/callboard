@@ -117,7 +117,7 @@ public sealed class CardStoreCorruptionTests : IDisposable
             ? new[] { new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, false, []) }
             : [];
 
-        var write = CardStore.WriteCard(path, new CardFile(frontmatter, "Body.", comments, []), TimeSpan.FromSeconds(5), ChangeName);
+        var write = CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body.", comments, []), TimeSpan.FromSeconds(5), ChangeName);
         write.Match<object?>(
             onSuccess: static _ => null,
             onFailure: failure => throw new Xunit.Sdk.XunitException($"setup write failed: {failure.Reason}"));
