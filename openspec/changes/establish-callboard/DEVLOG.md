@@ -7629,45 +7629,235 @@ for tests that filter by name; the same applies to guarantees stated in English.
 
 ---
 
+**[supervisor]** §4 "Card model" — section review, **round two**, same range `df8b1a4..HEAD`, now four
+commits (`c8c3a2b`, `d6be240`, `a34e96d`, `cdcd6fa`). **Approve.**
+
+Gates re-run at my end rather than taken from the report: `TEST_EXIT:0` (199/199) / `FORMAT_EXIT:0` /
+`VALIDATE_EXIT:0`, and the section-close check `AOT_EXIT:0` — still a formality, still worth the two
+minutes.
+
+### All three blockers close, verified by inverting my own reproductions
+
+Re-ran the three probes from round one against a freshly published binary. Each now does the opposite
+of what it did:
+
+| probe | round one | round two |
+|---|---|---|
+| archived `B-0042`, `block.count=3` | `indexedCardCount:1`, `failures:[]`, `identityCounterViolations:[]` | `indexedCardCount:2`, violation reported `counterValue:3 / observedMaxId:42` |
+| one card, two comments with `id=C-0001` | `tool-failure`, `SQLite Error 19`, exit 2, healthy card unindexed | `ok:true`, one `failures` row naming the file and `C-0001`, healthy card indexed |
+| `R-0001` in both `changes/<name>/` and `register/` | `tool-failure`, `SQLite Error 19`, exit 2 | `ok:true`, two `failures` rows naming both files, neither indexed, healthy card indexed |
+
+**R1** is closed at the right layer: `CardLayout.ArchiveDirectory`/`ArchivedChangeDirectory` is now the
+single statement of the path, composed from `ChangesRootDirectory` + `ReservedArchiveChangeName` rather
+than re-typed, and `ResolveCardSources` skips the archive when enumerating live changes and descends it
+separately (`IndexPopulator.cs:194-218`). 4.3 now resolves the archived card through
+`IndexPopulator.Populate` — the production derived path — asserting status, both comments, ordinals and
+the derived `resolved`, having first asserted the live directory is gone. That is the proposition the
+scenario names, in place of the one the old test proved. The companion test
+(`VerifyCounters_ReportsAViolation_WhenTheHighestIdentityExistsOnlyInTheArchive`) lands the negative,
+per this section's rule.
+
+**R2** is closed by pre-filtering rather than by catching, which is the better of the two — a
+constraint violation is now unreachable rather than handled. I checked the exclusion set is
+*complete* against `IndexSchema`: the only enforced constraints are `cards.id` and
+`comments (card_id, comment_id)`; the `NOT NULL` columns are all non-nullable at the parse layer
+(`section` defaults to empty, never null), and the `REFERENCES cards (id)` foreign key is inert because
+`PRAGMA foreign_keys` is never set. After card-id deduplication every surviving `card_id` is unique, so
+a comment-key collision can only be within one card — which is exactly what
+`ExcludeDuplicateIdentities` checks. Nothing else can reach `WriteDatabase` and collide.
+
+Three details I probed rather than read, all correct:
+- `ObservedMaxIdByKind` is computed **before** exclusion (`IndexPopulator.cs:64-70`), so an identity
+  that exists only on an excluded file still counts against the counter. Confirmed: a duplicated
+  `B-0099` with `block.count=1` indexes neither file and still reports `observedMaxId:99`. Getting this
+  backwards would have re-opened R1 through R2's own fix; it did not.
+- A card excluded for a duplicate card id does not also get a duplicate-comment-id failure — one
+  failure per file, not two.
+- Rebuild determinism survives the new pass: three destroy-and-rebuild cycles over a corpus with two
+  live changes, two archived changes, register, decisions and one duplicate-comment card produced
+  byte-identical reports and byte-identical `cards` dumps.
+
+**R3** is closed by deletion, as directed. `NewCardFile` carries frontmatter and body only; `WriteCard`
+constructs `new CardFile(card.Frontmatter, card.Body, [], [])` itself
+(`CardStore.cs:99-101`), so neither a handover tail nor a comment list has a parameter to occupy. I
+checked the surrounding closure rather than the one signature: `CardFileWriter.Serialize` reaches disk
+only through `CardStore`'s three writers, and the other two derive their `CardFile` from what they just
+read under the lock, so no production path can now write an `Owner` that disagrees with its own
+`Handovers`. Both overstating doc comments are corrected and now name the shape that was reachable
+rather than quietly dropping the claim.
+
+### What the remediation itself introduced — the seams I went looking for
+
+It touched four source files and eight test files late in a section I had already read once, so I
+treated it as its own diff rather than as a patch. Nothing blocking. Four things worth recording.
+
+**The test rewrites are stronger, not merely adjusted.** `IndexPopulatorTests`, `IndexInvariantTests`
+and `CardStoreCorruptionTests` all had helper setups that constructed a `CardFile` with a comment list
+and handed it to `WriteCard`; they now create through `WriteCard` and then append each comment through
+`CardStore.AppendComment`. That is a strictly more production-shaped setup, and it is what makes the
+duplicate-comment-id test meaningful — it proves `AppendComment` genuinely accepts a repeated id, which
+is the upstream fact R2's filter exists to absorb. `CardCommentImmutabilityTests`'s reviewer-probe test
+is narrower by necessity (its original shape is no longer expressible as a call) but still asserts both
+halves: the second create is refused, and the comment still reads back afterwards.
+
+**Archived cards are now in `cards` with no discriminator but `file_path`.** Verified: an archived card
+with `status: open, owner: worker` sits in the table alongside a live one, distinguishable only by its
+path. Nothing is lost — archived-ness is reconstructible from `file_path`, so the index stays properly
+derived — but this is a real consequence of R1 that no test pins. §5/§7's queue will be built over this
+table, and *"resolvable by identity"* and *"in my queue"* are not the same set. `## NEXT`.
+
+**A `*.md` sitting directly at `callboard/changes/archive/`** is now silently unread — before R1 the
+archive directory was enumerated as though it were a change and its top-level files *were* read.
+That path is not a location `CardLayout` defines, so a file there is not in the record and I am not
+treating it as a regression. Recording it because the silence is the same shape as the finding this
+remediation just closed: whichever section builds archive-as-a-verb should not be able to create one.
+
+**`ArchivedChangeDirectory` permits the reserved name that `ChangesDirectory` refuses.**
+`ChangesDirectory("archive")` throws; `ArchivedChangeDirectory("archive")` returns
+`callboard/changes/archive/archive/`, since it calls only `RequireSafePathSegment`. Test-facing today
+and harmless, but the same reserved name is now guarded in one direction and not the other. `## NEXT`.
+
+### Notes for `## NEXT`
+
+- Archived cards are indexed indistinguishably from live ones — §5/§7's queue must filter on
+  `file_path`, or a role's queue will include archived work.
+- `ArchivedChangeDirectory` does not refuse `archive` as a change name; `ChangesDirectory` does.
+- A half-completed archive (a copy rather than a `Directory.Move`) now excludes **both** copies of
+  every affected card and reports each — fail-closed and legible, which is right, but archive-as-a-verb
+  must be a move, and should land with a test that it is one.
+- The `CS1503` evidence for R3 was confirmed and then discarded, per this section's precedent for
+  unrepresentable-by-construction. The standing guarantee is `NewCardFile`'s shape; the
+  `CardStore_EntireStaticMethodSurface_IsExplicitlyAccountedFor` inventory is what would catch a future
+  overload re-opening it.
+- Everything carried forward from §4's own close post (§5's targeted read-modify-writes, O-3, §9's
+  owed refusal message for comment editing, the `resolved=`→`resolves=` wire rename, scope promotion
+  being a move rather than a write, and the queryability clause of "Ownership names whose turn it is")
+  still stands unchanged.
+
+§4 satisfies card-model's requirements end to end as far as this section is scoped to carry them. No
+dead scaffolding, no cross-block drift left open, no binding ADR eroded. **Section closed.**
+
+---
+
+**[architect]** **§4 "Card model" — CLOSED.** Supervisor `Approve` on round two over `df8b1a4..HEAD`,
+having re-run its own round-one reproductions against a freshly published binary and watched all three
+invert, confirmed the exclusion set is complete against the schema's only enforced constraints, and
+proved rebuild determinism over a corpus spanning two live changes, two archived changes, register,
+decisions and a duplicate-comment card. Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (199/199) /
+`FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, and `AOT_EXIT:0`.
+
+4.1–4.8 ticked across four commits — `c8c3a2b`, `d6be240`, `a34e96d`, `cdcd6fa`. Architectural notes and
+the supervisor's four non-blocking observations are rolled into `## NEXT`, which is now current for a
+cold resume at **5.1**. O-1 and O-2 are discharged; **O-3 is owed by §5** and restated there
+unconditionally.
+
+---
+
 ## NEXT
 
-**Resume point: 4.1.** §3 is closed; §4 has not been opened. Nothing is in flight — working tree clean,
+**Resume point: 5.1.** §4 is closed; §5 has not been opened. Nothing is in flight — working tree clean,
 no uncommitted WIP, no part-built block.
 
-**§3 "Derived index" — CLOSED.** Supervisor `Approve` over `6f8d07d..9801c3a` (second and final round;
-the first requested changes and the remediation landed as `9801c3a`). 3.1–3.6 ticked. Six commits:
+**§4 "Card model" — CLOSED.** Supervisor `Approve` over `df8b1a4..HEAD` (second and final round; the
+first requested changes and the remediation landed as `cdcd6fa`). 4.1–4.8 ticked. Four commits:
 
 | commit | what | review rounds |
 |---|---|---|
-| `26e48e9` | block A — schema + population (3.1–3.2) | 2 |
-| `ccf7e5a` | block B — `index rebuild` verb + §1's CLI obligations (3.3) | 4 |
-| `a841745` | block C — the three invariants (3.4–3.6) | 1 |
-| `9801c3a` | remediation — supervisor findings | 1 |
-| `4aa293c` | section close, obligations rolled into this block | — |
-| `be4fa37` | `make aot` section-close target (Product Owner decision) | — |
+| `c8c3a2b` | block A — kinds confirmed, identity allocation, archive survival, scope table (4.1–4.4) | 1 |
+| `d6be240` | block B — ownership handover; O-1 and O-2 discharged (4.5) | 2 |
+| `a34e96d` | block C — comment routing, resolution, immutability (4.6–4.8) | 2 |
+| `cdcd6fa` | remediation — supervisor findings | 1 |
 
-Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (117/117) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, and
+Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (199/199) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, and
 `AOT_EXIT:0`.
 
-**§1 and §2 are also closed**, each with a `[supervisor]` `Approve` posted under its own `## N.` heading.
-All three sections' approvals are in place; **no section is awaiting a review.**
+**§1, §2 and §3 are also closed**, each with a `[supervisor]` `Approve` under its own `## N.` heading.
+All four sections' approvals are in place; **no section is awaiting a review.**
 
-### Starting §4 — read this before carving blocks
+### Starting §5 — read this before carving blocks
 
-§4 is the card model: 4.1 the closed union over seven kinds, 4.2 kind-prefixed identity allocation,
-4.3 identity survives archive, 4.4 scope with `section`-on-`rule` refused, 4.5 ownership handover,
-4.6 append-only comments, 4.7 mention-versus-address routing, 4.8 appended comments immutable.
+§5 is work lifecycle and sections: read `specs/work-lifecycle/spec.md` against `tasks.md`'s `## 5.`
+before carving. Three things bind it before its first block:
 
-**O-1 and O-2 belong in §4's brief's first line.** 4.5 and 4.6 land the first production callers of a
-`CardStore` write path, which is precisely their trigger — see the obligations list below. They are
-**§4 blockers**, not notes: if §4 lands those callers without closing them, the section does not close.
+- **O-3 is owed by §5** — named when §4 opened, and unconditional. A refusal must prevent the side
+  effect it refuses; today enforcement runs *after* the handler. §4 built no verbs, so nothing has
+  discharged or deepened it. **If §5 wires the first verb whose side effect writes a card, O-3 closes in
+  the block that wires it.** Fix: a parse phase drawing fully from the cursor which may refuse, then an
+  execute phase — **one global funnel, never a per-verb check**.
+- **`WriteCard` is create-only, and full replacement is not coming back.** §4 block C narrowed it to
+  close a 4.8 defect, and the remediation narrowed it further: it now takes `NewCardFile` (frontmatter
+  and body only). **Status transitions must be targeted locked read-modify-writes modelled on
+  `TransferOwnership`** — a worker who assumes a whole-card write exists will find the API refuses and
+  may reach for the wrong fix. Put this in §5's first brief.
+- **Preserved unknown values are stored raw and never tool-escaped.** The day §5 promotes such a key to
+  a known field, the read path will unescape a value a human wrote (`base: C:\north` gains a newline).
 
-**§4 adds no dependency as specified**, so `make aot` at its close should be a formality. That is the
-point of the target, not a reason to skip it.
+**§5 adds no dependency as specified**, so `make aot` at close should be a formality. That is the point
+of the target, not a reason to skip it.
 
-**Verb vocabulary is settled**: noun-then-verb subcommands (`index rebuild`, and later `card show`,
-`context get`). §3 landed the two-token dispatch; §4 should not invent verbs beyond what its tasks ask
-for, and `tasks.md` does not schedule verb wiring in §4 at all — the model is the deliverable.
+### What §4 established that later sections must not re-derive
+
+- **The card model is complete and reviewed**: seven kinds and four scopes as closed unions; identity
+  kind-prefixed, allocated from a committed counter file under `CardLock`, never recycled, never from
+  the index; scope an **attribute** validated as a refusal over the `(kind, scope)` pair, so promotion
+  is expressible; ownership handover attributed to a **third-party acting role**; comments append-only
+  with structural addressing.
+- **A role's queue is a union** — cards it owns **∪** cards carrying a live thread addressed to it — and
+  **resolution is per-comment, not per-card**. `BelongsInQueue` and the index's `owner`/`addressed_to`/
+  `resolved` columns are the same predicate over the same `IsResolved`; the supervisor verified they
+  compose. Do not build a second answer.
+- **Resolution is an appended comment naming what it resolves** (`Resolves`, same shape as `ReplyTo`),
+  not a flag flipped on the resolved comment. Architect ruling, because flipping `Resolved` *is*
+  editing a comment the spec forbids editing. `CardComment.Resolved` no longer exists.
+- **Comment deletion is unexpressible, not refused.** `WriteCard` is create-only, `AtomicWrite` is
+  private, and `CardStore`'s whole method surface is inventoried by a test that fails on any
+  unaccounted-for member. §4 minted **no refusal codes** by design.
+- **The archive is part of the record.** `callboard/changes/archive/<name>/`, stated once in
+  `CardLayout`, walked as a *container* rather than a change; `archive` is a reserved live-change name.
+  The index and the counter-violation check both see archived cards.
+- **A duplicated identity is a reported failure inside a *successful* rebuild**, naming the colliding
+  files, and one bad card never costs a healthy one. `ObservedMaxIdByKind` is computed **before**
+  duplicate exclusion — an identity existing only on an excluded file must still count against the
+  counter, or R2's fix silently reopens R1.
+- **The honest limit: `callboard` cannot refuse a text editor.** The card is a git-committed Markdown
+  file humans are expected to hand-edit (ADR-0003). The tool guarantees that *it* never rewrites or
+  drops a comment; git history guards the rest. Do not mistake 4.8's guarantee for a wider one.
+
+### Working rules earned in §4 — the section's real output
+
+- **A mechanism can be mandatory, compile, and still be a convention — if it proves the wrong
+  proposition.** This is §3's rule sharpened, and §4 hit it three times: `heldLock` proved *a* lock
+  existed, not that this file's lock was held; a reflection test proved its *filter* was safe, not that
+  the surface was; a doc comment claimed no other write path existed while `WriteCard` was one. **Ask
+  what proposition a mechanism establishes, never whether a mechanism is present.**
+- **When two values must agree, the guarantee is deleting one, not checking they match.** A guard that
+  must run is a convention with a compiler's endorsement. Used four times: `heldLock`+`filePath` →
+  `heldLock.CardPath`; handover scalars → history alone; `WriteCard` replacement → create-only;
+  `CardFile` on create → `NewCardFile`.
+- **A test that enumerates a surface by name proves only what its filter admits.** 4.8's reflection test
+  filtered `CardStore`'s members for `Comment` and so never saw `WriteCard`. Where the claim is "nothing
+  here can do X", enumerate the whole surface and account for every member.
+- **A doc comment asserting a guarantee is a claim, and claims decay when the code around them
+  changes.** Both of R3's overstating comments were *true when written* — one until block C added a
+  write path, one of the paths its author was thinking about. Nothing re-examined them because nothing
+  changed *in* them. "There is no other path" is a property of the whole surface: it belongs in a test
+  that enumerates the surface, not in prose beside one member.
+- **A test that constructs its own subject proves the construction.** 4.3 hand-built the archive path as
+  a string, making the test the codebase's only statement of it — so it proved "a file survives a
+  directory move", which no §4 code could break, rather than "resolution reaches an archived card",
+  which no §4 code satisfied. **Before landing a test, break the production code and watch it go red.**
+- **Every defect in §4 that mattered was found by execution; not one would have been found by reading.**
+  That holds across both block reviews and both supervisor rounds.
+
+### Why the section review is a different lens, not a wider one
+
+All three supervisor blockers were **unions, not diffs** — none was visible in any single block's
+changes, and the block reviewer was demonstrably rigorous (it found real defects by execution in both B
+and C). **Every blocker sat in the seam between two changes that were correct in isolation:** R1 because
+block A built the guard and the test and block C never revisited either; R2 because §3 made `comment_id`
+a key when it was a label and block C made it load-bearing a section later; R3 because block B made
+`Owner` derivable and block C narrowed `WriteCard` for an unrelated reason. A block reviewer sees one
+side of a seam by construction.
 
 ### What §2–§3 established that later sections must not re-derive
 
@@ -7678,7 +7868,7 @@ for, and `tasks.md` does not schedule verb wiring in §4 at all — the model is
 - **Unknown fields are preserved verbatim, never dropped.** This is §2's stated extensibility rule and
   the reason §5 and §6 can add kind-specific fields without read-modify-write eating them.
 - **Closed unions, not enums**, for `CardKind`/`CardScope`/`CardOwner` — matching `CommandOutcome` from
-  §1. **4.1 should find the kinds already closed** and spend its effort on identity allocation.
+  §1, and confirmed against the spec at §4's 4.1 rather than rebuilt.
 - **`CommandContext.Output` and `Error` are already deleted** (block A, `0531805`). §1's carried
   obligation is discharged; the §2 re-audit's note to delete them at the start of §3 is stale, and §3
   must not go looking for members that are gone.
@@ -7747,100 +7937,71 @@ for, and `tasks.md` does not schedule verb wiring in §4 at all — the model is
 
 ### Obligations, each with the section that owes it
 
-**The three carried obligations, restated unconditionally at §3 close.** Each names a trigger and
-contains no `if`. Superseded wordings have been deleted from this list rather than left alongside — the
-thread is append-only and keeps the history; this pinned list carries **exactly one live wording per
+Each names a trigger and contains no `if`. Superseded wordings are deleted rather than left alongside —
+the thread is append-only and keeps the history; this pinned list carries **exactly one live wording per
 obligation**, because it is the surface a section's brief gets assembled from.
 
-- **O-1 — anchor `CardStore` to the repo root.** Owed by **§4**. Trigger: **the first production code
-  path that calls `CardStore.WriteCard` or `CardStore.AppendComment`** — a *caller*, not a verb. On the
-  current breakdown that is 4.5 (ownership handover) and 4.6 (append-only comments).
-  `expectedDirectory` is a relative literal with no repo-root anchor, so `ValidateAgainstLayout`
-  constrains only the *trailing* segments: a path with a different root but a correctly-shaped tail
-  passes. §3 closed the index-path half via `RepoRootResolver`; this is the record half.
-- **O-2 — close `CardStore.AppendCommentUnderExistingLock`** (`CardStore.cs:76`). Owed by **§4**, same
-  trigger as O-1. A card write path that takes **no lock**, held closed only by a doc comment, against a
-  binding ADR. Unreachable from production today; live the moment a caller reaches it.
-- **O-3 — a refusal must prevent the side effect it refuses.** Owed by **the first CLI verb whose side
-  effect writes the primary record**; `tasks.md` schedules verb wiring nowhere, so the Architect names
-  the section when carving its blocks and records it here at that point. Today enforcement runs *after*
-  the handler: `index rebuild extra-token` writes the index and *then* refuses. Accepted for §3 because
-  D4 makes the index disposable and the discarded `Success` leaves no actionable state; **not**
-  acceptable once the side effect is a card. Fix: a parse phase that draws fully from the cursor and may
-  refuse, then an execute phase — kept as **one global funnel**, never a per-verb check.
-  - **Held in code, not only here:**
-    `CommandDispatcherTests.IndexRebuild_WithTrailingToken_RefusesButHasAlreadyWrittenTheIndex` pins
-    today's ordering and must be **inverted** on discharge. Verified by reviewer mutation to fail when
-    O-3 is discharged, so it pins the *ordering*, not the outcome.
-  - **Gap in the marker, recorded by the supervisor:** it pins `index rebuild`, whose side effect is the
-    *index*, while O-3's trigger is a *record*-writing verb. It therefore fires on discharge **only if
-    the split is one global funnel**. A per-verb check would leave the marker green while
-    `index rebuild` still refuses after writing — so whoever discharges O-3 must confirm the marker
-    actually goes red, and treat it staying green as evidence the split was built in the rejected shape.
+- **O-1 — DISCHARGED (§4 block B).** `CardStore` is anchored to the repo root structurally:
+  `AnchoredCardPath` is the only type `AtomicWrite` accepts, and it can only be constructed by proving
+  the target resolves under the given root. The bypass gives `CS0122`.
+- **O-2 — DISCHARGED (§4 block B, second attempt).** The lockless write path is closed by **deleting the
+  argument that could disagree**: the `*UnderExistingLock` methods no longer take a `filePath` and act on
+  `heldLock.CardPath`, so a lock on card X cannot write card Y. The mistake gives `CS1501`. **The first
+  attempt is the lesson** — a mandatory `CardLock` parameter proved a lock existed, not that it was the
+  right one, and reproduced the defect one level up inside its own fix.
+- **O-3 — a refusal must prevent the side effect it refuses. Owed by §5.** Trigger: **the first CLI verb
+  whose side effect writes the primary record.** Today enforcement runs *after* the handler:
+  `index rebuild extra-token` writes the index and *then* refuses. Accepted for §3 because D4 makes the
+  index disposable and the discarded `Success` leaves no actionable state; **not** acceptable once the
+  side effect is a card. Fix: a parse phase that draws fully from the cursor and may refuse, then an
+  execute phase — kept as **one global funnel**, never a per-verb check. §4 built no verbs, so nothing
+  discharged or deepened it.
 
-**O-1 and O-2 no longer depend on an Architect promise**: their trigger is an event `tasks.md` already
-schedules, so the plan holds them. O-3's trigger is genuinely unscheduled, which is why it is backstopped
-by a test rather than by recall.
+### Notes owed to later sections
 
-**Standing pattern, adopted at §3 close on the supervisor's recommendation:** an accepted trade-off is
-held by a **test that must be inverted on discharge**, not by a bullet in this file. It lives where the
-discharging worker is already editing, and it fails at the moment of discharge rather than depending on
-anyone remembering to read this list.
-
-- **§3 — DISCHARGED.** §1's three orphaned CLI obligations, all closed **structurally** rather than by
-  convention: `BannedApiAnalyzers` bans `System.Console` outside `Program.cs` (stdout/stderr split);
-  `EnforceNoUnconsumedArguments` runs once in `Run` past `Dispatch`'s single exit, with the bypassable
-  per-arm wrapper **deleted** because its existence was the bypass; `StdinBodyReader.ReadBody` takes a
-  `RedirectedStdin` whose only construction path runs the redirect check.
-- **§3 — DISCHARGED.** `.gitignore` re-verified against the real constant:
-  `git check-ignore -v callboard/.index/callboard.db` → `.gitignore:12 callboard/.index/`, and
-  `RepoRootResolver` now anchors `IndexPaths.DatabasePath` so the rule holds rather than depending on a
-  caller-supplied root.
-- **§3 — DISCHARGED.** No path→scope inverse was built into the index: `IndexPopulator` enumerates the
-  fixed layout only and never infers a card's scope from where a file was found. Still binding on every
-  later section.
-- **§4** — 4.2 allocates filenames, which removes `CardStore`'s redundant `filePath` input and turns
-  today's validation into construction. The current shape is coherent but transitional.
-- **§5** — preserved unknown values are stored **raw and never tool-escaped**. The day §5 promotes such
-  a key to a known field, the read path will unescape a value a human wrote (`base: C:\north` gains a
-  newline). This must be in §5's brief.
-- **§9** — the refusal set becomes a closed union. §3 minted the first members —
-  `unknown-command`, `missing-subcommand`, `unknown-subcommand`, `unrecognised-argument`,
-  `repo-root-not-found` — and the supervisor judged the set coherent rather than accreted. That is the
-  retrofit list.
-- **§9** — `tool-failure` must **not** become a member of the closed refusal set; consider a third
-  `error` payload on the envelope. §3 routed its SQLite I/O failure through the existing tool-failure
-  path rather than minting a refusal code, so the masquerade was not deepened. `CliEnvelope.cs:6-8` is
-  stale: it still says `ok` discriminates success from refusal and describes only two payload shapes.
-- **§10** — **`Microsoft.Data.Sqlite` connection pooling served a stale cached handle** across a
-  delete-then-rebuild cycle; §3's tests needed `Pooling=false`. §3 has exactly one production
-  `SqliteConnection` call site and it opens only against a fresh per-call temp path, so nothing can hit
-  this today. §10's read path opens against the stable `databasePath`, which `index rebuild` renames out
-  from under it — the same shape. **A pooled handle answering from a deleted database is the index
-  becoming authoritative over the record by accident**, arriving through a connection-pool default
-  rather than a design decision.
+- **§5/§7 — archived cards are now indexed indistinguishably from live ones.** Derivable from
+  `file_path`, but a queue that does not filter them will offer archived work as live. This is the cost
+  of R1 and it is the right trade; the filter is owed where a queue is built.
+- **§9 — the refusal set becomes a closed union.** §3 minted the first members — `unknown-command`,
+  `missing-subcommand`, `unknown-subcommand`, `unrecognised-argument`, `repo-root-not-found` — and §4
+  added none by design. That is the retrofit list.
+- **§9 — `tool-failure` must not become a member of the closed refusal set**; consider a third `error`
+  payload on the envelope. `CliEnvelope.cs:6-8` is stale: it still says `ok` discriminates success from
+  refusal and describes only two payload shapes.
+- **§9 — card-model's "the system refuses and states that corrections are appended"** is owed by
+  whichever section wires a comment-editing verb. §4 made the operation unexpressible instead, which is
+  stronger, but the *message* is still owed if a verb ever offers the operation.
+- **Archive-as-a-verb must be a move, not a copy**, and should land with a test that it is one. A
+  half-completed archive (both copies present) currently fail-closes both — correct behaviour, and worth
+  keeping deliberate rather than accidental.
+- **`ArchivedChangeDirectory` permits the reserved name that `ChangesDirectory` refuses**, and a `*.md`
+  directly at `callboard/changes/archive/` is silently unread. Both are supervisor notes from §4's
+  close, judged non-blocking; whichever section builds archive-as-a-verb owns them.
+- **§10 — `Microsoft.Data.Sqlite` connection pooling served a stale cached handle** across a
+  delete-then-rebuild cycle; §3's tests needed `Pooling=false`. §10's read path opens against the stable
+  `databasePath`, which `index rebuild` renames out from under it. **A pooled handle answering from a
+  deleted database is the index becoming authoritative over the record by accident**, arriving through a
+  connection-pool default rather than a design decision.
 - **Tooling — any writer that appends to this file must anchor on a line-start heading match**, never a
   substring search, and must verify the file still has exactly **one** `## NEXT` heading in final
-  position after every write. §3 broke this file's structure three times: twice a worker's post landed
-  below `## NEXT`, and once the Architect's own tooling matched the preamble's *description* of the
-  convention and nested five posts inside it. The instruction "check where your post landed" was
-  present, explicit, and repeated in three consecutive briefs by the party that then broke it — which is
-  the argument for the tool, not for more care.
+  position after every write. §3 broke this file's structure three times; §4 broke it none, having
+  adopted the check.
 - **Opportunistic** — `Escape*` was left unmerged while `Unescape*` was collapsed, so the duplication
   risk is half-closed; a forward `Dictionary<char,string>` mirror finishes it. `CardFile` lacks the
   `Equals`/`GetHashCode` override `CardComment` has. The `InvalidUtf8Bytes` corruption test passes for
-  the wrong reason. `AtomicWrite` **and** `IndexPopulator.WriteDatabase` both have a throwing `finally`
-  — fix both in one pass, since fixing one leaves the other looking intentional. There is no bounded
-  read primitive.
-- **Dependency changes — run `make aot` at section close** and quote `AOT_EXIT:0`. Not in
-  `make gates` by Product Owner decision (§3 close): NativeAOT compilation is slow and gates run
-  several times per block. §3's closing tree: `AOT_EXIT:0`.
+  the wrong reason. `AtomicWrite` **and** `IndexPopulator.WriteDatabase` both have a throwing `finally` —
+  fix both in one pass, since fixing one leaves the other looking intentional. There is no bounded read
+  primitive.
+- **Dependency changes — run `make aot` at section close** and quote `AOT_EXIT:0`. Not in `make gates`
+  by Product Owner decision (§3 close): NativeAOT compilation is slow and gates run several times per
+  block. §4's closing tree: `AOT_EXIT:0`.
 - **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs` versus
   an absent `<Version>` in the csproj).
 - **Gate hygiene** — `-k` aggregation on a red `make gates` has still never been demonstrated. Worth
   proving once when a section next has a genuine failure.
 
 ### Environment — resolved, no override needed
+
 
 `make gates` is green **inside** the sandbox. Two causes, both closed: `/tmp` and `/private/tmp` added to
 `sandbox.filesystem.allowWrite` (MSBuild's IPC sockets); and tests moved to **xUnit v3 on
