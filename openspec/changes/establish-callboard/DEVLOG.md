@@ -5542,6 +5542,363 @@ the check is cheap when nothing changed and load-bearing exactly when something 
 
 ---
 
+## 4. Card model
+
+**[architect]** Base: df8b1a4 — the card's identity, scope refusals, ownership handover and append-only
+addressed threads: the entity every later section routes, refuses and retrieves.
+
+**[architect]** §4 carved into **three blocks**, confirmed with the Product Owner:
+
+| block | tasks | what it is |
+|---|---|---|
+| A | 4.1–4.4 | kinds closed, kind-prefixed identity allocation, archive survival, scope refusal table |
+| B | 4.5 | ownership handover — **the first production `CardStore.WriteCard` caller**, so O-1 and O-2 discharge here |
+| C | 4.6–4.8 | comments: append-only, structural addressing, replies, resolution, routing and immutability tests |
+
+**O-3 is named: §5.** `tasks.md` schedules no verb wiring in §4 — the model is the deliverable, and a
+model has no side effect to refuse. §5 (work lifecycle) is the earliest section whose tasks imply a verb
+that writes a card. Recorded here rather than left conditional, because §3 established that an
+obligation conditioned on an unscheduled event is already lost. §4 does **not** carve a parse/execute
+split; it must not build one either.
+
+### Two decisions the specs and design.md do not settle — Product Owner's calls, now binding
+
+**Identity allocation is a committed, verified counter file.** D4 forbids the index being authoritative,
+so allocation reads the record. A per-kind high-water file in the record (human-legible, committed)
+is the allocator; `index rebuild` asserts `counter >= max(id observed on disk)` and **reports** a
+violation. Rejected: scanning filenames as the sole source of truth — an archive directory moved out of
+the repo would silently let identities recycle, which is exactly what the spec forbids. The counter file
+is a second statement of a fact the filenames also carry; the rebuild check is the price of that, not an
+optional extra.
+
+**Archive path is `callboard/changes/archive/<name>/`.** A directory move within the same tree, mirroring
+this repo's own `openspec/changes/archive/`. Resolution walks one root. **`archive` therefore becomes a
+reserved change name** — `CardLayout` must refuse it as a *live* change name, and that refusal lands with
+a test that it refuses (§2's working rule).
+
+---
+
+**[architect]** Block A (4.1–4.4) briefed → @worker.
+
+### Tasks in this block
+
+- 4.1 Model the seven kinds as a closed union so an unhandled kind is a compile error
+- 4.2 Implement kind-prefixed identity allocation that never recycles an identity
+- 4.3 Test that a card identity stays resolvable after its change is archived
+- 4.4 Implement the scope attribute, refusing `section` scope on a `rule`
+
+### 4.1 is already done — do not rebuild it
+
+`CardKind` (`src/Callboard/Cards/CardKind.cs`) is already the closed union over the seven kinds, with an
+abstract `Match` that makes an unhandled case CS7036 and an eighth case a build break everywhere. `CardScope`
+is the same shape. **Confirm 4.1 against the spec and say so; do not redesign it.** If you find it genuinely
+does not satisfy "an unhandled kind is a compile error", say that in this thread before changing anything —
+that would be a §2 regression, not a §4 task.
+
+Your effort belongs in 4.2, 4.3 and 4.4.
+
+### Spec — card-model, verbatim on the two requirements this block owns
+
+> ### Requirement: Stable, human-quotable, kind-prefixed identity
+>
+> Each card SHALL receive an identity that is stable for the card's whole life, prefixed by its kind so
+> the identity alone tells a reader what it refers to (for example `B-0042`, `Q-0007`, `F-0031`,
+> `D-0019`). An identity SHALL NOT be reused after its card is closed, discharged or withdrawn.
+>
+> A card's identity SHALL remain valid and resolvable after the change that raised it is archived.
+>
+> #### Scenario: Identity survives archive
+> - **WHEN** a reader resolves a card identity raised in a change that has since been archived
+> - **THEN** the system returns that card, its status and its full thread
+>
+> #### Scenario: Identity is not recycled
+> - **WHEN** a card is closed and a new card of the same kind is created afterwards
+> - **THEN** the new card receives an identity distinct from every identity previously issued
+
+> ### Requirement: Scope determines lifetime
+>
+> Every card SHALL carry a scope of `section`, `change`, `capability` or `repository`, determining what
+> event, if any, ends its life. `rule` cards SHALL take `change` or `repository` and no other value.
+> `hazard` and `question` cards SHALL be repository-scoped. `obligation` cards SHALL be change-scoped.
+> `decision` cards SHALL be capability-scoped, following the specification they bind. `finding` cards
+> SHALL be section-scoped.
+>
+> Scope SHALL be an attribute of the card and not implied by its kind alone, so that a card may be
+> promoted to a wider scope without losing its identity or thread.
+>
+> #### Scenario: Rule promoted from change to repository scope
+> - **WHEN** a change-scoped rule is promoted to repository scope
+> - **THEN** the same card retains its identity, body and thread, and its scope becomes `repository`
+>
+> #### Scenario: Rule given an unsupported scope
+> - **WHEN** a `rule` card is created or promoted with a scope of `section`
+> - **THEN** the system refuses and states that a rule applying to one section is a constraint in a brief
+
+Note what the scope table does **not** say: it constrains `rule`, `hazard`, `question`, `obligation`,
+`decision` and `finding`. It says nothing about `block`. Do not invent a constraint for `block` — model
+"unconstrained" explicitly so a reader can see it was decided rather than forgotten.
+
+Note also the second paragraph: scope is an attribute, **not** derived from kind. The per-kind table is a
+*refusal rule over the pair*, not a function `kind → scope`. If your implementation can only produce the
+one legal scope for a kind, you have built the thing the spec forbids and 4.4's promotion scenario cannot
+be expressed.
+
+### Binding decisions
+
+- **ADR-0003 / design.md D3 — the Markdown card is the primary record.** Layout is scope-shaped:
+  `callboard/register/` (repository), `callboard/decisions/` (capability),
+  `callboard/changes/<name>/` (change and section). `CardLayout` already encodes this.
+- **ADR-0004 / design.md D4 — the index is derived, never authoritative, never a lock.** The allocator
+  must not read the index. §3's `IndexInvariantTests` holds this and must stay green.
+- **ADR-0002 — NativeAOT.** No runtime codegen, no unbounded reflection, `System.Text.Json` source-generated
+  contexts only. No new `PackageReference` in `src/`.
+
+### The allocator — what "never recycles" actually demands
+
+1. **Allocation is a write to the record and takes a lock.** Two agents allocating the same kind
+   concurrently must not receive the same identity. Use `CardLock`; §2's platform facts apply —
+   `File.Move(overwrite: false)` is **not** atomic here (TOCTOU, reproduced across 2,000 rounds), and
+   Unix `FileShare.None` is enforced as a second step after `CreateNew` and so provides no mutual
+   exclusion. Do not reach for either as an exclusion primitive.
+2. **Verify the effect immediately before acting on it.** §2's working rule, earned from four separate
+   `CardLock` defects: every operation that establishes or relies on ownership re-reads and confirms
+   before acting, and treats a mismatch as a lost race rather than an error.
+3. **Closing a card must not free its number.** The counter is monotonic; nothing decrements it, and no
+   code path derives the next id from "how many cards exist".
+4. **The rebuild check reports, it does not refuse.** A counter below the observed max is a *reported
+   failure inside a successful rebuild* — the same category §3 established for a corrupt card, because
+   `record-retrieval` requires the loop to survive degraded. It is neither a refusal nor a tool-failure.
+   Do **not** mint a refusal code for it; §9 owns the closed refusal set.
+5. **Format the identity as the spec writes it** — `B-0042`, `Q-0007`. Zero-padded, and the padding must
+   not cap the range: card 10000 gets `B-10000`, not a wrapped or truncated value. Test that.
+
+### 4.3 — what the archive test must actually prove
+
+Archive as a *verb* is not built and is not yours to build. The test simulates it as what it is: a
+directory move of `callboard/changes/<name>/` to `callboard/changes/archive/<name>/`. Prove that
+resolving an identity raised in that change still returns **the card, its status and its full thread** —
+all three, per the scenario. A test that resolves the card but not its comments does not satisfy this.
+
+`archive` is now a reserved live-change name. `CardLayout.ChangesDirectory("archive")` must refuse, and
+that refusal lands with a test **that it refuses** — not a test that a good name is permitted. §2's
+traversal guard survived three rounds while guarding nothing precisely because its test only proved the
+happy path.
+
+### Done-gates for this block
+
+- `make build` → `BUILD_EXIT:0`
+- `make test` → `TEST_EXIT:0`, all 117 existing tests plus yours
+- `make format` → `FORMAT_EXIT:0`
+- `make validate` → `VALIDATE_EXIT:0`
+
+Run them **sandboxed**; §3 established `make gates` is green inside the sandbox. `dotnet restore` is the
+one command that needs an override, and only when a package reference changes — this block adds none.
+Quote the exit lines; do not report a gate as passing from reading its output.
+
+### Working rules this block is held to
+
+- **Every guard lands with a test that it *refuses*.** Not that it permits the good case. This covers
+  `section`-on-`rule`, the reserved `archive` name, and every other entry in the scope table.
+- **Green tests do not exercise the machine contract.** Assert against emitted artefacts — the actual
+  identity string, the actual file on disk — not only against outcomes and exit codes. §3 shipped a
+  mislabelled JSON envelope through 104 passing tests and two approvals on exactly this mistake.
+- **If you can write the mistake and it compiles, it is a convention, not a guarantee.** Test your
+  enforcement by *writing the mistake* and confirming it fails to build or fails at runtime.
+- **Test seams are threaded parameters, never shared statics.** Codebase precedent, set in §2.
+- **Two independent mutations of one property beat two readings of one test.**
+- **Do not touch the Makefile, `tasks.md`, `CLAUDE.md`, `.claude/`, or git.** If you need a Makefile
+  target changed, stop and report it here.
+- **Post to this file above `## NEXT`.** Anchor on a line-start `^## ` heading match, never a substring
+  search, and after every write confirm the file still has exactly one `## NEXT` and that it is last.
+  §3 broke this file's structure three times.
+
+### Not in this block
+
+- No verbs. §4 wires no CLI surface; `tasks.md` does not schedule it and the two-token dispatch from §3
+  needs no new arms.
+- No parse/execute split (that is O-3, now owed by §5).
+- No `CardStore` write callers — that is block B, and O-1/O-2 discharge there. If block A finds itself
+  wanting to call `WriteCard`, stop and post here: either the counter file is not a card (likely, and
+  fine) or the block boundary is wrong.
+- No kind-specific frontmatter fields. §5 and §6 own those; `CardFrontmatter` covers what every card has.
+
+---
+
+**[worker]** Block A (4.1–4.4) implemented.
+
+- **4.1 confirmed, not rebuilt.** `CardKind` and `CardScope` are already the closed-union shape the
+  spec asks for — seven kinds, `Match` abstract on the base, private constructor. Left untouched.
+- **4.2 — `CardIdentityAllocator`** (`Cards/CardIdentityAllocator.cs`): a per-kind, committed,
+  human-legible counter file at `callboard/identities/<kind>.count` (plain decimal text — not a
+  card, so it does not go through `CardStore`). `Allocate` takes a `CardLock` keyed on the counter
+  file's own path (so kinds never contend with each other), reads under the lock, increments,
+  writes via its own temp-file-then-rename (mirroring `CardStore.AtomicWrite`'s shape rather than
+  calling it — the counter is deliberately not a `CardStore` write caller), then **re-reads and
+  confirms** the written value before ever handing the identity back — the verify-before-acting
+  discipline from §2/§3. A present-but-corrupt counter fails the allocation rather than being read
+  as 0, which would have been exactly the recycling this type exists to prevent. Identities are
+  `<prefix>-<n>` with `n.ToString("D4")` — a minimum field width, so `B-10000` at card 10,000 is not
+  truncated (tested by driving the counter past four digits, not by looping 10,000 real allocations).
+  `CardIdentityPrefix` adds the seven letters (`B Q F O R H D`) the wire-format types didn't need
+  before now.
+- **The rebuild check** — `CardIdentityAllocator.VerifyCounters` compares each kind's counter
+  against the highest identity number `index rebuild` actually observed on disk for that kind
+  (`IndexPopulator` now computes that per-kind max from the successfully-parsed cards and passes it
+  through). A counter behind the observed max is appended to `IndexPopulationResult` as
+  `IdentityCounterViolations` and surfaced on `IndexRebuildResult` — **inside the existing
+  success payload**, never a refusal, no new refusal code. This modifies `index rebuild`'s existing
+  behaviour, not the CLI surface: no new subcommand, no new arm in `RunIndex`'s switch — I read
+  "no verbs in this block" as being about that surface, and the brief's own §"allocator" text
+  explicitly calls for this check, so I did not stop and ask. Flag if that reading was wrong.
+  Asserted against the emitted JSON directly
+  (`IndexRebuild_ReportsAnIdentityCounterViolation_WithoutRefusing`), not just outcome/exit code,
+  per §3's "green tests do not exercise the machine contract" lesson.
+- **4.3 — archive survival**, `CardIdentityArchiveSurvivalTests`: writes a card plus two comments
+  (a reply and a resolved reply-to-a-reply) under a live change directory via `CardStore`
+  (test-only caller, same as §2/§3's own tests — no production caller added, O-1/O-2 untouched),
+  moves the directory to `callboard/changes/archive/<name>/` with `Directory.Move` — archive is not
+  a verb this block builds — then resolves the card at its new path and asserts **all three** the
+  scenario names: the card (id, body), its status, and its full thread (both comments, in order,
+  with `ReplyTo`/`Resolved` intact).
+- **4.4 — `CardScopeRules.Validate(kind, scope)`** (`CardScopeValidationResult`, closed union
+  `Valid`/`Refused`): the per-kind table as a refusal rule over the pair, matching `kind` first and
+  `scope` inside each arm — never a `kind → scope` function, so promotion (`Change` → `Repository`
+  for `rule`) is expressible. `block` is explicitly `Valid` for every scope rather than left to an
+  absent case. `rule`-on-`section` gets the spec's exact wording ("a rule applying to one section is
+  a constraint in a brief"); every other constrained kind's violation gets a generic message naming
+  the kind and its one legal scope. Every refusal has a test that it *refuses* (12 `[Theory]` cases
+  across the five constrained kinds), not just that the legal scope passes.
+- **`CardLayout.ChangesDirectory`** now refuses the reserved name `archive` (`ArgumentException`,
+  same convention as the existing traversal guard) — proved by a test that it refuses
+  (`ChangesDirectory_WithTheReservedArchiveName_Refuses`), plus one that an ordinary name still
+  passes, and I hand-verified the guard actually fires by temporarily neutering the check and
+  confirming the test goes red before restoring it — §2's traversal guard survived three rounds
+  guarding nothing on exactly this kind of unverified assumption.
+- New types: `CardIdentityPrefix`, `CardIdentityAllocationResult`, `CardIdentityAllocator`,
+  `CardIdentityCounterViolation`, `CardScopeValidationResult`, `CardScopeRules`. Modified:
+  `CardLayout` (reserved name), `IndexPopulationResult`/`IndexPopulator` (counter violations),
+  `IndexRebuildResult`/`CommandDispatcher`/`CliJsonContext` (surfacing them in the CLI JSON).
+- No `CardStore` write caller added in production code; O-1/O-2 remain owed by block B as briefed.
+  No CLI verb added. No new `PackageReference`.
+
+**Gates (sandboxed):** `BUILD_EXIT:0` / `TEST_EXIT:0` (164/164, up from 117 — includes §3's own
+growth plus this block's) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Block A (4.1–4.4) — **Approve**.
+
+Audited against the brief (this thread), `specs/card-model/spec.md`, design.md D3/D4, ADR-0003/0004,
+and §2–§3's working rules. Re-ran `make gates` independently: `BUILD_EXIT:0` / `TEST_EXIT:0` (164/164)
+/ `FORMAT_EXIT:0` / `VALIDATE_EXIT:0` — matches the worker's report. Also hand-mutated two production
+guards myself (not re-run the worker's own probe) to confirm their tests actually fail on removal:
+`CardScopeRules.ValidateRule`'s `Section` arm (changed to `Valid`) turned
+`Rule_RefusesSectionScope_NamingThatARuleIsAConstraintInABrief` red; `CardLayout.ChangesDirectory`'s
+reserved-name check removed turned both `ChangesDirectory_WithTheReservedArchiveName_Refuses` and
+`ChangeScope_WithTheReservedArchiveName_Refuses` red. Both restored before this post; `git status`
+confirms only `DEVLOG.md` and the block's own files are touched.
+
+**1. Allocator concurrency/recycling story — sound.** `CardIdentityAllocator.Allocate` takes
+`CardLock` keyed on the counter file's own path (`CardIdentityAllocator.cs:39`), never
+`File.Move(overwrite:false)` or bare `FileShare.None` as the exclusion primitive — the temp-file
+write (`TryWriteCounter`) uses `FileMode.CreateNew` only to avoid colliding with itself on a unique
+GUID name, and the publishing step is `File.Move(tempPath, counterPath, overwrite: true)`
+(`CardIdentityAllocator.cs:255`), which §2's platform facts established **is** atomic. Lock usage
+mirrors `CardStore.WithLock` exactly (`CardStore.cs:195-207` vs `CardIdentityAllocator.cs:39-47`) —
+`using (acquired.Lock)` around the whole critical section, disposed on every path including the
+failure branches. `AllocateUnderLock` re-reads and confirms the just-written value before returning
+it (`CardIdentityAllocator.cs:145-159`) — the verify-before-acting discipline. Closing a card has no
+code path into this type at all (there is no decrement/reset entry point), and the id is never
+derived from a directory scan — `Allocate_DoesNotDeriveTheNextNumberFromCardsPresentOnDisk`
+(`CardIdentityAllocatorTests.cs:80-95`) proves this directly rather than by assertion. `D4` format is
+a minimum field width, not fixed (`FormatIdentity`, `CardIdentityAllocator.cs:224-229`); confirmed by
+`Allocate_PadsToAtLeastFourDigitsWithoutCappingTheRange` driving the counter past 9999 and asserting
+`B-10000` (nine chars), not a truncated or wrapped value. `Allocate_ConcurrentCallsForTheSameKind_
+NeverIssueTheSameIdentity` exercises real concurrent contention (20 parallel `Task.Run` calls) and
+asserts both distinctness and the exact expected sequence — not merely that no exception was thrown.
+
+**2. `callboard/identities/<kind>.count` — architectural note, not a blocker.** The path is correctly
+*not* gitignored (checked `.gitignore`; only `.index/`, `*.db*`, `*.lock`, `*.tmp-*` are excluded), so
+it is committed as the brief requires. It is coherent with the "committed part of the record" half of
+D3, but it is not registered anywhere in `CardLayout` — it lives only as `CardIdentityAllocator.
+IdentitiesDirectory`. `CardLayout`'s own doc comment frames it as "the scope-shaped layout"; this
+directory is deliberately *not* scope-shaped (it isn't a card), so keeping it out of `CardLayout` is
+defensible, but it does mean there are now two places in `Cards/` that know a root-level
+`callboard/<x>/` path exists, discovered by grep rather than by one file. Worth a one-line pointer
+from `CardLayout`'s doc comment to `CardIdentityAllocator.IdentitiesDirectory` (or vice versa) so a
+future reader assembling the whole layout doesn't have to find it by accident. Not a blocker; your call
+whether to fix now or park it.
+
+**3. Counter-violation classification — correct.** `RunIndexRebuild` returns `CommandOutcome.Success`
+unconditionally when parsing succeeds (`CommandDispatcher.cs:196-227`); `IdentityCounterViolations` is
+carried inside `IndexRebuildResult`, never routed through `CliRefusal`, and mints no new refusal code.
+Verified against the **emitted JSON**, not outcome/exit code alone —
+`IndexRebuild_ReportsAnIdentityCounterViolation_WithoutRefusing`
+(`CommandDispatcherTests.cs:316-342`) parses the actual envelope and asserts `ok:true`,
+`indexedCardCount`, and every field of the violation object (`kind`, `counterValue`, `observedMaxId`,
+`reason`) against a hand-authored on-disk card with no corresponding allocation — exactly the §3
+lesson about not shipping a mislabelled envelope on outcome-only assertions. The empty-list case is
+covered too (`IndexRebuild_WithNoIdentityCounterViolation_ReportsAnEmptyList`).
+
+**4. Scope as an attribute, not a function of kind — correct, and tested as promotion.**
+`CardScopeRules.Validate` matches on `kind` and re-matches `scope` *inside* each arm
+(`CardScopeRules.cs:17-35`); `Rule_AcceptsChangeScope` and `Rule_AcceptsRepositoryScope_AfterPromotion`
+both pass through the same `Validate(CardKind.Rule, …)` call with only the scope argument changed,
+which is the promotion path the spec's second paragraph requires and which a `kind → scope` function
+could not express. `block` is explicitly `CardScopeValidationResult.Valid` for every scope
+(`Block_AcceptsEveryScope_BecauseTheSpecConstrainsItNot`,
+`CardScopeRulesTests.cs:14-19`) rather than left as an absent arm — "unconstrained" is visibly a
+decision, not an omission, matching the brief's instruction.
+
+**5. Every guard has a refusal test, and I checked two by mutation myself** (see the note above the
+findings) rather than trusting the worker's description of its own mutation check. Every constrained
+kind in the scope table (`question`, `hazard`, `obligation`, `decision`, `finding`) has a
+`_RefusesEveryOtherScope` theory covering all three illegal values, plus `rule`'s two illegal-scope
+facts, one of them (`section`) asserting the spec's exact wording. `archive` as a reserved change name
+is proven refusing at both call sites that reach it (`ChangesDirectory` directly and via
+`DirectoryFor(CardScope.Change, …)`), plus a permitted-name control case.
+
+**6. Scope — clean.** 4.1 confirmed, not rebuilt (`CardKind`/`CardScope` untouched — checked the diff,
+neither file appears in it). No new CLI verb or arm added; `RunIndex`'s switch is unchanged in the
+diff. No new `CardStore` write caller in production code — the two production callers remain what §2/§3
+established, and the block's only `CardStore` use is in `CardIdentityArchiveSurvivalTests`, a test-only
+caller by design (O-1/O-2 correctly left for block B). No new `PackageReference`. Extending `index
+rebuild`'s existing JSON rather than adding a subcommand is a reasonable reading of "no verbs" —
+it adds no arm to the two-token dispatch — and the worker flagged the interpretation explicitly rather
+than deciding it silently, which is the right way to take a judgment call in this loop.
+
+No blockers. Finding 2 is the only item I'd like acknowledged (fix or explicit park) before this closes
+out; it does not block Approve.
+
+→ @architect
+
+**[architect]** Block A (4.1–4.4) — reviewer `Approve` on round one, gates re-run at my end:
+`BUILD_EXIT:0` / `TEST_EXIT:0` (164/164) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, and `GATES_EXIT:0`.
+Boxes 4.1–4.4 ticked, committing now.
+
+**Disposition on the reviewer's non-blocking item 2 — `callboard/identities/` is not registered in
+`CardLayout`.** Accepted as a real cohesion defect, and **it goes to block B, not to the opportunistic
+list.** `Cards/` now has two places that know a root-level `callboard/<x>/` path, and the second one
+appeared without passing through the type whose whole job is that layout. Block B is the right home
+because **O-1 forces exactly this question open anyway**: anchoring `CardStore` to the repo root is the
+same question — *who is entitled to state where the record lives* — and fixing the two independently
+would leave two answers. That is a trigger the plan actually contains, in the very next block, which is
+the standard §3 set for an obligation.
+
+Note for block B's brief: this is not a cosmetic move of a constant. If `CardLayout` gains the identities
+path, it should gain it as **the** statement of it, such that `CardIdentityAllocator` cannot construct a
+counter path any other way — the §3 rule applies, that a mechanism a caller must remember to invoke is a
+convention rather than a guarantee.
+
+**Confirming the worker's flagged reading of "no verbs in this block": it stayed in scope.** Extending
+`index rebuild`'s reported output is not wiring a verb — no new subcommand, no new dispatch arm, no new
+refusal code. The brief asked for the counter check to report through rebuild, so the two instructions
+were consistent; the worker was right to surface the tension rather than resolve it silently.
+
+---
+
 ## NEXT
 
 **Resume point: 4.1.** §3 is closed; §4 has not been opened. Nothing is in flight — working tree clean,

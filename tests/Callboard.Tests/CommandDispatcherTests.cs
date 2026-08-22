@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using Callboard.Cards;
 using Callboard.Cli;
 using Callboard.Index;
 
@@ -303,6 +304,55 @@ public sealed class CommandDispatcherTests
         var failure = Assert.Single(result.GetProperty("failures").EnumerateArray());
         Assert.Contains("corrupt.md", failure.GetProperty("filePath").GetString());
         Assert.False(string.IsNullOrWhiteSpace(failure.GetProperty("reason").GetString()));
+    }
+
+    /// <summary>
+    /// 4.2 — a counter that has fallen behind the highest identity actually on disk (here: a card
+    /// hand-authored with an id no allocation ever issued) is reported inside a <em>successful</em>
+    /// rebuild, per the block A brief: not a refusal, not a tool-failure, and no new refusal code.
+    /// Asserted against the emitted JSON directly, not only the exit code.
+    /// </summary>
+    [Fact]
+    public void IndexRebuild_ReportsAnIdentityCounterViolation_WithoutRefusing()
+    {
+        using var repo = new TempGitRepo();
+        var registerDirectory = Path.Combine(repo.Path, "callboard", "register");
+        Directory.CreateDirectory(registerDirectory);
+        var handAuthored = new CardFrontmatter(
+            "B-0005", CardKind.Block, "Hand-authored", "open", CardOwner.Architect, CardScope.Repository,
+            string.Empty, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        File.WriteAllText(
+            Path.Combine(registerDirectory, "b-0005.md"),
+            CardFileWriter.Serialize(new CardFile(handAuthored, "Body.", [], [])));
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(["index", "rebuild"], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.Equal(1, result.GetProperty("indexedCardCount").GetInt32());
+
+        var violation = Assert.Single(result.GetProperty("identityCounterViolations").EnumerateArray());
+        Assert.Equal("block", violation.GetProperty("kind").GetString());
+        Assert.Equal(0, violation.GetProperty("counterValue").GetInt32());
+        Assert.Equal(5, violation.GetProperty("observedMaxId").GetInt32());
+        Assert.False(string.IsNullOrWhiteSpace(violation.GetProperty("reason").GetString()));
+    }
+
+    [Fact]
+    public void IndexRebuild_WithNoIdentityCounterViolation_ReportsAnEmptyList()
+    {
+        using var repo = new TempGitRepo();
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(["index", "rebuild"], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.Empty(result.GetProperty("identityCounterViolations").EnumerateArray());
     }
 
     // The argument-boundary check runs once, after Dispatch returns (CommandDispatcher

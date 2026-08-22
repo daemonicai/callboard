@@ -40,6 +40,18 @@ public sealed class CardLayoutTests
         Assert.Throws<ArgumentException>(() => CardLayout.DirectoryFor(CardScope.Section, "../../etc"));
 
     [Fact]
+    public void ChangesDirectory_WithTheReservedArchiveName_Refuses() =>
+        Assert.Throws<ArgumentException>(() => CardLayout.ChangesDirectory("archive"));
+
+    [Fact]
+    public void ChangeScope_WithTheReservedArchiveName_Refuses() =>
+        Assert.Throws<ArgumentException>(() => CardLayout.DirectoryFor(CardScope.Change, "archive"));
+
+    [Fact]
+    public void ChangesDirectory_WithAnOrdinaryName_IsNotRefused() =>
+        Assert.Equal("callboard/changes/establish-callboard/", CardLayout.ChangesDirectory("establish-callboard"));
+
+    [Fact]
     public void RequireSafePathSegment_AcceptsAnOrdinaryName() =>
         Assert.Equal("establish-callboard", CardLayout.RequireSafePathSegment("establish-callboard", "changeName"));
 

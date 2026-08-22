@@ -29,10 +29,10 @@
 
 ## 4. Card model
 
-- [ ] 4.1 Model the seven kinds as a closed union so an unhandled kind is a compile error
-- [ ] 4.2 Implement kind-prefixed identity allocation that never recycles an identity
-- [ ] 4.3 Test that a card identity stays resolvable after its change is archived
-- [ ] 4.4 Implement the scope attribute, refusing `section` scope on a `rule`
+- [x] 4.1 Model the seven kinds as a closed union so an unhandled kind is a compile error
+- [x] 4.2 Implement kind-prefixed identity allocation that never recycles an identity
+- [x] 4.3 Test that a card identity stays resolvable after its change is archived
+- [x] 4.4 Implement the scope attribute, refusing `section` scope on a `rule`
 - [ ] 4.5 Implement ownership with attributed, timestamped handover
 - [ ] 4.6 Implement append-only comments with structural addressing, replies and resolution
 - [ ] 4.7 Test that a role mention in prose routes nothing and that an addressed comment does

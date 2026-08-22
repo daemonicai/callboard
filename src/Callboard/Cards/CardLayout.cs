@@ -16,8 +16,28 @@ internal static class CardLayout
     internal const string DecisionsDirectory = "callboard/decisions/";
     internal const string ChangesRootDirectory = "callboard/changes/";
 
-    internal static string ChangesDirectory(string changeName) =>
-        $"{ChangesRootDirectory}{RequireSafePathSegment(changeName, nameof(changeName))}/";
+    /// <summary>
+    /// The reserved live-change name: card-model's archive path is
+    /// <c>callboard/changes/archive/&lt;name&gt;/</c> (a directory move within the same tree,
+    /// mirroring this repository's own <c>openspec/changes/archive/</c>), so a live change named
+    /// <c>archive</c> would collide with every archived change's own container the moment it
+    /// existed. Refused here, at the one place a live change's directory is resolved, rather than
+    /// left to whichever later section builds the archive move to discover by accident.
+    /// </summary>
+    internal const string ReservedArchiveChangeName = "archive";
+
+    internal static string ChangesDirectory(string changeName)
+    {
+        var segment = RequireSafePathSegment(changeName, nameof(changeName));
+        if (string.Equals(segment, ReservedArchiveChangeName, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"'{ReservedArchiveChangeName}' is a reserved change name — it is where archived changes live.",
+                nameof(changeName));
+        }
+
+        return $"{ChangesRootDirectory}{segment}/";
+    }
 
     /// <summary>
     /// Resolves the directory a card of the given <paramref name="scope"/> lives in.

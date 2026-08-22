@@ -58,8 +58,36 @@ internal static class IndexPopulator
         WriteDatabase(databasePath, successes);
 
         var indexedCommentCount = successes.Sum(static success => success.Card.Comments.Count);
+        var identityCounterViolations = CardIdentityAllocator.VerifyCounters(cardsRoot, ObservedMaxIdByKind(successes));
 
-        return new IndexPopulationResult(successes.Count, indexedCommentCount, failures);
+        return new IndexPopulationResult(successes.Count, indexedCommentCount, failures, identityCounterViolations);
+    }
+
+    /// <summary>
+    /// The highest identity number actually seen on disk, per kind — what 4.2's
+    /// <see cref="CardIdentityAllocator.VerifyCounters"/> compares each kind's committed counter
+    /// against. A card whose <c>id</c> does not match its own <c>kind</c>'s prefix is simply
+    /// omitted from that kind's maximum rather than misread — see
+    /// <see cref="CardIdentityAllocator.TryParseIdentityNumber"/>.
+    /// </summary>
+    private static IReadOnlyDictionary<CardKind, int> ObservedMaxIdByKind(IReadOnlyList<(string FilePath, CardFile Card)> successes)
+    {
+        var observedMaxByKind = new Dictionary<CardKind, int>();
+
+        foreach (var (_, card) in successes)
+        {
+            if (!CardIdentityAllocator.TryParseIdentityNumber(card.Frontmatter.Kind, card.Frontmatter.Id, out var number))
+            {
+                continue;
+            }
+
+            if (!observedMaxByKind.TryGetValue(card.Frontmatter.Kind, out var existing) || number > existing)
+            {
+                observedMaxByKind[card.Frontmatter.Kind] = number;
+            }
+        }
+
+        return observedMaxByKind;
     }
 
     private static IReadOnlyList<string> ResolveCardSources(string cardsRoot)

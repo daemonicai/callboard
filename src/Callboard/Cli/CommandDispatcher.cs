@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Callboard.Cards;
 using Callboard.Index;
 
 namespace Callboard.Cli;
@@ -214,6 +215,13 @@ internal static class CommandDispatcher
             {
                 FilePath = failure.FilePath,
                 Reason = failure.Reason,
+            })],
+            IdentityCounterViolations = [.. population.IdentityCounterViolations.Select(static violation => new IndexRebuildIdentityCounterViolation
+            {
+                Kind = violation.Kind.ToWireString(),
+                CounterValue = violation.CounterValue,
+                ObservedMaxId = violation.ObservedMaxId,
+                Reason = violation.Reason,
             })],
         });
     }

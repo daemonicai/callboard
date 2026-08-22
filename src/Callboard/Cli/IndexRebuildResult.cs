@@ -24,6 +24,14 @@ internal sealed class IndexRebuildResult : ICommandResult
     [JsonPropertyName("failures")]
     public required IReadOnlyList<IndexRebuildFailure> Failures { get; init; }
 
+    /// <summary>
+    /// Every kind whose committed identity counter (4.2) has fallen behind the highest identity
+    /// number this rebuild actually observed on disk for that kind. Reported, never a refusal —
+    /// the same category as <see cref="Failures"/>, and not a member of §9's closed refusal set.
+    /// </summary>
+    [JsonPropertyName("identityCounterViolations")]
+    public required IReadOnlyList<IndexRebuildIdentityCounterViolation> IdentityCounterViolations { get; init; }
+
     public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CliJsonContext.Default.IndexRebuildResult);
 }
 
@@ -32,6 +40,25 @@ internal sealed class IndexRebuildFailure
 {
     [JsonPropertyName("filePath")]
     public required string FilePath { get; init; }
+
+    [JsonPropertyName("reason")]
+    public required string Reason { get; init; }
+}
+
+/// <summary>
+/// One kind's committed identity counter reported behind the highest identity number observed on
+/// disk for that kind — see <see cref="Callboard.Cards.CardIdentityAllocator.VerifyCounters"/>.
+/// </summary>
+internal sealed class IndexRebuildIdentityCounterViolation
+{
+    [JsonPropertyName("kind")]
+    public required string Kind { get; init; }
+
+    [JsonPropertyName("counterValue")]
+    public required int CounterValue { get; init; }
+
+    [JsonPropertyName("observedMaxId")]
+    public required int ObservedMaxId { get; init; }
 
     [JsonPropertyName("reason")]
     public required string Reason { get; init; }
