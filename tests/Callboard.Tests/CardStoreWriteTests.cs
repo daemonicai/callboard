@@ -350,19 +350,15 @@ public sealed class CardStoreWriteTests : IDisposable
         Assert.Equal(comment, Assert.Single(read.Comments));
     }
 
-    private static CardFile SampleCard(string id, string body = "Body.") =>
+    private static NewCardFile SampleCard(string id, string body = "Body.") =>
         new(
             new CardFrontmatter(id, CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "2", Created, Created),
-            body,
-            [],
-            []);
+            body);
 
-    private static CardFile RepositoryScopedCard(string id) =>
+    private static NewCardFile RepositoryScopedCard(string id) =>
         new(
             new CardFrontmatter(id, CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Repository, string.Empty, Created, Created),
-            "Body.",
-            [],
-            []);
+            "Body.");
 
     private static void AssertSuccess(CardWriteResult result) =>
         result.Match<object?>(

@@ -38,6 +38,28 @@ internal static class CardLayout
     /// </summary>
     internal const string ReservedArchiveChangeName = "archive";
 
+    /// <summary>
+    /// The directory holding every archived change's own card directory —
+    /// <c>callboard/changes/archive/</c> — the single statement of that path anywhere in this
+    /// codebase (§4 remediation R1: previously spelled only as a hand-built string inside a test).
+    /// A card that survives archive is not at this directory itself; it is one level further down,
+    /// at <see cref="ArchivedChangeDirectory"/>, exactly mirroring <see cref="ChangesDirectory"/>
+    /// one level up.
+    /// </summary>
+    internal const string ArchiveDirectory = ChangesRootDirectory + ReservedArchiveChangeName + "/";
+
+    /// <summary>
+    /// Where <paramref name="changeName"/>'s cards live once that change has been archived — a
+    /// directory move of <see cref="ChangesDirectory"/>'s result to under <see cref="ArchiveDirectory"/>
+    /// and nothing else (the Product Owner's binding decision; archive-as-a-verb is later work).
+    /// Every derived path that reads the record (<c>index rebuild</c>'s population,
+    /// <see cref="CardIdentityAllocator"/>'s counter-violation check) must resolve this the same
+    /// way, which is what this method — rather than a second hand-built string — exists to
+    /// guarantee.
+    /// </summary>
+    internal static string ArchivedChangeDirectory(string changeName) =>
+        $"{ArchiveDirectory}{RequireSafePathSegment(changeName, nameof(changeName))}/";
+
     internal static string ChangesDirectory(string changeName)
     {
         var segment = RequireSafePathSegment(changeName, nameof(changeName));

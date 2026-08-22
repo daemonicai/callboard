@@ -135,7 +135,7 @@ public sealed class CardStoreConcurrencyTests : IDisposable
     {
         var frontmatter = new CardFrontmatter(
             "B-0200", CardKind.Block, "Concurrent appends", "open", CardOwner.Worker, CardScope.Change, "2", Created, Created);
-        AssertSuccess(CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body.", [], []), TimeSpan.FromSeconds(5), ChangeName));
+        AssertSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName));
     }
 
     private static CardLock AssertAcquired(CardLockResult result) =>

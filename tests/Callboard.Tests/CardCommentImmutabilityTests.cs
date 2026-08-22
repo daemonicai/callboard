@@ -112,11 +112,14 @@ public sealed class CardCommentImmutabilityTests
     }
 
     /// <summary>
-    /// The reviewer's exact probe, reproduced as a permanent regression test: a card is written
-    /// with one comment; a second <see cref="CardStore.WriteCard"/> call on the same path, with a
-    /// <see cref="CardFile"/> carrying an empty comment list, must now be refused — and the
-    /// original comment must still read back afterwards, proving the refusal actually prevented
-    /// the drop rather than merely reporting a failure while the file underneath still changed.
+    /// The reviewer's exact probe, reproduced as a permanent regression test: a card is created and
+    /// then has one comment appended; a second <see cref="CardStore.WriteCard"/> call on the same
+    /// path must now be refused — and the original comment must still read back afterwards, proving
+    /// the refusal actually prevented the drop rather than merely reporting a failure while the file
+    /// underneath still changed. (§4 remediation R3 narrowed <see cref="CardStore.WriteCard"/>'s
+    /// input further, to <see cref="NewCardFile"/>, which cannot carry a comment list at all — so
+    /// the original probe's shape, a second <c>CardFile</c> with an emptied <c>Comments</c>, is no
+    /// longer expressible as a call; create-only refusal is what is left to prove.)
     /// </summary>
     [Fact]
     public void WriteCard_RefusesToOverwriteAnExistingCard_SoItCannotDropAComment()
@@ -133,14 +136,14 @@ public sealed class CardCommentImmutabilityTests
             var frontmatter = new CardFrontmatter(
                 "B-0001", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "4", timestamp, timestamp);
             var comment = new CardComment("C-0001", CardOwner.Worker, timestamp, "Do not drop me.", null, null, null, []);
-            var original = new CardFile(frontmatter, "Body.", [comment], []);
 
-            var created = CardStore.WriteCard(root, path, original, TimeSpan.FromSeconds(5), changeName);
+            var created = CardStore.WriteCard(root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), changeName);
             AssertSuccess(created);
+            AssertSuccess(CardStore.AppendComment(root, path, comment, TimeSpan.FromSeconds(5), changeName));
 
-            // The reviewer's probe: the same production entry point, same path, a CardFile that
-            // carries no comments at all.
-            var replacement = new CardFile(frontmatter, "Body.", [], []);
+            // The reviewer's probe: the same production entry point, same path, a second create
+            // attempt over a card that already carries a comment.
+            var replacement = new NewCardFile(frontmatter, "Body.");
             var replaceResult = CardStore.WriteCard(root, path, replacement, TimeSpan.FromSeconds(5), changeName);
 
             AssertFailure(replaceResult);

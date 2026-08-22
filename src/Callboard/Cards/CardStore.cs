@@ -56,12 +56,19 @@ internal static class CardStore
     /// this type at all — see this method's own existence check, not a convention layered on top
     /// of one that still allowed it (the shape that let a reviewer probe pass an empty
     /// <c>Comments</c> list over a card that had one and silently drop it).
+    /// <paramref name="card"/> is a <see cref="NewCardFile"/>, not a <see cref="CardFile"/> (§4
+    /// remediation, R3): it carries no <see cref="CardFile.Comments"/> and no
+    /// <see cref="CardFile.Handovers"/>, so a caller cannot construct a brand-new card whose
+    /// frontmatter <see cref="CardFrontmatter.Owner"/> disagrees with a handover history that
+    /// should not exist yet, or one that silently discards an existing thread — both are simply
+    /// not expressible in this method's input, rather than accepted and then rejected. See
+    /// <see cref="NewCardFile"/>'s own doc comment.
     /// <paramref name="cardsRoot"/> is the repository root every card in this call must live under
     /// (4.5, O-1) — see <see cref="AnchoredCardPath"/>. <paramref name="changeName"/> is required
     /// exactly when <c>card.Frontmatter.Scope</c> is <see cref="CardScope.Change"/> or
     /// <see cref="CardScope.Section"/> — see <see cref="CardLayout.DirectoryFor"/>.
     /// </summary>
-    internal static CardWriteResult WriteCard(string cardsRoot, string filePath, CardFile card, TimeSpan lockTimeout, string? changeName = null)
+    internal static CardWriteResult WriteCard(string cardsRoot, string filePath, NewCardFile card, TimeSpan lockTimeout, string? changeName = null)
     {
         var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
         if (anchored is null)
@@ -85,11 +92,13 @@ internal static class CardStore
         // called — a bare pre-lock File.Exists check would race a concurrent create for the same
         // path (TOCTOU); File.Move(overwrite: false) is not atomic on this platform (§2) and
         // FileShare.None gives no mutual exclusion either, so the lock is what makes this sound,
-        // not the check by itself.
+        // not the check by itself. A brand-new card has no comments and no handovers by
+        // definition, so both are always empty in the CardFile actually serialised — see
+        // NewCardFile.
         return WithLock(filePath, lockTimeout, _ =>
             File.Exists(filePath)
                 ? new CardWriteResult.Failure($"a card already exists at '{filePath}'; WriteCard only creates a new card — use AppendComment or TransferOwnership to update one.")
-                : AtomicWrite(anchored, CardFileWriter.Serialize(card)));
+                : AtomicWrite(anchored, CardFileWriter.Serialize(new CardFile(card.Frontmatter, card.Body, [], []))));
     }
 
     /// <summary>
@@ -163,9 +172,13 @@ internal static class CardStore
     /// once — the ordinary lifecycle, not an edge case — needs every prior handover's attribution
     /// still recoverable, not just the most recent. <see cref="CardFrontmatter.Owner"/> stays the
     /// queryable <em>current</em> owner; <see cref="CardFile.Handovers"/> is the append-only
-    /// <em>history</em> that can never disagree with it, because <see cref="CardFrontmatter.Owner"/> is set, in this
-    /// same write, to exactly the <see cref="CardHandover.To"/> of the entry this call appends —
-    /// there is no second code path that could set one without the other.
+    /// <em>history</em> kept from disagreeing with it by every code path that can set either:
+    /// <see cref="WriteCard"/> takes a <see cref="NewCardFile"/>, which carries no
+    /// <see cref="CardFile.Handovers"/> at all (a brand-new card has none), and this method sets
+    /// <see cref="CardFrontmatter.Owner"/>, in this same write, to exactly the
+    /// <see cref="CardHandover.To"/> of the entry it appends — §4 remediation R3, after a
+    /// <see cref="CardFile"/>-shaped <see cref="WriteCard"/> made the disagreement writable despite
+    /// this doc comment's earlier claim that no such path existed.
     /// </para>
     /// </summary>
     internal static CardWriteResult TransferOwnership(

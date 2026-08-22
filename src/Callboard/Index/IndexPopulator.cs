@@ -6,11 +6,12 @@ namespace Callboard.Index;
 /// <summary>
 /// Rebuilds the derived index from the primary record alone (record-retrieval: "reconstruct all
 /// derived state from the primary record"). <see cref="Populate"/> reads only <c>*.md</c> card
-/// files under <paramref name="cardsRoot"/>'s <c>callboard/register/</c>, <c>callboard/decisions/</c>
-/// and <c>callboard/changes/&lt;name&gt;/</c> — the same layout <see cref="CardLayout"/> and
-/// <see cref="CardStore"/> use — via <see cref="CardStore.ReadAllCards"/>. No other input is
-/// consulted, so a rebuild starting from a fresh, empty <paramref name="databasePath"/> is
-/// reconstructible from the record alone, exactly what the requirement this block serves asks for.
+/// files under <paramref name="cardsRoot"/>'s <c>callboard/register/</c>, <c>callboard/decisions/</c>,
+/// <c>callboard/changes/&lt;name&gt;/</c> and <c>callboard/changes/archive/&lt;name&gt;/</c> — the
+/// same layout <see cref="CardLayout"/> and <see cref="CardStore"/> use — via
+/// <see cref="CardStore.ReadAllCards"/>. No other input is consulted, so a rebuild starting from a
+/// fresh, empty <paramref name="databasePath"/> is reconstructible from the record alone, exactly
+/// what the requirement this block serves asks for.
 ///
 /// <para>
 /// This block has no production caller: block B wires <see cref="Populate"/> to the
@@ -25,7 +26,15 @@ internal static class IndexPopulator
     /// into <paramref name="databasePath"/> atomically — a full replace, never an incremental
     /// merge (3.3 is a <em>rebuild</em>). A card that fails to parse is recorded in the returned
     /// <see cref="IndexPopulationResult.Failures"/> and otherwise skipped; it never stops the rest
-    /// of the rebuild and never throws.
+    /// of the rebuild and never throws. <b>Neither does a duplicated identity</b> (§4 remediation
+    /// R2): two files sharing one <c>id</c>, or one card whose own thread repeats a
+    /// <c>comment id</c>, would each violate <see cref="IndexSchema"/>'s primary keys — rather than
+    /// let that constraint violation escape as an unhandled exception (which it did before this
+    /// fix, surfacing as a <c>tool-failure</c> and aborting the whole rebuild), both are detected in
+    /// <see cref="ExcludeDuplicateIdentities"/> before a single row is written, so the affected
+    /// card(s) never reach the database at all and are reported in <see cref="IndexPopulationResult.Failures"/>
+    /// naming the offending file(s) instead — the same "reported failure inside a successful
+    /// rebuild" category a corrupt card already gets.
     /// </summary>
     internal static IndexPopulationResult Populate(string cardsRoot, string databasePath)
     {
@@ -55,12 +64,85 @@ internal static class IndexPopulator
             }
         }
 
-        WriteDatabase(databasePath, successes);
-
-        var indexedCommentCount = successes.Sum(static success => success.Card.Comments.Count);
+        // Computed over every card actually read, before duplicates are excluded below — an
+        // identity that only exists because of a now-excluded duplicate file was still genuinely
+        // observed on disk, and hiding it from this check would let a counter reset past it
+        // unnoticed (exactly the recycling CardIdentityAllocator's doc comment names).
         var identityCounterViolations = CardIdentityAllocator.VerifyCounters(cardsRoot, ObservedMaxIdByKind(successes));
 
-        return new IndexPopulationResult(successes.Count, indexedCommentCount, failures, identityCounterViolations);
+        var indexable = ExcludeDuplicateIdentities(successes, failures);
+
+        WriteDatabase(databasePath, indexable);
+
+        var indexedCommentCount = indexable.Sum(static success => success.Card.Comments.Count);
+
+        return new IndexPopulationResult(indexable.Count, indexedCommentCount, failures, identityCounterViolations);
+    }
+
+    /// <summary>
+    /// Removes every card that would collide with <see cref="IndexSchema"/>'s primary keys before
+    /// <see cref="WriteDatabase"/> ever sees it, appending one <see cref="IndexPopulationResult.Failures"/>
+    /// entry per excluded file (§4 remediation R2). Two routes, both reachable from the record
+    /// alone:
+    ///
+    /// <list type="bullet">
+    /// <item>Two files whose frontmatter <c>id</c> matches — what the spec's own "Rule promoted
+    /// from change to repository scope" scenario produces when a card's file is written at its new
+    /// scope's path without removing the old one (<see cref="AnchoredCardPath"/> requires the new
+    /// path; nothing today moves or deletes the old one). Every file sharing the id is excluded and
+    /// named in the others' failure reasons — not last-writer-wins, since neither file is more
+    /// authoritative than the other.</item>
+    /// <item>One card whose own <see cref="CardFile.Comments"/> repeats a <c>comment id</c> —
+    /// nothing upstream of this rejects a duplicate on append or on parse. Only that file is
+    /// excluded; every other card, including ones sharing no relationship to it, is indexed
+    /// normally.</item>
+    /// </list>
+    /// </summary>
+    private static List<(string FilePath, CardFile Card)> ExcludeDuplicateIdentities(
+        List<(string FilePath, CardFile Card)> successes,
+        List<(string FilePath, string Reason)> failures)
+    {
+        var excludedFilePaths = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var group in successes.GroupBy(static success => success.Card.Frontmatter.Id, StringComparer.Ordinal))
+        {
+            var filePaths = group.Select(static success => success.FilePath).OrderBy(static path => path, StringComparer.Ordinal).ToList();
+            if (filePaths.Count <= 1)
+            {
+                continue;
+            }
+
+            var namedFiles = string.Join(", ", filePaths.Select(static path => $"'{path}'"));
+            foreach (var filePath in filePaths)
+            {
+                failures.Add((filePath, $"card id '{group.Key}' is claimed by more than one file: {namedFiles}; none of them has been indexed."));
+                excludedFilePaths.Add(filePath);
+            }
+        }
+
+        var indexable = new List<(string FilePath, CardFile Card)>();
+        foreach (var (filePath, card) in successes)
+        {
+            if (excludedFilePaths.Contains(filePath))
+            {
+                continue;
+            }
+
+            var duplicateCommentId = card.Comments
+                .GroupBy(static comment => comment.Id, StringComparer.Ordinal)
+                .FirstOrDefault(static group => group.Count() > 1);
+
+            if (duplicateCommentId is not null)
+            {
+                failures.Add((filePath, $"comment id '{duplicateCommentId.Key}' appears more than once in the thread of card " +
+                    $"'{card.Frontmatter.Id}'; the card has not been indexed."));
+                continue;
+            }
+
+            indexable.Add((filePath, card));
+        }
+
+        return indexable;
     }
 
     /// <summary>
@@ -90,6 +172,17 @@ internal static class IndexPopulator
         return observedMaxByKind;
     }
 
+    /// <summary>
+    /// Every directory holding <c>*.md</c> card files: <c>register/</c>, <c>decisions/</c>, one
+    /// per live change, and — §4 remediation R1 — one per <em>archived</em> change too. The archive
+    /// is part of the record, not an exception to it: a card that survived archive must be exactly
+    /// as visible to the index and to <see cref="CardIdentityAllocator.VerifyCounters"/> as one
+    /// still in a live change, or a counter reset silently reissues an identity an archived card
+    /// still holds. <c>callboard/changes/archive/</c> is a container of archived changes, not a
+    /// change itself (<see cref="CardLayout.ReservedArchiveChangeName"/>), so its own entry inside
+    /// <see cref="CardLayout.ChangesRootDirectory"/> is skipped when enumerating live changes and
+    /// descended into separately via <see cref="CardLayout.ArchiveDirectory"/>.
+    /// </summary>
     private static IReadOnlyList<string> ResolveCardSources(string cardsRoot)
     {
         var directories = new List<string>
@@ -101,10 +194,28 @@ internal static class IndexPopulator
         // Population does not know change names ahead of time, so it enumerates CardLayout's
         // changes root directly rather than asking CardLayout to resolve one card's directory.
         var changesRoot = CombineWithLayout(cardsRoot, CardLayout.ChangesRootDirectory);
+
+        // Trimmed to match Directory.EnumerateDirectories' own results below, which never carry a
+        // trailing separator, while CombineWithLayout's input (a CardLayout constant) always does.
+        var archiveRoot = Path.TrimEndingDirectorySeparator(CombineWithLayout(cardsRoot, CardLayout.ArchiveDirectory));
+
         if (Directory.Exists(changesRoot))
         {
+            foreach (var directory in Directory.EnumerateDirectories(changesRoot).OrderBy(static path => path, StringComparer.Ordinal))
+            {
+                if (string.Equals(directory, archiveRoot, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                directories.Add(directory);
+            }
+        }
+
+        if (Directory.Exists(archiveRoot))
+        {
             directories.AddRange(
-                Directory.EnumerateDirectories(changesRoot)
+                Directory.EnumerateDirectories(archiveRoot)
                     .OrderBy(static path => path, StringComparer.Ordinal));
         }
 

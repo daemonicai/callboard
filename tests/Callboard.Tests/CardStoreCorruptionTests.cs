@@ -113,14 +113,20 @@ public sealed class CardStoreCorruptionTests : IDisposable
         var path = Path.Combine(_directory, id + ".md");
         var frontmatter = new CardFrontmatter(
             id.ToUpperInvariant(), CardKind.Block, "Title " + id, "open", CardOwner.Worker, CardScope.Change, "2", Created, Created);
-        var comments = withComment
-            ? new[] { new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, null, []) }
-            : [];
 
-        var write = CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body.", comments, []), TimeSpan.FromSeconds(5), ChangeName);
+        var write = CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName);
         write.Match<object?>(
             onSuccess: static _ => null,
             onFailure: failure => throw new Xunit.Sdk.XunitException($"setup write failed: {failure.Reason}"));
+
+        if (withComment)
+        {
+            var comment = new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, null, []);
+            var appended = CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
+            appended.Match<object?>(
+                onSuccess: static _ => null,
+                onFailure: failure => throw new Xunit.Sdk.XunitException($"setup append failed: {failure.Reason}"));
+        }
 
         return path;
     }

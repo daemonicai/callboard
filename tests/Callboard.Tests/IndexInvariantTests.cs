@@ -131,7 +131,7 @@ public sealed class IndexInvariantTests : IDisposable
         // edit made outside the tool (ADR-0003, "legible without the tool" — the record is a file
         // humans are expected to hand-edit), not a second call through the production API.
         var mutated = GoodCard("B-0002", "After edit");
-        File.WriteAllText(path, CardFileWriter.Serialize(mutated));
+        File.WriteAllText(path, CardFileWriter.Serialize(new CardFile(mutated.Frontmatter, mutated.Body, [], [])));
 
         IndexPopulator.Populate(_root, databasePath);
 
@@ -267,7 +267,7 @@ public sealed class IndexInvariantTests : IDisposable
         var path = Path.Combine(directory, "stress.md");
         var frontmatter = new CardFrontmatter(
             "B-0800", CardKind.Block, "Concurrent", "open", CardOwner.Worker, CardScope.Change, "3", Created, Created);
-        AssertWriteSuccess(CardStore.WriteCard(scenarioRoot, path, new CardFile(frontmatter, "Body.", [], []), TimeSpan.FromSeconds(5), ChangeName));
+        AssertWriteSuccess(CardStore.WriteCard(scenarioRoot, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName));
 
         var databasePath = IndexPaths.DatabasePath(scenarioRoot);
         if (indexState is "present" or "deleted-mid-run")
@@ -353,36 +353,39 @@ public sealed class IndexInvariantTests : IDisposable
     {
         var path = Path.Combine(_root, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
         var frontmatter = new CardFrontmatter(id, kind, "Title " + id, "open", owner, CardScope.Repository, string.Empty, Created, Updated);
-        AssertWriteSuccess(CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body for " + id + ".", [], []), TimeSpan.FromSeconds(5)));
+        AssertWriteSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body for " + id + "."), TimeSpan.FromSeconds(5)));
     }
 
     private void WriteDecisionCard(string fileStem, string id, CardKind kind, CardOwner owner)
     {
         var path = Path.Combine(_root, CardLayout.DecisionsDirectory.Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
         var frontmatter = new CardFrontmatter(id, kind, "Title " + id, "open", owner, CardScope.Capability, string.Empty, Created, Updated);
-        AssertWriteSuccess(CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body for " + id + ".", [], []), TimeSpan.FromSeconds(5)));
+        AssertWriteSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body for " + id + "."), TimeSpan.FromSeconds(5)));
     }
 
     private void WriteCardInChange(string changeName, string fileStem, string id, CardKind kind, CardOwner owner, CardScope scope, IReadOnlyList<CardComment> comments)
     {
         var path = Path.Combine(_root, CardLayout.ChangesDirectory(changeName).Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
         var frontmatter = new CardFrontmatter(id, kind, "Title " + id, "open", owner, scope, "3", Created, Updated);
-        AssertWriteSuccess(CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body for " + id + ".", comments, []), TimeSpan.FromSeconds(5), changeName));
+        AssertWriteSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body for " + id + "."), TimeSpan.FromSeconds(5), changeName));
+
+        foreach (var comment in comments)
+        {
+            AssertWriteSuccess(CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), changeName));
+        }
     }
 
-    private string WriteCard(string fileStem, CardFile card)
+    private string WriteCard(string fileStem, NewCardFile card)
     {
         var path = Path.Combine(_root, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
         AssertWriteSuccess(CardStore.WriteCard(_root, path, card, TimeSpan.FromSeconds(5), ChangeName));
         return path;
     }
 
-    private static CardFile GoodCard(string id, string title) =>
+    private static NewCardFile GoodCard(string id, string title) =>
         new(
             new CardFrontmatter(id, CardKind.Block, title, "open", CardOwner.Worker, CardScope.Change, "3", Created, Created),
-            "Body.",
-            [],
-            []);
+            "Body.");
 
     private static void Execute(SqliteConnection connection, string sql)
     {

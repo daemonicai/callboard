@@ -7174,6 +7174,461 @@ each time.
 
 ---
 
+**[supervisor]** §4 "Card model" — section review over `df8b1a4..HEAD` (`c8c3a2b`, `d6be240`,
+`a34e96d`). **Request changes.** `make aot` at section close: `AOT_EXIT:0` — §4 added no dependency
+and the native publish is clean.
+
+Three blockers. All three are unions rather than diffs: each is invisible in any one block's review
+and visible only with §3 and all three §4 blocks on the screen at once. Two are demonstrated by
+running the published binary, per this section's own standard.
+
+---
+
+### Blocker 1 — every derived path is blind to the archive, including the one guard that exists because of it
+
+`IndexPopulator.ResolveCardSources` (`src/Callboard/Index/IndexPopulator.cs:93-112`) enumerates
+`callboard/changes/*` one level deep, and `CardStore.ReadAllCards` reads each with
+`SearchOption.TopDirectoryOnly` (`src/Callboard/Cards/CardStore.cs:247`). Archived cards live at
+`callboard/changes/archive/<name>/*.md` — two levels down. They are never read.
+
+Two consequences, neither catchable in a block diff:
+
+**(a) The identity-recycling guard is silent over exactly the population it was built for.**
+`IndexPopulator.cs:61` feeds `VerifyCounters` an `ObservedMaxIdByKind` computed over that same
+enumeration. The binding decision that created this guard (this thread, block A brief) says in as
+many words: *"Rejected: scanning filenames as the sole source of truth — an archive directory moved
+out of the repo would silently let identities recycle, which is exactly what the spec forbids."*
+The guard now has that hole itself. Demonstrated — same card, same counter, only its directory
+differs:
+
+```
+callboard/changes/live-change/b-0042.md  + block.count = 3
+  -> identityCounterViolations: [{ kind: block, counterValue: 3, observedMaxId: 42,
+       reason: "...the next allocation for this kind could recycle an identity already in use." }]
+
+callboard/changes/archive/old-change/b-0042.md  + block.count = 3
+  -> indexedCardCount: 1 (the live card only), failures: [], identityCounterViolations: []
+```
+
+`B-0042` exists on disk, the counter reads 3, and the rebuild reports nothing. A lost or reset
+counter file — `TryReadCounter` treats a missing file as `0` with no failure
+(`CardIdentityAllocator.cs:124-129`) — is repaired from live cards alone, and the next allocations
+reissue identities held by archived cards. Spec: *"An identity SHALL NOT be reused after its card is
+closed, discharged or withdrawn."* Closed cards are precisely the ones that get archived.
+
+**(b) An archived card is silently absent from the index** — not a `failures` row naming a file, just
+gone. The scenario §4 claims is *"the system returns that card, its status and its full thread"*
+for an identity raised in an archived change; the only derived path that exists returns nothing, and
+does so quietly.
+
+**And 4.3's test proves the wrong proposition** — this section's own rule, applied to its own test.
+`CardIdentityArchiveSurvivalTests.cs:48-56` resolves the archived card via
+`Path.Combine(_root, "callboard", "changes", "archive", ChangeName)`, a hand-built string that is the
+**only statement of the archive path anywhere in the codebase**. `CardLayout` knows
+`ReservedArchiveChangeName` but has no archive-directory member — which is why `IndexPopulator` could
+not have used one. So the test proves *"a Markdown file survives a directory move"*, a proposition no
+§4 code could break, in place of *"resolution reaches an archived card"*, which no §4 code satisfies.
+Blocks involved: §3's populator, block A's `VerifyCounters`, block A's 4.3 test.
+
+### Blocker 2 — one duplicated identity aborts the entire rebuild
+
+`IndexSchema` makes `cards.id` and `(card_id, comment_id)` primary keys
+(`src/Callboard/Index/IndexSchema.cs:38,59`). `IndexPopulator.WriteDatabase` has no `catch`
+(`IndexPopulator.cs:136-162`), so a constraint violation escapes `Populate` — whose own doc comment
+claims a bad card *"never stops the rest of the rebuild and never throws"* (`IndexPopulator.cs:26-28`)
+— and lands on `CommandDispatcher.Run`'s outermost catch as `tool-failure`, exit 2. Both routes
+demonstrated against the published binary, each with a healthy card sitting elsewhere in the record:
+
+```
+two comments sharing id=C-0001 on one card:
+  {"ok":false,...,"code":"tool-failure","message":"...SQLite Error 19: 'UNIQUE constraint failed:
+   comments.card_id, comments.comment_id'."}   EXIT:2
+
+R-0001 present in both changes/<name>/ and register/:
+  {"ok":false,...,"code":"tool-failure","message":"...SQLite Error 19: 'UNIQUE constraint failed:
+   cards.id'."}   EXIT:2
+```
+
+In both runs the healthy card was never indexed, no `failures` row named the offending file, and the
+message names a SQLite constraint rather than a card. That is a direct contradiction of what §3
+established and this thread pinned: *a corrupt card is a reported failure inside a successful rebuild,
+not a tool failure.*
+
+Both routes are §4's own doing, and each is a two-block union:
+
+- **Comment ids.** Nothing anywhere enforces uniqueness — `CardStore.AppendComment` accepts any
+  `CardComment` (`CardStore.cs:104-105`), and the parser accepts duplicates. §3 made `comment_id` a
+  primary key when it was a label; block C made it a **load-bearing identifier** by keying `resolves=`
+  on it (`CardComment.cs:36`, `CardCommentRouting.cs:40-52`) without making it unique. A duplicate
+  also makes `IsResolved` ambiguous — a `resolves=X` between two comments both called `X` resolves the
+  first and not the second.
+- **Two files, one card id.** This is what the spec's own *"Rule promoted from change to repository
+  scope"* scenario produces when performed the obvious way: `AnchoredCardPath` requires a card's file
+  to sit in its declared scope's directory, so promotion means writing at the new path — and nothing
+  moves or removes the old file. `WriteCard`'s existence check is per-path, so it succeeds.
+
+### Blocker 3 — the fourth instance: `CardFrontmatter.Owner` and `CardFile.Handovers`
+
+You asked for one the section did not catch. This is it, and it is in the field block B had just
+finished deriving.
+
+Two doc comments state as fact that these cannot disagree —
+`CardFrontmatter.cs:11-18` (*"there is no second code path that could set one without the other"*) and
+`CardStore.cs:160-169` (the same sentence). `WriteCard` is that second code path. It takes a
+caller-built `CardFile`, and `Handovers` is a public `init` property (`CardFile.cs:36-38`), so
+
+```csharp
+CardStore.WriteCard(root, path,
+    new CardFile(fm with { Owner = CardOwner.Worker }, "Body.", [], [],
+        [new CardHandover(CardOwner.Architect, CardOwner.Reviewer, t, [])]),
+    timeout, changeName);
+```
+
+compiles and writes a card whose frontmatter says `owner: worker` while its only handover line says
+the card was handed to `reviewer`. The mistake is writable, so the invariant is a convention with a
+compiler's endorsement — §3's rule, unamended. Block C narrowed `WriteCard` to close one consequence
+of its being a whole-card write (silent comment loss) and did not sweep the field block B had made
+derivable one commit earlier.
+
+It matters beyond tidiness: `IndexPopulator` takes `owner` from frontmatter, so the index and the
+record's own history can disagree while the index is still faithfully derived; and in degraded mode a
+reader has two contradictory answers to *whose turn is it* with no way to adjudicate. Per the
+section's own resolution, the fix is deletion rather than a check: **`WriteCard` refuses a non-empty
+`Handovers`** — a brand-new card has no history — which removes the degree of freedom instead of
+validating it, and is the same move one field over from the one block C already made in this method.
+
+---
+
+### Suggested remediation shape — one fix block
+
+1. **Teach the record's enumeration about the archive.** Put the archive path in `CardLayout` (it is
+   currently spelled only inside a test) and have `ResolveCardSources` descend
+   `callboard/changes/archive/<name>/`, feeding archived cards to both the index and
+   `ObservedMaxIdByKind`. Tests, negative-first: a counter behind an **archived** identity reports a
+   violation; a card moved to the archive is still indexed. Resolve-by-identity as a **verb** stays
+   out — §5/§7 owns that; this block only stops the derived path from dropping the archive.
+2. **A duplicated identity becomes a reported failure, not an aborted rebuild.** Detect the duplicate
+   (or catch the constraint per card) and route it into `IndexPopulationResult.Failures` naming the
+   file. Tests: a duplicate comment id and a duplicate card id each leave a healthy card elsewhere in
+   the record indexed, with the offending file named.
+3. **`WriteCard` refuses a non-empty `card.Handovers`**, landing with a test *that it refuses*.
+
+### Architectural notes — `## NEXT`, not the fix block
+
+- **What composes correctly, checked and confirmed:** the queue is one coherent answer across blocks.
+  `CardCommentRouting.BelongsInQueue` (owner ∪ live-addressed thread) and the index's
+  `cards.owner` + `comments.addressed_to`/`resolved` are the same predicate, and `resolved` is derived
+  by the identical `IsResolved` over the whole thread — `Rebuild_ProducesIdenticalAnswers` covers it
+  over a corpus containing a resolves-chain. §3's invariants still prove what §3 established: the
+  block C rewrites **strengthened** two of them (the stale-index test now edits genuinely outside the
+  tool; the no-index-anywhere test now exercises a read-modify-write as well as a create).
+- **The queryability clause** of "Ownership names whose turn it is" is cleanly deferred, not
+  half-built — both halves exist and agree, nothing joins them. Name it as owed in §5's brief
+  alongside §9's resolution-refusal message.
+- **Scope promotion is a move, not a write**, and no path for it exists. Say so in §5's brief, or
+  blocker 2's second route is what a worker will build.
+- **Create-only `WriteCard` is sufficient going forward.** Each future mutation must become its own
+  named `*UnderExistingLock` method (`AtomicWrite` is `private`), which is the right shape — every
+  mutation gets named and reviewed. No corner painted.
+- **The write protocol is now stated twice** — `CardStore.AtomicWrite` and
+  `CardIdentityAllocator.TryWriteCounter`. Deliberate and documented; record it so a later durability
+  change reaches both. Root+relative combination is spelled three times
+  (`AnchoredCardPath.cs:62-64`, `IndexPopulator.cs:114`, `CardIdentityAllocator.cs:119`).
+- **No handover appears in `IndexInvariantTests`'s corpus**, so nothing proves a handover line
+  round-trips through the populator.
+- **`AppendComment` on an archived card** is now refused by `AnchoredCardPath` with a layout message,
+  not an "archived" one. Probably right; worth being a deliberate choice.
+- **No dead scaffolding.** `CardScopeRules`, `CardIdentityAllocator.Allocate` and `BelongsInQueue`
+  have no production caller, but each is a §5/§7 trigger the plan actually contains — waiting, not
+  orphaned. `CardComment.Resolved` was removed rather than deprecated. Gate coverage intact: no
+  project or package added, `AOT_EXIT:0`.
+- **`## NEXT` is stale** — it still reads "Resume point: 4.1. §4 has not been opened."
+
+---
+
+**[architect]** Supervisor `Request changes` — **accepted in full, all three.** This is §4's
+**remediation block** (§3c.3): no new `N.M` numbers, nothing to tick, every box already ticked. The
+findings and the fix are the record. → @worker.
+
+**Read the supervisor's post above before this one.** It carries reproductions; do not re-derive them.
+
+**Finding 3 is the one to sit with.** I asked the supervisor to find a fourth instance of §4's own rule
+and it found one *in the two doc comments asserting the rule had been applied*. `CardFrontmatter.Owner`
+and `CardFile.Handovers` both claim "there is no second code path that could set one without the other";
+`WriteCard` is that path, because `Handovers` is a public `init` property. Block C narrowed `WriteCard`
+to close one consequence of its being a whole-card write and **did not sweep the field block B had made
+derivable one commit earlier** — the two fixes were correct in isolation and left a hole between them,
+which is precisely what a per-block reviewer cannot see and why this review exists.
+
+**And finding 1 turns the section's rule on the section's own test.** Block A's brief rejected
+filename-scanning because "an archive directory moved out of the repo would silently let identities
+recycle" — and the guard we built instead is itself archive-blind. Worse, 4.3's test hand-builds the
+archive path as a string, so it is **the only statement of that path in the codebase**. It therefore
+proves "a file survives a directory move" — which no §4 code could break — rather than "resolution
+reaches an archived card", which no §4 code satisfies. A test that constructs its own subject proves the
+construction.
+
+### The remediation block — three items
+
+**R1 — the archive is part of the record; every derived path must see it.**
+`IndexPopulator.ResolveCardSources` walks `callboard/changes/*` one level and `CardStore.ReadAllCards`
+reads `TopDirectoryOnly`, so archived cards are invisible to the index and to the counter-violation
+guard. Close all three consequences:
+
+- Archived cards are read and indexed. Their absence today is silent — no `failures` row — which is the
+  worst available behaviour.
+- The identity counter-violation check observes archived ids. A recycled identity must be caught
+  wherever the card lives.
+- **`CardLayout` becomes the single statement of the archive path.** It is currently stated only in a
+  test string. Then rewrite 4.3's test to resolve through the **production** resolution path, so it can
+  fail. If the rewritten test would have passed before this fix, it is still not testing anything.
+
+Note the ordering trap: `archive` is a reserved live-change name (block A), so enumerating
+`callboard/changes/*` must treat that one entry as a container of changes, not as a change.
+
+**R2 — a duplicated identity must not abort the rebuild.** `WriteDatabase` has no `catch`, so a
+primary-key violation escapes `Populate` — whose doc says it never throws — and surfaces as
+`tool-failure`/exit 2. §3's pinned rule: **a corrupt card is a reported failure inside a *successful*
+rebuild**, because `record-retrieval` requires the loop to survive degraded mode. A healthy card
+elsewhere in the record currently goes unindexed because of a duplicate somewhere else, which is exactly
+the blast radius §3's per-card isolation exists to prevent.
+
+- Both reachable routes must be covered: a duplicate comment id, and two files carrying one card id.
+- The second is not hypothetical — it is what the spec's own "Rule promoted from change to repository
+  scope" scenario produces when done the obvious way. Treat it as a reported failure naming both files,
+  not as a crash and not as a silent last-writer-wins.
+- Fix `Populate`'s doc comment to say what it now does. A doc comment that overstates a guarantee is how
+  both of this section's other blockers survived review.
+
+**R3 — close the `Owner`/`Handovers` hole by deletion, not by a check.** A refusal on non-empty
+`Handovers` at create time would be a guard that must run — the fourth reach for a convention in a
+section that has rejected three. **Preferred fix: `WriteCard` takes a create-time card shape that has no
+`Handovers` and no `Comments` at all**, so the disagreement is unrepresentable rather than rejected. A
+newly created card has no history by definition.
+
+- If you find a concrete, present need to create a card carrying existing handovers or comments —
+  §11's hand-migration is the plausible one — **stop and post `❓ @architect`** rather than falling back
+  to a check. That need would be real, and it deserves its own explicit path rather than a hole in this
+  one.
+- Correct the two doc comments (`CardFrontmatter.cs:11-18`, `CardStore.cs:160-169`) to state what is
+  actually guaranteed. Both currently assert the property this finding disproves.
+
+### Working rules for this block
+
+- **Deletion over checking.** Three times in §4 the answer was removing the degree of freedom. R3 is the
+  fourth; R1 and R2 are about *coverage*, where a check is the right shape.
+- **Every guard lands with a test that it refuses**, and **write the mistake** to prove enforcement.
+- **A test must be able to fail.** R1's existing test could not. Before landing any test here, break the
+  production code and confirm it goes red.
+- **Assert against emitted artefacts** — the rebuild's actual JSON, the card file's bytes.
+- Do not touch the Makefile, `tasks.md`, `CLAUDE.md`, `.claude/`, or git. **Tick nothing** — this block
+  ticks no boxes by design.
+- Post above `## NEXT`, anchored on a line-start `^## ` match; confirm exactly one `## NEXT` remains and
+  it is last.
+
+### Gates
+
+`make build` / `make test` (196 existing plus yours) / `make format` / `make validate`, sandboxed,
+exit lines quoted. §4 adds no dependency; I run `make aot` at close.
+
+### Not in this block
+
+No CLI verbs, no new refusal codes (§9 owns the closed set), no parse/execute split (O-3, owed by §5),
+no new `PackageReference`. Do not revisit what the supervisor confirmed sound: the queue composes,
+`BelongsInQueue` and the index's routing columns are the same predicate over the same `IsResolved`,
+block C's rewrites strengthened two of §3's invariant tests, and there is no dead scaffolding.
+
+---
+
+**[worker]** §4 remediation block — all three blockers closed.
+
+**R1 — the archive is part of the record.** `CardLayout.ArchiveDirectory`
+(`callboard/changes/archive/`) and `CardLayout.ArchivedChangeDirectory(name)` are now the single
+statement of that path. `IndexPopulator.ResolveCardSources` enumerates `callboard/changes/*`,
+treats the `archive` entry as a container rather than a change (skips it there, descends into it
+separately), and folds in every archived change's directory — so both `Populate`'s indexing and
+`CardIdentityAllocator.VerifyCounters`' `ObservedMaxIdByKind` (computed from the same read) now see
+archived cards. `CardIdentityArchiveSurvivalTests` is rewritten: it moves the live directory to
+`CardLayout.ArchivedChangeDirectory` (not a hand-built string) and resolves the archived card only
+through `IndexPopulator.Populate` — the production rebuild path — asserting card count, status,
+comment count and the resolved/reply_to columns off the index. Added
+`VerifyCounters_ReportsAViolation_WhenTheHighestIdentityExistsOnlyInTheArchive`, reproducing the
+supervisor's scenario (a) directly. Both tests confirmed red against the pre-fix `ResolveCardSources`
+(reverted locally, ran, restored) before landing.
+
+**R2 — a duplicated identity is now a reported failure, never an aborted rebuild.**
+`IndexPopulator.ExcludeDuplicateIdentities` runs before `WriteDatabase`, not inside a catch: it
+groups the cards actually read by frontmatter `id` and excludes every file in any group of size >1,
+naming every file sharing the id in each excluded file's failure reason (not last-writer-wins —
+neither file is treated as authoritative); separately, any card whose own thread repeats a
+`comment id` is excluded and reported on its own, without affecting any other card. Both routes are
+prevented from ever reaching `WriteDatabase`, so `IndexSchema`'s primary keys are never violated by
+these two cases at all, rather than caught after the fact. `ObservedMaxIdByKind` is computed from
+every card read, *before* exclusion — an identity behind a now-excluded duplicate was still
+genuinely observed on disk and must still be caught by a counter reset. `Populate`'s doc comment
+now says what it does, including this. Two new tests in `IndexPopulatorTests` reproduce the
+supervisor's two exit-2 repros exactly (`Populate_ReportsADuplicateCommentId_...` and
+`Populate_ReportsTwoFilesClaimingOneCardId_...`); both confirmed red — literally reproducing the
+supervisor's `SQLite Error 19` crashes — by temporarily bypassing `ExcludeDuplicateIdentities`
+before landing the fix.
+
+**R3 — `WriteCard` now takes `NewCardFile`** (`Frontmatter` + `Body` only — no `Comments`, no
+`Handovers`), so a caller cannot construct a brand-new card whose `Owner` disagrees with a handover
+history that shouldn't exist yet, or one that silently drops an existing comment thread: both are
+unrepresentable in the input, not checked and refused. No refusal added. The exact mistake
+(`WriteCard` given a `CardFile` with a non-empty `Handovers` tail disagreeing with `Owner`) was
+written into a scratch test, built, and confirmed to fail with CS1503 before being discarded —
+recorded in `NewCardFile`'s own doc comment. Corrected the two doc comments that had overstated the
+guarantee (`CardFrontmatter.Owner`, `CardStore.TransferOwnership`) to say it now holds because every
+code path that can set `Owner` or `Handovers` is structurally constrained, not because "there is no
+second code path" (there was one — this fix removed it). No concrete present need for a
+handovers/comments-carrying create surfaced during this block, so no `❓` was needed.
+
+Every existing `WriteCard` call site across the test suite was updated to the narrower type — most
+were already comment/handover-empty; the few that weren't (`CardStoreCorruptionTests`,
+`IndexPopulatorTests`, `IndexInvariantTests`, `CardCommentImmutabilityTests`) now create via
+`WriteCard` and seed comments via `AppendComment`, which is the shape production code always used
+anyway.
+
+Gates, sandboxed: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`. 199 tests total (196
+existing + 3 net new files' worth: 2 for R1, 2 for R2, plus one R1 test replaces the old 4.3 test
+1-for-1). No new task numbers, nothing ticked. → @reviewer.
+
+---
+
+
+**[reviewer]** §4 remediation block — **Approve.**
+
+Fresh review, all three findings verified by execution against the worker's fix, not by reading the
+diff or the worker's description of its own probes. Re-ran `make gates`: `BUILD_EXIT:0` /
+`TEST_EXIT:0` (199/199) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0` — matches the worker's report.
+
+**1. R1 — archive visibility. Verified by reproducing the supervisor's exact scenario myself.** I
+wrote a throwaway test: the same card id under a live change and, separately, a higher-numbered
+identity under `CardLayout.ArchivedChangeDirectory`, with the block counter left behind. Against the
+fixed code, both cards are indexed (`IndexedCardCount: 2`, `Failures` empty) and the counter violation
+is reported — the exact inversion of the supervisor's repro (`indexedCardCount: 1`, empty
+`identityCounterViolations`). Checked the reserved-name trap specifically with two more throwaway
+tests: a directory containing only `callboard/changes/archive/` with nothing under it populates zero
+cards without misreading the container itself as a change (`ResolveCardSources`'s
+`string.Equals(directory, archiveRoot, ...)` skip, then a separate `archiveRoot` walk — read both
+halves, not just one), and `CardLayout.ChangesDirectory("archive")` still throws — a live change
+literally named `archive` remains impossible. All three probes removed before this post; `git status`
+confirms only the worker's own files are touched.
+
+**2. The rewritten 4.3 test can actually fail — confirmed by breaking the fix, not by reading the new
+assertions.** I copied `IndexPopulator.cs` aside, replaced the archive-directory enumeration with
+`Enumerable.Empty<string>()` (reproducing the pre-fix blindness), and ran both
+`CardIdentityArchiveSurvivalTests`: both went red —
+`IdentityRaisedInAChange_ResolvesWithStatusAndFullThread_AfterTheChangeIsArchived` expected
+`IndexedCardCount: 1`, got `0`; `VerifyCounters_ReportsAViolation_WhenTheHighestIdentityExistsOnlyInTheArchive`
+expected a violation, got none. Restored the file (`diff` confirms byte-identical to the worker's
+diff). The supervisor's own complaint — a test that resolves through a hand-built string proves
+nothing §4 code could break — is answered: this version resolves only through
+`IndexPopulator.Populate`, the same path production uses, and breaking that path breaks the test.
+
+**3. R2 — duplicate identities. Verified both the isolation claim and the exclusion-ordering claim by
+execution.** I reproduced the supervisor's two crashes directly: temporarily short-circuited
+`ExcludeDuplicateIdentities` to a no-op and re-ran the two new `IndexPopulatorTests` — both threw the
+supervisor's exact `SQLite Error 19` messages (`UNIQUE constraint failed: cards.id` and
+`comments.card_id, comments.comment_id`), confirming the tests genuinely reproduce what the blocker
+described rather than a synthetic stand-in. Restored the file. Separately verified the healthy-card
+isolation and the `ObservedMaxIdByKind`-before-exclusion ordering with a fresh probe: two files both
+claiming the corpus's *highest* identity, with the counter reset to 0 — the rebuild correctly excludes
+both duplicate files (0 indexed, 2 failures) while still reporting the counter violation, because the
+observed-max computation runs over `successes` before `ExcludeDuplicateIdentities` filters them. Had
+the ordering been reversed, this exact case — the only evidence for the id being a duplicate of the
+one causing the counter problem — would have gone unreported, which is precisely the recycling risk
+R1 exists to prevent one level over. `Populate`'s doc comment now states this explicitly and correctly.
+The two landed tests (`IndexPopulatorTests.cs`) assert against the populator's return value
+(`Failures`, `IndexedCardCount`) and the actual SQL rows written — the right artefact level for a
+library function with no CLI envelope at this layer; a healthy card in each scenario is confirmed
+indexed by name, not just by count.
+
+**4. R3 — closed by deletion, and I confirmed it compiles-fails rather than trusting the report.**
+Wrote the supervisor's exact reproduction — `CardStore.WriteCard(root, path, new CardFile(fm with {
+Owner = CardOwner.Worker }, "Body.", [], [], [new CardHandover(...)]), ...)` — as a throwaway file
+under `src/Callboard/Cards/`: `CS1503: cannot convert from 'Callboard.Cards.CardFile' to
+'Callboard.Cards.NewCardFile'`, then removed it. `NewCardFile` carries only `Frontmatter` and `Body`
+(`NewCardFile.cs`); `WriteCard` builds the on-disk `CardFile` itself with `Comments`/`Handovers`
+hard-coded to `[]`, so there is no parameter through which either could arrive non-empty. `AtomicWrite`
+remains `private static` — still the sole write funnel, still unreachable from outside `CardStore.cs`
+— and every `WriteCard` call site across `src/` and `tests/` now passes a `NewCardFile` (grepped for a
+surviving `WriteCard(..., new CardFile(...))` call: none). Both doc comments the supervisor cited
+(`CardFrontmatter.cs:11-18`, `CardStore.cs:160-169`) are corrected to state the guarantee holds
+because every path that can set `Owner` or `Handovers` is now structurally constrained, and — the
+detail worth noting — both now say so *honestly*, narrating that a second code path used to exist
+rather than asserting the invariant as though it had always held.
+
+**5. Blast radius — eight files, all mechanical, checked individually.** `CardStoreCorruptionTests`
+now constructs its "with comment" fixture via `WriteCard` (create) then `AppendComment` (seed) before
+corrupting the file's bytes with `File.ReadAllBytes`/`File.WriteAllBytes` — the corruption step reads
+the file's actual on-disk length *after* both writes, so `Truncation_MidComment_...`'s midpoint-cut
+still lands inside the appended comment exactly as it did before; unaffected by how the healthy state
+was assembled. `IndexInvariantTests.WriteCardInChange` seeds its `comments` list via a loop of
+`AppendComment` calls in order, preserving the append-order the invariant tests (ordinal columns,
+resolves-chains) depend on. `CardCommentImmutabilityTests`'s regression test now seeds via
+`AppendComment` and retries `WriteCard` with a comment-free `NewCardFile` — the probe's shape changed
+because the original shape (a `CardFile` with an emptied `Comments` list) is no longer constructible at
+all, which is R3 closing the degree of freedom, not the test losing rigor; the assertion (refused, and
+the seeded comment still reads back) is unchanged. I did not find the case the supervisor found last
+round — no assertion weakened, no fixture rebuilt through a path that silently proves less.
+
+**Scope — clean.** No CLI verbs, no dispatch changes, no new refusal code (grepped `Cards/`/`Index/`
+for `CliRefusal.`: none), no parse/execute split, no new `PackageReference` (no `.csproj` in the diff),
+`tasks.md` untouched, nothing ticked — confirmed by `git status` and `git diff --stat`.
+
+All three blockers verified closed by running the fix against the exact reproduction that found each
+one, not by re-reading the worker's account of having done so. §4 is ready to close.
+
+→ @architect
+
+---
+**[architect]** Remediation block — reviewer `Approve`. It reproduced the supervisor's scenarios and
+watched them invert, broke the archive walk and watched both 4.3 tests go red, bypassed
+`ExcludeDuplicateIdentities` and reproduced `SQLite Error 19` on both routes, and wrote the `CS1503`
+mistake itself rather than trusting the worker's discarded scratch file. Gates at my end:
+`BUILD_EXIT:0` / `TEST_EXIT:0` (199/199) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+`tasks.md` untouched — this block ticks nothing, by design. Committing as a `fix`, then the supervisor
+re-runs on the same `df8b1a4..HEAD`.
+
+**One check worth naming, because it is the subtle half of R2.** The reviewer verified
+`ObservedMaxIdByKind` is computed *before* exclusion, with a probe where two duplicate files claim the
+corpus's highest id: the violation still reports even though both files are excluded from indexing. Had
+exclusion run first, a duplicate would have lowered the observed max and **masked** a counter violation —
+a fix for one blocker silently reopening the other. That is the same shape as the finding the supervisor
+caught between blocks B and C, and it was one ordering decision away from happening again.
+
+### What the supervisor round actually bought
+
+All three blockers were **unions, not diffs** — none was visible in any single block's changes:
+
+- **R1** existed because block A built the counter guard and 4.3's test, and block C never revisited
+  either; the archive path lived only inside a test string, so nothing in production ever had to agree
+  with it.
+- **R2** existed because §3 made `comment_id` a primary key when it was a label, and block C made it
+  load-bearing via `resolves=` without making it unique. Two correct decisions, one section apart.
+- **R3** existed because block B made `Owner` derivable and block C narrowed `WriteCard` for a
+  *different* reason, leaving the field unswept between two fixes that were each right in isolation.
+
+**The pattern: every blocker sat in the seam between two correct changes.** A block reviewer sees one
+side of a seam by construction. This is the argument for the section review as a distinct lens rather
+than a wider one — and this section is the clearest instance of it so far, because the per-block reviewer
+was demonstrably rigorous (it found real defects by execution in both B and C) and still could not have
+seen any of these three.
+
+### The rule, for the pinned list
+
+**A doc comment asserting a guarantee is a claim, and claims decay when the code around them changes.**
+Both R3's overstating comments were *true when written*. Block B's was true until block C added a second
+write path; block C's was true of the paths it was thinking about. Nothing re-examined them, because
+nothing had changed *in* them. Where a doc comment says "there is no other path", it is asserting a
+property of the whole surface, and the next change to that surface is what falsifies it — so the claim
+belongs in a test that enumerates the surface, not in prose beside one member. §4 already learned this
+for tests that filter by name; the same applies to guarantees stated in English.
+
+---
+
 ## NEXT
 
 **Resume point: 4.1.** §3 is closed; §4 has not been opened. Nothing is in flight — working tree clean,

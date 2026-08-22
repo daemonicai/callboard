@@ -187,7 +187,7 @@ public sealed class CardOwnershipTransferTests : IDisposable
     {
         var path = Path.Combine(_directory, fileStem + ".md");
         var frontmatter = new CardFrontmatter(id, CardKind.Block, "Title", "open", owner, CardScope.Change, "4", Created, Created);
-        AssertSuccess(CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body.", [], []), TimeSpan.FromSeconds(5), ChangeName));
+        AssertSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName));
         return path;
     }
 

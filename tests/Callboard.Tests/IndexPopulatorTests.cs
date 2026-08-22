@@ -35,7 +35,7 @@ public sealed class IndexPopulatorTests : IDisposable
         var comment = new CardComment("C-0001", CardOwner.Reviewer, Created, "Narrative body.", null, CardOwner.Worker, null, []);
         var frontmatter = new CardFrontmatter(
             "B-0001", CardKind.Block, "A title", "open", CardOwner.Worker, CardScope.Change, "3", Created, Updated);
-        WriteCard(CardScope.Change, "b-0001", new CardFile(frontmatter, "Body.", [comment], []));
+        WriteCard(CardScope.Change, "b-0001", new NewCardFile(frontmatter, "Body."), [comment]);
 
         var result = IndexPopulator.Populate(_root, databasePath);
 
@@ -69,7 +69,7 @@ public sealed class IndexPopulatorTests : IDisposable
         var second = new CardComment("C-0002", CardOwner.Architect, Updated, "Second.", "C-0001", null, "C-0001", []);
         var frontmatter = new CardFrontmatter(
             "B-0002", CardKind.Question, "Q", "open", CardOwner.Architect, CardScope.Change, "3", Created, Created);
-        WriteCard(CardScope.Change, "b-0002", new CardFile(frontmatter, "Body.", [first, second], []));
+        WriteCard(CardScope.Change, "b-0002", new NewCardFile(frontmatter, "Body."), [first, second]);
 
         IndexPopulator.Populate(_root, databasePath);
 
@@ -109,7 +109,7 @@ public sealed class IndexPopulatorTests : IDisposable
         var comment = new CardComment("C-0001", CardOwner.Worker, Created, commentBodySecret, null, null, null, []);
         var frontmatter = new CardFrontmatter(
             "B-0003", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "3", Created, Created);
-        WriteCard(CardScope.Change, "b-0003", new CardFile(frontmatter, cardBodySecret, [comment], []));
+        WriteCard(CardScope.Change, "b-0003", new NewCardFile(frontmatter, cardBodySecret), [comment]);
 
         IndexPopulator.Populate(_root, databasePath);
 
@@ -168,6 +168,81 @@ public sealed class IndexPopulatorTests : IDisposable
         Assert.Equal(0L, (long)command.ExecuteScalar()!);
     }
 
+    // ---------------------------------------------------------------------------------------
+    // §4 remediation R2 — a duplicated identity is a reported failure, not an aborted rebuild.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Populate_ReportsADuplicateCommentId_AndStillIndexesAHealthyCardElsewhere()
+    {
+        var databasePath = IndexPaths.DatabasePath(_root);
+        var duplicateCardPath = CardPath(CardScope.Change, "b-0010");
+
+        var first = new CardComment("C-0001", CardOwner.Worker, Created, "First.", null, null, null, []);
+        var repeated = new CardComment("C-0001", CardOwner.Reviewer, Updated, "Same id as the first.", null, null, null, []);
+        var frontmatter = new CardFrontmatter(
+            "B-0010", CardKind.Block, "Has a duplicate comment id", "open", CardOwner.Worker, CardScope.Change, "3", Created, Created);
+        WriteCard(CardScope.Change, "b-0010", new NewCardFile(frontmatter, "Body."), [first, repeated]);
+        WriteCard(CardScope.Change, "b-0011", GoodCard("B-0011"));
+
+        var result = IndexPopulator.Populate(_root, databasePath);
+
+        Assert.Equal(1, result.IndexedCardCount);
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal(duplicateCardPath, failure.FilePath);
+        Assert.Contains("C-0001", failure.Reason, StringComparison.Ordinal);
+
+        using var connection = OpenReadOnly(databasePath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id FROM cards ORDER BY id;";
+        using var reader = command.ExecuteReader();
+        var ids = new List<string>();
+        while (reader.Read())
+        {
+            ids.Add(reader.GetString(0));
+        }
+
+        Assert.Equal(["B-0011"], ids);
+    }
+
+    [Fact]
+    public void Populate_ReportsTwoFilesClaimingOneCardId_NamesBothAndIndexesNeither_LeavingAHealthyCardElsewhereIndexed()
+    {
+        // What the spec's own "Rule promoted from change to repository scope" scenario produces
+        // when performed the obvious way: the card's file is written at the new scope's path
+        // without the old one being moved or removed.
+        var databasePath = IndexPaths.DatabasePath(_root);
+        var pathA = CardPath(CardScope.Change, "r-0020-change");
+        var pathB = CardPath(CardScope.Repository, "r-0020-register");
+        var frontmatterA = new CardFrontmatter(
+            "R-0020", CardKind.Rule, "Original scope", "open", CardOwner.Architect, CardScope.Change, "3", Created, Created);
+        var frontmatterB = new CardFrontmatter(
+            "R-0020", CardKind.Rule, "Promoted scope", "open", CardOwner.Architect, CardScope.Repository, string.Empty, Created, Created);
+        WriteCard(CardScope.Change, "r-0020-change", new NewCardFile(frontmatterA, "Body."));
+        WriteCard(CardScope.Repository, "r-0020-register", new NewCardFile(frontmatterB, "Body."));
+        WriteCard(CardScope.Change, "b-0021", GoodCard("B-0021"));
+
+        var result = IndexPopulator.Populate(_root, databasePath);
+
+        Assert.Equal(1, result.IndexedCardCount);
+        Assert.Equal(2, result.Failures.Count);
+        Assert.Contains(result.Failures, failure => failure.FilePath == pathA);
+        Assert.Contains(result.Failures, failure => failure.FilePath == pathB);
+        Assert.All(result.Failures, failure => Assert.Contains("R-0020", failure.Reason, StringComparison.Ordinal));
+
+        using var connection = OpenReadOnly(databasePath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id FROM cards ORDER BY id;";
+        using var reader = command.ExecuteReader();
+        var ids = new List<string>();
+        while (reader.Read())
+        {
+            ids.Add(reader.GetString(0));
+        }
+
+        Assert.Equal(["B-0021"], ids);
+    }
+
     [Fact]
     public void Populate_ReadsRepositoryAndCapabilityScopedCardsToo()
     {
@@ -176,20 +251,18 @@ public sealed class IndexPopulatorTests : IDisposable
             "R-0001", CardKind.Rule, "Rule", "open", CardOwner.Architect, CardScope.Repository, string.Empty, Created, Created);
         var capabilityFrontmatter = new CardFrontmatter(
             "D-0001", CardKind.Decision, "Decision", "open", CardOwner.Architect, CardScope.Capability, string.Empty, Created, Created);
-        WriteCard(CardScope.Repository, "r-0001", new CardFile(repositoryFrontmatter, "Body.", [], []));
-        WriteCard(CardScope.Capability, "d-0001", new CardFile(capabilityFrontmatter, "Body.", [], []));
+        WriteCard(CardScope.Repository, "r-0001", new NewCardFile(repositoryFrontmatter, "Body."));
+        WriteCard(CardScope.Capability, "d-0001", new NewCardFile(capabilityFrontmatter, "Body."));
 
         var result = IndexPopulator.Populate(_root, databasePath);
 
         Assert.Equal(2, result.IndexedCardCount);
     }
 
-    private static CardFile GoodCard(string id) =>
+    private static NewCardFile GoodCard(string id) =>
         new(
             new CardFrontmatter(id, CardKind.Block, "Title " + id, "open", CardOwner.Worker, CardScope.Change, "3", Created, Created),
-            "Body.",
-            [],
-            []);
+            "Body.");
 
     private string CardPath(CardScope scope, string fileStem)
     {
@@ -202,7 +275,7 @@ public sealed class IndexPopulatorTests : IDisposable
         return Path.Combine(_root, directory.Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
     }
 
-    private void WriteCard(CardScope scope, string fileStem, CardFile card)
+    private void WriteCard(CardScope scope, string fileStem, NewCardFile card, IReadOnlyList<CardComment>? comments = null)
     {
         var path = CardPath(scope, fileStem);
         var changeName = scope.Match(
@@ -215,6 +288,14 @@ public sealed class IndexPopulatorTests : IDisposable
         result.Match<object?>(
             onSuccess: static _ => null,
             onFailure: failure => throw new Xunit.Sdk.XunitException($"setup write failed: {failure.Reason}"));
+
+        foreach (var comment in comments ?? [])
+        {
+            var appended = CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), changeName);
+            appended.Match<object?>(
+                onSuccess: static _ => null,
+                onFailure: failure => throw new Xunit.Sdk.XunitException($"setup append failed: {failure.Reason}"));
+        }
     }
 
     private static SqliteConnection OpenReadOnly(string databasePath)
