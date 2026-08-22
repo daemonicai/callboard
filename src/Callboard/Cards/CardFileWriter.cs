@@ -44,7 +44,8 @@ internal static class CardFileWriter
             onObligation: static () => false,
             onRule: static () => false,
             onHazard: static () => false,
-            onDecision: static () => false);
+            onDecision: static () => false,
+            onSection: static () => false);
 
         if (isBlockCard)
         {
@@ -84,6 +85,40 @@ internal static class CardFileWriter
             }
         }
 
+        // §5 block E's three section-only scalar fields — same "present only when set" convention
+        // as the block fields above, and the same guarantee that a card of any other kind never
+        // reaches here with non-empty SectionFields (CardFileParser only ever populates it for kind
+        // section).
+        var isSectionCard = frontmatter.Kind.Match(
+            onBlock: static () => false,
+            onQuestion: static () => false,
+            onFinding: static () => false,
+            onObligation: static () => false,
+            onRule: static () => false,
+            onHazard: static () => false,
+            onDecision: static () => false,
+            onSection: static () => true);
+
+        if (isSectionCard)
+        {
+            var sectionFields = card.SectionFields;
+
+            if (sectionFields.Base is { } baseCommit)
+            {
+                builder.Append("base: ").Append(CardFileFormat.EscapeFrontmatterValue(baseCommit)).Append('\n');
+            }
+
+            if (sectionFields.ClosedBy is { } closedBy)
+            {
+                builder.Append("closed_by: ").Append(closedBy.ToWireString()).Append('\n');
+            }
+
+            if (sectionFields.ClosedAt is { } closedAt)
+            {
+                builder.Append("closed_at: ").Append(FormatTimestamp(closedAt)).Append('\n');
+            }
+        }
+
         // Unknown fields (a §5/§6 field this build does not model, or a hand-added line) are
         // re-emitted after the known ones rather than interleaved back into their original
         // position — the parser records only the value at each known key, not a full original
@@ -120,6 +155,20 @@ internal static class CardFileWriter
             builder.Append(CardFileFormat.TransitionLinePrefix)
                 .Append(BuildTransitionFields(transition))
                 .Append(CardFileFormat.TransitionLineSuffix)
+                .Append('\n');
+        }
+
+        // Verdicts after transitions, before comments — the same fixed, deterministic layout
+        // convention as handovers-before-transitions above; each sequence's own internal order
+        // (oldest first) is what the append-only guarantee is actually about. A section may
+        // accumulate more than one verdict across supervisor rounds (work-lifecycle §3c: request
+        // changes, remediate, re-review), so this is its own append-only sequence for the same
+        // reason Transitions is not folded into a scalar.
+        foreach (var verdict in card.SectionFields.Verdicts)
+        {
+            builder.Append(CardFileFormat.VerdictLinePrefix)
+                .Append(BuildVerdictFields(verdict))
+                .Append(CardFileFormat.VerdictLineSuffix)
                 .Append('\n');
         }
 
@@ -207,6 +256,23 @@ internal static class CardFileWriter
         fields.Append(" timestamp=").Append(FormatTimestamp(transition.Timestamp));
 
         foreach (var (key, rawValue) in transition.UnknownFields)
+        {
+            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+        }
+
+        return fields.ToString();
+    }
+
+    private static string BuildVerdictFields(SectionVerdictEntry verdict)
+    {
+        var fields = new StringBuilder();
+        fields.Append("by=").Append(verdict.By.ToWireString());
+        fields.Append(" verdict=").Append(verdict.Verdict.ToWireString());
+        fields.Append(" range-from=").Append(CardFileFormat.EscapeCommentHeaderValue(verdict.RangeFrom));
+        fields.Append(" range-to=").Append(CardFileFormat.EscapeCommentHeaderValue(verdict.RangeTo));
+        fields.Append(" timestamp=").Append(FormatTimestamp(verdict.Timestamp));
+
+        foreach (var (key, rawValue) in verdict.UnknownFields)
         {
             fields.Append(' ').Append(key).Append('=').Append(rawValue);
         }

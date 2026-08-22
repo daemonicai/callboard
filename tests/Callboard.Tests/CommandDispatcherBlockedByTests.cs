@@ -91,6 +91,51 @@ public sealed class CommandDispatcherBlockedByTests
         Assert.Equal("missing-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
+    // Cross-block repair (§5 block E remediation, reviewer's requested sweep): landed in block D
+    // (a52cd7a), found by the CLI-parser-vs-file-parser audit block E's own defect prompted.
+    // CommandParser used to check only `blockingCardId is null`, so an empty or whitespace-only id
+    // parsed clean and reached CardStore.UpdateBlockedByUnderExistingLock, where
+    // BlockCardFields.BlockedBy's validating `init` accessor threw ArgumentException — surfacing as
+    // an ungraceful `tool-failure` (exit 2) rather than a clean refusal. Unlike the section-verdict
+    // defect this remediation exists for, the exception fired *before* AtomicWrite, so no card was
+    // ever corrupted — a crash where a refusal belonged, not a write that poisoned the record.
+    // Shared site (ParseBlockedByMutation): reached identically by add-blocker and remove-blocker.
+    [Fact]
+    public void AddBlocker_EmptyBlockingCardId_RefusesWithInvalidBlockingCardIdCode_AndWritesNothing()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo.Path, "b-0011", "B-0011");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "add-blocker", path, "", "--role", "worker", "--change", ChangeName], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("invalid-blocking-card-id", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // Same construction site, reached via remove-blocker instead — proving the shared guard fires
+    // for both verbs' parse arms, not just add-blocker's.
+    [Fact]
+    public void RemoveBlocker_WhitespaceOnlyBlockingCardId_RefusesWithInvalidBlockingCardIdCode_AndWritesNothing()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo.Path, "b-0012", "B-0012");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "remove-blocker", path, "   ", "--role", "worker", "--change", ChangeName], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("invalid-blocking-card-id", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
     // Shared site (ParseRoleAndChangeFlags) — same construction the block gate tests already prove
     // for --role/--change dangling with no value and --role entirely absent; not repeated here.
     [Fact]

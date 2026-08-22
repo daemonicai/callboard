@@ -5,7 +5,7 @@ namespace Callboard.Cards;
 /// <c>Q-0007</c>, <c>F-0031</c>, <c>D-0019</c>) — the letter alone is what lets a reader identify a
 /// card's kind from its identity without looking anything up. One letter per kind, all distinct:
 /// <c>B</c>lock, <c>Q</c>uestion, <c>F</c>inding, <c>O</c>bligation, <c>R</c>ule, <c>H</c>azard,
-/// <c>D</c>ecision.
+/// <c>D</c>ecision, <c>S</c>ection (§5 block E, card-model's eighth kind).
 /// </summary>
 internal static class CardIdentityPrefix
 {
@@ -16,5 +16,6 @@ internal static class CardIdentityPrefix
         onObligation: static () => "O",
         onRule: static () => "R",
         onHazard: static () => "H",
-        onDecision: static () => "D");
+        onDecision: static () => "D",
+        onSection: static () => "S");
 }

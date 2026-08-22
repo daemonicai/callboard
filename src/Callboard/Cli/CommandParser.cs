@@ -33,9 +33,10 @@ internal static class CommandParser
         "version" => new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.Version()),
         "index" => ParseIndex(context),
         "block" => ParseBlock(context),
+        "section" => ParseSection(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section.")),
     };
 
     /// <summary>
@@ -292,6 +293,13 @@ internal static class CommandParser
                 "this command requires a blocking card id."));
         }
 
+        if (!BlockCardFields.IsValidListItem(blockingCardId))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "invalid-blocking-card-id",
+                "a blocking card id cannot be empty or whitespace-only — card identities are never empty."));
+        }
+
         var flags = ParseRoleAndChangeFlags(context, "this command");
         if (flags.Refusal is not null)
         {
@@ -356,5 +364,224 @@ internal static class CommandParser
         }
 
         return (role, changeName, null);
+    }
+
+    /// <summary>
+    /// <c>section</c>'s only job is routing to a subcommand: <c>verdict</c>, <c>close</c> and
+    /// <c>status</c> (§5 block E). Same peek-don't-take shape as <see cref="ParseBlock"/>, same
+    /// reason.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseSection(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'section' requires a subcommand. Known subcommands: verdict, close, status."));
+            case "verdict":
+                context.Arguments.TryTake();
+                return ParseSectionVerdict(context);
+            case "close":
+                context.Arguments.TryTake();
+                return ParseSectionClose(context);
+            case "status":
+                context.Arguments.TryTake();
+                return ParseSectionStatus(context);
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'section' subcommand: '{subcommand}'. Known subcommands: verdict, close, status."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>section verdict</c>'s <see cref="CommandDispatcher.ParsedCommand.SectionVerdict"/>:
+    /// one positional token (card file path) followed by <c>--verdict</c>, <c>--range-from</c> and
+    /// <c>--range-to</c> (all required), <c>--role</c> (required) and the optional <c>--change</c>
+    /// flag. <c>--verdict</c>'s wire-format validity is argv-decidable, the same O-3 discipline
+    /// <see cref="ParseBlockTransition"/> already applies to <c>--role</c>.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseSectionVerdict(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'section verdict' requires a card file path."));
+        }
+
+        string? verdictText = null;
+        string? rangeFrom = null;
+        string? rangeTo = null;
+        string? roleText = null;
+        string? changeName = null;
+
+        while (context.Arguments.Peek() is { } flag)
+        {
+            if (flag == "--verdict")
+            {
+                context.Arguments.TryTake();
+                verdictText = context.Arguments.TryTake();
+                if (verdictText is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-flag-value", "'--verdict' requires a value."));
+                }
+
+                continue;
+            }
+
+            if (flag == "--range-from")
+            {
+                context.Arguments.TryTake();
+                rangeFrom = context.Arguments.TryTake();
+                if (rangeFrom is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-flag-value", "'--range-from' requires a value."));
+                }
+
+                continue;
+            }
+
+            if (flag == "--range-to")
+            {
+                context.Arguments.TryTake();
+                rangeTo = context.Arguments.TryTake();
+                if (rangeTo is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-flag-value", "'--range-to' requires a value."));
+                }
+
+                continue;
+            }
+
+            if (flag == "--role")
+            {
+                context.Arguments.TryTake();
+                roleText = context.Arguments.TryTake();
+                if (roleText is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-flag-value", "'--role' requires a value."));
+                }
+
+                continue;
+            }
+
+            if (flag == "--change")
+            {
+                context.Arguments.TryTake();
+                changeName = context.Arguments.TryTake();
+                if (changeName is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-flag-value", "'--change' requires a value."));
+                }
+
+                continue;
+            }
+
+            break;
+        }
+
+        if (verdictText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'section verdict' requires '--verdict <verdict>'."));
+        }
+
+        if (!SectionVerdictWireFormat.TryParse(verdictText, out var verdict))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-verdict", $"unrecognised verdict: '{verdictText}'. Recognised verdicts: {SectionVerdictWireFormat.RecognisedValues}."));
+        }
+
+        if (rangeFrom is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'section verdict' requires '--range-from <commit>'."));
+        }
+
+        if (!Callboard.Cards.SectionVerdictEntry.IsValidRangeValue(rangeFrom))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "invalid-range", "'--range-from' cannot be empty or whitespace-only — a range endpoint that cannot be read back is not a range."));
+        }
+
+        if (rangeTo is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'section verdict' requires '--range-to <commit>'."));
+        }
+
+        if (!Callboard.Cards.SectionVerdictEntry.IsValidRangeValue(rangeTo))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "invalid-range", "'--range-to' cannot be empty or whitespace-only — a range endpoint that cannot be read back is not a range."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'section verdict' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionVerdict(
+            filePath, verdict, rangeFrom, rangeTo, role, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>section close</c>'s <see cref="CommandDispatcher.ParsedCommand.SectionClose"/>:
+    /// one positional token (card file path), <c>--role</c> (required) and the optional
+    /// <c>--change</c> flag — the same <c>--role</c>/<c>--change</c> pair
+    /// <see cref="ParseRoleAndChangeFlags"/> already factors out.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseSectionClose(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'section close' requires a card file path."));
+        }
+
+        var flags = ParseRoleAndChangeFlags(context, "'section close'");
+        if (flags.Refusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flags.Refusal);
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionClose(
+            filePath, flags.Role!, flags.ChangeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>section status</c>'s <see cref="CommandDispatcher.ParsedCommand.SectionStatus"/>:
+    /// one positional token (card file path), nothing else — read-only, so no role, no
+    /// <c>--change</c>, no timestamp (work-lifecycle: "the system answers from the section entity
+    /// without requiring its cards to be read").
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseSectionStatus(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'section status' requires a card file path."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionStatus(filePath));
     }
 }

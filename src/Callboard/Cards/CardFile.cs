@@ -48,6 +48,15 @@ namespace Callboard.Cards;
 /// parameter accepts <see langword="null"/> for the same reason <paramref name="Handovers"/>'s
 /// does.
 /// </param>
+/// <param name="SectionFields">
+/// The three §5 block E fields (<c>base</c>, <c>closed_by</c>, <c>closed_at</c>) known only on a
+/// <c>section</c> card — see <see cref="Cards.SectionCardFields"/>'s own doc comment.
+/// <see cref="CardFileParser"/> only ever populates this with non-empty content when
+/// <see cref="CardFrontmatter.Kind"/> is <see cref="CardKind.Section"/>; for every other kind it is
+/// <see cref="Cards.SectionCardFields.Empty"/>, exactly the same convention <paramref name="BlockFields"/>
+/// already applies. The constructor parameter accepts <see langword="null"/> for the same reason
+/// <paramref name="Handovers"/>'s does.
+/// </param>
 internal sealed record CardFile(
     CardFrontmatter Frontmatter,
     string Body,
@@ -55,11 +64,14 @@ internal sealed record CardFile(
     IReadOnlyList<(string Key, string RawValue)> UnknownFrontmatterFields,
     IReadOnlyList<CardHandover>? Handovers = null,
     BlockCardFields? BlockFields = null,
-    IReadOnlyList<CardBlockTransitionEntry>? Transitions = null)
+    IReadOnlyList<CardBlockTransitionEntry>? Transitions = null,
+    SectionCardFields? SectionFields = null)
 {
     public IReadOnlyList<CardHandover> Handovers { get; init; } = Handovers ?? [];
 
     public BlockCardFields BlockFields { get; init; } = BlockFields ?? BlockCardFields.Empty;
 
     public IReadOnlyList<CardBlockTransitionEntry> Transitions { get; init; } = Transitions ?? [];
+
+    public SectionCardFields SectionFields { get; init; } = SectionFields ?? Cards.SectionCardFields.Empty;
 }

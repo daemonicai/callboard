@@ -535,6 +535,156 @@ internal static class CardStore
                 new CardBlockedByOutcome.CardCorrupt(filePath, failure.Reason));
     }
 
+    /// <summary>
+    /// Appends one supervisor verdict to the section card at <paramref name="filePath"/>
+    /// (work-lifecycle: "Sections are entities" — "the verdict, the range and the acting role are
+    /// recorded against that section entity", §5 block E) — reads the current card, and only if it
+    /// is a section card, appends the entry under the card's lock, the same read-decide-write shape
+    /// <see cref="ApplyBlockTransition"/> established. A second verdict for the same section is a
+    /// second entry, not an upsert — see <see cref="SectionVerdictEntry"/>'s own doc comment for
+    /// why (unlike <see cref="RecordGateResult"/>'s label-keyed upsert).
+    /// </summary>
+    internal static CardSectionVerdictOutcome RecordSectionVerdict(
+        string cardsRoot, string filePath, SectionVerdict verdict, string rangeFrom, string rangeTo, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => RecordSectionVerdictUnderExistingLock(heldLock, cardsRoot, verdict, rangeFrom, rangeTo, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardSectionVerdictOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="RecordSectionVerdict"/>. Same structural lock
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type — the target is
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>.
+    /// </summary>
+    internal static CardSectionVerdictOutcome RecordSectionVerdictUnderExistingLock(
+        CardLock heldLock, string cardsRoot, SectionVerdict verdict, string rangeFrom, string rangeTo, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardSectionVerdictOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardSectionVerdictOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsSectionCard(card))
+                {
+                    return new CardSectionVerdictOutcome.NotASectionCard(card.Frontmatter.Kind);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardSectionVerdictOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var entry = new SectionVerdictEntry(actingRole, verdict, rangeFrom, rangeTo, timestamp, []);
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Updated = timestamp },
+                    SectionFields = card.SectionFields with { Verdicts = [.. card.SectionFields.Verdicts, entry] },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardSectionVerdictOutcome>(
+                    onSuccess: _ => new CardSectionVerdictOutcome.Recorded(updated, entry),
+                    onNotFound: notFound => new CardSectionVerdictOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardSectionVerdictOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardSectionVerdictOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// Closes the section card at <paramref name="filePath"/> (work-lifecycle: "Sections are
+    /// entities" — "closing it SHALL record the acting role and the time", §5 block E) — reads the
+    /// current card, and only if it is a section card not already closed, writes
+    /// <c>status: closed</c> plus <c>closed_by</c>/<c>closed_at</c> under the card's lock. Whether a
+    /// section is <em>permitted</em> to close (§9: open obligations, undeferred questions,
+    /// unresolved threads) is not decided here — see <see cref="CardSectionCloseOutcome"/>'s own
+    /// doc comment.
+    /// </summary>
+    internal static CardSectionCloseOutcome CloseSection(
+        string cardsRoot, string filePath, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => CloseSectionUnderExistingLock(heldLock, cardsRoot, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardSectionCloseOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="CloseSection"/>. Same structural lock precondition
+    /// as every other <c>*UnderExistingLock</c> method on this type — the target is
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>.
+    /// </summary>
+    internal static CardSectionCloseOutcome CloseSectionUnderExistingLock(
+        CardLock heldLock, string cardsRoot, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardSectionCloseOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardSectionCloseOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsSectionCard(card))
+                {
+                    return new CardSectionCloseOutcome.NotASectionCard(card.Frontmatter.Kind);
+                }
+
+                if (!SectionFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
+                {
+                    return new CardSectionCloseOutcome.CardCorrupt(
+                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {SectionFlowStateWireFormat.RecognisedValues}.");
+                }
+
+                if (currentState == SectionFlowState.Closed)
+                {
+                    return new CardSectionCloseOutcome.AlreadyClosed(filePath);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardSectionCloseOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Status = SectionFlowState.Closed.ToWireString(), Updated = timestamp },
+                    SectionFields = card.SectionFields with { ClosedBy = actingRole, ClosedAt = timestamp },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardSectionCloseOutcome>(
+                    onSuccess: _ => new CardSectionCloseOutcome.Closed(updated),
+                    onNotFound: notFound => new CardSectionCloseOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardSectionCloseOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardSectionCloseOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardSectionCloseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardSectionCloseOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
     /// <summary>Shared by <see cref="ApplyBlockTransitionUnderExistingLock"/>,
     /// <see cref="RecordGateResultUnderExistingLock"/> and <see cref="UpdateBlockedByUnderExistingLock"/>
     /// — the one place "is this card's kind block" is decided, over the closed
@@ -547,7 +697,22 @@ internal static class CardStore
         onObligation: static () => false,
         onRule: static () => false,
         onHazard: static () => false,
-        onDecision: static () => false);
+        onDecision: static () => false,
+        onSection: static () => false);
+
+    /// <summary>The <see cref="IsBlockCard"/> counterpart for <see cref="CardKind.Section"/>
+    /// (§5 block E), shared by <see cref="RecordSectionVerdictUnderExistingLock"/> and
+    /// <see cref="CloseSectionUnderExistingLock"/> so the two verbs cannot drift on what counts as
+    /// a section card.</summary>
+    private static bool IsSectionCard(CardFile card) => card.Frontmatter.Kind.Match(
+        onBlock: static () => false,
+        onQuestion: static () => false,
+        onFinding: static () => false,
+        onObligation: static () => false,
+        onRule: static () => false,
+        onHazard: static () => false,
+        onDecision: static () => false,
+        onSection: static () => true);
 
     /// <summary>
     /// Reads and parses one card file. I/O failures (the file vanished, permissions) are caught

@@ -52,6 +52,19 @@ public sealed class CardScopeRulesTests
     public void Obligation_RefusesEveryOtherScope(string scopeName) =>
         AssertRefused(CardScopeRules.Validate(CardKind.Obligation, ScopeByName(scopeName)));
 
+    // §5 block E: card-model's amended (kind, scope) table gives section the same row as
+    // obligation — change-scoped only, matching D3's layout (`changes/<name>/`).
+    [Fact]
+    public void Section_AcceptsChangeScope() =>
+        AssertValid(CardScopeRules.Validate(CardKind.Section, CardScope.Change));
+
+    [Theory]
+    [InlineData("Section")]
+    [InlineData("Capability")]
+    [InlineData("Repository")]
+    public void Section_RefusesEveryOtherScope(string scopeName) =>
+        AssertRefused(CardScopeRules.Validate(CardKind.Section, ScopeByName(scopeName)));
+
     [Fact]
     public void Decision_AcceptsCapabilityScope() =>
         AssertValid(CardScopeRules.Validate(CardKind.Decision, CardScope.Capability));

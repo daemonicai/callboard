@@ -20,7 +20,8 @@ internal static class CardScopeRules
         onObligation: () => RequireExactly(scope, CardScope.Change, kind),
         onRule: () => ValidateRule(scope),
         onHazard: () => RequireExactly(scope, CardScope.Repository, kind),
-        onDecision: () => RequireExactly(scope, CardScope.Capability, kind));
+        onDecision: () => RequireExactly(scope, CardScope.Capability, kind),
+        onSection: () => RequireExactly(scope, CardScope.Change, kind));
 
     /// <summary>
     /// <c>rule</c> is the one kind the table gives two legal scopes, and the one scenario the spec

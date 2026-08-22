@@ -171,17 +171,20 @@ internal static class CommandDispatcher
             Func<BlockTransition, TResult> onBlockTransition,
             Func<BlockGate, TResult> onBlockGate,
             Func<BlockAddBlocker, TResult> onBlockAddBlocker,
-            Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker);
+            Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker,
+            Func<SectionVerdict, TResult> onSectionVerdict,
+            Func<SectionClose, TResult> onSectionClose,
+            Func<SectionStatus, TResult> onSectionStatus);
 
         internal sealed record Version : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
                 onVersion(this);
         }
 
         internal sealed record IndexRebuild(string WorkingDirectory) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
                 onIndexRebuild(this);
         }
 
@@ -206,7 +209,7 @@ internal static class CommandDispatcher
         internal sealed record BlockTransition(
             string FilePath, string TransitionName, CardOwner ActingRole, string? BaseCommit, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
                 onBlockTransition(this);
         }
 
@@ -219,7 +222,7 @@ internal static class CommandDispatcher
         internal sealed record BlockGate(
             string FilePath, string Label, int ExitCode, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
                 onBlockGate(this);
         }
 
@@ -231,15 +234,44 @@ internal static class CommandDispatcher
         internal sealed record BlockAddBlocker(
             string FilePath, string BlockingCardId, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
                 onBlockAddBlocker(this);
         }
 
         internal sealed record BlockRemoveBlocker(
             string FilePath, string BlockingCardId, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
                 onBlockRemoveBlocker(this);
+        }
+
+        /// <param name="RangeFrom">The commit range's start the supervisor is recording a verdict
+        /// against — data on the entity, never re-derived from git (§5 block E brief).</param>
+        /// <param name="RangeTo">The commit range's end.</param>
+        internal sealed record SectionVerdict(
+            string FilePath, Callboard.Cards.SectionVerdict Verdict, string RangeFrom, string RangeTo, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+                onSectionVerdict(this);
+        }
+
+        internal sealed record SectionClose(
+            string FilePath, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+                onSectionClose(this);
+        }
+
+        /// <summary>
+        /// <c>section status</c>: read-only, work-lifecycle's "the system answers from the section
+        /// entity without requiring its cards to be read" scenario (§5 block E) — carries only the
+        /// card file path, the same "a path, not a symbolic id" convention every other verb here
+        /// follows.
+        /// </summary>
+        internal sealed record SectionStatus(string FilePath) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+                onSectionStatus(this);
         }
     }
 
@@ -283,7 +315,10 @@ internal static class CommandDispatcher
                     onBlockTransition: parsed => RunBlockTransition(parsed, resolvedLockTimeout),
                     onBlockGate: parsed => RunBlockGate(parsed, resolvedLockTimeout),
                     onBlockAddBlocker: parsed => RunBlockAddBlocker(parsed, resolvedLockTimeout),
-                    onBlockRemoveBlocker: parsed => RunBlockRemoveBlocker(parsed, resolvedLockTimeout)),
+                    onBlockRemoveBlocker: parsed => RunBlockRemoveBlocker(parsed, resolvedLockTimeout),
+                    onSectionVerdict: parsed => RunSectionVerdict(parsed, resolvedLockTimeout),
+                    onSectionClose: parsed => RunSectionClose(parsed, resolvedLockTimeout),
+                    onSectionStatus: static parsed => RunSectionStatus(parsed)),
                 onRefused: refused => refused.Refusal);
 
             WriteEnvelope(output, RecognisedCommand(command, arguments), outcome);
@@ -589,6 +624,154 @@ internal static class CommandDispatcher
             onCardCorrupt: corrupt => throw new InvalidOperationException(
                 $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
+
+    /// <summary>
+    /// <c>section verdict</c> (§5 block E, work-lifecycle: "Sections are entities" — "the verdict,
+    /// the range and the acting role are recorded against that section entity"): appends one
+    /// supervisor verdict via <see cref="CardStore.RecordSectionVerdict"/>. Same three-way
+    /// refusal/tool-failure/reported-failure split every §5 write verb already applies.
+    /// <see langword="private"/>: <see cref="CommandParser"/> cannot name this method.
+    /// </summary>
+    private static CommandOutcome RunSectionVerdict(ParsedCommand.SectionVerdict parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var outcome = CardStore.RecordSectionVerdict(
+            repoRoot, parsed.FilePath, parsed.Verdict, parsed.RangeFrom, parsed.RangeTo, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+
+        return outcome.Match<CommandOutcome>(
+            onRecorded: recorded => new CommandOutcome.Success(new SectionVerdictResult
+            {
+                FilePath = parsed.FilePath,
+                Verdict = recorded.Entry.Verdict.ToWireString(),
+                RangeFrom = recorded.Entry.RangeFrom,
+                RangeTo = recorded.Entry.RangeTo,
+                ActingRole = recorded.Entry.By.ToWireString(),
+                Timestamp = recorded.Entry.Timestamp,
+            }),
+            onNotASectionCard: notASection => new CommandOutcome.Refusal(
+                "not-a-section-card",
+                $"'{parsed.FilePath}' is a '{notASection.Kind.ToWireString()}' card; verdicts only apply to a section card."),
+            onCardNotFound: notFound => new CommandOutcome.Refusal(
+                "card-not-found",
+                $"no card file exists at '{notFound.FilePath}' to record a verdict on."),
+            onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            onCardCorrupt: corrupt => throw new InvalidOperationException(
+                $"card '{corrupt.FilePath}' could not be read as a section card: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
+    }
+
+    /// <summary>
+    /// <c>section close</c> (§5 block E, work-lifecycle: "closing it SHALL record the acting role
+    /// and the time"): closes the section via <see cref="CardStore.CloseSection"/>. Records who
+    /// closed it and when only — the closing <em>conditions</em> (§9: open obligations, undeferred
+    /// questions, unresolved threads) are not this handler's job, the same boundary
+    /// <see cref="CardSectionCloseOutcome"/>'s own doc comment states.
+    /// <see langword="private"/>: <see cref="CommandParser"/> cannot name this method.
+    /// </summary>
+    private static CommandOutcome RunSectionClose(ParsedCommand.SectionClose parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var outcome = CardStore.CloseSection(repoRoot, parsed.FilePath, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+
+        return outcome.Match<CommandOutcome>(
+            onClosed: closed => new CommandOutcome.Success(new SectionCloseResult
+            {
+                FilePath = parsed.FilePath,
+                ClosedBy = (closed.Card.SectionFields.ClosedBy ?? parsed.ActingRole).ToWireString(),
+                ClosedAt = closed.Card.SectionFields.ClosedAt ?? parsed.Timestamp,
+            }),
+            onAlreadyClosed: already => new CommandOutcome.Refusal(
+                "already-closed",
+                $"'{already.FilePath}' is already closed."),
+            onNotASectionCard: notASection => new CommandOutcome.Refusal(
+                "not-a-section-card",
+                $"'{parsed.FilePath}' is a '{notASection.Kind.ToWireString()}' card; only a section card can be closed by this verb."),
+            onCardNotFound: notFound => new CommandOutcome.Refusal(
+                "card-not-found",
+                $"no card file exists at '{notFound.FilePath}' to close."),
+            onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            onCardCorrupt: corrupt => throw new InvalidOperationException(
+                $"card '{corrupt.FilePath}' could not be read as a section card: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
+    }
+
+    /// <summary>
+    /// <c>section status</c> (§5 block E, work-lifecycle: "the system answers from the section
+    /// entity without requiring its cards to be read"): reads exactly one file —
+    /// <paramref name="parsed"/>'s own <see cref="ParsedCommand.SectionStatus.FilePath"/> — via
+    /// <see cref="CardStore.ReadCard"/> and answers from that card's own frontmatter alone. No
+    /// directory listing, no <see cref="CardStore.ReadAllCards"/>, and no lookup of any other card
+    /// this section may have raised: there is nothing in this method's body that could resolve
+    /// "the cards this section raised" even if it wanted to — see <see cref="SectionCardFields"/>'s
+    /// own doc comment for the structural argument this handler is the CLI-facing half of.
+    /// <see langword="private"/>: <see cref="CommandParser"/> cannot name this method.
+    /// </summary>
+    private static CommandOutcome RunSectionStatus(ParsedCommand.SectionStatus parsed)
+    {
+        if (!File.Exists(parsed.FilePath))
+        {
+            return new CommandOutcome.Refusal(
+                "card-not-found",
+                $"no card file exists at '{parsed.FilePath}' to read a status from.");
+        }
+
+        var read = CardStore.ReadCard(parsed.FilePath);
+        return read.Match<CommandOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                var isSectionCard = card.Frontmatter.Kind.Match(
+                    onBlock: static () => false,
+                    onQuestion: static () => false,
+                    onFinding: static () => false,
+                    onObligation: static () => false,
+                    onRule: static () => false,
+                    onHazard: static () => false,
+                    onDecision: static () => false,
+                    onSection: static () => true);
+
+                if (!isSectionCard)
+                {
+                    return new CommandOutcome.Refusal(
+                        "not-a-section-card",
+                        $"'{parsed.FilePath}' is a '{card.Frontmatter.Kind.ToWireString()}' card; 'section status' only reads a section card.");
+                }
+
+                if (!SectionFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var status))
+                {
+                    throw new InvalidOperationException(
+                        $"card '{parsed.FilePath}' has an unrecognised section status: '{card.Frontmatter.Status}'.");
+                }
+
+                return new CommandOutcome.Success(new SectionStatusResult
+                {
+                    FilePath = parsed.FilePath,
+                    Status = status.ToWireString(),
+                    Base = card.SectionFields.Base,
+                    ClosedBy = card.SectionFields.ClosedBy?.ToWireString(),
+                    ClosedAt = card.SectionFields.ClosedAt,
+                    VerdictCount = card.SectionFields.Verdicts.Length,
+                });
+            },
+            onFailure: failure => throw new InvalidOperationException(
+                $"card '{parsed.FilePath}' could not be read as a section card: {failure.Reason}"));
+    }
 
     private static int ExitCodeFor(CommandOutcome outcome) => outcome.Match(
         onSuccess: static _ => SuccessExitCode,

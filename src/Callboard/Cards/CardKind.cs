@@ -1,16 +1,19 @@
 namespace Callboard.Cards;
 
 /// <summary>
-/// The seven recognised card kinds (card-model: "Single card entity with a kind discriminator"),
-/// modelled the same way as <see cref="Callboard.Cli.CommandOutcome"/>: a private constructor and
-/// seven sealed nested cases close the hierarchy to this file, and <see cref="Match{TResult}"/>
-/// is the only way to consume a value — abstract on the base, so a call site missing an argument
-/// for a case is a compile error (CS7036), and an eighth case added later is a compile error
-/// everywhere <see cref="Match{TResult}"/> is implemented until it is handled. A plain
-/// <c>enum</c> cannot give this: C# treats every enum switch as potentially incomplete (an enum
-/// can hold any underlying integer value), so a switch over it needs a default/discard arm just
-/// to compile — which then silently swallows a future case instead of failing to build, exactly
-/// what "an unhandled case is a compile error" forbids.
+/// The eight recognised card kinds (card-model: "Single card entity with a kind discriminator" —
+/// amended to eight, §5 block E: <c>section</c> was not one of the original seven kinds card-model
+/// shipped with §4's supervisor approval; work-lifecycle's "Sections are entities" requires a
+/// section to be a card, and the Architect ruled the union grows a case rather than a section being
+/// represented some other way — see the §5 DEVLOG thread). Modelled the same way as
+/// <see cref="Callboard.Cli.CommandOutcome"/>: a private constructor and eight sealed nested cases
+/// close the hierarchy to this file, and <see cref="Match{TResult}"/> is the only way to consume a
+/// value — abstract on the base, so a call site missing an argument for a case is a compile error
+/// (CS7036), and a ninth case added later is a compile error everywhere <see cref="Match{TResult}"/>
+/// is implemented until it is handled. A plain <c>enum</c> cannot give this: C# treats every enum
+/// switch as potentially incomplete (an enum can hold any underlying integer value), so a switch
+/// over it needs a default/discard arm just to compile — which then silently swallows a future case
+/// instead of failing to build, exactly what "an unhandled case is a compile error" forbids.
 /// </summary>
 internal abstract record CardKind
 {
@@ -25,7 +28,8 @@ internal abstract record CardKind
         Func<TResult> onObligation,
         Func<TResult> onRule,
         Func<TResult> onHazard,
-        Func<TResult> onDecision);
+        Func<TResult> onDecision,
+        Func<TResult> onSection);
 
     internal static readonly CardKind Block = new BlockCase();
     internal static readonly CardKind Question = new QuestionCase();
@@ -34,40 +38,46 @@ internal abstract record CardKind
     internal static readonly CardKind Rule = new RuleCase();
     internal static readonly CardKind Hazard = new HazardCase();
     internal static readonly CardKind Decision = new DecisionCase();
+    internal static readonly CardKind Section = new SectionCase();
 
     private sealed record BlockCase : CardKind
     {
-        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision) => onBlock();
+        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision, Func<TResult> onSection) => onBlock();
     }
 
     private sealed record QuestionCase : CardKind
     {
-        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision) => onQuestion();
+        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision, Func<TResult> onSection) => onQuestion();
     }
 
     private sealed record FindingCase : CardKind
     {
-        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision) => onFinding();
+        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision, Func<TResult> onSection) => onFinding();
     }
 
     private sealed record ObligationCase : CardKind
     {
-        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision) => onObligation();
+        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision, Func<TResult> onSection) => onObligation();
     }
 
     private sealed record RuleCase : CardKind
     {
-        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision) => onRule();
+        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision, Func<TResult> onSection) => onRule();
     }
 
     private sealed record HazardCase : CardKind
     {
-        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision) => onHazard();
+        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision, Func<TResult> onSection) => onHazard();
     }
 
     private sealed record DecisionCase : CardKind
     {
-        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision) => onDecision();
+        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision, Func<TResult> onSection) => onDecision();
+    }
+
+    private sealed record SectionCase : CardKind
+    {
+        internal override TResult Match<TResult>(Func<TResult> onBlock, Func<TResult> onQuestion, Func<TResult> onFinding, Func<TResult> onObligation, Func<TResult> onRule, Func<TResult> onHazard, Func<TResult> onDecision, Func<TResult> onSection) => onSection();
     }
 }
 
@@ -89,6 +99,7 @@ internal static class CardKindWireFormat
             ["rule"] = CardKind.Rule,
             ["hazard"] = CardKind.Hazard,
             ["decision"] = CardKind.Decision,
+            ["section"] = CardKind.Section,
         };
 
     internal static string ToWireString(this CardKind kind) => kind.Match(
@@ -98,7 +109,8 @@ internal static class CardKindWireFormat
         onObligation: static () => "obligation",
         onRule: static () => "rule",
         onHazard: static () => "hazard",
-        onDecision: static () => "decision");
+        onDecision: static () => "decision",
+        onSection: static () => "section");
 
     /// <summary>The recognised wire values, in the order card-model's spec text lists them.</summary>
     internal static string RecognisedValues => string.Join(", ", ByWireValue.Keys);

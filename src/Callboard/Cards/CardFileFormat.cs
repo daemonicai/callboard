@@ -32,6 +32,16 @@ internal static class CardFileFormat
     internal const string TransitionLineSuffix = " -->";
 
     /// <summary>
+    /// A section's supervisor-verdict entry (work-lifecycle: "Sections are entities" — "the
+    /// verdict, the range and the acting role are recorded against that section entity", §5 block
+    /// E): the same self-contained, no-body, no-footer shape as <see cref="TransitionLinePrefix"/>,
+    /// for the same reason — a verdict carries no prose, only
+    /// <c>by</c>/<c>verdict</c>/<c>range-from</c>/<c>range-to</c>/<c>timestamp</c> fields.
+    /// </summary>
+    internal const string VerdictLinePrefix = "<!-- callboard:verdict ";
+    internal const string VerdictLineSuffix = " -->";
+
+    /// <summary>
     /// True for a line that, written unescaped, would be misread as a structural delimiter on
     /// the next parse — the header prefix, the footer, or an already-escaped instance of either
     /// (any number of leading backslashes stripped still matches). Escaping is checked against
@@ -43,7 +53,8 @@ internal static class CardFileFormat
         return unescaped.StartsWith(CommentHeaderPrefix, StringComparison.Ordinal)
             || string.Equals(unescaped, CommentFooter, StringComparison.Ordinal)
             || unescaped.StartsWith(HandoverLinePrefix, StringComparison.Ordinal)
-            || unescaped.StartsWith(TransitionLinePrefix, StringComparison.Ordinal);
+            || unescaped.StartsWith(TransitionLinePrefix, StringComparison.Ordinal)
+            || unescaped.StartsWith(VerdictLinePrefix, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -87,6 +98,11 @@ internal static class CardFileFormat
     internal static bool IsTransitionLine(string line) =>
         line.StartsWith(TransitionLinePrefix, StringComparison.Ordinal)
             && line.EndsWith(TransitionLineSuffix, StringComparison.Ordinal);
+
+    /// <summary>An unescaped, self-contained section-verdict entry line.</summary>
+    internal static bool IsVerdictLine(string line) =>
+        line.StartsWith(VerdictLinePrefix, StringComparison.Ordinal)
+            && line.EndsWith(VerdictLineSuffix, StringComparison.Ordinal);
 
     private static readonly IReadOnlyDictionary<char, char> FrontmatterEscapeTable =
         new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r' };

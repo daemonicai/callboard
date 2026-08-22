@@ -36,6 +36,16 @@ internal static class CardFileParser
         "base", "reviewed_state", "tasks", "gate_results", "round", "blocked_by",
     };
 
+    // §5 block E's three fields — known only when the card's own kind is section, the same
+    // two-pass reasoning as BlockOnlyFrontmatterKeys above ("base" is shared wire vocabulary with a
+    // block card, disambiguated purely by which of isBlockCard/isSectionCard is true for this
+    // card — the two are mutually exclusive since CardKind is a closed union each card has exactly
+    // one case of).
+    private static readonly HashSet<string> SectionOnlyFrontmatterKeys = new(StringComparer.Ordinal)
+    {
+        "base", "closed_by", "closed_at",
+    };
+
     // The six comment-header fields this build recognises. Same rule, same reason, applied to the
     // per-comment header instead of the frontmatter block.
     private static readonly HashSet<string> KnownCommentHeaderKeys = new(StringComparer.Ordinal)
@@ -53,6 +63,12 @@ internal static class CardFileParser
     private static readonly HashSet<string> KnownTransitionKeys = new(StringComparer.Ordinal)
     {
         "by", "name", "from", "to", "timestamp",
+    };
+
+    // The five section-verdict-line fields this build recognises (§5 block E). Same rule again.
+    private static readonly HashSet<string> KnownVerdictKeys = new(StringComparer.Ordinal)
+    {
+        "by", "verdict", "range-from", "range-to", "timestamp",
     };
 
     internal static CardFileParseResult Parse(string rawText)
@@ -121,7 +137,18 @@ internal static class CardFileParser
             onObligation: static () => false,
             onRule: static () => false,
             onHazard: static () => false,
-            onDecision: static () => false);
+            onDecision: static () => false,
+            onSection: static () => false);
+
+        var isSectionCard = frontmatterResult.Frontmatter!.Kind.Match(
+            onBlock: static () => false,
+            onQuestion: static () => false,
+            onFinding: static () => false,
+            onObligation: static () => false,
+            onRule: static () => false,
+            onHazard: static () => false,
+            onDecision: static () => false,
+            onSection: static () => true);
 
         var unknownFrontmatterFields = new List<(string Key, string RawValue)>();
         foreach (var (key, value) in orderedFields)
@@ -132,6 +159,11 @@ internal static class CardFileParser
             }
 
             if (isBlockCard && BlockOnlyFrontmatterKeys.Contains(key))
+            {
+                continue;
+            }
+
+            if (isSectionCard && SectionOnlyFrontmatterKeys.Contains(key))
             {
                 continue;
             }
@@ -153,8 +185,22 @@ internal static class CardFileParser
             blockFields = blockFieldsResult.BlockFields!;
         }
 
+        var sectionFields = SectionCardFields.Empty;
+        if (isSectionCard)
+        {
+            var sectionFieldsResult = BuildSectionFields(fields);
+            if (sectionFieldsResult.Failure is { } sectionFieldsFailure)
+            {
+                return Failure(sectionFieldsFailure);
+            }
+
+            // sectionFieldsResult.Failure is null here, so SectionFields is guaranteed non-null by
+            // BuildSectionFields's own contract.
+            sectionFields = sectionFieldsResult.SectionFields!;
+        }
+
         var bodyLines = new List<string>();
-        while (cursor < lines.Length && !CardFileFormat.IsCommentHeader(lines[cursor]) && !CardFileFormat.IsHandoverLine(lines[cursor]) && !CardFileFormat.IsTransitionLine(lines[cursor]))
+        while (cursor < lines.Length && !CardFileFormat.IsCommentHeader(lines[cursor]) && !CardFileFormat.IsHandoverLine(lines[cursor]) && !CardFileFormat.IsTransitionLine(lines[cursor]) && !CardFileFormat.IsVerdictLine(lines[cursor]))
         {
             bodyLines.Add(CardFileFormat.UnescapeContentLine(lines[cursor]));
             cursor++;
@@ -174,6 +220,7 @@ internal static class CardFileParser
         var comments = new List<CardComment>();
         var handovers = new List<CardHandover>();
         var transitions = new List<CardBlockTransitionEntry>();
+        var verdicts = new List<SectionVerdictEntry>();
         while (cursor < lines.Length)
         {
             var headerLine = lines[cursor];
@@ -228,9 +275,34 @@ internal static class CardFileParser
                 continue;
             }
 
+            if (CardFileFormat.IsVerdictLine(headerLine))
+            {
+                var verdictFieldsText = headerLine[CardFileFormat.VerdictLinePrefix.Length..^CardFileFormat.VerdictLineSuffix.Length];
+                var verdictFieldsResult = ParseVerdictFields(verdictFieldsText);
+                if (verdictFieldsResult.Failure is { } verdictFieldsFailure)
+                {
+                    return Failure(verdictFieldsFailure);
+                }
+
+                cursor++;
+
+                // verdictFieldsResult.Failure is null here, so Fields/UnknownFields are guaranteed
+                // non-null by ParseVerdictFields's own contract.
+                var verdictResult = BuildSectionVerdictEntry(verdictFieldsResult.Fields!, verdictFieldsResult.UnknownFields!);
+                if (verdictResult.Failure is { } verdictFailure)
+                {
+                    return Failure(verdictFailure);
+                }
+
+                // verdictResult.Failure is null here, so Entry is guaranteed non-null by
+                // BuildSectionVerdictEntry's own contract.
+                verdicts.Add(verdictResult.Entry!);
+                continue;
+            }
+
             if (!CardFileFormat.IsCommentHeader(headerLine))
             {
-                return Failure($"expected a comment header, a handover line, a transition line, or end of file, found: '{headerLine}'");
+                return Failure($"expected a comment header, a handover line, a transition line, a verdict line, or end of file, found: '{headerLine}'");
             }
 
             if (!headerLine.EndsWith(CardFileFormat.CommentHeaderSuffix, StringComparison.Ordinal))
@@ -250,7 +322,7 @@ internal static class CardFileParser
             var commentBodyLines = new List<string>();
             while (cursor < lines.Length && !CardFileFormat.IsCommentFooter(lines[cursor]))
             {
-                if (CardFileFormat.IsCommentHeader(lines[cursor]) || CardFileFormat.IsHandoverLine(lines[cursor]) || CardFileFormat.IsTransitionLine(lines[cursor]))
+                if (CardFileFormat.IsCommentHeader(lines[cursor]) || CardFileFormat.IsHandoverLine(lines[cursor]) || CardFileFormat.IsTransitionLine(lines[cursor]) || CardFileFormat.IsVerdictLine(lines[cursor]))
                 {
                     return Failure($"missing comment footer before next block: '{lines[cursor]}'");
                 }
@@ -279,9 +351,13 @@ internal static class CardFileParser
             comments.Add(commentResult.Comment!);
         }
 
+        // BuildSectionFields only ever populates the three scalar fields — Verdicts is always the
+        // append-only sequence just parsed above, folded in here once both are known.
+        var sectionFieldsWithVerdicts = sectionFields with { Verdicts = [.. verdicts] };
+
         // frontmatterResult.Failure is null here, so Frontmatter is guaranteed non-null by BuildFrontmatter's own contract.
         return new CardFileParseResult.Success(
-            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions));
+            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts));
     }
 
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
@@ -423,6 +499,50 @@ internal static class CardFileParser
     }
 
     /// <summary>
+    /// Extracts §5 block E's three known-on-a-section-card scalar fields from a frontmatter
+    /// <paramref name="fields"/> dictionary already confirmed to belong to a <c>section</c> card —
+    /// see the <c>isSectionCard</c> gate in <see cref="Parse"/>, the only caller. Same "absent or
+    /// empty parses to null" convention as <see cref="BuildBlockFields"/>. <c>closed_by</c> and
+    /// <c>closed_at</c> are recorded together (<see cref="CardStore.CloseSectionUnderExistingLock"/>
+    /// is the only writer of either), but this parser accepts either alone rather than refusing a
+    /// hand-edited file that carries one without the other — degraded-mode legibility (ADR-0003)
+    /// over strict round-trip enforcement here, the same latitude <see cref="BuildFrontmatter"/>
+    /// already gives every other optional field. <see cref="SectionCardFields.Verdicts"/> is not
+    /// built here — it comes from the append-only verdict-line sequence <see cref="Parse"/> parses
+    /// separately, the same reason <see cref="BuildBlockFields"/> does not build
+    /// <see cref="CardFile.Transitions"/>.
+    /// </summary>
+    private static (SectionCardFields? SectionFields, string? Failure) BuildSectionFields(
+        IReadOnlyDictionary<string, string> fields)
+    {
+        var baseCommit = ParseOptionalFrontmatterValue(fields, "base");
+
+        CardOwner? closedBy = null;
+        if (fields.TryGetValue("closed_by", out var closedByText) && closedByText.Length > 0)
+        {
+            if (!CardOwnerWireFormat.TryParse(closedByText, out var parsedClosedBy))
+            {
+                return (null, $"section card has unrecognised 'closed_by': '{closedByText}'. Recognised owners: {CardOwnerWireFormat.RecognisedValues}.");
+            }
+
+            closedBy = parsedClosedBy;
+        }
+
+        DateTimeOffset? closedAt = null;
+        if (fields.TryGetValue("closed_at", out var closedAtText) && closedAtText.Length > 0)
+        {
+            if (!TryParseTimestamp(closedAtText, out var parsedClosedAt))
+            {
+                return (null, $"section card has invalid 'closed_at': '{closedAtText}'");
+            }
+
+            closedAt = parsedClosedAt;
+        }
+
+        return (new SectionCardFields(baseCommit, closedBy, closedAt, []), null);
+    }
+
+    /// <summary>
     /// Parses <c>gate_results</c>: a comma-joined list (the same <see cref="CardFileFormat.
     /// SplitFrontmatterList"/> <c>tasks</c>/<c>blocked_by</c> use) of <c>label=exitcode</c> items.
     /// Each item is split on its <em>first</em> <c>=</c> — <see cref="GateResult.IsValidLabel"/>
@@ -516,6 +636,10 @@ internal static class CardFileParser
     private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
         ParseTransitionFields(string transitionFieldsText) =>
         ParseKeyValueTokens(transitionFieldsText, KnownTransitionKeys, "transition line");
+
+    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
+        ParseVerdictFields(string verdictFieldsText) =>
+        ParseKeyValueTokens(verdictFieldsText, KnownVerdictKeys, "verdict line");
 
     /// <summary>
     /// The <c>key=value</c> token parsing comment headers and handover lines both use — one
@@ -693,6 +817,65 @@ internal static class CardFileParser
         }
 
         return (new CardBlockTransitionEntry(by, name, from, to, timestamp, unknownFields), null);
+    }
+
+    private static (SectionVerdictEntry? Entry, string? Failure) BuildSectionVerdictEntry(
+        IReadOnlyDictionary<string, string> fields,
+        IReadOnlyList<(string Key, string RawValue)> unknownFields)
+    {
+        if (!fields.TryGetValue("by", out var byText))
+        {
+            return (null, "verdict missing required field: by");
+        }
+
+        if (!CardOwnerWireFormat.TryParse(byText, out var by))
+        {
+            return (null, $"verdict has unrecognised 'by': '{byText}'. Recognised owners: {CardOwnerWireFormat.RecognisedValues}.");
+        }
+
+        if (!fields.TryGetValue("verdict", out var verdictText))
+        {
+            return (null, "verdict missing required field: verdict");
+        }
+
+        if (!SectionVerdictWireFormat.TryParse(verdictText, out var verdict))
+        {
+            return (null, $"verdict has unrecognised 'verdict': '{verdictText}'. Recognised verdicts: {SectionVerdictWireFormat.RecognisedValues}.");
+        }
+
+        if (!fields.TryGetValue("range-from", out var rangeFromRaw))
+        {
+            return (null, "verdict missing required field: range-from");
+        }
+
+        var rangeFrom = CardFileFormat.UnescapeCommentHeaderValue(rangeFromRaw);
+        if (!SectionVerdictEntry.IsValidRangeValue(rangeFrom))
+        {
+            return (null, "verdict has an empty or whitespace-only 'range-from'");
+        }
+
+        if (!fields.TryGetValue("range-to", out var rangeToRaw))
+        {
+            return (null, "verdict missing required field: range-to");
+        }
+
+        var rangeTo = CardFileFormat.UnescapeCommentHeaderValue(rangeToRaw);
+        if (!SectionVerdictEntry.IsValidRangeValue(rangeTo))
+        {
+            return (null, "verdict has an empty or whitespace-only 'range-to'");
+        }
+
+        if (!fields.TryGetValue("timestamp", out var timestampText))
+        {
+            return (null, "verdict missing required field: timestamp");
+        }
+
+        if (!TryParseTimestamp(timestampText, out var timestamp))
+        {
+            return (null, $"verdict has invalid timestamp: '{timestampText}'");
+        }
+
+        return (new SectionVerdictEntry(by, verdict, rangeFrom, rangeTo, timestamp, unknownFields), null);
     }
 
     private static bool TryParseTimestamp(string value, out DateTimeOffset timestamp) =>

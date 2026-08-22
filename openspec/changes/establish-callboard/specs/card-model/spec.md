@@ -8,21 +8,21 @@ threads that turn agent-to-agent prose into actual routing.
 
 ### Requirement: Single card entity with a kind discriminator
 
-The system SHALL represent every unit of work, question, finding, obligation, rule, hazard and decision
-as a card of one entity type, distinguished by a `kind` field taking exactly one of: `block`,
-`question`, `finding`, `obligation`, `rule`, `hazard`, `decision`.
+The system SHALL represent every unit of work, question, finding, obligation, rule, hazard, decision
+and section as a card of one entity type, distinguished by a `kind` field taking exactly one of:
+`block`, `question`, `finding`, `obligation`, `rule`, `hazard`, `decision`, `section`.
 
 Every card SHALL carry `id`, `kind`, `title`, `status`, `owner`, `created`, `updated` and `body`. Cards
 raised within a section SHALL carry that `section`; cards not tied to one SHALL leave it empty.
 
 #### Scenario: Card created with a recognised kind
 
-- **WHEN** a card is created with `kind` set to one of the seven recognised values
+- **WHEN** a card is created with `kind` set to one of the eight recognised values
 - **THEN** the system assigns it an identity and records `created` and `updated`
 
 #### Scenario: Card created with an unrecognised kind
 
-- **WHEN** a card is created with a `kind` outside the seven recognised values
+- **WHEN** a card is created with a `kind` outside the eight recognised values
 - **THEN** the system refuses the creation and names the recognised kinds
 
 ### Requirement: Stable, human-quotable, kind-prefixed identity
@@ -67,7 +67,7 @@ Every card SHALL carry a scope of `section`, `change`, `capability` or `reposito
 event, if any, ends its life. `rule` cards SHALL take `change` or `repository` and no other value.
 `hazard` and `question` cards SHALL be repository-scoped. `obligation` cards SHALL be change-scoped.
 `decision` cards SHALL be capability-scoped, following the specification they bind. `finding` cards
-SHALL be section-scoped.
+SHALL be section-scoped. `section` cards SHALL be change-scoped.
 
 Scope SHALL be an attribute of the card and not implied by its kind alone, so that a card may be
 promoted to a wider scope without losing its identity or thread.

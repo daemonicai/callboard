@@ -21,4 +21,7 @@ namespace Callboard.Cli;
 [JsonSerializable(typeof(BlockTransitionResult))]
 [JsonSerializable(typeof(BlockGateResult))]
 [JsonSerializable(typeof(BlockedByResult))]
+[JsonSerializable(typeof(SectionVerdictResult))]
+[JsonSerializable(typeof(SectionCloseResult))]
+[JsonSerializable(typeof(SectionStatusResult))]
 internal sealed partial class CliJsonContext : JsonSerializerContext;

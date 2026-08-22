@@ -10163,6 +10163,658 @@ still zero diff.
 
 Ready to land. 5.6/5.7 tick cleanly against what's actually in the diff.
 
+---
+
+**[architect]** Block D is **landed** as `a52cd7a`. Gates re-run by me: `BUILD_EXIT:0` `TEST_EXIT:0`
+(325/325) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`. 5.6 and 5.7 ticked.
+
+**Two rounds against block C's four, and the reason is visible in the diff:** block C's disposition
+lesson was applied from the first submission rather than rediscovered, so corrupt cards and tool
+failures never entered the refusal set. **The one finding was a test that did not exist, not code that
+was wrong.** That is the review loop teaching rather than merely costing rounds, and it is worth naming
+plainly at section close.
+
+Both requirements landed **structurally**: `BlockCardFields` has no `Comments` field at all, so
+`GateStatusOf` cannot reach narrative — there is no line to revert; `BlockFlowState` has no blocked case,
+so writing one is `CS0117`. Absent and failed stay distinct through domain, wire format and CLI.
+
+**Carried to the §5 supervisor review** (reviewer's list, added to block C's four):
+
+5. **The archived-card filter is deferred, not discharged** — confirmed accurate in both rounds. Binds
+   whoever builds the first `blocked_by`-resolving read path (§8/§10 likely).
+6. **No CLI query verb reads `GateStatusOf` back yet** — only the write verb exists, so `GateStatus.Absent`
+   is proven at the domain and wire layers with no CLI-JSON shape to verify.
+7. **Still no structural check tying a minted refusal code to a test proving it fires** — flagged in block
+   C and again in D. Systemic, and §9's to close.
+
+**Refusal codes minted by block D**, added to §5's list for §9: `invalid-gate-label`,
+`invalid-exit-code`, `already-blocked-by`, `not-blocked-by`.
+
+---
+
+**[architect]** Brief — block E (5.8). **Last block of §5**; the supervisor review follows it.
+
+**Task**
+
+- **5.8** Implement sections as entities carrying status, base commit and supervisor verdict.
+
+**Spec — `specs/work-lifecycle/spec.md`, "Sections are entities"**
+
+> A section SHALL be a first-class entity carrying its own status, its `base` commit, and the supervisor
+> verdict recorded against its commit range. Cards SHALL reference the section that raised them.
+>
+> A section SHALL be closable only when the conditions imposed by process enforcement are met, and
+> closing it SHALL record the acting role and the time.
+>
+> - **WHEN** a supervisor records a verdict for a section against a commit range
+> - **THEN** the verdict, the range and the acting role are recorded against that section entity
+>
+> - **WHEN** a role asks for a section's status
+> - **THEN** the system answers from the section entity **without requiring its cards to be read**
+
+**Read that last scenario carefully — it is the block's hardest requirement.** A section's status must be
+answerable **from the section entity alone**. If answering it requires walking the section's cards, 5.8
+is not met. Build it so that is structurally true rather than merely how the current code happens to
+work: the answer should come from somewhere that *has no access* to the cards, the way block D put
+`GateStatusOf` beyond reach of `CardFile.Comments`. That shape has now worked twice in this section.
+
+**Binding constraints**
+
+- **`section` is already one of the seven card kinds** confirmed in §4, and its scope is change-scoped
+  per D3's layout. A section is a card — do not invent a parallel storage mechanism, and do not widen
+  `CardStore`'s surface beyond the read-modify-write pattern blocks C and D established.
+- **`WriteCard` stays create-only.** Verdict recording and closing are targeted locked
+  read-modify-writes on `ApplyBlockTransition`'s pattern.
+- **The closing *conditions* are §9's, not yours.** 9.6, 9.7, 9.8 and 9.11 impose what must hold before a
+  section closes. This block records the acting role and the time, and carries the status — **do not
+  build a half-version of §9's enforcement** that §9 then has to unpick. If the shape you build makes
+  §9's job harder, say so in your post rather than guessing.
+- **"Cards reference the section that raised them"** — block cards already carry fields from block A. Add
+  the reference without inventing a second spelling of identity, and remember §4's rule: identity is
+  kind-prefixed and allocated from the committed counter, never from the index.
+- **Supervisor verdict is recorded against a commit range.** That range is data on the section entity,
+  not something re-derived from git at read time — the tool must not shell out to git to answer what a
+  verdict was recorded against.
+- **Archived sections.** §4 established the archive is part of the record and that archived cards are
+  indexed indistinguishably from live ones. A section query that does not filter them will report
+  archived sections as live.
+
+**Owed evidence**
+
+1. A test that a section's status is answered **without reading its cards** — and make it a test that
+   would fail if someone later routed the answer through the cards. Name what that mutation is before
+   you write it.
+2. A test that a recorded verdict carries its range and acting role.
+3. A CLI-level test per construction site for every refusal code you mint, each verified by reverting the
+   exact line it guards.
+4. Anything that is a convention rather than a guarantee, **stated plainly as one**.
+
+**The standard, restated because it is the section's real output:** a test proves a proposition, and the
+proposition is whatever a mutation of the real defect would falsify. Name what would have to break for
+each test to go red, then break exactly that. Block C spent four rounds in the gap between "it passes"
+and "it would catch the thing it exists to catch"; block D spent two, by not repeating it.
+
+**Done-gates** — `make build`, `make test`, `make format`, `make validate`, or `make gates` sandboxed.
+Quote every `LABEL_EXIT:<n>` verbatim; 325 existing tests stay green. Post as `[worker]` under `## 5.`,
+anchoring DEVLOG edits on a **line-start heading match, never a substring**, and hand off `→ @reviewer`.
+No commit, no ticks, no `Makefile`.
+
+**[worker]** Stopping before writing any code for block E (5.8) — the brief and the shipped code
+disagree about a load-bearing fact, and I don't have authority to pick a side.
+
+The brief states as a binding constraint: **"`section` is already one of the seven card kinds
+confirmed in §4."** It is not. `card-model/spec.md`, "Single card entity with a kind discriminator"
+(§4, supervisor-approved, `df8b1a4..HEAD`), closes the kind union at exactly seven: `block`,
+`question`, `finding`, `obligation`, `rule`, `hazard`, `decision` — no `section` — and pins a refusal
+scenario on an eighth: "WHEN a card is created with a `kind` outside the seven recognised values THEN
+the system refuses the creation and names the recognised kinds." `src/Callboard/Cards/CardKind.cs`
+matches the spec exactly: seven sealed cases, closed since block A of §4 (`0531805`), untouched since.
+`design.md` D3's directory list (`changes/<name>/ change-scoped: block, obligation, finding, section`)
+is the only place in the repo that names `section` as if it belonged in that enumeration, and it reads
+as a slip against card-model's own closed union, not a separate ruling — nothing in §4's DEVLOG thread
+or `tasks.md` (4.1–4.4) ever added an eighth case, and `openspec/specs/` has nothing archived yet to
+fall back on.
+
+So work-lifecycle's "Sections are entities" requirement ("A section SHALL be a first-class entity...
+Cards SHALL reference the section that raised them") and card-model's closed-seven-kind requirement
+pull in different directions once a section is meant to be *a card*: either card-model's union grows
+an eighth case (a spec change to an already-approved, already-shipped requirement, which is the
+Architect's call to make, not mine to assume), or a section is represented some other way that
+doesn't touch `CardKind` at all (e.g. riding on an existing kind, or a distinct non-`CardKind`-typed
+entity that still lives under `changes/<name>/` per D3's layout) — and the brief's other constraints
+("do not invent a parallel storage mechanism", "identity is kind-prefixed... never a second spelling
+of identity") read differently depending on which of those it is.
+
+❓ @architect — is `section` meant to become an eighth `CardKind` case now (amending card-model's
+already-approved closed-seven requirement), or should the section entity be represented without
+adding to that union? I don't want to guess at a change to a shipped, supervisor-approved spec
+requirement, and the two readings lead to structurally different code. Nothing implemented yet;
+working tree is clean apart from this DEVLOG post.
+
+---
+
+**[architect]** ✅ @worker — **you were right and my brief was wrong.** `section` was **not** one of the
+seven kinds; I asserted it was, and you stopped instead of building on it. That is exactly the call the
+workflow asks for, and it caught a spec contradiction that would otherwise have been discovered halfway
+through an implementation or, worse, at the section review.
+
+**Verified before ruling:** `card-model/spec.md` closed the union at seven with an explicit refusal
+scenario for an eighth; `CardKind.cs` matched it exactly, unchanged since §4 block A (`0531805`);
+`design.md` D3's layout listed `section` among the change-scoped card files; and `work-lifecycle`
+requires a section to be a first-class entity. Two specs in one change genuinely contradicted each
+other.
+
+**Escalated to the Product Owner** — a contradiction between specs is theirs, not mine (CLAUDE.md §4).
+
+**Ruling: `section` becomes the eighth card kind, and `card-model`'s spec is amended in place.** The
+change is active and unarchived, so its specs are legitimately editable; this is the normal path, not a
+workaround. Rejected: a parallel storage mechanism outside `CardKind`, which would duplicate the write
+path, locking and identity machinery that §2–§4 spent many rounds hardening, and would leave sections
+without card threading; and deferring 5.8, which would leave §8's supervisor verdicts and §9's
+section-close refusals specified against an entity that does not exist.
+
+**Spec amendment landed by me** (Architect owns the specs), `VALIDATE_EXIT:0`:
+
+- The kind union is now **eight**: `block`, `question`, `finding`, `obligation`, `rule`, `hazard`,
+  `decision`, `section`. Both scenarios now read "the eight recognised values".
+- **`section` cards SHALL be change-scoped** — added to the scope requirement, matching D3's layout. The
+  `(kind, scope)` table from §4 needs the row, or the pair is unexpressible.
+
+**What this means for §4's approval, recorded so the supervisor does not have to discover it:** §4's
+supervisor `Approve` covered a seven-kind union. It no longer covers the shipped code once the eighth
+lands. **I am folding that delta into §5's supervisor review** rather than re-running §4's — the §5
+supervisor will be told the kind union changed under §4's approval and asked to check the eighth kind
+against everything §4 established: the `(kind, scope)` refusal table, identity prefixing and allocation
+from the committed counter, archive survival, and the scope-promotion rules.
+
+**Block E proceeds on this ruling.** Read the amended `card-model/spec.md` before you start.
+
+**[worker]** Block E (5.8) implemented on the architect's ruling.
+
+**Card-model's eighth kind, mechanically.** `CardKind` grew `Section` (`S-0001`-style identity, prefix
+`S`, wire value `"section"` appended last to match the spec's ordering); every exhaustive `Match` call
+site over `CardKind` in `src/` picked up an `onSection` arm — `CardIdentityPrefix`, `CardScopeRules`
+(section is change-scoped only, same row as obligation), `CardFileWriter`/`CardFileParser`'s
+`isBlockCard` checks (each now paired with an `isSectionCard` check), and `CardStore.IsBlockCard`
+(paired with a new `IsSectionCard`). The compiler found every one of these — not a single site needed
+finding by hand, confirming the exhaustive-union guarantee the brief asked me to watch for held.
+
+**The entity.** `SectionCardFields` (`base`, `closed_by`, `closed_at` — the section-scoped counterpart
+to `BlockCardFields`) plus an append-only `Verdicts` sequence of `SectionVerdictEntry` (`by`, `verdict`,
+`range-from`, `range-to`, `timestamp`), written as its own `<!-- callboard:verdict ... -->` line
+alongside handovers/transitions — append-only because a section can carry more than one verdict across
+remediation rounds (§3c: request-changes, then a later approve), so a second verdict is a second entry,
+never an upsert. `SectionFlowState` (open/closed) reads `CardFrontmatter.Status` the same way
+`BlockFlowState` already does — the section's own status lives there, not derived from anything else.
+
+**The structural half of the hardest requirement.** `SectionCardFields`'s own doc comment states it
+plainly: nothing on this type, on `SectionFlowState`, or on the CLI's `RunSectionStatus` handler has a
+parameter that could carry "the cards this section raised" — `RunSectionStatus` opens exactly the one
+file `CardStore.ReadCard` is pointed at and answers from that card's own frontmatter, full stop. Proven
+in `SectionStatusStructuralTests` two ways at once: a section recorded `open` with every raised block
+card looking `closed`/`landed` still reports `open`, and the mirror (section `closed`, a raised card
+still `building`) still reports `closed` — an aggregate-over-children implementation gets at least one
+of the two wrong however it aggregates. **Verified by mutation, not just written and trusted**: I
+temporarily swapped `RunSectionStatus`'s answer for a real "walk the directory, aggregate raised cards'
+own status" implementation (`CardStore.ReadAllCards` + a majority-closed rule) — both direction tests
+went red exactly as expected — then reverted. A third test deletes the raised card outright before
+reading status and still gets the right answer without throwing.
+
+**Verdict recording.** `CardStore.RecordSectionVerdict`/`RecordSectionVerdictUnderExistingLock`, same
+read-decide-write shape `ApplyBlockTransition` established. `CardSectionVerdictTests` proves owed
+evidence 2 directly: the entry read back off the card carries both range endpoints and the acting role,
+not just that something landed, and a second recording appends rather than replacing.
+
+**Closing.** `CardStore.CloseSection`/`CloseSectionUnderExistingLock` records `closed_by`/`closed_at`
+and flips `status` to `closed` — and refuses a second close (`already-closed`) rather than silently
+re-recording a different acting role/time over the first. **Deliberately shallow, per the brief:**
+no obligation/question/thread check lives here — `CardSectionCloseOutcome`'s doc comment says so in
+terms 9.6/9.7/9.8 can build on without unpicking anything, and the outcome union's cases are
+exhaustively about the entity's own state (already closed, wrong kind, missing, corrupt, unavailable),
+never about what a section is permitted to close over.
+
+**CLI verbs** — `section verdict`, `section close`, `section status` — same parse/dispatch split §5
+block B and C already established. `section status` takes no `--role`/`--change`/timestamp at all: it
+is read-only, which is itself the point (work-lifecycle's scenario names *reading* status, not
+recording anything).
+
+**Refusal codes minted, each with its own CLI-level test:**
+- `not-a-section-card` — three construction sites (`section verdict`, `section close`, `section
+  status`), three tests, each verified by reverting its guard (`IsSectionCard`/the CLI's own kind
+  check) and confirming the test goes red.
+- `already-closed` — one site, verified the same way (removed `CloseSectionUnderExistingLock`'s check;
+  the test caught both the domain-level and CLI-level version).
+- `unrecognised-verdict` — one site (`ParseSectionVerdict`), verified the same way.
+Reused codes (`card-not-found`, `missing-argument`, `card-layout-mismatch`, `unrecognised-role`) get
+exercise-only tests here — their construction sites were already proven for `block gate`/`block
+transition`.
+
+**Conventions, stated plainly rather than left implicit:**
+- `CardFrontmatter.Section` (the pre-existing generic field) is where a card spells the section that
+  raised it, including a section card's own kind-prefixed id going forward — this is a convention this
+  block leans on, not a new guarantee it adds: the field is still unvalidated free text, same as before
+  §5 block E, and nothing refuses a card whose `section` value isn't a real `S-####`.
+- `section status`'s "no lock, no repo-root resolution" shape is a design choice for a read-only verb,
+  not a spec requirement — a concurrent write mid-read can still be observed as a torn value the way
+  `ReadCard` always could; nothing in this block changes that.
+- The verdict's `range-from`/`range-to` are recorded as whatever the caller supplies — this block does
+  not check them against the section's own `base` or against git in any way; "data on the entity, not
+  re-derived from git" is honoured by never shelling out, not by validating the caller's claim.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. 359 tests total (325
+carried + 34 new), all green.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Block E (5.8) audited — `git diff a52cd7a`, the eighth card kind and sections as
+entities. **Last block of §5.**
+
+**Verdict: Request changes.** One finding is a genuine, demonstrated round-trip defect: a
+`section verdict` call can write a card that the tool can then never read back, including through
+its own read-only status verb. Everything else — the eighth-kind blast radius, the structural
+status claim, the lock-free read, the refusal-site coverage — held up under independent execution.
+
+**1. The structural status claim — verified independently, with my own aggregate implementation,
+not the worker's.** Read `SectionCardFields`/`SectionFlowState`/`ParsedCommand.SectionStatus`: none
+carries a `Comments` field, a directory listing, or an `IReadOnlyList<CardFile>` parameter — the
+same class of guarantee block D gave `GateStatusOf` against `Comments`. `RunSectionStatus` calls
+`CardStore.ReadCard` on exactly the one path it's given and nothing else. Grepped the index code:
+nothing there touches `SectionFields`/section identity either — no alternate route through the
+derived index.
+
+Then, independently of the worker's own mutation, I wrote and injected **my own** aggregate
+implementation into a scratch copy — different from the worker's "majority-closed rule": mine
+lists every `.md` file in the section's directory, reads each via `CardStore.ReadCard`, filters to
+cards whose `Frontmatter.Section` matches the section's own id, and derives `closed` only when
+every raised card is itself `closed`/`landed`. Ran the three structural tests against it: both
+disagreement tests went red exactly as predicted, the third (raised cards deleted outright) stayed
+green — because my aggregate, like any real one, only kicks in when raised cards exist, and the
+test's whole point is that the answer must be identical whether they exist or not. This confirms
+the tests aren't narrowly tuned to the worker's specific wrong implementation; any plausible
+aggregate-over-children shape gets caught. Reverted, confirmed byte-identical to source.
+
+**2. The eighth kind's blast radius across §4 — every site confirmed, the compiler-forcing claim
+holds.**
+- **`(kind, scope)` table**: `CardScopeRules.Validate`'s `onSection` arm requires exactly
+  `CardScope.Change` — matches the Architect's amendment. New tests (`Section_AcceptsChangeScope`,
+  `Section_RefusesEveryOtherScope`) confirm all three other scopes refuse.
+- **Kind-prefixed identity, from the committed counter, never the index**: `CardIdentityPrefix`
+  assigns `"S"`, distinct from all seven existing letters. `CardIdentityAllocator`'s `CounterPath`
+  is generic — built from `kind.ToWireString()`, itself an exhaustive `Match` — so section identity
+  allocation needed **zero** new code and carries zero risk of having been missed; it rides the
+  same committed-counter path every other kind already uses, unchanged.
+- **Archive survival**: `CardLayout.cs` has no kind-specific branching anywhere (confirmed by
+  grep) — archive logic is generic over any card, so it needed no update and none is missing.
+- **The refusal message naming eight kinds**: `CardKindWireFormat.RecognisedValues` is computed
+  from the `ByWireValue` dictionary's keys, not a hand-written list — adding `["section"] =
+  CardKind.Section` to that dictionary was the only change needed for every "unrecognised kind"
+  message to automatically say eight.
+- **Compiler-forcing, checked exhaustively, not sampled**: grepped every `.Kind.Match(`/`kind.Match(`
+  call site in `src/` (9 total) and confirmed each has an `onSection:` arm. No `is CardKind.X`
+  pattern-matching exists anywhere that could have silently admitted an eighth case without
+  complaint — `Match` is genuinely the only consumption route, and every site was compiler-forced.
+
+**3. The three declared conventions, judged individually.**
+- **`CardFrontmatter.Section` stays unvalidated free text.** Acceptable at §5, not blocking — this
+  mirrors block D's own deferred `blocked_by`-to-card resolution exactly (same shape: a plain
+  string reference, no id-format validation, explicitly flagged rather than silently assumed
+  discharged). Consistent precedent, not a new gap.
+- **`section status` takes no lock.** Judged safe — see finding 4.
+- **Verdict ranges recorded as supplied, never checked against git.** The "don't shell out to git"
+  half is correctly a convention and should stay one — the brief explicitly forbids re-deriving
+  from git, and honouring that by simply never shelling out is the right shape. **But this
+  convention has a sharp edge the brief didn't anticipate, and it's finding 5's subject: nothing
+  validates the supplied range is even non-empty**, which is a different, narrower claim than "is
+  it a real commit" and one this codebase already answers everywhere else (`GateResult.IsValidLabel`,
+  `BlockCardFields.IsValidListItem` both reject empty/whitespace-only for exactly this class of
+  field). That gap is what causes finding 5.
+
+**4. `section status`'s lock-free read — safe, and it's a genuine consequence of the write path,
+not luck.** Confirmed `RecordSectionVerdictUnderExistingLock`/`CloseSectionUnderExistingLock` both
+call the same shared `AtomicWrite` every other write path in this codebase uses — temp-file then
+`File.Move(overwrite: true)`, the platform fact §2 hammer-tested as genuinely atomic (3,000 racing
+rounds, zero torn finals). Since that is the *only* way a section card's bytes ever change, a
+lock-free reader can only ever observe a complete pre-write or complete post-write snapshot — never
+a torn file, and never a cross-field inconsistency (status from one write, verdicts from another),
+because each write replaces the whole file atomically in one rename. A stale read (an in-flight
+write not yet visible) is expected and correct for a read-only, no-lock design — not the same thing
+as a torn one. This is structurally true because of the write path's own proven atomicity, not
+something this block introduces or could break on its own.
+
+**5. `gate_results`'s bar, applied — and a real defect found, not just a missing test.** The
+verdict line reuses `EscapeCommentHeaderValue`/`UnescapeCommentHeaderValue` (the same functions
+`id`/`reply-to`/`resolves` already use) for `range-from`/`range-to`. I verified the escaping itself
+directly: constructed ranges containing a literal space and a literal backslash, round-tripped
+through the real `Serialize`/`Parse` cycle — byte-identical, values preserved exactly, in every
+combination tried. **No dedicated byte-identical hazard test exists for this third delimited-line
+addition** (unlike block D's `gate_results`, which got one after the first round) — should be
+closed the same way, cheap to add. But the more serious problem I found testing the boundary:
+
+**A `section verdict` call with an empty `--range-from` (or `--range-to`) writes successfully and
+then makes the card permanently unreadable, including by `section status`.** Live-executed against
+the real, unmutated binary: `section verdict <path> --range-from "" --range-to abc123 ...` exits
+`0`, reports `"ok":true`, and writes `range-from= range-to=abc123` to the file. The **next** read of
+that exact file — by anything, including `section status`, the read-only verb the whole hardest
+requirement is built around — fails: `CardFileParser` treats an empty raw `range-from` as "verdict
+missing required field: range-from" (a parse failure), which `RunSectionStatus` converts to a
+thrown `InvalidOperationException`, surfacing as `exitCode=2`, `"code":"tool-failure"`. The card the
+tool itself just wrote is now corrupt by the tool's own definition. Whitespace-only values (e.g.
+`"   "`) don't trigger this — only a truly empty string does, because the parser's check is
+`rawValue.Length == 0`, not `IsNullOrWhiteSpace`. This is not a git-validation question (correctly
+out of scope) — it's a **write path that permits a value the read path then refuses to have ever
+been written**, the same class of write/read asymmetry this codebase's whole `Cards/` module exists
+to prevent. Not present in `base`/`reviewed_state` (an empty raw value there degrades to `null`,
+gracefully, not a parse failure) — this is specific to `BuildSectionVerdictEntry`'s own
+required-field check disagreeing with the CLI parser's `is null`-only guard on `--range-from`/
+`--range-to`. Cheap, precedented fix: reject empty-or-whitespace-only range values at parse time
+(`ParseSectionVerdict`), the same shape `GateResult.IsValidLabel`/`BlockCardFields.
+IsValidListItem` already establish for this exact class of mistake — delete the value that could
+collide, don't just document around it.
+
+**6. My own adversarial pass over refusal construction sites, not the worker's enumeration.**
+Independently mutated four sites in a scratch copy, none matching how the worker's own account
+describes verifying them, each reverted and the full 359-test suite re-run clean after: 
+`RunSectionStatus`'s own `not-a-section-card` site (one of the three the worker names — I picked
+this one, not `RecordSectionVerdict`'s or `CloseSection`'s), `CloseSection`'s `already-closed` site,
+and `ParseSectionVerdict`'s `unrecognised-verdict` site — each caught by exactly one test, nothing
+else moving. `section status` correctly has no `repo-root-not-found` site at all (it never resolves
+`AnchoredCardPath`, matching convention 2 — read-only, no repo-root needed) — confirmed by grep,
+not assumed absent.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (359/359),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report. `Program.cs`/`BannedSymbols.txt`
+still zero diff.
+
+**Carrying to the section supervisor, since this is the last block review before it:**
+1. **The spec contradiction the worker caught (§4's seven-kind union vs. work-lifecycle's section
+   requirement) is exactly the kind of cross-block/cross-spec issue the supervisor lens exists for**
+   — it surfaced here only because the worker stopped rather than building on a wrong brief. Worth
+   naming as a positive data point for the process, the same way block D's clean execution was.
+2. **§4's supervisor `Approve` covered seven kinds; the shipped code now has eight.** The Architect
+   already flagged this explicitly for the section review rather than re-running §4's — I've now
+   independently checked every §4 surface named (scope table, identity/counter, archive survival,
+   refusal message) and found the eighth kind correctly integrated everywhere, with the compiler
+   force-checking every consumption site. This should make the supervisor's own pass on that delta
+   fast, not something to redo from scratch.
+3. **The verdict-range validation gap (finding 5) is worth the supervisor's attention even after
+   it's fixed here**, because §8's supervisor-verdict flow and §9's section-close conditions will
+   both read `SectionVerdictEntry.RangeFrom`/`RangeTo` as if they were meaningful — the fix closes
+   the corruption bug, not the softer question of whether an obviously-wrong-looking range (not a
+   git SHA at all) should be accepted. That softer question is legitimately deferred, but is worth
+   naming so it doesn't surface as a surprise in §8/§9.
+4. **No structural check ties a minted refusal code to a test proving it fires** — the same
+   standing note from blocks C and D's closes, still true, still systemic. Flagged three times now
+   across this section; worth the supervisor actually deciding whether §9 addresses it rather than
+   inheriting a fourth flag.
+
+Please close finding 5 (the empty-range corruption bug is the priority; the missing byte-identical
+test can land alongside it) and re-flag.
+
+**[worker]** Finding 5 closed — the write-succeeds-then-read-fails defect, and the requested audit.
+
+**The fix, at both ends, made to agree.** `SectionVerdictEntry.IsValidRangeValue` (`!string.IsNullOrWhiteSpace`)
+is now the one predicate both doors react to:
+
+- `CommandParser.ParseSectionVerdict` refuses `--range-from`/`--range-to` with the new `invalid-range`
+  code *before* `CardStore.RecordSectionVerdict` is ever called — an empty or whitespace-only range
+  endpoint never reaches a write at all.
+- `CardFileParser.BuildSectionVerdictEntry`'s own required-field check moved off `rangeFromRaw.Length ==
+  0` (checked on the *raw, still-escaped* wire text — which is why whitespace-only slipped through
+  before: `"\s"` has length 2) onto `IsValidRangeValue` checked on the *unescaped* value, closing
+  exactly the gap the reviewer named.
+
+**Verified by mutation, reproducing the live demonstration exactly, not just written and trusted.** I
+removed both CLI-side guards, leaving only the (already-fixed) file-parser check in place — the same
+shape the original bug had — and re-ran the three new tests: both `invalid-range` refusal tests went
+red (the write now silently succeeded again, exit 0 instead of 1), the round-trip write-then-read test
+stayed green (it only exercises valid ranges, correctly). Reverted, confirmed rebuild green. Separately,
+I mutated `CardFileWriter.BuildVerdictFields` to skip escaping `range-from` and confirmed the new
+byte-identical round-trip test goes red on that too, then reverted.
+
+**Tests added, each with its proposition named before it was written:**
+1. `SectionVerdict_EmptyRangeFrom_RefusesWithInvalidRangeCode_AndWritesNothing` — proposition: an empty
+   `--range-from` is refused before any write happens (asserts the refusal code *and* that the card's
+   bytes are unchanged, not just that the exit code is non-zero).
+2. `SectionVerdict_WhitespaceOnlyRangeTo_RefusesWithInvalidRangeCode_AndWritesNothing` — the reviewer's
+   own detail: whitespace-only must trigger the same guard as empty, not a weaker one.
+3. `SectionVerdict_WrittenThroughTheCli_IsThenReadableThroughTheCli_ViaSectionStatus` — the actual
+   proposition this remediation exists to establish, end to end: write via `section verdict`, read via
+   `section status`, assert the read succeeds. This is the exact sequence the reviewer demonstrated
+   failing against the unmutated binary.
+4. `HandAuthoredCard_WithAnAwkwardVerdictLine_RoundTripsByteIdentically` (`CardSectionVerdictTests.cs`)
+   — the missing byte-identical round-trip test, same shape as block D's `gate_results` one: a
+   hand-authored verdict line with an escaped backslash, an escaped space, and an unrecognised extra
+   field round-trips through parse → write asserted on the file's bytes.
+
+**The requested audit — every other write verb, checked for the same CLI-parser-vs-file-parser
+disagreement, not assumed clean because reviewed:**
+
+- **`block gate`** — clean. Both `CommandParser.ParseBlockGate` and `CardFileParser.ParseGateResults`
+  react to the exact same predicate, `GateResult.IsValidLabel`, called by name at both sites. No
+  daylight between them.
+- **`block transition`** — clean, structurally rather than by a matching predicate: `TransitionName` has
+  no independent validity check at either end because it doesn't need one — `ApplyBlockTransitionUnderExistingLock`
+  looks it up in `BlockFlowTransitions.AvailableFrom(currentState)`, and an empty or garbage name simply
+  never matches any entry, so it is *always* refused as `undefined-transition` before anything is
+  written. There is no path by which an invalid name reaches the file.
+- **`section close`** — clean. No free-text field besides the file path and `--role`, both already
+  validated (path existence checked before the read; role via the shared `CardOwnerWireFormat.TryParse`).
+- **`block add-blocker` / `block remove-blocker` — disagreement found, demonstrated live, not fixed in
+  this remediation (out of this block's scope; flagging for the architect).** `CommandParser.
+  ParseBlockedByMutation` only checks `blockingCardId is null` — an empty or whitespace-only id parses
+  clean. `BlockCardFields.BlockedBy`'s validating `init` accessor
+  (`RequireNoEmptyOrWhitespaceItems`) throws `ArgumentException` on such a value. I ran it against the
+  real binary: `block add-blocker <path> "" --role worker` returns `exitCode=2`,
+  `"code":"tool-failure"`, with the `ArgumentException` message surfaced as the tool-failure text.
+  **This is a different class of bug than finding 5, not the same one**: the exception fires while
+  `CardStore.UpdateBlockedByUnderExistingLock` constructs the `with`-updated `BlockCardFields`, which
+  happens *before* `AtomicWrite` is ever called — so the write never lands, the card is never touched,
+  and nothing corrupts. The defect is a crash reachable from ordinary bad CLI input (an ungraceful
+  `tool-failure` where a clean `invalid-argument`-shaped refusal belongs), not a card the tool itself
+  then can't read back. I did not fix it: it lives in §5 block D's verb, outside 5.8's remediation
+  scope, and fixing it here would widen this diff past what the reviewer's finding asked for. Recording
+  it here so the architect can decide whether it's a §5 remediation, a standing obligation, or folded
+  into §9.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. 363 tests total (359
+carried, 4 new), all green.
+
+→ @reviewer
+
+**[worker]** `block add-blocker`/`remove-blocker` fixed, on the architect's ruling — the class closed,
+not just flagged. **This repairs a verb landed in block D (`a52cd7a`)**, so the §5 supervisor should
+read it as a cross-block repair, not new 5.8 surface.
+
+**Two defects this section has now found are not the same severity, stated plainly so a reader six
+months from now can tell them apart:**
+
+- **Finding 5 (section verdict, closed in the previous round):** the write *succeeded* and produced a
+  card the tool's own read path then refused as corrupt. A bad card landed in the record.
+- **This one (`block add-blocker`/`remove-blocker`):** an empty or whitespace-only blocking card id
+  reached `CardStore.UpdateBlockedByUnderExistingLock`, which builds an updated `BlockCardFields`
+  through a `with` expression *before* `AtomicWrite` is ever called. `BlockCardFields.BlockedBy`'s
+  validating `init` accessor (`RequireNoEmptyOrWhitespaceItems`) throws there, and nothing catches it
+  short of `CommandDispatcher.Run`'s own top-level `catch` — so it surfaced as `tool-failure` (exit 2)
+  with the raw `ArgumentException` message as the refusal text. **No card was ever touched.** A crash
+  where a clean refusal belonged, not a write that poisoned the record.
+
+**The fix, the same predicate pattern, same code the reviewer has already audited twice.**
+`CommandParser.ParseBlockedByMutation` — the one parse site both `add-blocker` and `remove-blocker`
+already shared before this fix — now checks `BlockCardFields.IsValidListItem(blockingCardId)` (the
+existing predicate `Tasks`/`BlockedBy` already enforce at construction, not a new one) and refuses
+before either verb's execute phase runs. **Refusal code minted: `invalid-blocking-card-id`** — checked
+first against §5's own list (repo-root-not-found, undefined-transition, base-not-recorded,
+base-immutable, not-a-block-card, card-not-found, card-layout-mismatch, already-blocked-by,
+not-blocked-by, not-a-section-card, already-closed, missing-argument, missing-flag-value,
+missing-subcommand, unknown-command, unknown-subcommand, unrecognised-argument, unrecognised-role,
+unrecognised-verdict, invalid-exit-code, invalid-gate-label, invalid-range, tool-failure) — nothing
+existing said "this identity value is empty," so a new one earns its place rather than overloading
+`missing-argument` (which already means "absent," a different fact from "present but empty").
+
+**Verified by mutation, reproducing the live crash exactly, not just written and trusted.** I removed
+the new guard and re-ran both tests: `AddBlocker_EmptyBlockingCardId_...` went red with `exitCode=2`
+(the exact `tool-failure`/`ArgumentException` crash reproduced), while `RemoveBlocker_WhitespaceOnly...`
+went red differently — `not-blocked-by` instead of the clear `invalid-blocking-card-id` — because
+`remove-blocker`'s `apply` function takes the `onNoChange` branch for an id that was never in an
+(always-valid) `blocked_by` set, so it never reaches the throwing accessor at all; the guard's value
+for `remove-blocker` is a correct, specific refusal rather than a misleading one, not corruption
+prevention. Both failure modes confirm the guard is load-bearing for what it actually protects on each
+verb. Reverted, rebuilt green.
+
+**Tests added, one construction site (shared parse function), both verbs exercised so the shared guard
+is proven to fire on either caller, each asserting the refusal code *and* that the card's bytes are
+byte-for-byte unchanged:**
+1. `AddBlocker_EmptyBlockingCardId_RefusesWithInvalidBlockingCardIdCode_AndWritesNothing`
+2. `RemoveBlocker_WhitespaceOnlyBlockingCardId_RefusesWithInvalidBlockingCardIdCode_AndWritesNothing`
+
+**The requested question, answered explicitly: does any other CLI-parser-vs-validating-accessor
+disagreement exist?** I grepped every validating `init` accessor in `src/Callboard/Cards/` — there are
+exactly three, all on `BlockCardFields`: `Tasks`, `BlockedBy`, `GateResults`. (`SectionCardFields.
+Verdicts`, added this section, has no validating accessor at all — plain passthrough — so it cannot
+disagree with anything by construction.)
+
+- **`BlockedBy`** — was the disagreement. Fixed above.
+- **`GateResults`** — no disagreement: the only free-text component is `Label`, and `block gate`'s CLI
+  parse arm already calls the exact same `GateResult.IsValidLabel` the constructor's
+  `RequireValidGateResults` calls. `ExitCode` is an `int`; "empty or whitespace" doesn't apply to it.
+  This was already covered by the previous round's audit, restated here for completeness against the
+  narrower "validating accessor" question specifically.
+- **`Tasks`** — **not currently reachable from any CLI verb at all.** No `ParsedCommand` case sets it
+  (`Version`, `IndexRebuild`, `BlockTransition`, `BlockGate`, `BlockAddBlocker`, `BlockRemoveBlocker`,
+  `SectionVerdict`, `SectionClose`, `SectionStatus` — none of the nine touch `Tasks`). There is no live
+  disagreement today because there is no live door yet. Naming this so whichever later section wires a
+  CLI verb that sets `tasks` inherits the warning rather than rediscovering the same shape: check
+  `BlockCardFields.IsValidListItem` at that verb's own parse arm before it ships, the same way this fix
+  and `block gate`'s already do.
+
+So: **one real disagreement found and fixed (`BlockedBy`), one already aligned (`GateResults`), one
+latent and named for later (`Tasks`) rather than assumed safe by absence of a bug report.**
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. 365 tests total (363
+carried, 2 new), all green.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Closing pass, block E (5.8) — and §5's last block review. **Verdict: Approve.**
+
+**1. Re-ran the live reproduction against the real binary — refuses cleanly, bytes unchanged, and
+the actual escaping gap (not just the surface symptom) is closed.** `section verdict --range-from
+"" --range-to abc123 ...`: `exitCode=1`, `"code":"invalid-range"`, card bytes byte-for-byte
+unchanged before/after. Same for whitespace-only on both `--range-from` and `--range-to`. Then the
+neighbouring shape that actually matters — not a CLI argument, but a **hand-authored file** whose
+`range-from` wire text is literally `\s` (the escaped form of one space, raw length 2, which is
+exactly what slipped past the old `Length == 0` check on raw text): fed
+`<!-- callboard:verdict ... range-from=\s range-to=abc123 ... -->` directly to
+`CardFileParser.Parse` — **parse failure**, `"verdict has an empty or whitespace-only
+'range-from'"`. Same for `range-to=\s`. This is the actual gap the original defect hid in, not a
+paraphrase of it, and it's closed on both ends. (I separately tried passing the two-character
+literal string `\` + `s` as a CLI argument value — that's a different, legitimate case: a caller
+asking to store literal backslash-s content, correctly accepted and correctly distinct from the
+escaped-whitespace-on-disk scenario.)
+
+**2. The shared predicate is genuinely structural — same function by name, not parallel logic.**
+Grepped every call site: `CommandParser.cs:509` and `:521` (`--range-from`/`--range-to`) and
+`CardFileParser.cs:852` and `:863` (parse-time) all call `SectionVerdictEntry.IsValidRangeValue`
+by name — one implementation, four call sites, not two independent rules that happen to agree
+today. The file-parser side now unescapes first (`CardFileFormat.UnescapeCommentHeaderValue`) and
+checks the *unescaped* value, which is precisely what closes the raw-vs-decoded gap rather than
+moving it elsewhere.
+
+**3. The block D repair — confirmed correct on all three counts.**
+- **Fixes the crash, no regression on valid input.** Live-executed against the real binary: empty
+  and whitespace-only blocking ids on both `add-blocker` and `remove-blocker` now refuse
+  `invalid-blocking-card-id` at exit 1 (not the old `tool-failure` exit 2), card bytes unchanged in
+  every case. A valid id on `add-blocker` still succeeds normally (`blockedBy:["Q-0099"]`,
+  `blocked:true`). A well-formed-but-absent id on `remove-blocker` still correctly refuses
+  `not-blocked-by`, unaffected by the new guard.
+- **The remove-blocker asymmetry, verified by reading the code myself, not accepted from the
+  narrative.** `RemoveBlockedByUnderExistingLock`'s `apply` function checks
+  `current.Contains(id, ...)` before ever building a `with`-updated `BlockCardFields` — since a
+  valid `blocked_by` set can never contain an empty/whitespace string in the first place (that
+  value is unrepresentable), `Contains("")` is always `false`, so the no-op branch
+  (`onNoChange` → `NotBlockedBy`) fires unconditionally for such an id, and the throwing validating
+  accessor is *never reached* on this path — confirmed by reading `RemoveBlockedByUnderExistingLock`
+  directly, independent of the worker's own account. The new guard was therefore never preventing a
+  crash on `remove-blocker`; its value there is a clearer, on-topic refusal
+  (`invalid-blocking-card-id`) in place of a technically-true-but-misleading one (`not-blocked-by`,
+  which implies the id was a legitimate identity simply not present, when it was never a legitimate
+  identity to begin with). Understood, not glossed.
+- **`invalid-blocking-card-id` earns its place, judged against the same bar `missing-role` failed.**
+  `missing-role` was rejected because it meant exactly what `missing-argument` already meant
+  ("required thing wasn't supplied"), differing only in *which* thing — a pure near-synonym.
+  `invalid-blocking-card-id` means something `missing-argument` cannot: the argument *was*
+  supplied and is itself invalid — the same distinction already established for
+  `invalid-gate-label`, `invalid-exit-code`, and `invalid-range`, all landed in prior rounds without
+  objection. It continues an established pattern (one code per validated field, not a generic
+  "invalid-argument" reused across all of them) rather than inventing a new one. Independently
+  cross-checked the worker's own pre-check list against a fresh grep of every refusal-code string
+  literal in `CommandDispatcher.cs`/`CommandParser.cs`: 23 existing codes, exact match, nothing
+  missed.
+
+**4. The validating-`init`-accessor enumeration — verified independently, exactly three, matching
+the claim.** `grep -rn "init =>" src/Callboard/Cards/*.cs`: four hits total — `BlockCardFields.Tasks`,
+`BlockCardFields.BlockedBy`, `BlockCardFields.GateResults` (each calling a `Require*` validator),
+and `SectionCardFields.Verdicts` (`init => _verdicts = value;` — no validation call, a plain
+passthrough, exactly as the worker's parenthetical says). No other file in `Cards/` has a
+`private readonly` field paired with a validating `init` accessor — `CardLock.cs`'s two `private
+readonly` fields are plain constructor-set fields on an ordinary class, not `record` properties a
+`with` expression could route around, so they're out of scope for this question entirely, not a
+miss. Also independently confirmed `Tasks` has zero references anywhere in `CommandDispatcher.cs`/
+`CommandParser.cs` — genuinely unreachable from any verb today, as claimed.
+
+**5. Final verdict on block E as a whole: Approve.** Two real defects found and closed across three
+rounds — one a genuine round-trip corruption bug (finding 5, the section-verdict range), one a
+crash-where-a-refusal-belonged in a verb from the *previous* block, found by the worker sweeping
+the class rather than stopping at the one instance named. Both fixes are minimal, structural (one
+shared predicate each, called by name at every door), and independently verified by mutation this
+round and every round before it. The eighth-kind integration, the structural status guarantee, and
+the lock-free read's safety were all confirmed independently in the prior round and are untouched
+by this remediation.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (365/365),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report. `Program.cs`/`BannedSymbols.txt`
+still zero diff.
+
+**Final carry-forward for the section supervisor — named now, this being the last block review in
+§5:**
+
+1. **The `block add-blocker`/`remove-blocker` fix repairs code committed in block D
+   (`a52cd7a`).** It will appear in the §5 section diff (`git diff <base>..HEAD`) as part of block
+   E's changes even though the defect it closes predates block E. Not scope creep — read it as a
+   cross-block repair, the same way the eighth-kind spec amendment is a cross-block fact this
+   section review inherits rather than something to re-litigate.
+2. **The section's real output, stated once, plainly, since it recurred four times:** a validation
+   rule split across two doors (a CLI parse-time check and a domain-level guard, or a write path
+   and its own read path) drifts unless *one* function is the rule and both doors call it by name.
+   `missing-role` (block C) was a near-synonym, not this shape; but `card-write-failed`'s
+   misclassification, block D's `gate_results` escaping-test gap, this block's `range-from`/
+   `range-to` corruption, and the `add-blocker`/`remove-blocker` crash are one shape, found four
+   times, closed the same way each time once found. Worth the supervisor naming this as the
+   section's own lesson rather than four unrelated findings.
+3. **No structural check ties a minted refusal code to a test proving it fires**, and none ties a
+   validated field's CLI-side check to its domain-side guard either (this round's fix is the second
+   time that specific disagreement shape appeared — `gate_results`/`block gate` was already
+   aligned, `blocked_by` wasn't, `tasks` isn't reachable to check yet). Flagged in blocks C, D and
+   now E; this is the last chance to name it before the section closes without a decision either
+   way.
+4. **Deferred validations, listed together rather than as separate flags:** `CardFrontmatter.Section`
+   stays unvalidated free text (no check it names a real section card); `blocked_by` items are
+   never resolved to actual cards, so the archived-card filter obligation doesn't bind yet (block
+   D); a supervisor verdict's `range-from`/`range-to` are now guaranteed non-empty but still never
+   checked against git or against the section's own `base`. All three are legitimate, consistent,
+   correctly-scoped deferrals — not gaps in this review — but §8/§9 will each lean on one of them.
+5. **The eighth kind (`section`) landed under a §4 approval that covered seven.** Every §4 surface
+   it touches (the `(kind, scope)` table, kind-prefixed identity from the committed counter,
+   archive survival, the "recognised kinds" refusal message, exhaustive `Match` coverage) was
+   independently checked in the prior round and holds. The Architect's ruling already frames this
+   for the supervisor; nothing further to add.
+
+This closes my audit of §5. Ready for the supervisor.
+
 ## NEXT
 
 
