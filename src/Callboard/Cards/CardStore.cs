@@ -47,7 +47,15 @@ namespace Callboard.Cards;
 internal static class CardStore
 {
     /// <summary>
-    /// Writes a new card file, or fully replaces an existing one at the same path.
+    /// Writes a brand-new card file at <paramref name="filePath"/>. <b>Create-only</b> (4.6/4.8
+    /// remediation, DEVLOG §4 block C review round 1): refuses under the lock when a card already
+    /// exists at that path, rather than replacing it. A card is created exactly once; every later
+    /// touch goes through a targeted read-modify-write (<see cref="AppendComment"/>,
+    /// <see cref="TransferOwnership"/>) that reads the current file first and so can only add to
+    /// it, never drop what it did not read. Full replacement is deliberately not reachable through
+    /// this type at all — see this method's own existence check, not a convention layered on top
+    /// of one that still allowed it (the shape that let a reviewer probe pass an empty
+    /// <c>Comments</c> list over a card that had one and silently drop it).
     /// <paramref name="cardsRoot"/> is the repository root every card in this call must live under
     /// (4.5, O-1) — see <see cref="AnchoredCardPath"/>. <paramref name="changeName"/> is required
     /// exactly when <c>card.Frontmatter.Scope</c> is <see cref="CardScope.Change"/> or
@@ -73,7 +81,15 @@ internal static class CardStore
 
         Directory.CreateDirectory(directory);
 
-        return WithLock(filePath, lockTimeout, _ => AtomicWrite(anchored, CardFileWriter.Serialize(card)));
+        // The existence check happens here, inside the lock's callback, not before WithLock is
+        // called — a bare pre-lock File.Exists check would race a concurrent create for the same
+        // path (TOCTOU); File.Move(overwrite: false) is not atomic on this platform (§2) and
+        // FileShare.None gives no mutual exclusion either, so the lock is what makes this sound,
+        // not the check by itself.
+        return WithLock(filePath, lockTimeout, _ =>
+            File.Exists(filePath)
+                ? new CardWriteResult.Failure($"a card already exists at '{filePath}'; WriteCard only creates a new card — use AppendComment or TransferOwnership to update one.")
+                : AtomicWrite(anchored, CardFileWriter.Serialize(card)));
     }
 
     /// <summary>

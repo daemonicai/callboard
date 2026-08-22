@@ -6569,6 +6569,611 @@ mistake available to write.
 
 ---
 
+**[architect]** Block C (4.6–4.8) briefed → @worker. Base for the block: `d6be240`. This is §4's last
+block; a supervisor reviews the whole section over `df8b1a4..HEAD` once it lands.
+
+### Tasks in this block
+
+- 4.6 Implement append-only comments with structural addressing, replies and resolution
+- 4.7 Test that a role mention in prose routes nothing and that an addressed comment does
+- 4.8 Test that an appended comment cannot be edited or deleted
+
+### What already exists — confirm it, do not rebuild it
+
+§2 built the comment **container** and §4 block B hardened its write path. `CardComment` already carries
+`Id`, `Author`, `Timestamp`, `Body`, `ReplyTo`, `To`, `Resolved` and `UnknownHeaderFields`.
+`CardStore.AppendComment` is the append-only write surface, and `AppendCommentUnderExistingLock` now
+derives its target from the held lock. **What is missing is the routing semantics** — the queue. That is
+where 4.6's effort goes.
+
+### Spec — card-model, verbatim
+
+> ### Requirement: Append-only addressed comment threads
+>
+> Cards SHALL carry an append-only sequence of comments. Each comment SHALL record its own identity, the
+> role that wrote it, a timestamp and a body, and MAY record the comment it replies to, the role it is
+> addressed `to`, and whether it is resolved.
+>
+> A comment SHALL NOT be edited or deleted once appended; a correction is a further comment.
+>
+> A comment addressed to a role and not yet resolved SHALL constitute a live thread and SHALL appear in
+> that role's queue. Addressing SHALL be a structural property of the comment, not prose within it — a
+> role mention in body text SHALL NOT route anything.
+>
+> #### Scenario: Addressed comment routes to its target
+> - **WHEN** a comment is addressed to `reviewer` and left unresolved
+> - **THEN** that card appears in the `reviewer` queue even though the card's `owner` is another role
+>
+> #### Scenario: Role mention in prose does not route
+> - **WHEN** a comment body mentions a role without addressing the comment to it
+> - **THEN** the card does not appear in that role's queue on account of the mention
+>
+> #### Scenario: Resolved thread leaves the queue
+> - **WHEN** an addressed comment is resolved
+> - **THEN** the card ceases to appear in that role's queue on account of that comment, and the comment
+>   remains readable in the thread
+>
+> #### Scenario: Appended comment cannot be rewritten
+> - **WHEN** any role attempts to alter or remove an existing comment
+> - **THEN** the system refuses and states that corrections are appended
+
+**Read the first scenario carefully: the card appears in the `reviewer` queue "even though the card's
+`owner` is another role".** A role's queue is therefore *not* "cards I own" — it is the union of cards I
+own and cards carrying a live thread addressed to me. Block B built owner-based assignment; this block
+adds the second source, and they are different questions with the same answer shape.
+
+**And the third scenario: "on account of that comment".** Resolution is per-comment, not per-card. Two
+comments addressed to the same role, one resolved and one not, leaves the card in that role's queue. A
+boolean "card has been dealt with" cannot express this — the queue is computed over comments.
+
+### Resolution — the one thing the spec does not say, and my ruling
+
+The spec says a resolved comment leaves the queue and never says **who may resolve** or **how resolution
+is recorded**. Since a comment cannot be edited once appended (same requirement, two paragraphs up), and
+`Resolved` is a field *on* the comment, these two statements are in tension: flipping `Resolved` on an
+existing comment **is** editing it.
+
+**Ruling: resolution is an appended comment that resolves another, not a mutation of the resolved
+comment's field.** A comment carries `ReplyTo`; resolution is the same shape — a later comment naming the
+comment it resolves. The queue is then computed over the whole thread: an addressed comment is live if no
+later comment resolves it. This keeps append-only literally true rather than true-with-an-exception, and
+it means resolution is attributed and timestamped for free, which the DEVLOG's own review loop needs.
+
+The existing `CardComment.Resolved` **field** therefore needs a decision, and I want your recommendation
+rather than a silent choice: it is either (a) removed as unrepresentable-by-construction, or (b) kept as
+a read-only *derived* value computed from the thread. Do not keep it as a settable stored field — that is
+the drift problem block B just closed for `Owner`. State which you chose and why in your post. §2's
+unknown-field preservation still applies to whatever a card file already carries.
+
+If you conclude my ruling is wrong — for instance that it breaks §2's file format in a way I have not
+seen — **stop and post `❓ @architect` rather than implementing around it.**
+
+### 4.8 — what to prove, and the honest limit
+
+4.8 says *test* that an appended comment cannot be edited or deleted. The strongest discharge is that
+**there is no operation to test**: `CardStore` exposes no edit and no delete, and after block B the only
+mutation is read-append-write under the lock. Prove that by **writing the mistake** and showing it does
+not compile — §3's standard, and the same evidence that closed O-1 and O-2.
+
+**On the spec's "the system refuses and states that corrections are appended":** there is no verb in §4
+to refuse through, and §9 owns the closed refusal set — **do not mint a refusal code**. Note in your post
+that this scenario's *message* is owed by whichever section wires the comment verb, so §9's retrofit list
+picks it up. An operation that cannot be expressed is stronger than one that is refused; say so, and say
+what is still owed.
+
+**Name the limit explicitly in your post:** the card is a git-committed Markdown file that humans are
+expected to hand-edit (ADR-0003, "legible without the tool"). `callboard` cannot refuse a text editor.
+What the tool guarantees is that *it* never rewrites a comment; what guards the rest is git history. Do
+not build anything to close that gap — state it, so nobody later mistakes the guarantee for a wider one.
+
+### Carried from block B's review — a test that block is owed
+
+The reviewer probed, and confirmed working, a case **no test covers**: a card body containing a line that
+looks exactly like a `<!-- callboard:handover ... -->` delimiter round-trips correctly, via the escaping
+mechanism shared with comments. You are in that format layer. **Land the test**, for the comment
+delimiter as well as the handover one — a body that contains what looks like a thread entry must not be
+able to inject one.
+
+### Binding decisions
+
+- **ADR-0004 / D4** — the index is derived, never authoritative. §3 indexes thread routing, so the queue
+  may be *served* from the index but must be **computable from the record alone**, and a rebuild must
+  reproduce it exactly. `IndexInvariantTests` holds this and stays green.
+- **ADR-0003 / D3** — comments are delimited blocks in the card file; the record is legible without the
+  tool.
+- **ADR-0002** — NativeAOT: no runtime codegen, no unbounded reflection, no new `PackageReference`.
+- **No narrative reaches the database** (§3, asserted against the file's bytes). Routing metadata is
+  indexable; comment bodies are not.
+
+### Working rules
+
+- **Every guard lands with a test that it *refuses***, not that the good case passes.
+- **If you can write the mistake and it compiles, it is a convention** — and block B sharpened this:
+  a mandatory parameter can still be a convention if it proves the *wrong proposition*. Ask what each
+  mechanism proves, not whether it is present. **When two values must agree, delete one rather than
+  checking them.**
+- **Green tests do not exercise the machine contract.** Assert against the card file's bytes.
+- **Two independent mutations of one property beat two readings of one test.**
+- **Test seams are threaded parameters, never shared statics.**
+- **Do not touch the Makefile, `tasks.md`, `CLAUDE.md`, `.claude/`, or git.**
+- **Post above `## NEXT`**, anchored on a line-start `^## ` heading match; confirm after every write that
+  exactly one `## NEXT` remains and it is last.
+
+### Done-gates
+
+`make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0` (182 existing plus yours); `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Sandboxed. Quote the exit lines.
+
+### Not in this block
+
+- **No CLI verbs**, no parse/execute split (O-3, owed by §5), no new refusal codes.
+- No kind-specific frontmatter fields — §5 and §6 own those.
+- No revisiting O-1, O-2, the allocator, the scope table or the handover sequence; all reviewed and
+  landed.
+
+---
+
+**[worker]** Block C (4.6–4.8) implemented.
+
+**4.6 — routing semantics, and the ruling accepted as given.** New `CardCommentRouting` (pure functions
+over `IReadOnlyList<CardComment>`, no I/O): `BelongsInQueue(owner, comments, role)` is the union the
+spec's first scenario names — `owner == role || HasLiveThreadAddressedTo(comments, role)` — not "cards I
+own". `HasLiveThreadAddressedTo` reads only `To` (never `Body`), so a role mention in prose never routes.
+`IsResolved(comments, index)` scans strictly forward in append order for a later comment whose `Resolves`
+names the one at `index` — per-comment, so two comments addressed to the same role, one resolved and one
+not, correctly leave the card in the queue (test:
+`HasLiveThreadAddressedTo_TrueWhileAnotherAddressedCommentToTheSameRoleStaysUnresolved`).
+
+**`CardComment.Resolved` — removed, not kept derived.** Took option (a). Replaced with `Resolves: string?`
+— same shape as `ReplyTo`, a later comment names the one it resolves; wire field `resolves=` (free text,
+same escaping as `reply-to`). Reasoning for removing over keeping a derived accessor: any per-comment
+"am I resolved" value needs the *whole thread* to answer (a single `CardComment` cannot know what was
+appended after it), so a property on the type itself would have to either be wrong in isolation or take a
+thread parameter that looks like state but isn't — the drift shape block B just closed for `Owner`, one
+level up. Deleting it removes the value that could disagree with the thread; `CardCommentRouting.IsResolved`
+is the only place that answer exists, and it always takes the thread. `KnownCommentHeaderKeys` swapped
+`resolved` → `resolves`; an on-disk `resolved=` from before this block now falls into
+`UnknownHeaderFields` and survives untouched — §2's extensibility rule is what makes this rename painless
+rather than a migration.
+
+**IndexPopulator** (§3, not this block's task list, but `InsertComment` read `comment.Resolved` directly
+and had to follow the model change): the `resolved` column is unchanged in shape and still derived, now
+computed via `CardCommentRouting.IsResolved(comments, ordinal)` over the card's full comment list at
+population time, per ADR-0004 — ordinal computes the number, then a rebuild reproduces it exactly.
+`IndexInvariantTests` (3.4–3.6) untouched in behavior, green.
+
+**4.7 — tests.** `CardCommentRoutingTests`: the four spec scenarios by name (addressed-routes-despite-
+different-owner, prose-mention-does-not-route, resolved-thread-leaves-queue via per-comment scan, and the
+two-threads-one-resolved-one-not case that a card-level boolean cannot express), plus `IsResolved` only
+looking forward and the owner's own queue membership surviving its own thread resolving.
+
+**4.8 — no operation to test, proved and pinned.** Wrote the mistake in a throwaway scratch file, built,
+recorded the real errors, discarded the file:
+```
+comment.Body = "changed";                 // CS8852 — Body is init-only
+CardStore.EditComment(root, path, ...);   // CS0117 — no such member
+```
+`CardCommentImmutabilityTests` pins both facts as tests that run in CI rather than a one-off manual
+check: every `CardComment` property has either no setter or an `init`-only one (reflection over
+`IsExternalInit`), and `CardStore`'s only comment-named members are exactly `{AppendComment,
+AppendCommentUnderExistingLock}` — a future `EditComment`/`DeleteComment` would fail this test by merely
+existing, not by what it does. No refusal code minted (§9 owns the closed set); the spec's "the system
+refuses and states that corrections are appended" has no verb to refuse through in §4, so that message is
+owed by whichever later section wires a comment-editing verb, if one is ever proposed. **The honest
+limit, stated and left open, not closed**: a card is a git-committed Markdown file humans are expected to
+hand-edit (ADR-0003, "legible without the tool") — `callboard` cannot refuse a text editor. These
+guarantees are about `callboard` itself never rewriting or dropping a comment; a human editing the file
+directly is guarded only by git history.
+
+**Block B's owed test — landed.** `RoundTrips_BodyContainingTextThatLooksLikeAHandoverDelimiter_...` and
+the comment-body sibling (`AppendContent`/`EscapeContentLine` is the same escaping path for both card
+body and comment body), alongside the pre-existing comment-delimiter test — all three assert the
+lookalike line round-trips verbatim and injects nothing into `Handovers`/`Comments`.
+
+**Existing tests updated for the model change** (not new coverage, compile/semantics fixes only):
+`CardFileRoundTripTests`, `CardIdentityArchiveSurvivalTests`, `CardOwnershipTransferTests`,
+`CardStoreConcurrencyTests`, `CardStoreCorruptionTests`, `CardStoreWriteTests`, `IndexInvariantTests`,
+`IndexPopulatorTests` — every `Resolved: bool` argument became `Resolves: string?`; two tests that
+asserted a `resolved=1` column value were re-pointed at a comment that is genuinely resolved by a later
+one, rather than asserting on the removed field's old meaning.
+
+**Not touched:** Makefile, `tasks.md`, CLAUDE.md, `.claude/`, git. No CLI verbs, no refusal codes, no
+kind-specific frontmatter.
+
+Gates (sandboxed): `BUILD_EXIT:0`, `TEST_EXIT:0` (195/195 — 182 existing + 13 new), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Block C (4.6–4.8) — **Request changes.**
+
+Fresh review, treated independently of block B. Re-ran `make gates` in the sandbox:
+`BUILD_EXIT:0` / `TEST_EXIT:0` (195/195) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0` — matches the worker's
+report. One blocker below; everything else discharges as briefed.
+
+**1. Routing (`CardCommentRouting`) — sound, verified by two independent mutations, not by reading.**
+I copied the file out, mutated `BelongsInQueue` to collapse the union to `owner == role` (deleting the
+`HasLiveThreadAddressedTo` half), ran the real `CardCommentRoutingTests` suite, and got exactly one
+failure: `BelongsInQueue_TrueForAnAddresseeThatDoesNotOwnTheCard` — the spec's first scenario, caught
+precisely. Restored the file, then mutated `IsResolved` to treat *any* `Resolves` value anywhere in the
+thread as resolving *this* comment (collapsing per-comment resolution into a card-level boolean) — this
+time `IsResolved_TrueOnlyForTheCommentALaterOneNames` went red. Restored again; `git status` confirms
+the file matches the worker's diff. Both mutations targeted a different proposition than the other, per
+the working rule, and both were caught by a different test — the suite isn't one assertion wearing nine
+names. `HasLiveThreadAddressedTo_IgnoresARoleNamedOnlyInProse` constructs a comment with `To: null` and
+a body mentioning "reviewer", confirming the prose-mention scenario routes nothing; I read
+`CardCommentRouting` itself and confirmed `Body` is never referenced anywhere in the type — the
+structural-only claim is real, not just asserted.
+
+**2. `CardComment.Resolved` removed outright, not kept derived — the right call, and nothing can
+construct disagreement.** The type now carries only `Resolves: string?`, the same shape as `ReplyTo`.
+There is no boolean anywhere on `CardComment` that could disagree with the thread, because there is no
+longer a resolution-state field at all — only an edge (this comment resolves that one), and the only
+place "is X resolved" is ever computed is `CardCommentRouting.IsResolved`, which always takes the whole
+thread. This is the same fix shape block B applied to `Owner`/`Handovers`, one level down, and it's the
+right one: keeping `Resolved` as a derived read-only property computed from a thread the type doesn't
+have access to would have been worse than either extreme (it would need a `comments` parameter to
+compute honestly, at which point it isn't a property of the comment any more, or it would be wrong when
+read off a single fetched comment in isolation). Minor, non-blocking observation: nothing stops
+`Resolves` naming a comment ID that never actually appears in the thread, or naming itself — but the
+existing `ReplyTo` field has the identical property and this isn't a new gap, so I'm not asking for
+validation here to be added asymmetrically.
+
+**3. `resolved=` → `resolves=` rename — acceptable, verified by round-trip, and genuinely moot today.**
+I round-tripped a hand-authored file with an old-style `<!-- callboard:comment ... resolved=true -->`
+myself: it parses, the field lands in `UnknownHeaderFields` as `("resolved", "true")`, survives
+re-serialisation verbatim, and — the real check — `CardCommentRouting.IsResolved` reads it as **live**
+(false), since nothing in `KnownCommentHeaderKeys` maps it any more. So the preservation claim holds and
+the reinterpretation-as-live claim also holds; both were worth checking independently rather than
+assuming one implies the other. I then checked whether this is actually moot: `callboard/` in this repo
+holds only `.index/` — no `register/`, `decisions/`, or `changes/` card files exist yet, so there is no
+real `resolved=true` anywhere for this rename to silently flip. Acceptable as-is; I'd still put one line
+in `## NEXT` naming the rename explicitly (not because it's live now, but because "no production data
+yet" stops being true at some point in this project and nobody should have to rediscover this by an
+audit next time) — your call whether that's worth the line.
+
+**4. 4.8's reflection proof — BLOCKER. It proves a narrower proposition than the one it claims, and I
+found the gap by executing the exact route the brief asked me to check.**
+
+The test file's own doc comment asserts, as fact: *"there is no operation to test: `CardStore` exposes
+no edit and no delete"* and the reflection test's comment says the guard is "the absence of the member,
+not a check on what it does." I did not accept that on the strength of the reflection filter — I asked
+what proposition the mechanism actually proves. `CardStore_HasNoMemberThatEditsOrRemovesAnExistingComment`
+filters `CardStore`'s methods to those whose *name* contains `"Comment"`. That is not the same claim as
+"no member can edit or remove an existing comment," and the gap is not hypothetical: I wrote and ran a
+probe test calling the production, already-shipped `CardStore.WriteCard` — which does **not** contain
+`"Comment"` in its name and so is invisible to this filter — on a path that already held a card with one
+comment, passing a replacement `CardFile` with an empty `Comments` list. **It succeeded, and the comment
+was gone on the next read.** `WriteCard` is documented as "or fully replaces an existing one at the same
+path" and that behaviour predates this block (§2/block A) — I am not asking this block to fix `WriteCard`
+itself, which may be a legitimate create/replace primitive for a purpose this section doesn't build yet.
+What I am asking to be fixed is the **claim**: this block's own evidence says flatly that no operation
+exists to edit or drop a comment, and I proved by execution, in this same assembly, today, that one does.
+That is exactly the "unreachable from production today is not closed" standard this DEVLOG already
+settled for O-2 in block B, applied to the same failure shape one level up — a check that is real but
+answers the wrong question.
+
+Concretely: no production caller of `WriteCard` exists yet (I grepped `src/` — only tests call it), so
+this is not an active hazard today. But 4.8 exists to *prove* the append-only guarantee, not merely to
+observe that nothing currently exercises the gap, and the reflection test's name-substring filter would
+stay green forever even if a later section (§5/§6, wiring a status-update or re-file verb) called
+`WriteCard` on an existing card path and silently dropped its comment history — the exact shape the
+`WriteCard` probe demonstrates. Suggested discharge, not prescriptive: narrow the doc comment's claim to
+what the test actually establishes (no method whose job is *append* can also edit/delete — true and
+already proven), state `WriteCard`'s full-replace capability as a **named, separate gap** rather than
+silence, and either broaden the reflection check to catch any `CardStore` method touching
+`CardFile.Comments` (not just name-matched ones) or carry it forward as an obligation with a trigger, in
+the pattern O-1/O-2/O-3 already established in this DEVLOG — "the first production caller that writes an
+existing card's `Comments` via `WriteCard`" is a real, nameable trigger, not an unscheduled one.
+
+**5. `IndexPopulator.InsertComment`'s derived `resolved` column — correct, and I found real evidence of
+care, not just absence of regression.** It's computed via `CardCommentRouting.IsResolved(comments,
+ordinal)` over the full thread at population time — reproducible from the record alone, no state read
+from anywhere but the parsed `CardFile`. `IndexPopulatorTests.Populate_RoutesEveryCommentWithCorrectOrdinals`
+is the tell: the **first** comment (the one later resolved) now asserts `resolved == 1` and the
+**second** (the one doing the resolving) asserts `resolved == 0` — the reverse of what the old
+directly-settable field encoded before this block, because that field could be (and in the old test,
+was) set arbitrarily per comment rather than derived from the thread. This is a real semantic correction
+surfacing through the "mechanical" test updates, not a weakening — worth noting explicitly since finding
+7 below is about checking exactly this class of thing. `IndexInvariantTests` (3.4–3.6) — re-diffed: only
+the `Resolved: bool` → `Resolves: string?` argument shape changed in its comment constructions; the
+three invariant scenarios (derived, never authoritative; rebuild reproduces identical answers; absent/
+present/deleted-mid-flight index states) are untouched in structure and still pass.
+
+**6. Delimiter-injection tests — present, and they test injection, not just round-tripping.** Both new
+tests (`RoundTrips_BodyContainingTextThatLooksLikeAHandoverDelimiter_AndInjectsNoHandoverEntry` and its
+comment-body sibling) assert `Handovers`/`Comments` are empty or contain only the real entries, in
+addition to the body-bytes-survive assertion — the injection claim is checked, not assumed from a
+successful round-trip. The pre-existing §2 test
+(`RoundTrips_BodyContainingTextThatLooksLikeACommentDelimiter`) already covered the comment-delimiter
+half for both card body and comment body and asserts the comment list has exactly the one real entry, so
+block B's owed test is fully landed across both delimiter kinds and both content locations (card body,
+comment body).
+
+**7. Blast radius — mechanical, and I found one place it's actually a strengthening, not a wash.** All
+eight touched test files change only `bool Resolved` → `string? Resolves` argument shapes, except
+`IndexPopulatorTests.cs`, which flips two assertions to match the corrected derivation (see finding 5) —
+a real, positive semantic change riding in a diff described as "compile/semantics fixes only," which is
+exactly the kind of thing "described as mechanical" is supposed to make me check for. I read every touched
+test file's diff, not a sample: no assertion was weakened, one was corrected to be more accurate than it
+was before this block.
+
+**Scope — clean.** No CLI verbs, no dispatch arm (`CommandDispatcher.cs`/`Program.cs` absent from the
+diff), no new refusal code (grepped for `CliRefusal.` in `Cards/`/`Index/` — none), no parse/execute
+split, no new `PackageReference` (no `.csproj` in the diff), no kind-specific frontmatter fields. The
+architect's resolution ruling — an appended comment naming what it resolves, rather than a mutable field
+— is one I agree with independently, not just compliance-checked: it's the only shape that keeps
+"a comment SHALL NOT be edited" literally true while still letting resolution be attributed and
+timestamped, and it composes cleanly with the append-only write boundary block B already built.
+
+**Summary: one blocker (4).** Everything else — routing, the `Resolved` removal, the rename's
+preservation behaviour, the derived index column, and the delimiter tests — verified sound by execution,
+not by reading the worker's description. Please correct finding 4's claim (narrow the doc comment, and
+either broaden the reflection check or name `WriteCard` as a carried gap with a trigger) and I'll
+re-audit.
+
+→ @architect
+
+---
+
+**[architect]** Block C review round 1 — `Request changes` accepted, and **I am directing a fix rather
+than the correction the reviewer asked for.** → @worker.
+
+The reviewer asked for the *claim* to be narrowed: either broaden the reflection check or carry
+`WriteCard` as a named gap. That was the right conservative ask. I am taking the wider option, because
+the evidence says the gap should not be carried at all.
+
+**The finding.** `CardStore.WriteCard` full-replaces a card. Given a card holding a comment, passing a
+`CardFile` with an empty comment list drops the comment — the reviewer ran it. So 4.8's claim that
+"there is no operation to test" is false: `WriteCard` is the operation, and the reflection test's
+name-substring filter never saw it because `"WriteCard"` does not contain `"Comment"`. **A test that
+enumerates by name proves what its filter admits, not what the type exposes** — the same class of error
+as block B's `heldLock`, which proved "a lock exists" rather than "this file's lock is held". Second
+instance this section of a mechanism proving the wrong proposition.
+
+**Why not carry it.** The reviewer noted this is unreachable from production today and invoked block B's
+own standard — "unreachable from production today is not closed". That standard is right, and it cuts
+further than the reviewer's remedy: carrying this as an obligation means writing one whose trigger is
+*the first production `WriteCard` caller*. §3 established that an obligation conditioned on an event the
+plan does not schedule is already lost, and O-1/O-2 sat unclosed across two sections on exactly that
+shape. We would be minting a fourth carried obligation to defer a fix that is affordable now:
+**`WriteCard` has no production callers at all** — 57 uses, every one of them a test fixture.
+
+**Direction — delete the degree of freedom, do not check it.** Do not add a guard comparing the incoming
+comment list against the stored one; that is a convention with a compiler's endorsement, and this block
+is the third time this section has reached for one. Make **`WriteCard` create-only**: under the card's
+lock, refuse when the file already exists. A card is created once; thereafter the only paths that touch
+it are the append and transfer read-modify-writes, which cannot drop what they did not read. Full
+replacement stops existing, so it cannot be reached — the same move that closed O-2 and §3's per-arm
+wrapper.
+
+- The existence check is safe **under the lock** and only there. Do not implement it as a bare
+  create-only rename: §2 established `File.Move(overwrite: false)` is not atomic here (TOCTOU, 13,847
+  successes across 2,000 rounds where 2,000 were expected), and Unix `FileShare.None` is enforced as a
+  second step after `CreateNew` and provides no mutual exclusion. The lock is what makes this sound.
+- Some of the 57 test uses will be overwriting a fixture deliberately. Where a test genuinely needs to
+  set up a card in a given state, it may write the file directly or create-then-append; **do not weaken
+  the production API to keep a test convenient**, and do not delete coverage to make this compile.
+- **Note for §5:** status transitions will need to change a card's frontmatter. That is a targeted locked
+  read-modify-write of its own, modelled on `TransferOwnership` — not a return of full replacement. §5's
+  brief will carry this.
+
+**Then make 4.8's evidence match the claim.** With replacement gone, "there is no operation to test"
+becomes true and can be stated plainly. Fix the reflection test's filter regardless of what it now finds:
+a check that enumerates `CardStore`'s members by name substring will miss the next member that can drop a
+comment without having `Comment` in its name. Enumerate the whole surface and justify each member, or
+assert on something that does not depend on naming.
+
+**Everything else in the block stands as built** — the reviewer verified routing by two independent
+mutations, the `Resolved` removal, the wire rename's preservation behaviour, the index's derived
+`resolved` column, the delimiter-injection tests and the eight mechanical test updates. Do not revisit
+them.
+
+### The rule, for the pinned list
+
+**A test that enumerates a surface by name proves only what its filter admits.** Where the claim is
+"nothing here can do X", enumerate the whole surface and account for every member, or assert on something
+naming cannot skip. Filters silently narrow claims; a passing test then reports the narrowed one.
+
+---
+
+**[worker]** Block C review round 1 — fixed as directed.
+
+**`CardStore.WriteCard` is now create-only.** Under the lock (`WithLock`'s callback, not a pre-lock
+`File.Exists` — that would race a concurrent create, and `File.Move(overwrite: false)` /
+`FileShare.None` were already established in §2 as not providing atomicity/exclusion here), it checks
+`File.Exists(filePath)` and returns `CardWriteResult.Failure` if the path already holds a card, before
+`AtomicWrite` is ever reached. No guard comparing incoming vs. stored comment lists — the degree of
+freedom (a second `WriteCard` on an existing path) is deleted, not checked, same move as O-2 and §3's
+per-arm wrapper. Doc comment rewritten to state create-only plainly and point at `AppendComment`/
+`TransferOwnership` for updates.
+
+**4.8's claim corrected, not narrowed — made true.** With replacement gone, "there is no operation to
+test" is real again. Two things now stand behind it instead of a name-filtered reflection check:
+
+- `CardStore_EntireStaticMethodSurface_IsExplicitlyAccountedFor` — enumerates **every** static method
+  `CardStore` declares (`BindingFlags` with no `Where` on the name), asserts the list equals an explicit
+  nine-member enumeration with a one-line reason beside each. A future member fails this test by
+  existing, forcing it to be read and justified rather than silently passing a substring pattern.
+- `WriteCard_RefusesToOverwriteAnExistingCard_SoItCannotDropAComment` — the reviewer's exact probe,
+  landed as a permanent regression: write a card with one comment, call `WriteCard` again on the same
+  path with an empty `Comments` list, assert the second call fails, then read the file back and confirm
+  the original comment is still there. This is the direct proof the enumeration's one-liner for
+  `WriteCard` asserts in prose.
+
+The type's doc comment now narrates round 1 explicitly — what the original claim got wrong, why, and
+what closed it — rather than presenting the corrected version as though it were always true.
+
+**Test fallout — three call sites relied on `WriteCard`'s old overwrite behaviour; fixed per your
+constraint, not weakened, nothing dropped:**
+
+- `CardStoreWriteTests.WriteCard_OverwritingRepeatedly_...` → renamed
+  `AppendComment_Repeatedly_NeverExposesAPartiallyWrittenFileToAConcurrentReader`. Same claim (50 rapid
+  whole-file rewrites through `AtomicWrite`, a concurrent reader never sees a torn file), same
+  mechanism (`AtomicWrite` is shared by every write path), driven through `AppendComment` instead of a
+  second `WriteCard` — each append is its own full read-modify-write, so the atomicity property under
+  test is exercised identically. Comment body size dropped from 20,000 to 2,000 chars per append since
+  the file now accumulates all 50 comments rather than replacing one body in place.
+- `IndexInvariantTests.Rebuild_ReflectsAFileMutation_EvenWhenTheIndexWasStale` — the test's own comment
+  already said "mutate the card file directly, leaving the index stale"; that's now `File.WriteAllText`
+  with `CardFileWriter.Serialize`, genuinely bypassing `CardStore`, which is a more accurate stand-in for
+  an external hand-edit (ADR-0003) than a second call through the production API ever was.
+- `IndexInvariantTests.CardWrites_SucceedWithTheIndexAbsentEntirely_AndNeverCreateOne` — the second
+  `WriteCard` on the same path (there to show a second kind of write succeeding with no index present)
+  became a `TransferOwnership` call instead — a different read-modify-write path, same claim, still
+  covering the "not just create" half of the test's name.
+
+No coverage deleted; no test's assertion weakened. Re-ran every touched file's neighbouring tests to
+confirm nothing else assumed overwrite.
+
+**Everything else per your direction — not revisited:** routing, the `Resolved` removal, the wire
+rename, the derived index column, the delimiter tests, the eight mechanical updates.
+
+Gates (sandboxed): `BUILD_EXIT:0`, `TEST_EXIT:0` (196/196 — 195 prior + 1 new regression test, net of the
+rename), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+---
+
+
+**[reviewer]** Block C (4.6–4.8) round 2 — **Approve.**
+
+Re-ran `make gates` independently: `BUILD_EXIT:0` / `TEST_EXIT:0` (196/196) / `FORMAT_EXIT:0` /
+`VALIDATE_EXIT:0` — matches the worker's report. Verified all five points by execution.
+
+**1. Round-1 probe re-run against the fixed code — now refuses, as directed.** I reproduced my exact
+round-1 probe (write a card with one comment, call `WriteCard` again on the same path with an empty
+`Comments` list) as a fresh throwaway test: the second call now returns `CardWriteResult.Failure`, and
+the original comment reads back intact. Checked for a remaining route around it: `AtomicWrite` is
+`private static` — nothing outside `CardStore.cs` can reach it directly — and it is called from exactly
+three places, `WriteCard` (now create-only), `AppendCommentUnderExistingLock`, and
+`TransferOwnershipUnderExistingLock` (both targeted read-modify-writes that only ever add to what they
+read). `AnchoredCardPath.TryCreate` proves a path is rooted but performs no I/O itself, so constructing
+one is not itself a write. I found no surviving path to full replacement.
+
+**2. Existence check is sound under the lock, not racing it.** `WriteCard`'s `File.Exists(filePath)`
+check sits inside the lambda passed to `WithLock`, which calls `CardLock.Acquire` first and only invokes
+the lambda from within `using (acquired.Lock)` — confirmed by reading `WithLock` itself
+(`CardStore.cs:260-272`), unchanged in this round. The check runs after the lock is held, `AtomicWrite`
+runs immediately after in the same held-lock scope, and nothing between them can be raced by a second
+caller — a second `WriteCard` call for the same path blocks on `CardLock.Acquire` until the first
+finishes, then sees the file the first one created. This is the same pattern §2 already established
+protects `AppendComment`'s read-modify-write; applying it to an existence-check-then-create is the
+correct generalisation, not a new primitive.
+
+**3. The inventory test fails closed, verified by adding a member myself.** I copied `CardStore.cs`
+aside, added an unrelated `internal static void SneakyNewMember() { }`, and ran
+`CardStore_EntireStaticMethodSurface_IsExplicitlyAccountedFor` — it failed immediately, reporting the
+list mismatch at the new member's alphabetical position, with no name-based reason it could have been
+skipped. Restored the file; `git status` confirms it matches the worker's diff. The mechanism itself
+can't be satisfied by a lazy blanket entry: `expectedMembers` is a fixed, explicit array of exact method
+names asserted via `Assert.Equal`, not a pattern, a count, or a `Contains` check — a future member has to
+be typed into that array by name for the test to pass again, which is what forces it to be read rather
+than waved through. This is a materially different mechanism from round 1's name-substring filter, not
+the same filter tightened.
+
+**4. The three test-fallout call sites — re-checked each individually, no coverage lost.**
+- `CardStoreWriteTests`: `WriteCard_OverwritingRepeatedly_...` → `AppendComment_Repeatedly_...`. The
+  reader thread still polls `CardStore.ReadCard` concurrently against 50 sequential writes and asserts
+  zero parse failures — the exact torn-write detection mechanism, now driven by 50 `AppendComment` calls
+  (each its own full `AtomicWrite`) instead of 50 `WriteCard` calls. Per-write body size dropped from
+  20,000 to 2,000 chars, but the file accumulates all 50 appended comments, so the file the reader
+  contends against at the end is larger, not smaller, than the original single-body test produced —
+  this is not a shrunk test.
+- `IndexInvariantTests.Rebuild_ReflectsAFileMutation_EvenWhenTheIndexWasStale`: now mutates via
+  `File.WriteAllText(path, CardFileWriter.Serialize(mutated))` instead of a second `WriteCard`. Read the
+  full test: it still asserts the pre-rebuild database disagrees with the mutated file (proving the
+  index really was stale), then calls `IndexPopulator.Populate` and asserts the rebuilt row matches the
+  mutation — the derived/stale/rebuild-reproduces-truth claim is intact, and arguably better-targeted
+  now, since a direct file write is a closer stand-in for the ADR-0003 hand-edit scenario this test's
+  name describes than a second production-API call ever was.
+- `IndexInvariantTests.CardWrites_SucceedWithTheIndexAbsentEntirely_AndNeverCreateOne`: the second write
+  is now `TransferOwnership` rather than a second `WriteCard`, followed by the pre-existing
+  `AppendComment` call — so this test now exercises three distinct write paths (create, ownership
+  transfer, comment append) all succeeding with the index absent throughout, and still asserts the index
+  file never gets created. Coverage widened, not narrowed, by the substitution.
+
+**5. Everything verified clean in round 1 — spot-checked unchanged, not re-derived.** Diffed
+`CardCommentRouting.cs` against my saved round-1 copy: byte-identical. `CardComment.cs`,
+`CardFileParser.cs`, `CardFileWriter.cs`, `IndexPopulator.cs` carry the same `Resolves`/`resolves=`/
+`CardCommentRouting.IsResolved` shapes I verified by mutation and round-trip last round. Both
+handover/comment delimiter-injection tests (`RoundTrips_...LooksLikeAHandoverDelimiter_...` and its
+comment-body sibling) are present and untouched. The eight mechanical test files still show only the
+`Resolved: bool` → `Resolves: string?` shape change plus this round's three call-site fixes — nothing
+else moved.
+
+**Round 1's non-blocking note (naming the `resolved=`→`resolves=` rename in `## NEXT` for future
+visibility) still stands as a minor, optional suggestion — not blocking approval.**
+
+O-1, O-2 (block B) and 4.6–4.8 (block C) all discharge. §4 is done pending the supervisor's section
+review. Agreed with the architect's call to delete the degree of freedom rather than carry it as a
+fourth obligation — `WriteCard` had no production callers, so the fix was affordable now, and "unreachable
+today" was already the standard that argued against carrying it, not for it.
+
+→ @architect
+
+---
+**[architect]** Block C (4.6–4.8) — reviewer `Approve` on round two, every point re-verified by
+execution. Gates at my end: `BUILD_EXIT:0` / `TEST_EXIT:0` (196/196) / `FORMAT_EXIT:0` /
+`VALIDATE_EXIT:0`, `GATES_EXIT:0`. 4.6–4.8 ticked, committing. **All of §4's tasks are now ticked;
+the section goes to the supervisor over `df8b1a4..HEAD`.**
+
+**`WriteCard` is create-only and full replacement is gone.** The reviewer confirmed `AtomicWrite` is
+`private static`, reachable only from the create-only `WriteCard` and the two append-only
+`*UnderExistingLock` methods; the existence check sits **inside** `WithLock`'s callback, after
+`CardLock.Acquire` succeeds, so it is race-free rather than a TOCTOU pre-check. It added a member to a
+copy of `CardStore` and watched the new inventory test fail on it, which is the check the old
+name-filtered test could not do.
+
+### What §4 actually established, beyond its tasks
+
+**The section's real output is a rule about evidence, arrived at three times from three directions.**
+Each time, a mechanism was present, mandatory, and compiled — and proved a proposition adjacent to the
+one that mattered:
+
+| where | the mechanism | what it proved | what needed proving |
+|---|---|---|---|
+| block B, O-2 round 1 | mandatory `CardLock heldLock` | a lock exists | *this file's* lock is held |
+| block C, 4.8 round 1 | reflection test over `*Comment*` | the filtered members are safe | the *surface* exposes no deletion |
+| block C, 4.8 round 1 | `CardStore` "exposes no edit or delete" | append paths don't delete | `WriteCard` full-replace does |
+
+§3 left us "if you can write the mistake and it compiles, it is a convention." §4's amendment:
+**a mechanism that passes that test can still be a convention if it proves the wrong proposition.**
+Ask what proposition a mechanism establishes, never whether a mechanism is present. Every one of these
+was found by *running* something; not one would have been found by reading.
+
+**And the resolution that follows from it, used three times in this section:** when two values must
+agree, the guarantee is **deleting one**, not checking they match. `heldLock` + `filePath` became
+`heldLock.CardPath`. `HandoverBy`/`HandoverAt` + history became history alone. `WriteCard`'s
+replacement + an append-only claim became create-only. A guard that must run is a convention with a
+compiler's endorsement — and this section reached for one three times before taking the other route
+each time.
+
+### Carried forward from §4
+
+- **§5 — status transitions need targeted locked read-modify-writes**, modelled on `TransferOwnership`.
+  `WriteCard` is create-only now and full replacement is not coming back. This must be in §5's brief;
+  a worker who assumes a whole-card write is available will find the API refuses and may reach for the
+  wrong fix.
+- **§5 — O-3** (a refusal must prevent the side effect it refuses) is owed there, as named when §4
+  opened. §4 built no verbs, so nothing in this section discharged or deepened it.
+- **§9 — the refusal-message for card-model's "the system refuses and states that corrections are
+  appended"** is owed by whichever section wires a comment-editing verb. §4 minted no refusal code, by
+  design: an operation that cannot be expressed is stronger than one that is refused. The message is
+  still owed when a verb exists.
+- **The honest limit, stated not closed:** `callboard` cannot refuse a text editor. The card is a
+  git-committed Markdown file humans are expected to hand-edit (ADR-0003). What the tool guarantees is
+  that *it* never rewrites or drops a comment; git history guards the rest. Nobody should later mistake
+  4.8's guarantee for a wider one.
+- **`resolved=` → `resolves=` wire rename**: a pre-existing on-disk `resolved=` now falls into
+  `UnknownHeaderFields` — preserved but no longer interpreted, so such a comment reads as live. Moot
+  today (no production card data exists), and recorded because it will not be moot after first use.
+
+---
+
 ## NEXT
 
 **Resume point: 4.1.** §3 is closed; §4 has not been opened. Nothing is in flight — working tree clean,

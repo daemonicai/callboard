@@ -189,12 +189,21 @@ internal static class IndexPopulator
 
         for (var ordinal = 0; ordinal < card.Comments.Count; ordinal++)
         {
-            InsertComment(connection, transaction, frontmatter.Id, ordinal, card.Comments[ordinal]);
+            InsertComment(connection, transaction, frontmatter.Id, ordinal, card.Comments);
         }
     }
 
-    private static void InsertComment(SqliteConnection connection, SqliteTransaction transaction, string cardId, int ordinal, CardComment comment)
+    /// <summary>
+    /// Indexes the comment at <paramref name="ordinal"/> in <paramref name="comments"/>. The
+    /// <c>resolved</c> column is not read off <see cref="CardComment"/> — that field no longer
+    /// exists (card-model 4.6: resolution is an appended comment naming what it resolves, not a
+    /// stored flag) — it is derived here via <see cref="CardCommentRouting.IsResolved"/>, over the
+    /// whole thread, exactly as it would be recomputed from the record on a rebuild (ADR-0004).
+    /// </summary>
+    private static void InsertComment(SqliteConnection connection, SqliteTransaction transaction, string cardId, int ordinal, IReadOnlyList<CardComment> comments)
     {
+        var comment = comments[ordinal];
+
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText =
@@ -209,7 +218,7 @@ internal static class IndexPopulator
         command.Parameters.AddWithValue("$timestamp", comment.Timestamp.ToString("O"));
         command.Parameters.AddWithValue("$replyTo", (object?)comment.ReplyTo ?? DBNull.Value);
         command.Parameters.AddWithValue("$addressedTo", (object?)comment.To?.ToWireString() ?? DBNull.Value);
-        command.Parameters.AddWithValue("$resolved", comment.Resolved ? 1 : 0);
+        command.Parameters.AddWithValue("$resolved", CardCommentRouting.IsResolved(comments, ordinal) ? 1 : 0);
         command.ExecuteNonQuery();
     }
 }

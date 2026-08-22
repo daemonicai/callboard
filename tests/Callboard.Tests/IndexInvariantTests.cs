@@ -125,10 +125,13 @@ public sealed class IndexInvariantTests : IDisposable
             Assert.Equal("Before edit", (string)command.ExecuteScalar()!);
         }
 
-        // Mutate the card file directly, leaving the index stale — no Populate call in between.
+        // Mutate the card file directly (File.WriteAllText, not CardStore.WriteCard — WriteCard
+        // is create-only as of DEVLOG §4 block C review round 1), leaving the index stale — no
+        // Populate call in between. This is genuinely the scenario the test name describes: an
+        // edit made outside the tool (ADR-0003, "legible without the tool" — the record is a file
+        // humans are expected to hand-edit), not a second call through the production API.
         var mutated = GoodCard("B-0002", "After edit");
-        var writeResult = CardStore.WriteCard(_root, path, mutated, TimeSpan.FromSeconds(5), ChangeName);
-        AssertWriteSuccess(writeResult);
+        File.WriteAllText(path, CardFileWriter.Serialize(mutated));
 
         IndexPopulator.Populate(_root, databasePath);
 
@@ -226,12 +229,16 @@ public sealed class IndexInvariantTests : IDisposable
         Assert.False(Directory.Exists(Path.GetDirectoryName(databasePath)));
 
         var path = WriteCard("b-0007", GoodCard("B-0007", "Written with no index anywhere"));
-        AssertWriteSuccess(CardStore.WriteCard(_root, path, GoodCard("B-0007", "Rewritten"), TimeSpan.FromSeconds(5), ChangeName));
+
+        // A second write path (TransferOwnership, not a second WriteCard — WriteCard is
+        // create-only as of DEVLOG §4 block C review round 1) exercising the same "no index
+        // anywhere" claim for a read-modify-write, not just a fresh create.
+        AssertWriteSuccess(CardStore.TransferOwnership(_root, path, CardOwner.Reviewer, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName));
 
         var appendResult = CardStore.AppendComment(
             _root,
             path,
-            new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, false, []),
+            new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, null, []),
             TimeSpan.FromSeconds(5),
             ChangeName);
         AssertWriteSuccess(appendResult);
@@ -271,7 +278,7 @@ public sealed class IndexInvariantTests : IDisposable
 
         const int appendCount = 20;
         var comments = Enumerable.Range(0, appendCount)
-            .Select(i => new CardComment($"C-{i:D3}", CardOwner.Worker, Created, $"Comment {i}.", null, null, false, []))
+            .Select(i => new CardComment($"C-{i:D3}", CardOwner.Worker, Created, $"Comment {i}.", null, null, null, []))
             .ToList();
 
         var exceptions = new System.Collections.Concurrent.ConcurrentBag<Exception>();
@@ -331,11 +338,11 @@ public sealed class IndexInvariantTests : IDisposable
         WriteRegisterCard("r-0002", "R-0002", CardKind.Obligation, CardOwner.ProductOwner);
         WriteDecisionCard("d-0001", "D-0001", CardKind.Decision, CardOwner.Architect);
 
-        var comment1 = new CardComment("C-0001", CardOwner.Worker, Created, "First.", null, CardOwner.Architect, false, []);
-        var reply = new CardComment("C-0002", CardOwner.Architect, Updated, "Reply.", "C-0001", null, true, []);
+        var comment1 = new CardComment("C-0001", CardOwner.Worker, Created, "First.", null, CardOwner.Architect, null, []);
+        var reply = new CardComment("C-0002", CardOwner.Architect, Updated, "Reply.", "C-0001", null, "C-0001", []);
         WriteCardInChange(ChangeName, "b-0010", "B-0010", CardKind.Block, CardOwner.Worker, CardScope.Change, [comment1, reply]);
 
-        var findingComment = new CardComment("C-0003", CardOwner.Reviewer, Created, "Finding narrative.", null, CardOwner.Worker, false, []);
+        var findingComment = new CardComment("C-0003", CardOwner.Reviewer, Created, "Finding narrative.", null, CardOwner.Worker, null, []);
         WriteCardInChange(ChangeName, "b-0011", "B-0011", CardKind.Finding, CardOwner.Reviewer, CardScope.Section, [findingComment]);
 
         WriteCardInChange(OtherChangeName, "h-0001", "H-0001", CardKind.Hazard, CardOwner.Supervisor, CardScope.Change, []);

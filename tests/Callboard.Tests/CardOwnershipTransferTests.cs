@@ -141,12 +141,12 @@ public sealed class CardOwnershipTransferTests : IDisposable
         // Two independent append-only sequences sharing one card: a comment append must not
         // disturb the handover history, and a handover must not disturb the comment thread.
         var path = WriteInitialCard("b-0006", "B-0006", CardOwner.Worker);
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Started.", null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Started.", null, null, null, []);
 
         AssertSuccess(CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName));
         AssertSuccess(CardStore.TransferOwnership(_root, path, CardOwner.Reviewer, CardOwner.Architect, Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName));
         AssertSuccess(CardStore.AppendComment(
-            _root, path, new CardComment("C-0002", CardOwner.Reviewer, Created.AddHours(2), "Reviewing.", null, null, false, []),
+            _root, path, new CardComment("C-0002", CardOwner.Reviewer, Created.AddHours(2), "Reviewing.", null, null, null, []),
             TimeSpan.FromSeconds(5), ChangeName));
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));

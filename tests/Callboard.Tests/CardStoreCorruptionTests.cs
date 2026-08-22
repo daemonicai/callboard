@@ -114,7 +114,7 @@ public sealed class CardStoreCorruptionTests : IDisposable
         var frontmatter = new CardFrontmatter(
             id.ToUpperInvariant(), CardKind.Block, "Title " + id, "open", CardOwner.Worker, CardScope.Change, "2", Created, Created);
         var comments = withComment
-            ? new[] { new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, false, []) }
+            ? new[] { new CardComment("C-0001", CardOwner.Worker, Created, "A comment.", null, null, null, []) }
             : [];
 
         var write = CardStore.WriteCard(_root, path, new CardFile(frontmatter, "Body.", comments, []), TimeSpan.FromSeconds(5), ChangeName);

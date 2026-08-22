@@ -11,9 +11,15 @@ namespace Callboard.Cards;
 /// does not reply to anything.</param>
 /// <param name="To">The role this comment is addressed to, or <c>null</c> when it addresses no
 /// one in particular.</param>
-/// <param name="Resolved">Whether this comment's thread has been marked resolved. Resolution
-/// <em>semantics</em> — who may resolve, what resolving does to queue routing — is 4.6/4.7's
-/// business; this only carries the flag.</param>
+/// <param name="Resolves">The identity of the comment this one resolves, or <c>null</c> when it
+/// resolves nothing. This is how resolution is recorded (architect's ruling, DEVLOG §4 block C):
+/// the spec forbids editing or removing an existing comment, and a comment's own <c>Resolved</c>
+/// flag would be exactly that field being flipped after the fact, so resolution is instead an
+/// appended comment naming the comment it resolves — the same shape as <see cref="ReplyTo"/>. A
+/// comment is live (unresolved) for queue-routing purposes exactly when no later comment in the
+/// same thread <see cref="Resolves"/> it — see <c>CardCommentRouting</c>, which computes that over
+/// a whole thread rather than this type carrying a settable "am I resolved" bit that a fresh
+/// construction could set independently of the thread and disagree with it.</param>
 /// <param name="UnknownHeaderFields">Header fields this build's parser does not recognise,
 /// captured verbatim (raw key, raw — still comment-header-escaped — value) in the order they were
 /// read, and re-emitted the same way on write. A future section's own field (or a hand-added one)
@@ -27,7 +33,7 @@ internal sealed record CardComment(
     string Body,
     string? ReplyTo,
     CardOwner? To,
-    bool Resolved,
+    string? Resolves,
     IReadOnlyList<(string Key, string RawValue)> UnknownHeaderFields)
 {
     // The compiler-generated record equality compares UnknownHeaderFields by reference (neither
@@ -43,9 +49,9 @@ internal sealed record CardComment(
         && Body == other.Body
         && ReplyTo == other.ReplyTo
         && EqualityComparer<CardOwner?>.Default.Equals(To, other.To)
-        && Resolved == other.Resolved
+        && Resolves == other.Resolves
         && UnknownHeaderFields.SequenceEqual(other.UnknownHeaderFields);
 
     public override int GetHashCode() =>
-        HashCode.Combine(Id, Author, Timestamp, Body, ReplyTo, To, Resolved, UnknownHeaderFields.Count);
+        HashCode.Combine(Id, Author, Timestamp, Body, ReplyTo, To, Resolves, UnknownHeaderFields.Count);
 }

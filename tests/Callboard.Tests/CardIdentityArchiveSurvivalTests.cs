@@ -37,8 +37,8 @@ public sealed class CardIdentityArchiveSurvivalTests : IDisposable
         var card = new CardFile(frontmatter, "Original body.", [], []);
         AssertWriteSuccess(CardStore.WriteCard(_root, cardPath, card, TimeSpan.FromSeconds(5), ChangeName));
 
-        var firstComment = new CardComment("C-0001", CardOwner.Worker, Created, "First reply.", null, null, false, []);
-        var secondComment = new CardComment("C-0002", CardOwner.Reviewer, Created, "Second reply.", "C-0001", CardOwner.Worker, true, []);
+        var firstComment = new CardComment("C-0001", CardOwner.Worker, Created, "First reply.", null, null, null, []);
+        var secondComment = new CardComment("C-0002", CardOwner.Reviewer, Created, "Second reply.", "C-0001", CardOwner.Worker, "C-0001", []);
         AssertWriteSuccess(CardStore.AppendComment(_root, cardPath, firstComment, TimeSpan.FromSeconds(5), ChangeName));
         AssertWriteSuccess(CardStore.AppendComment(_root, cardPath, secondComment, TimeSpan.FromSeconds(5), ChangeName));
 
@@ -62,7 +62,8 @@ public sealed class CardIdentityArchiveSurvivalTests : IDisposable
         Assert.Equal("First reply.", resolved.Comments[0].Body);
         Assert.Equal("Second reply.", resolved.Comments[1].Body);
         Assert.Equal("C-0001", resolved.Comments[1].ReplyTo);
-        Assert.True(resolved.Comments[1].Resolved);
+        Assert.Equal("C-0001", resolved.Comments[1].Resolves);
+        Assert.True(CardCommentRouting.IsResolved(resolved.Comments, 0));
     }
 
     private static void AssertWriteSuccess(CardWriteResult result) =>

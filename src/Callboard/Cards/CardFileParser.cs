@@ -31,7 +31,7 @@ internal static class CardFileParser
     // per-comment header instead of the frontmatter block.
     private static readonly HashSet<string> KnownCommentHeaderKeys = new(StringComparer.Ordinal)
     {
-        "id", "author", "reply-to", "to", "resolved", "timestamp",
+        "id", "author", "reply-to", "to", "resolves", "timestamp",
     };
 
     // The three handover-line fields this build recognises (card-model 4.5). Same rule again.
@@ -376,24 +376,11 @@ internal static class CardFileParser
             to = toOwner;
         }
 
-        var resolved = false;
-        if (fields.TryGetValue("resolved", out var resolvedText))
-        {
-            if (string.Equals(resolvedText, "true", StringComparison.Ordinal))
-            {
-                resolved = true;
-            }
-            else if (string.Equals(resolvedText, "false", StringComparison.Ordinal))
-            {
-                resolved = false;
-            }
-            else
-            {
-                return (null, $"comment '{id}' has invalid 'resolved' value: '{resolvedText}'. Expected 'true' or 'false'.");
-            }
-        }
+        string? resolves = fields.TryGetValue("resolves", out var resolvesText)
+            ? CardFileFormat.UnescapeCommentHeaderValue(resolvesText)
+            : null;
 
-        return (new CardComment(id, author, timestamp, body, replyTo, to, resolved, unknownFields), null);
+        return (new CardComment(id, author, timestamp, body, replyTo, to, resolves, unknownFields), null);
     }
 
     private static (CardHandover? Handover, string? Failure) BuildHandover(

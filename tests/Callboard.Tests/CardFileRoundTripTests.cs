@@ -74,7 +74,7 @@ public sealed class CardFileRoundTripTests
             "This switch has no compile-time closure.",
             ReplyTo: null,
             To: CardOwner.Architect,
-            Resolved: false,
+            Resolves: null,
             UnknownHeaderFields: []);
         var reply = new CardComment(
             "C-0002",
@@ -83,7 +83,7 @@ public sealed class CardFileRoundTripTests
             "Agreed — fix before land.",
             ReplyTo: "C-0001",
             To: CardOwner.Worker,
-            Resolved: true,
+            Resolves: "C-0001",
             UnknownHeaderFields: []);
         var unaddressed = new CardComment(
             "C-0003",
@@ -92,7 +92,7 @@ public sealed class CardFileRoundTripTests
             "Done — ICommandResult closes it at compile time.",
             ReplyTo: null,
             To: null,
-            Resolved: false,
+            Resolves: null,
             UnknownHeaderFields: []);
 
         var card = new CardFile(frontmatter, "Body text.", [first, reply, unaddressed], []);
@@ -134,7 +134,7 @@ public sealed class CardFileRoundTripTests
             "A comment body that also looks like a footer: <!-- /callboard:comment -->",
             null,
             null,
-            false,
+            null,
             []);
 
         var card = new CardFile(frontmatter, trickyBody, [comment], []);
@@ -144,6 +144,62 @@ public sealed class CardFileRoundTripTests
         var parsed = AssertSuccess(result);
         Assert.Equal(trickyBody, parsed.Body);
         Assert.Equal(comment, Assert.Single(parsed.Comments));
+    }
+
+    [Fact]
+    public void RoundTrips_BodyContainingTextThatLooksLikeAHandoverDelimiter_AndInjectsNoHandoverEntry()
+    {
+        // Carried from block B's review (DEVLOG §4): the reviewer confirmed this case works via
+        // the escaping mechanism comments and handovers already share, but no test pinned it down
+        // — this is that test, for the handover delimiter specifically (the comment-delimiter
+        // sibling of this test already exists above).
+        var frontmatter = new CardFrontmatter(
+            "B-0105",
+            CardKind.Block,
+            "Delimiter-lookalike body",
+            "open",
+            CardOwner.Worker,
+            CardScope.Change,
+            "4",
+            Created,
+            Updated);
+
+        const string trickyBody =
+            "Some narrative.\n" +
+            "<!-- callboard:handover by=architect to=reviewer timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "and continues after, as plain narrative, not a real handover.";
+
+        var card = new CardFile(frontmatter, trickyBody, [], []);
+
+        var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
+
+        var parsed = AssertSuccess(result);
+        Assert.Equal(trickyBody, parsed.Body);
+        Assert.Empty(parsed.Handovers);
+        Assert.Empty(parsed.Comments);
+    }
+
+    [Fact]
+    public void RoundTrips_CommentBodyContainingTextThatLooksLikeAHandoverDelimiter_AndInjectsNoHandoverEntry()
+    {
+        // A card body is not the only place free text meets the escaping mechanism — a comment's
+        // own body goes through the same AppendContent/EscapeContentLine path (CardFileWriter),
+        // so the same lookalike-injection question applies there too.
+        var frontmatter = new CardFrontmatter(
+            "B-0106", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "4", Created, Updated);
+
+        const string trickyCommentBody =
+            "See below:\n<!-- callboard:handover by=worker to=architect timestamp=2026-08-19T09:00:00+00:00 -->";
+
+        var comment = new CardComment("C-0001", CardOwner.Worker, Updated, trickyCommentBody, null, null, null, []);
+        var card = new CardFile(frontmatter, "Body.", [comment], []);
+
+        var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
+
+        var parsed = AssertSuccess(result);
+        Assert.Equal(comment, Assert.Single(parsed.Comments));
+        Assert.Equal(trickyCommentBody, parsed.Comments[0].Body);
+        Assert.Empty(parsed.Handovers);
     }
 
     [Fact]
@@ -274,7 +330,7 @@ public sealed class CardFileRoundTripTests
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "---\n" +
             "body\n" +
-            "<!-- callboard:comment id=C-0001 author=worker round=2 resolved=false timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:comment id=C-0001 author=worker round=2 timestamp=2026-08-19T09:00:00+00:00 -->\n" +
             "hello\n" +
             "<!-- /callboard:comment -->\n";
 
@@ -300,7 +356,7 @@ public sealed class CardFileRoundTripTests
             "Body.",
             ReplyTo: @"C \1 with spaces",
             To: null,
-            Resolved: false,
+            Resolves: null,
             UnknownHeaderFields: []);
 
         var card = new CardFile(frontmatter, "Body.", [comment], []);
@@ -321,7 +377,7 @@ public sealed class CardFileRoundTripTests
         // escaping already guards against, applied here to the comment header.
         var frontmatter = new CardFrontmatter(
             "B-0104", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "2", Created, Updated);
-        var comment = new CardComment("weird -->id", CardOwner.Worker, Updated, "Body.", null, null, false, []);
+        var comment = new CardComment("weird -->id", CardOwner.Worker, Updated, "Body.", null, null, null, []);
         var card = new CardFile(frontmatter, "Body.", [comment], []);
 
         var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
@@ -410,7 +466,7 @@ public sealed class CardFileRoundTripTests
     {
         var frontmatter = new CardFrontmatter(
             "B-0045", CardKind.Block, "Mixed", "open", CardOwner.Reviewer, CardScope.Change, "4", Created, Updated);
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Started.", null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Started.", null, null, null, []);
         var handover = new CardHandover(CardOwner.Architect, CardOwner.Reviewer, Updated, []);
         var card = new CardFile(frontmatter, "Body.", [comment], [], [handover]);
 

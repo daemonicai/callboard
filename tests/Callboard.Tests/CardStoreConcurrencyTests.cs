@@ -50,8 +50,8 @@ public sealed class CardStoreConcurrencyTests : IDisposable
         var path = Path.Combine(_directory, "card.md");
         WriteInitialCard(path);
 
-        var commentA = new CardComment("C-A", CardOwner.Worker, Created, "First to acquire the lock.", null, null, false, []);
-        var commentB = new CardComment("C-B", CardOwner.Reviewer, Created, "Waits for A, then appends after.", null, null, false, []);
+        var commentA = new CardComment("C-A", CardOwner.Worker, Created, "First to acquire the lock.", null, null, null, []);
+        var commentB = new CardComment("C-B", CardOwner.Reviewer, Created, "Waits for A, then appends after.", null, null, null, []);
 
         // Hold the lock ourselves first, so B is guaranteed to still be waiting on it — the
         // ordering this test asserts is forced by that hold, not by timing luck.
@@ -85,7 +85,7 @@ public sealed class CardStoreConcurrencyTests : IDisposable
 
         const int appendCount = 20;
         var comments = Enumerable.Range(0, appendCount)
-            .Select(i => new CardComment($"C-{i:D3}", CardOwner.Worker, Created, $"Comment {i}.", null, null, false, []))
+            .Select(i => new CardComment($"C-{i:D3}", CardOwner.Worker, Created, $"Comment {i}.", null, null, null, []))
             .ToList();
 
         // Dedicated threads, not the thread pool: CardLock.Acquire's retry loop blocks on

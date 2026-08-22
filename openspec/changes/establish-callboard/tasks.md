@@ -34,9 +34,9 @@
 - [x] 4.3 Test that a card identity stays resolvable after its change is archived
 - [x] 4.4 Implement the scope attribute, refusing `section` scope on a `rule`
 - [x] 4.5 Implement ownership with attributed, timestamped handover
-- [ ] 4.6 Implement append-only comments with structural addressing, replies and resolution
-- [ ] 4.7 Test that a role mention in prose routes nothing and that an addressed comment does
-- [ ] 4.8 Test that an appended comment cannot be edited or deleted
+- [x] 4.6 Implement append-only comments with structural addressing, replies and resolution
+- [x] 4.7 Test that a role mention in prose routes nothing and that an addressed comment does
+- [x] 4.8 Test that an appended comment cannot be edited or deleted
 
 ## 5. Work lifecycle and sections
 

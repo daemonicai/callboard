@@ -32,7 +32,7 @@ public sealed class IndexPopulatorTests : IDisposable
     public void Populate_RoundTripsEveryFrontmatterField()
     {
         var databasePath = IndexPaths.DatabasePath(_root);
-        var comment = new CardComment("C-0001", CardOwner.Reviewer, Created, "Narrative body.", null, CardOwner.Worker, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Reviewer, Created, "Narrative body.", null, CardOwner.Worker, null, []);
         var frontmatter = new CardFrontmatter(
             "B-0001", CardKind.Block, "A title", "open", CardOwner.Worker, CardScope.Change, "3", Created, Updated);
         WriteCard(CardScope.Change, "b-0001", new CardFile(frontmatter, "Body.", [comment], []));
@@ -65,8 +65,8 @@ public sealed class IndexPopulatorTests : IDisposable
     public void Populate_RoutesEveryCommentWithCorrectOrdinals()
     {
         var databasePath = IndexPaths.DatabasePath(_root);
-        var first = new CardComment("C-0001", CardOwner.Worker, Created, "First.", null, CardOwner.Architect, false, []);
-        var second = new CardComment("C-0002", CardOwner.Architect, Updated, "Second.", "C-0001", null, true, []);
+        var first = new CardComment("C-0001", CardOwner.Worker, Created, "First.", null, CardOwner.Architect, null, []);
+        var second = new CardComment("C-0002", CardOwner.Architect, Updated, "Second.", "C-0001", null, "C-0001", []);
         var frontmatter = new CardFrontmatter(
             "B-0002", CardKind.Question, "Q", "open", CardOwner.Architect, CardScope.Change, "3", Created, Created);
         WriteCard(CardScope.Change, "b-0002", new CardFile(frontmatter, "Body.", [first, second], []));
@@ -85,7 +85,9 @@ public sealed class IndexPopulatorTests : IDisposable
         Assert.Equal("worker", reader.GetString(2));
         Assert.True(reader.IsDBNull(3));
         Assert.Equal("architect", reader.GetString(4));
-        Assert.Equal(0, reader.GetInt32(5));
+        // Resolved here — not by anything on this row itself, but because C-0002 (below) names
+        // it via `resolves`: the derived column IndexPopulator computes over the whole thread.
+        Assert.Equal(1, reader.GetInt32(5));
 
         Assert.True(reader.Read());
         Assert.Equal("C-0002", reader.GetString(0));
@@ -93,7 +95,7 @@ public sealed class IndexPopulatorTests : IDisposable
         Assert.Equal("architect", reader.GetString(2));
         Assert.Equal("C-0001", reader.GetString(3));
         Assert.True(reader.IsDBNull(4));
-        Assert.Equal(1, reader.GetInt32(5));
+        Assert.Equal(0, reader.GetInt32(5));
 
         Assert.False(reader.Read());
     }
@@ -104,7 +106,7 @@ public sealed class IndexPopulatorTests : IDisposable
         var databasePath = IndexPaths.DatabasePath(_root);
         const string cardBodySecret = "UNMISTAKABLE_CARD_BODY_MARKER_7f3a";
         const string commentBodySecret = "UNMISTAKABLE_COMMENT_BODY_MARKER_9c1e";
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, commentBodySecret, null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, commentBodySecret, null, null, null, []);
         var frontmatter = new CardFrontmatter(
             "B-0003", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "3", Created, Created);
         WriteCard(CardScope.Change, "b-0003", new CardFile(frontmatter, cardBodySecret, [comment], []));

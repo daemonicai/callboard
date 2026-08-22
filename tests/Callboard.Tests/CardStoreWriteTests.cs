@@ -66,10 +66,15 @@ public sealed class CardStoreWriteTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteCard_OverwritingRepeatedly_NeverExposesAPartiallyWrittenFileToAConcurrentReader()
+    public async Task AppendComment_Repeatedly_NeverExposesAPartiallyWrittenFileToAConcurrentReader()
     {
+        // Repeated whole-file rewrites through AtomicWrite, exercised via AppendComment rather
+        // than WriteCard — WriteCard is create-only (DEVLOG §4 block C review round 1) and cannot
+        // be called twice on the same path, but every append is its own full read-modify-write
+        // through the same AtomicWrite primitive, so the atomicity claim under test is exercised
+        // identically.
         var path = Path.Combine(_directory, "b-0004.md");
-        AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0004", body: new string('x', 20_000)), TimeSpan.FromSeconds(5), ChangeName));
+        AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0004"), TimeSpan.FromSeconds(5), ChangeName));
 
         var readerFailures = new List<string>();
         var stop = false;
@@ -102,7 +107,9 @@ public sealed class CardStoreWriteTests : IDisposable
 
         for (var i = 0; i < 50; i++)
         {
-            AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0004", body: new string((char)('a' + (i % 26)), 20_000)), TimeSpan.FromSeconds(5), ChangeName));
+            var comment = new CardComment(
+                $"C-{i:D3}", CardOwner.Worker, Created, new string((char)('a' + (i % 26)), 2_000), null, null, null, []);
+            AssertSuccess(CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName));
         }
 
         Volatile.Write(ref stop, true);
@@ -117,7 +124,7 @@ public sealed class CardStoreWriteTests : IDisposable
         var path = Path.Combine(_directory, "b-0005.md");
         AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0005"), TimeSpan.FromSeconds(5), ChangeName));
 
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, null, []);
         AssertSuccess(CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName));
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
@@ -142,7 +149,7 @@ public sealed class CardStoreWriteTests : IDisposable
             "Body.\n";
         File.WriteAllText(path, raw, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, null, []);
         AssertSuccess(CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName));
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
@@ -251,7 +258,7 @@ public sealed class CardStoreWriteTests : IDisposable
         var wrongPath = Path.Combine(_directory, "r-0003.md");
         File.Copy(realPath, wrongPath);
 
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, null, []);
         var result = CardStore.AppendComment(_root, wrongPath, comment, TimeSpan.FromSeconds(5));
 
         var failure = AssertFailure(result);
@@ -262,7 +269,7 @@ public sealed class CardStoreWriteTests : IDisposable
     public void AppendComment_WhenNoCardExistsAtThatPath_Fails()
     {
         var path = Path.Combine(_directory, "missing.md");
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, null, []);
 
         var result = CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
 
@@ -276,7 +283,7 @@ public sealed class CardStoreWriteTests : IDisposable
         var path = Path.Combine(_directory, "corrupt.md");
         File.WriteAllText(path, "not a card file at all");
 
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, null, []);
         var result = CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
 
         AssertFailure(result);
@@ -295,7 +302,7 @@ public sealed class CardStoreWriteTests : IDisposable
         // asserted here directly.
         var path = Path.Combine(_directory, "b-0007.md");
         AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0007"), TimeSpan.FromSeconds(5), ChangeName));
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, null, []);
 
         Assert.Throws<ArgumentNullException>(() =>
             CardStore.AppendCommentUnderExistingLock(null!, _root, comment, ChangeName));
@@ -322,7 +329,7 @@ public sealed class CardStoreWriteTests : IDisposable
         // test is the positive half: append under a lock acquired for `path` lands on `path`.
         var path = Path.Combine(_directory, "b-0009.md");
         AssertSuccess(CardStore.WriteCard(_root, path, SampleCard("B-0009"), TimeSpan.FromSeconds(5), ChangeName));
-        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, false, []);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Done.", null, null, null, []);
 
         var lockResult = CardLock.Acquire(path, TimeSpan.FromSeconds(5));
         var held = lockResult.Match(

@@ -99,7 +99,11 @@ internal static class CardFileWriter
             fields.Append(" to=").Append(to.ToWireString());
         }
 
-        fields.Append(" resolved=").Append(comment.Resolved ? "true" : "false");
+        if (comment.Resolves is { } resolves)
+        {
+            fields.Append(" resolves=").Append(CardFileFormat.EscapeCommentHeaderValue(resolves));
+        }
+
         fields.Append(" timestamp=").Append(FormatTimestamp(comment.Timestamp));
 
         foreach (var (key, rawValue) in comment.UnknownHeaderFields)
