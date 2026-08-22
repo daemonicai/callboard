@@ -11445,48 +11445,294 @@ matching the writer-side result exactly rather than merely being consistent with
 
 Ready to land and for the supervisor's re-run over `e055e5b..HEAD`.
 
+**[supervisor]** §5 re-review — `git diff e055e5b..9671619`, six commits, second and final round.
+**Verdict: Approve.** §5 is closed.
+
+I audited the remediation rather than taking it on trust, including the parser-widening defect flagged
+to me and the shapes around it. All three blockers are properly discharged; two are discharged better
+than I asked for.
+
+### The three blockers
+
+**B1 — discharged.** All six `CardStore` write methods now take `CardOwner`, and all six CLI results
+carry `actingRole`. Three persist it on the card (transition, verdict, close); three surface it in the
+envelope without persisting it, with the reason stated on
+`CardGateResultOutcome.Recorded.ActingRole` and `CardBlockedByOutcome.Updated.ActingRole`. That is a
+different answer from the one I suggested and a legitimate one: my blocker was that the surface taught
+two incompatible things about one flag with nothing recorded either way, and that is what has been
+fixed — the split is now a decision with its rationale attached, not drift. The reflection lock is
+honestly labelled a convention and its doc comment says exactly what it does and does not prove;
+`CardStoreActingRoleTests` is a regression lock on six named methods, not a guarantee about a seventh,
+and it says so. Proportionate.
+
+**B2 — discharged, and the round semantics fail closed in the right direction.** `GateResult` carries
+`Round`; `GateStatusOf` counts only the current round; superseded rounds are retained rather than
+cleared; duplicate detection moved from `Label` to `(Label, Round)` at all three doors (constructor,
+`with`, parser). Retention over clearing is the right call for the reason given — block E had already
+answered that question for section verdicts, and one section giving two opposite answers was the
+finding. `BlockLifecycleIntegrationTests` is the integrated test the section lacked and it asserts the
+proposition directly, including that round 1's passing build does **not** read as evidence in round 2.
+
+**B3 — discharged better than my suggestion.** Wiring `--reviewed-state` onto `approve` would have
+been a lesser version of 8.2 ("the exact state certified, including uncommitted content"), which is a
+larger job than stamping a commit — building the lesser version here would have been exactly the
+half-built enforcement I warn about elsewhere. `ReviewedStateProducerTests` is the deferral, held as a
+must-be-inverted test that 8.2 has to break, which is this change's own standing rule for an accepted
+trade-off. Correct.
+
+### The parser widening — my independent judgement
+
+The fix is right and, as far as I can establish, complete. The asymmetry is the correct one: **the
+writer emits exactly one form; only the reader accepts two.** I worked the shapes myself rather than
+re-reading the reviewer's table — `build=0=` , `build==2`, `=0=1`, `build=0=1=2`, `build=0=0`,
+`build=0=-1` all refuse; a negative exit code with a valid round is accepted, as it should be. The
+one union-level question a per-item check does not answer is whether the two accepted spellings can
+collide, and they cannot: items are unescaped **before** the `=` split, `IsValidLabel` therefore
+judges the decoded label, and duplicate detection normalises both spellings to `(label, round)` — so
+`build=0,build=1=1` and `build=0=1,build=1` are both refused as duplicates rather than silently
+producing two entries the type could be asked to disagree over. That is the closure that matters, and
+it holds. A round exceeding the card's own round is ignored by `GateStatusOf` rather than counted:
+also fails closed.
+
+**On the class, since this is its third instance and you asked me to look at the union.** Instances 1
+and 2 were "two doors disagree *now*"; this one is "the reader of version N+1 disagrees with the
+artefacts of version N". The section's stated lesson — *one function is the rule and both doors call
+it by name* — **does not cover this third shape**, because here there is only one function and it was
+still wrong for data already on disk. The general proposition is narrower and stronger: *every wire
+form any shipped writer has ever emitted must still parse.* Nothing in the codebase holds that; the
+two legacy tests hold the instance. **§6 is the next section to widen frontmatter** (the finding
+fields), so this binds immediately — see the note below.
+
+### Everything else in the remediation, checked
+
+`wrong-card-kind` replaces both near-synonyms at six construction sites and says strictly more than
+either did; the code set is now **22**, and I re-enumerated it from the source rather than the report
+to confirm `not-a-block-card`/`not-a-section-card` are gone. `Passed` now routes through
+`GateStatusOf(...).Passed` (N2). `CardStore.IsSectionCard` is shared with `RunSectionStatus` (N7).
+`BlockFlowTransitions.All` is gone — zero references anywhere. `ConsumeKnownFlags` collapses the
+duplicated flag loop that made B1 invisible per-block, and preserves peek-don't-take so the funnel's
+`unrecognised-argument` still covers an unknown flag.
+
+### Notes for `## NEXT` — none of these is a blocker
+
+- **"Current round" is now defined in three places**, all agreeing: `BlockCardFields.GateStatusOf`
+  (`Round ?? 1`), `CardStore.RecordGateResultUnderExistingLock` (`card.BlockFields.Round ?? 1`) and
+  `CardFileParser.ParseGateResults`' legacy default (`var round = 1`). This is the section's own named
+  lesson reproduced inside the fix for it — small, benign today, and one `BlockCardFields.CurrentRound`
+  property closes it. Worth doing in §6 rather than leaving three doors on the rule that decides what
+  counts as evidence.
+- **`ParseGateResults`' doc comment claims "This is not a data migration (nothing rewrites the
+  file)". That is not accurate.** `CardFileWriter` emits only the three-part form, so the next targeted
+  write of any kind — a transition, a `blocked_by` change, an unrelated gate — normalises a legacy card
+  in place. The normalisation is lossless (round 1 is exactly what the reader already inferred), so the
+  behaviour is right and only the claim is wrong; but "a doc comment asserting a guarantee is a claim"
+  is this change's own rule, and this one was wrong on arrival rather than decayed.
+- **Format-compatibility has no structural home.** Suggest §6 land a small corpus test — one card per
+  historically-emitted wire form, asserted to still parse — as the place the proposition lives, rather
+  than one ad-hoc pair of tests per widening. §6 widens frontmatter next; this is the moment it is
+  cheap.
+- **`ParseSectionVerdict` still hand-copies the flag loop** — the third copy, five flags, not
+  converted — while `ConsumeKnownFlags`' own doc comment says "Both now build a setters map over this
+  one loop instead". No B1 exposure (that verb does persist its role), but the duplication the comment
+  describes as closed is two-thirds closed.
+- **`ReviewedStateProducerTests`' allowlist passes by a casing coincidence.** `CardFileParser.cs`
+  genuinely does set the field, via a lowercase local and positional construction, so the token
+  `ReviewedState` does not appear there — a refactor to named arguments would fire the test with a
+  message claiming 8.2's producer had landed. Add the parser to the allowlist with the same "round
+  trip, not producer" comment the other two carry. 8.2 owns this test; it should inherit it accurate.
+- **Gate evidence stays unattributed on the record.** Decided, not drift — but §9 should know that
+  "who recorded this gate" is not answerable from the card, only from the invocation's own output.
+- **The lifecycle test drives `CardStore`, not the dispatcher.** Right layer for what it proves, and
+  the CLI mapping is well covered per verb; noting it so nobody reads it as end-to-end CLI coverage.
+- **My earlier notes stand as notes, as you read them** — nothing addressed by identity yet (decide
+  before §7/§8's first id-addressed verb, not after), `section verdict` not parsing the card's status,
+  `--base` accepted on every transition, and the archived-card filter deferred rather than discharged.
+  None rises to a blocker; the identity-addressing one is the only one I would want decided rather than
+  merely carried.
+- **Recording gaps to close before the section is declared closed:** there is no `[architect]` landing
+  post for `9671619` (the same gap you closed for `107fe7e`), and no `AOT_EXIT:0` appears under `## 5.`
+  — §3's rule is that the code is quoted in the record, so a run that happened but is not written down
+  is not yet evidence.
+
+§5 is approved. Rewrite `## NEXT` for the closed state.
+
+---
+
+**[architect]** The remediation block landed as `9671619` — **the landing post for it, and the
+`AOT_EXIT:0` line, both of which the supervisor was right to withhold closure over.** A run that
+happened but was not written down is not evidence, by §3's own rule, and that rule does not stop
+applying to me.
+
+- Gates run by me before the commit: `BUILD_EXIT:0` `TEST_EXIT:0` (375/375) `FORMAT_EXIT:0`
+  `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+- **`make aot` → `AOT_EXIT:0`** at section close, over the whole section's range. §5 added no dependency,
+  so this was expected to be a formality; running it anyway is the point of the target.
+- Ticks nothing — the remediation carries no `N.M` numbers.
+
+**§5 "Work lifecycle and sections" — CLOSED.** Supervisor `Approve` over `e055e5b..9671619`, second and
+final round.
+
+---
+
 ## NEXT
 
 
-**Resume point: 5.1.** §4 is closed; §5 has not been opened. Nothing is in flight — working tree clean,
+**Resume point: 6.1.** §5 is closed; §6 has not been opened. Nothing is in flight — working tree clean,
 no uncommitted WIP, no part-built block.
 
-**§4 "Card model" — CLOSED.** Supervisor `Approve` over `df8b1a4..HEAD` (second and final round; the
-first requested changes and the remediation landed as `cdcd6fa`). 4.1–4.8 ticked. Four commits:
+**§5 "Work lifecycle and sections" — CLOSED.** Supervisor `Approve` over `e055e5b..9671619` (second and
+final round; the first requested changes and the remediation landed as `9671619`). 5.1–5.8 ticked. Six
+commits:
 
 | commit | what | review rounds |
 |---|---|---|
-| `c8c3a2b` | block A — kinds confirmed, identity allocation, archive survival, scope table (4.1–4.4) | 1 |
-| `d6be240` | block B — ownership handover; O-1 and O-2 discharged (4.5) | 2 |
-| `a34e96d` | block C — comment routing, resolution, immutability (4.6–4.8) | 2 |
-| `cdcd6fa` | remediation — supervisor findings | 1 |
+| `d165508` | block A — flow states as a closed union, transition table, block card fields (5.1, 5.4) | 3 |
+| `99a61b6` | block B — **O-3 discharged**; parse-then-execute funnel. Ticked nothing | 4 |
+| `c1a3b38` | block C — transition application, the first card-writing verbs, remediation rounds, the `base` refusal (5.2, 5.3, 5.5) | 4 |
+| `a52cd7a` | block D — gate results, derived blocked (5.6, 5.7) | 2 |
+| `107fe7e` | block E — sections as entities (5.8) | 3 |
+| `9671619` | remediation — supervisor findings B1/B2/B3 | 2 |
 
-Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (199/199) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, and
+Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (375/375) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, and
 `AOT_EXIT:0`.
 
-**§1, §2 and §3 are also closed**, each with a `[supervisor]` `Approve` under its own `## N.` heading.
-All four sections' approvals are in place; **no section is awaiting a review.**
+**§1, §2, §3 and §4 are also closed**, each with a `[supervisor]` `Approve` under its own `## N.`
+heading. **No section is awaiting a review.**
 
-### Starting §5 — read this before carving blocks
+### Starting §6 — read this before carving blocks
 
-§5 is work lifecycle and sections: read `specs/work-lifecycle/spec.md` against `tasks.md`'s `## 5.`
-before carving. Three things bind it before its first block:
+§6 is findings: read `specs/findings/spec.md` against `tasks.md`'s `## 6.` before carving. Three things
+bind it before its first block:
 
-- **O-3 is owed by §5** — named when §4 opened, and unconditional. A refusal must prevent the side
-  effect it refuses; today enforcement runs *after* the handler. §4 built no verbs, so nothing has
-  discharged or deepened it. **If §5 wires the first verb whose side effect writes a card, O-3 closes in
-  the block that wires it.** Fix: a parse phase drawing fully from the cursor which may refuse, then an
-  execute phase — **one global funnel, never a per-verb check**.
-- **`WriteCard` is create-only, and full replacement is not coming back.** §4 block C narrowed it to
-  close a 4.8 defect, and the remediation narrowed it further: it now takes `NewCardFile` (frontmatter
-  and body only). **Status transitions must be targeted locked read-modify-writes modelled on
-  `TransferOwnership`** — a worker who assumes a whole-card write exists will find the API refuses and
-  may reach for the wrong fix. Put this in §5's first brief.
-- **Preserved unknown values are stored raw and never tool-escaped.** The day §5 promotes such a key to
-  a known field, the read path will unescape a value a human wrote (`base: C:\north` gains a newline).
+- **O-4 is owed by §6, and it binds immediately.** *Every wire form any shipped writer has emitted must
+  still parse.* §5's remediation changed `gate_results` from `label=exitcode` to `label=exitcode=round`
+  and **made every card the previous binary had written unreadable** — recording an unrelated gate on
+  such a card exited as a `tool-failure`. Fixed by widening the reader, and the supervisor's key
+  observation is that **the section's own "one function is the rule" lesson does not cover this case**:
+  there was only one function, and it was still wrong for data already on disk. **§6 widens frontmatter
+  next**, so the trigger arrives in its first block. Fix shape: a **compatibility corpus test** — cards
+  in every historical wire form, which every future parser change must keep parsing.
+- **The reader may be widened; the writer emits exactly one form.** That asymmetry is deliberate and
+  verified: items are unescaped *before* the `=` split, so validation judges the decoded label, and
+  duplicate detection normalises both spellings to `(label, round)` — `build=0,build=1=1` refuses. Keep
+  the asymmetry when adding forms.
+- **`current round` is now defined in three agreeing places** (`GateStatusOf`,
+  `RecordGateResultUnderExistingLock`, the parser's legacy default) — the section's own lesson reproduced
+  *inside the fix for it*. One `CurrentRound` property closes it; whoever touches round semantics next
+  owns it.
 
-**§5 adds no dependency as specified**, so `make aot` at close should be a formality. That is the point
-of the target, not a reason to skip it.
+### What §5 established that later sections must not re-derive
+
+- **The block flow is a closed union with a total transition table.** Seven states; `changes-requested`
+  is a **transition landing in `briefed`**, not a state; `closed` has no available transitions.
+  Refusal messages read available transitions from `AvailableFrom` — never a second hand-maintained list.
+- **`blocked` is not storable.** No field, no union case, no wire key. Derived from a non-empty
+  `blocked_by`; flow state is preserved across blocking and unblocking, so clearing a blocker restores
+  nothing.
+- **A narrative claim is never gate evidence, structurally.** `BlockCardFields` has no `Comments` field,
+  so the gate reader cannot reach prose — there is no line to revert. A gate with no recorded exit code
+  is **absent**, which is a different answer from failed.
+- **Gate evidence is round-scoped**: results carry the round they were recorded in, only the current
+  round counts as evidence, and superseded rounds are **retained**. This is the same answer §5 gave for
+  section verdicts — superseded evidence is part of the trail, not noise.
+- **A section's status is answerable from the section entity alone.** The handler opens the file it is
+  given; nothing in its signature could carry the section's other cards. Verified by two agents
+  independently swapping in aggregate-over-children implementations and watching the tests go red.
+- **`section` is the eighth card kind**, change-scoped. `card-model`'s spec was amended in place after
+  it contradicted `design.md` D3 and `work-lifecycle` — a Product Owner ruling, not an Architect
+  improvisation. §4's supervisor approval covered seven kinds; §5's supervisor re-verified the eighth
+  against every §4 surface.
+- **`WriteCard` is still create-only.** Six write paths, all `WithLock` → read → decide →
+  `AnchoredCardPath.TryCreate` → `AtomicWrite`. `block transition` is the only path that can write a
+  block card's `status`.
+- **Acting role is recorded, not authorised.** All six write methods take a `CardOwner` and all six CLI
+  results carry `actingRole`; three persist it, three surface it without persisting, and the reason is
+  stated on the outcome types. **Who may do what is §8's and §9's**, and §5 deliberately built no
+  half-version of it.
+
+### Working rules earned in §5 — the section's real output
+
+- **A test proves a proposition, and the proposition is whatever a mutation of the real defect would
+  falsify.** Name what would have to break, then break exactly that. Block C spent four rounds in the gap
+  between "it passes" and "it would catch the thing it exists to catch": the fix for a misclassification
+  could be reverted to the original defect with all 263 tests still green, because the tests established
+  that the *domain* constructed the right case and nothing established that the *CLI* handed the caller
+  the right instruction.
+- **Every defect in §5 was found by execution — compiling a bypass, mutating a call site, or running the
+  real binary. Not one was found by reading.** Both auditors' most valuable work was writing the mistake
+  and seeing whether the compiler or the tool allowed it.
+- **Enumeration by recall is not an instrument.** A `repo-root-not-found` site sitting *beside* a tested
+  sibling survived two independent enumeration passes and fell only to someone walking every site. Where
+  the claim is "every X is covered", enumerate mechanically or say you didn't.
+- **Worker honesty is load-bearing, and it paid four times.** Workers declared what they could not
+  demonstrate — an unwatched red test, a future bypass that would still compile, an unrun hammer loop, a
+  self-caught DEVLOG corruption — instead of reporting a clean pass. Every one of those declarations got
+  a real gap settled properly. A confident clean report would have landed a hole.
+- **Stop when the brief and the code disagree.** Block E's worker refused to build on my false premise
+  that `section` was already a card kind, and caught a spec contradiction that would otherwise have
+  surfaced mid-implementation or at the section review. The brief is not evidence.
+- **The tool must read back what the tool wrote — including what *older versions* of the tool wrote.**
+  Three instances in §5: a card written then refused as corrupt, a crash where a refusal belonged, and a
+  format change that orphaned existing cards. See O-4.
+- **A review loop that teaches shows up in the round count.** Block D took two rounds where block C took
+  four, and the diff shows why: block C's lessons were applied from the first submission rather than
+  rediscovered.
+
+### Obligations, each with the section that owes it
+
+- **O-1 — DISCHARGED (§4 block B).** `CardStore` anchored to the repo root structurally.
+- **O-2 — DISCHARGED (§4 block B, second attempt).** The lockless write path closed by deleting the
+  argument that could disagree.
+- **O-3 — DISCHARGED (§5 block B).** A refusal now prevents the side effect it refuses. `Parse` returns
+  an inert `ParsedCommand` union carrying data and never a handler; parsing lives in a sibling
+  `CommandParser`, so the handlers stay `private` to `CommandDispatcher` and calling one from the parse
+  phase is `CS0122`; `Run`'s exhaustive match is the only place a handler is reached. **Three shapes
+  were tried and the first two proved narrower propositions than their prose claimed** — a `Func` let a
+  parse arm execute eagerly, and the data union hardened that while doing nothing for call-and-discard.
+  **Reflection and a recursive `Run` remain open**, predate the block, and are named in the class doc
+  comment rather than implied away.
+- **O-4 — every wire form any shipped writer has emitted must still parse. Owed by §6.** Trigger: **the
+  first frontmatter widening in §6**, which its first block contains. Fix: a compatibility corpus test
+  carrying cards in every historical wire form. Nothing holds this structurally today.
+
+### Notes owed to later sections
+
+- **§7/§8 — decide identity addressing before the first id-addressed verb, not after.** All six §5 verbs
+  take **file paths**; nothing is addressed by card identity yet, and §7/§8's read verbs will fork the
+  surface if the question is answered twice. The supervisor asked for this one to be *decided* rather
+  than carried.
+- **§9 — the refusal set is 22 codes and this is the frozen list:** `unknown-command`,
+  `missing-subcommand`, `unknown-subcommand`, `unrecognised-argument`, `repo-root-not-found`,
+  `missing-argument`, `missing-flag-value`, `unrecognised-role`, `unrecognised-verdict`,
+  `invalid-gate-label`, `invalid-exit-code`, `invalid-blocking-card-id`, `invalid-range`,
+  `card-not-found`, `card-layout-mismatch`, `wrong-card-kind`, `undefined-transition`,
+  `base-not-recorded`, `base-immutable`, `already-blocked-by`, `not-blocked-by`, `already-closed`.
+  `card-write-failed` was minted and **deleted** in the same block — it conflated tool-failure with
+  refusal and is not a member.
+- **§9 — no structural check ties a minted refusal code, or a validated field, to a test proving it
+  fires.** Flagged in blocks C, D, E and both supervisor rounds. The 18 existing instances are
+  mutation-verified; what is missing is the check for the *next* one. This is 9.12's shape.
+- **§8 — `reviewed_state` has no producer, deliberately.** 8.2 owns it. The deferral is held in
+  `ReviewedStateProducerTests`, which **8.2 must invert**. Two caveats the supervisor found: its
+  allowlist currently passes by a **casing coincidence** (`CardFileParser.cs` does set the field via a
+  lowercase local, so a refactor to named arguments would fire it and falsely claim 8.2 landed), and §8
+  should inherit it accurate rather than lucky.
+- **§8/§10 — the archived-card filter is deferred, not discharged.** Binds whoever builds the first
+  `blocked_by`-resolving read path; archived cards are indexed indistinguishably from live ones.
+- **Verdict commit ranges are recorded as supplied and never checked against git**, and `section verdict`
+  never parses the card's status. §8 and §9 lean on this data.
+- **`--base` is accepted on every transition**, not only those that record it.
+- **No CLI query verb reads `GateStatusOf` back** — the write verb exists, so `GateStatus.Absent` is
+  proven at the domain and wire layers with no CLI-JSON shape verified.
+- **`ParseGateResults`' doc claim that "nothing rewrites the file" is inaccurate** — the writer emits
+  three parts, so the next targeted write normalises a legacy card in place. Lossless; only the claim is
+  wrong.
+- **`ParseSectionVerdict` still hand-copies the flag loop** (third copy) while `ConsumeKnownFlags`'
+  comment describes the duplication as closed.
+- **`BlockCardFields.Tasks` is unreachable from any CLI verb today** — whichever section wires a verb
+  that sets it owns checking the CLI/file-parser agreement for it.
+- **The lifecycle test drives `CardStore`, not the dispatcher**, and gate evidence stays unattributed on
+  the record (decided, not drift).
 
 ### What §4 established that later sections must not re-derive
 
@@ -11628,36 +11874,14 @@ side of a seam by construction.
 - **Hold an accepted trade-off in a must-be-inverted test**, not a bullet in a rewritten file. Standing
   pattern, adopted at §3 close on the supervisor's recommendation.
 
-### Obligations, each with the section that owes it
-
-Each names a trigger and contains no `if`. Superseded wordings are deleted rather than left alongside —
-the thread is append-only and keeps the history; this pinned list carries **exactly one live wording per
-obligation**, because it is the surface a section's brief gets assembled from.
-
-- **O-1 — DISCHARGED (§4 block B).** `CardStore` is anchored to the repo root structurally:
-  `AnchoredCardPath` is the only type `AtomicWrite` accepts, and it can only be constructed by proving
-  the target resolves under the given root. The bypass gives `CS0122`.
-- **O-2 — DISCHARGED (§4 block B, second attempt).** The lockless write path is closed by **deleting the
-  argument that could disagree**: the `*UnderExistingLock` methods no longer take a `filePath` and act on
-  `heldLock.CardPath`, so a lock on card X cannot write card Y. The mistake gives `CS1501`. **The first
-  attempt is the lesson** — a mandatory `CardLock` parameter proved a lock existed, not that it was the
-  right one, and reproduced the defect one level up inside its own fix.
-- **O-3 — a refusal must prevent the side effect it refuses. Owed by §5.** Trigger: **the first CLI verb
-  whose side effect writes the primary record.** Today enforcement runs *after* the handler:
-  `index rebuild extra-token` writes the index and *then* refuses. Accepted for §3 because D4 makes the
-  index disposable and the discarded `Success` leaves no actionable state; **not** acceptable once the
-  side effect is a card. Fix: a parse phase that draws fully from the cursor and may refuse, then an
-  execute phase — kept as **one global funnel**, never a per-verb check. §4 built no verbs, so nothing
-  discharged or deepened it.
-
-### Notes owed to later sections
+### Notes owed to later sections — carried from §1–§4
 
 - **§5/§7 — archived cards are now indexed indistinguishably from live ones.** Derivable from
   `file_path`, but a queue that does not filter them will offer archived work as live. This is the cost
   of R1 and it is the right trade; the filter is owed where a queue is built.
-- **§9 — the refusal set becomes a closed union.** §3 minted the first members — `unknown-command`,
-  `missing-subcommand`, `unknown-subcommand`, `unrecognised-argument`, `repo-root-not-found` — and §4
-  added none by design. That is the retrofit list.
+- **§9 — the refusal set becomes a closed union.** §3 minted the first five and §4 added none by design;
+  §5 minted the rest. **Superseded — the frozen 22-code list is in §5's notes above**, and it is the
+  retrofit list. `card-write-failed` was minted and deleted within §5 and is not a member.
 - **§9 — `tool-failure` must not become a member of the closed refusal set**; consider a third `error`
   payload on the envelope. `CliEnvelope.cs:6-8` is stale: it still says `ok` discriminates success from
   refusal and describes only two payload shapes.
