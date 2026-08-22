@@ -168,9 +168,10 @@ public sealed class CommandDispatcherTests
 
     // Blocker 1 (§1 remediation): an argument no command consumed is a refusal, the same
     // convention as an unrecognised command, established here so §2+ don't each invent their own
-    // flag handling. §3 obligation 3 made this structural: CommandDispatcher.Run funnels every
-    // outcome through EnforceNoUnconsumedArguments once, after Dispatch (and therefore RunVersion,
-    // which takes no arguments at all) has already returned.
+    // flag handling. §3 obligation 3 made this structural, and §5's O-3 restructure kept it so:
+    // CommandDispatcher.Run funnels every parse result through EnforceNoUnconsumedArguments once,
+    // before it ever dispatches a ParsedCommand to its handler (RunVersion, which takes no
+    // arguments at all, included).
     [Fact]
     public void Version_WithUnrecognisedArgument_RefusesWithNonZeroExitCode()
     {
@@ -240,6 +241,32 @@ public sealed class CommandDispatcherTests
         Assert.False(root.TryGetProperty("result", out _));
 
         Assert.False(string.IsNullOrWhiteSpace(error.ToString()));
+    }
+
+    // Evidence for O-3's second item, compile-time half: RunIndexRebuild (on CommandDispatcher) is
+    // the code that performs the write, and ParseIndexRebuild (on the separate CommandParser class)
+    // is what builds the inert ParsedCommand.IndexRebuild it is later dispatched from — both take
+    // only the already-extracted working directory, not CommandContext, not ArgumentCursor. This
+    // test states that fact; it is not what proves it. What proves it is that neither parameter
+    // list names either type, which is why writing `context.Arguments.TryTake()` inside either
+    // method's body does not compile (CS0103, unknown identifier) — there is no `context` in scope
+    // to write it against. A test can only confirm the signature; it cannot exercise "this does not
+    // compile", so the DEVLOG states the guarantee achieved is the compile-time one, not this
+    // assertion. Note what this test does NOT and cannot cover: that RunIndexRebuild is
+    // unreachable by name from CommandParser (CS0122) — reflection with BindingFlags.NonPublic
+    // bypasses C# accessibility checks entirely, so no test can observe that guarantee; only
+    // reading (or attempting to compile) the source can.
+    [Fact]
+    public void IndexRebuildHandlerAndItsParseFunction_TakeNoCursorOrContext_SoNeitherCanPullMoreTokens()
+    {
+        var runIndexRebuild = typeof(CommandDispatcher).GetMethod("RunIndexRebuild", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var parseIndexRebuild = typeof(CommandParser).GetMethod("ParseIndexRebuild", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var forbidden = new[] { typeof(ArgumentCursor), typeof(CommandDispatcher.CommandContext) };
+
+        foreach (var method in new[] { runIndexRebuild, parseIndexRebuild })
+        {
+            Assert.All(method.GetParameters(), parameter => Assert.DoesNotContain(parameter.ParameterType, forbidden));
+        }
     }
 
     // --- index rebuild -----------------------------------------------------------------------
@@ -355,17 +382,13 @@ public sealed class CommandDispatcherTests
         Assert.Empty(result.GetProperty("identityCounterViolations").EnumerateArray());
     }
 
-    // The argument-boundary check runs once, after Dispatch returns (CommandDispatcher
-    // .EnforceNoUnconsumedArguments) — the single funnel point every command's outcome passes
-    // through, chosen over a per-arm wrapper specifically because a wrapper is something a new
-    // dispatch arm can skip and still compile (the reviewer proved this live against the
-    // wrapper-per-arm version). One consequence: a handler with a side effect (index rebuild's
-    // database write) still runs before the trailing token is caught and the result discarded —
-    // that trade-off is accepted, not overlooked, because the index is disposable and rebuildable
-    // (design.md D4): an errant write from an ultimately-refused command is harmless and the next
-    // correct invocation simply redoes it. What matters, and what this test proves, is that the
-    // caller-visible outcome is unconditionally a refusal with a non-zero exit — never a Success
-    // a handler happened to return.
+    // The argument-boundary check runs once, on the parse-phase result (CommandDispatcher
+    // .EnforceNoUnconsumedArguments), before CommandDispatcher.Run ever dispatches a ParsedCommand
+    // to its handler — the single funnel point every command's outcome passes through, chosen over
+    // a per-arm wrapper specifically because a wrapper is something a new dispatch arm can skip and
+    // still compile (the reviewer proved this live against the wrapper-per-arm version). What this
+    // test proves is that the caller-visible outcome is unconditionally a refusal with a non-zero
+    // exit — never a Success a handler happened to return.
     [Fact]
     public void IndexRebuild_WithTrailingToken_Refuses()
     {
@@ -379,16 +402,14 @@ public sealed class CommandDispatcherTests
         Assert.Equal("unrecognised-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
-    // Characterisation test for obligation O-3 (DEVLOG §3 remediation): pins today's accepted
-    // trade-off — RunIndexRebuild's database write already ran by the time the trailing token is
-    // caught, because EnforceNoUnconsumedArguments runs after Dispatch returns, not before a leaf
-    // handler runs. Accepted here because the index is disposable (design.md D4); it is NOT
-    // acceptable for the first CLI verb whose side effect writes the primary record. The section
-    // that discharges O-3 must invert this test — assert the database was NOT written when the
-    // command refuses — as proof the parse/execute split now runs before the handler's side
-    // effect, not after it.
+    // Obligation O-3 (DEVLOG §3/§5), discharged: this is the inverted characterisation the §3
+    // remediation asked the discharging section to write. The parse/execute split means
+    // EnforceNoUnconsumedArguments runs on the parse result — before RunIndexRebuild is ever
+    // dispatched to — so a trailing token now refuses the command AND leaves no index behind,
+    // where the old post-hoc check let the write happen first. Run against HEAD before the
+    // restructure, this test failed (the file existed); it is the block's red test.
     [Fact]
-    public void IndexRebuild_WithTrailingToken_RefusesButHasAlreadyWrittenTheIndex()
+    public void IndexRebuild_WithTrailingToken_RefusesAndDoesNotWriteTheIndex()
     {
         using var repo = new TempGitRepo();
         var output = new StringWriter();
@@ -398,7 +419,7 @@ public sealed class CommandDispatcherTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("unrecognised-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
-        Assert.True(File.Exists(IndexPaths.DatabasePath(repo.Path)));
+        Assert.False(File.Exists(IndexPaths.DatabasePath(repo.Path)));
     }
 
     [Fact]

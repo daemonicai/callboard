@@ -80,6 +80,24 @@ internal static class CardFileFormat
         new Dictionary<char, char> { ['s'] = ' ' };
 
     /// <summary>
+    /// The forward mirror of <see cref="FrontmatterEscapeTable"/>/<see cref="CommentHeaderEscapeTable"/>/
+    /// <see cref="FrontmatterListItemEscapeTable"/>: each maps a character worth escaping to its
+    /// multi-character replacement, keyed by the raw character rather than the escape letter, and
+    /// each always includes a literal backslash first — every escaper here needs a backslash
+    /// escaped before anything else stays invertible. Every <c>Escape*Value</c>/<c>Escape*Item</c>
+    /// function below reduces to <see cref="EscapeUsing"/> over one of these, the same collapsing
+    /// <see cref="UnescapeUsing"/> already did for the reverse direction.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<char, string> FrontmatterEscapeForwardTable =
+        new Dictionary<char, string> { ['\\'] = "\\\\", ['\n'] = "\\n", ['\r'] = "\\r" };
+
+    private static readonly IReadOnlyDictionary<char, string> CommentHeaderEscapeForwardTable =
+        new Dictionary<char, string> { ['\\'] = "\\\\", [' '] = "\\s" };
+
+    private static readonly IReadOnlyDictionary<char, string> FrontmatterListItemEscapeForwardTable =
+        new Dictionary<char, string> { ['\\'] = "\\\\", ['\n'] = "\\n", ['\r'] = "\\r", [','] = "\\," };
+
+    /// <summary>
     /// Escapes a free-text frontmatter field value (<c>id</c>/<c>title</c>/<c>status</c>/
     /// <c>section</c>) so it always occupies exactly one physical line. Frontmatter is
     /// line-based (<c>key: value</c>), unlike the body/comment format above which is delimiter-
@@ -87,11 +105,7 @@ internal static class CardFileFormat
     /// read would hit "malformed frontmatter line" on the fragment. A backslash is escaped first
     /// so the scheme stays invertible regardless of what the value already contains.
     /// </summary>
-    internal static string EscapeFrontmatterValue(string value) =>
-        value
-            .Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("\n", "\\n", StringComparison.Ordinal)
-            .Replace("\r", "\\r", StringComparison.Ordinal);
+    internal static string EscapeFrontmatterValue(string value) => EscapeUsing(value, FrontmatterEscapeForwardTable);
 
     /// <summary>Reverses <see cref="EscapeFrontmatterValue"/>.</summary>
     internal static string UnescapeFrontmatterValue(string value) => UnescapeUsing(value, FrontmatterEscapeTable);
@@ -113,10 +127,7 @@ internal static class CardFileFormat
     /// space — once every space in an escaped value has become the two-character <c>\s</c>, no
     /// unescaped space (and so no literal <c>" -->"</c>) can ever occur inside it.
     /// </summary>
-    internal static string EscapeCommentHeaderValue(string value) =>
-        value
-            .Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace(" ", "\\s", StringComparison.Ordinal);
+    internal static string EscapeCommentHeaderValue(string value) => EscapeUsing(value, CommentHeaderEscapeForwardTable);
 
     /// <summary>Reverses <see cref="EscapeCommentHeaderValue"/>.</summary>
     internal static string UnescapeCommentHeaderValue(string value) => UnescapeUsing(value, CommentHeaderEscapeTable);
@@ -131,12 +142,7 @@ internal static class CardFileFormat
     /// itself, so an item containing a literal comma cannot be misread as two items. A backslash
     /// is escaped first, same invertibility discipline as every other escaper here.
     /// </summary>
-    internal static string EscapeFrontmatterListItem(string value) =>
-        value
-            .Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("\n", "\\n", StringComparison.Ordinal)
-            .Replace("\r", "\\r", StringComparison.Ordinal)
-            .Replace(",", "\\,", StringComparison.Ordinal);
+    internal static string EscapeFrontmatterListItem(string value) => EscapeUsing(value, FrontmatterListItemEscapeForwardTable);
 
     /// <summary>Reverses <see cref="EscapeFrontmatterListItem"/>.</summary>
     internal static string UnescapeFrontmatterListItem(string value) => UnescapeUsing(value, FrontmatterListItemEscapeTable);
@@ -186,6 +192,38 @@ internal static class CardFileFormat
 
         items.Add(UnescapeFrontmatterListItem(current.ToString()));
         return items;
+    }
+
+    /// <summary>
+    /// The one escape shape every <c>Escape*</c> function above reduces to: walk the value one
+    /// character at a time and substitute <paramref name="table"/>'s replacement for any character
+    /// it maps, passing everything else through verbatim. Each table always carries a literal
+    /// backslash entry, so — matching the sequential <c>string.Replace</c> chain this replaced —
+    /// a backslash in the input always becomes a doubled backslash before any other substitution
+    /// is considered; the two never interact, because no replacement string this method ever
+    /// writes introduces a character another entry in the same table also maps.
+    /// </summary>
+    private static string EscapeUsing(string value, IReadOnlyDictionary<char, string> table)
+    {
+        if (!value.Any(table.ContainsKey))
+        {
+            return value;
+        }
+
+        var builder = new System.Text.StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            if (table.TryGetValue(ch, out var replacement))
+            {
+                builder.Append(replacement);
+            }
+            else
+            {
+                builder.Append(ch);
+            }
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>

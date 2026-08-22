@@ -4,22 +4,19 @@ namespace Callboard.Cli;
 /// The only way a command handler sees argv tokens (§3 obligation 3, carried from §1): a handler
 /// takes tokens off the front one at a time via <see cref="TryTake"/> and never sees the raw
 /// array, so "a handler ignored a token the caller passed" stops being possible to write by
-/// accident — there is no <c>string[]</c> to index into. What is left unconsumed after routing
-/// reaches a leaf command is what <see cref="CommandDispatcher"/> checks — in
-/// <c>CommandDispatcher.EnforceNoUnconsumedArguments</c>, called once from <c>Run</c> on whatever
-/// <see cref="CommandDispatcher.Dispatch(string, CommandDispatcher.CommandContext)"/> returned —
-/// per ADR-0001's "any token it does not consume is a refusal".
+/// accident — there is no <c>string[]</c> to index into. What is left unconsumed once
+/// <c>CommandDispatcher.Parse</c> has finished routing is what
+/// <c>CommandDispatcher.EnforceNoUnconsumedArguments</c> checks — called once from <c>Run</c>, on
+/// whatever <c>Parse</c> returned — per ADR-0001's "any token it does not consume is a refusal".
 /// <para>
-/// That check runs <em>after</em> <c>Dispatch</c> returns, not before: it overrides a
-/// <see cref="CommandOutcome.Success"/> into a refusal, but a <see cref="CommandOutcome.Refusal"/>
-/// the handler already returned passes through untouched. Enforcement is therefore post-hoc — by
-/// the time an unrecognised trailing token turns a handler's outcome into a refusal, that handler
-/// has already run and any side effect it had has already happened. §3 accepted this for
-/// <c>index rebuild</c> because its side effect (the derived index) is disposable and rebuildable;
-/// it is <b>not</b> acceptable for a verb whose side effect writes the primary record (obligation
-/// O-3, DEVLOG §3) — see
-/// <c>CommandDispatcherTests.IndexRebuild_WithTrailingToken_RefusesButHasAlreadyWrittenTheIndex</c>
-/// for the pinned characterisation of today's behaviour.
+/// That check runs <em>before</em> a verb's side-effecting work, not after (O-3, DEVLOG §5): it
+/// gates whether <c>Run</c> ever dispatches the parsed command to its handler at all, so a
+/// trailing unconsumed token turns a would-be success into a refusal <em>without the verb's work
+/// ever running</em>. A verb's own <see cref="CommandOutcome.Refusal"/> — decided during parsing, e.g.
+/// an unknown subcommand — still passes through untouched, because it is always more specific than
+/// the generic "unrecognised argument" complaint. See
+/// <c>CommandDispatcherTests.IndexRebuild_WithTrailingToken_RefusesAndDoesNotWriteTheIndex</c> for
+/// the characterisation that replaced the old post-hoc behaviour.
 /// </para>
 /// </summary>
 internal sealed class ArgumentCursor

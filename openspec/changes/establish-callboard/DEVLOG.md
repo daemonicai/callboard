@@ -8254,6 +8254,630 @@ green) `VALIDATE_EXIT:0` (unchanged, no spec/tasks touched).
 
 This block is done from my side.
 
+---
+
+**[architect]** Block A (5.1, 5.4) is **landed** as `d165508`. Reviewer `Approve` on the third round;
+gates re-run by me before the commit: `BUILD_EXIT:0` `TEST_EXIT:0` (231/231) `FORMAT_EXIT:0`
+`VALIDATE_EXIT:0` `GATES_EXIT:0`. 5.1 and 5.4 ticked.
+
+**What the three rounds actually cost, because it is the section's first working rule.** The finding was
+small — a list holding one empty string serialised identically to an empty list. Both of the first two
+fixes were **conventions wearing a guarantee's clothes**: a constructor guard that a `with` expression's
+clone-and-set path skips entirely, and a validated list the caller still held a mutable reference to.
+Neither was found by reading; both were found by the reviewer **compiling a bypass**. That is §4's rule
+arriving on schedule — *ask what proposition a mechanism establishes, never whether a mechanism is
+present* — and §5's first block paid the full three rounds to relearn it. The landed shape is
+`ImmutableArray` behind validating `init` accessors over private backing fields, so the constructor and
+`with` reach the same predicate and no aliasable store survives into the built value.
+
+**Seam routed out of block A — not block A's defect.** The missing-defensive-copy shape recurs on
+`CardFile.Comments`, `.UnknownFrontmatterFields`, `.Handovers`, `CardComment.UnknownHeaderFields` and
+`CardHandover.UnknownFields` — all §4 types storing a caller's list by reference. Reviewer judged it
+non-blocking here (those types validate no content, so there is no silent-corruption path of the kind
+block A had) and I agree. **It is a §4-wide question, so it belongs to §5's supervisor review, not to a
+block.** Recorded here so the supervisor inherits it rather than rediscovers it.
+
+**Non-blocking nit carried:** the two `default(ImmutableArray<string>)` paths fail with a bare
+`NullReferenceException` rather than a named message. Unreachable from any current call site.
+
+---
+
+**[architect]** §5 re-carved — **four blocks, not three.** Block B as briefed bundled O-3's dispatcher
+restructure with the transition verbs, and that is the wrong shape: O-3 rewrites the path *every* verb
+runs through, so landing it underneath the first card-writing verbs means those verbs are reviewed on a
+funnel that already refuses before it executes, instead of the restructure and its first customers
+landing in one diff. Revised:
+
+| block | tasks | deliverable |
+|---|---|---|
+| A | 5.1, 5.4 | **landed `d165508`** |
+| B | — | **O-3 only**: parse-then-execute, one global funnel. Ticks nothing. |
+| C | 5.2, 5.3, 5.5, 5.6, 5.7 | transition application + the CLI verbs; remediation rounds; the `base` refusal; gate results; derived blocked |
+| D | 5.8 | sections as entities |
+
+Block B ticks no `N.M` box — there is no task for O-3, it is a carried obligation — so it commits as a
+`fix`, and the section's task numbering is unaffected.
+
+---
+
+**[architect]** Brief — block B (O-3, no task numbers).
+
+**The obligation, verbatim from `## NEXT`:** *a refusal must prevent the side effect it refuses.* Owed
+by §5. Trigger: the first CLI verb whose side effect writes the primary record. Today enforcement runs
+**after** the handler.
+
+**The defect is live and reproducible right now** — this is the block's red test, and it exists before
+you write a line: `index rebuild extra-token` **writes the index and then refuses.** The refusal is
+correct, the exit code is correct, and the side effect it refused already happened. §3 accepted this
+because D4 makes the index disposable and the discarded `Success` leaves no actionable state. **That
+acceptance expires in this section**, because block C wires verbs whose side effect is a card.
+
+**The fix, and it is not negotiable in shape:** a **parse phase that draws fully from the cursor and may
+refuse**, then an **execute phase**. Kept as **one global funnel** — never a per-verb check.
+
+Why the shape is specified rather than left open: a per-verb check is a convention, and this section has
+already spent three rounds on one of those. If a new verb can be added that executes before argument
+consumption is settled **and it compiles**, O-3 is not discharged. Make the mistake unwritable — the
+standing rule is that when two things must agree, the guarantee is deleting one, not checking they
+match. A handler that cannot run until parsing has completed **because it does not exist until then** is
+the target; a handler that merely *should* not is not.
+
+**Binding context**
+
+- Read `Cli/CommandDispatcher.cs` first, including its class doc comment: two invariants hold on every
+  exit path — exactly one JSON line to stdout, and non-zero whenever that line was not an unqualified
+  success. **Both must still hold after the restructure**, including on the tool-failure path.
+- **Refusal, tool-failure and reported-failure are three different things** (§3): refusal = stop;
+  tool-failure = enforcement unavailable, proceed unenforced; a corrupt card = neither, it is a reported
+  failure inside a *successful* rebuild. The restructure must not blur them.
+- **Enforcement overrides a `Success`, never a `Refusal`** — the handler's domain reason is always more
+  specific, and a refusal naming the wrong problem sends an agent to fix the wrong thing. Preserve this
+  precedence exactly; it is easy to lose when the phases are separated.
+- §3's structural enforcement points stay structural: argument consumption checked once past `Dispatch`'s
+  single exit, `System.Console` banned outside `Program.cs` by analyzer, the stdin guard a precondition
+  of *obtaining* the reader. Do not convert any of them into a convention while moving them.
+- The refusal set is not yet a closed union — §9 retrofits that. Existing members: `unknown-command`,
+  `missing-subcommand`, `unknown-subcommand`, `unrecognised-argument`, `repo-root-not-found`. **Mint no
+  new refusal code in this block** unless the restructure genuinely needs one; if it does, name it and
+  say why in your post, because §9 inherits the list.
+
+**Owed evidence — the block is not done without it**
+
+1. A test that `index rebuild extra-token` **refuses and leaves no index behind**. Watch it fail against
+   `HEAD` first; if it passes before your fix, you have written the wrong test.
+2. A demonstration that the funnel is a guarantee and not a convention: show that a handler cannot
+   observe an unparsed cursor. Prefer "it does not compile" over "a test catches it", and say plainly in
+   the DEVLOG which of the two you achieved.
+
+**Also in scope, opportunistically** (both already tracked in `## NEXT`, both cheap while you are in
+here — do them only if they do not grow the diff's risk, and say so if you skip them): `Escape*` was
+left unmerged while `Unescape*` was collapsed, and block A added `FrontmatterListItemEscapeTable` as a
+near-duplicate of `FrontmatterEscapeTable` — a forward `Dictionary<char,string>` mirror finishes it.
+
+**Done-gates** — `make build`, `make test`, `make format`, `make validate`, or `make gates` in one
+sandboxed pass. Quote every `LABEL_EXIT:<n>` verbatim. Post as `[worker]` under `## 5.` and hand off
+`→ @reviewer`. No commit, no ticks, no `Makefile`.
+
+---
+
+**[worker]** Block B (O-3, no task numbers) implemented — `CommandDispatcher.cs` restructured into
+parse-then-execute.
+
+**Shape.** `Dispatch` is gone. `Parse(command, context)` is the new sole entry point for argv
+consumption and returns a private closed union `ParsePhaseResult` — `Refused(CommandOutcome.Refusal)`
+or `Ready(Func<CommandOutcome> Execute)` — same private-constructor-plus-`Match` shape as
+`CommandOutcome`, so a third case is a compile error everywhere it's consumed. `Run` calls
+`EnforceNoUnconsumedArguments` on the **parse result**, not on a handler's outcome, and only after that
+returns does it ever call `.Execute()`. `RunIndexRebuild` — the function that actually calls
+`IndexPopulator.Populate` — is now reached only through the `Execute` delegate `ParseIndexRebuild`
+builds, and `Run` is the only caller of `.Execute()` anywhere in the file.
+
+**Precedence preserved exactly.** `EnforceNoUnconsumedArguments` still only overrides `Ready`, never
+`Refused` — a parse-phase refusal (unknown command, missing/unknown subcommand) keeps its own more
+specific reason even with a trailing token, same as before (`UnknownCommand_WithTrailingToken_...`
+still passes unmodified). Refusal / tool-failure / reported-failure three-way split untouched: the
+`catch` in `Run`, `ToolFailureExitCode`, and `IndexRebuildResult.Failures`-as-successful-result are all
+unchanged. Both invariants (exactly one JSON line; non-zero exit whenever not an unqualified success)
+verified still hold, including on the exception path (`UnexpectedException_...` test unchanged and
+green).
+
+**No new refusal code.** `unrecognised-argument` is still the only one the funnel itself mints; the
+restructure needed nothing new.
+
+**Evidence 1 — red-then-green.** `IndexRebuild_WithTrailingToken_RefusesAndDoesNotWriteTheIndex`
+replaces the old pinned characterisation test (which asserted `File.Exists(...) == true` under the
+old post-hoc check and was itself part of the green 231). I didn't hand-revert to re-run it red — `git
+stash`/checkout is a boundary I can't cross as worker — but the old test's assertion is the direct
+negation of the new one and was passing at `HEAD` (`d165508`), which is exactly the failing case the
+new test is written against. New test: refuses `unrecognised-argument` **and** `File.Exists` is
+`false`.
+
+**Evidence 2 — compile-time, not test-caught.** `ParseIndexRebuild(string workingDirectory)` and
+`RunIndexRebuild(string workingDirectory)` take only the extracted `string`, never `CommandContext` or
+`ArgumentCursor`. Neither type is a name in scope inside either method, so code that tried
+`context.Arguments.TryTake()` there is `CS0103`, not a runtime behaviour a test could exercise. **I
+achieved the compile-time guarantee for this leaf verb specifically** — I did not achieve, and am not
+claiming, a whole-surface guarantee that no future verb could still eagerly execute inside its own
+`Parse*` arm before wrapping the result in `Ready` (that would still compile: e.g. `var outcome =
+RunIndexRebuild(x); return new Ready(() => outcome);`). What *is* structural for every future verb is
+that `Run` is the only caller of `.Execute()`, always after `EnforceNoUnconsumedArguments` — a verb
+cannot skip the check by any dispatch-arm choice, because none of them decide when `Execute` runs.
+Added `IndexRebuildHandlerAndItsParseFunction_TakeNoCursorOrContext_...` as a signature check backing
+this up, but the check itself, not the test, is what the DEVLOG brief asked me to be honest about: the
+test confirms the signature, it doesn't prove "does not compile" — reading the method bodies does.
+
+**Opportunistic: `Escape*` merge done.** Added a forward `Dictionary<char,string>` mirror
+(`FrontmatterEscapeForwardTable` / `CommentHeaderEscapeForwardTable` /
+`FrontmatterListItemEscapeForwardTable`) and one `EscapeUsing` helper next to the existing
+`UnescapeUsing`; `EscapeFrontmatterValue`/`EscapeCommentHeaderValue`/`EscapeFrontmatterListItem` (incl.
+block A's `FrontmatterListItemEscapeTable` duplication) now all reduce to it. Behaviour-preserving:
+each original was a sequential `Replace` chain over disjoint character classes, so a single per-char
+substitution pass produces identical output — didn't grow the diff's risk since `CardFileFormat`
+already has full escape/unescape round-trip test coverage and it's still green.
+
+**Gates:** `BUILD_EXIT:0` `TEST_EXIT:0` (232/232) `FORMAT_EXIT:0` `VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Block B (O-3, no task numbers) audited — `git diff d165508` plus the DEVLOG brief and
+worker's report.
+
+**Verdict: Approve.**
+
+**Evidence 1 (red-then-green) — independently verified, not just accepted.** `git show
+d165508:tests/Callboard.Tests/CommandDispatcherTests.cs` shows
+`IndexRebuild_WithTrailingToken_RefusesButHasAlreadyWrittenTheIndex` genuinely asserted
+`Assert.True(File.Exists(IndexPaths.DatabasePath(repo.Path)))`, with a doc comment explicitly
+framing itself as the pinned O-3 trade-off to be inverted once discharged. I also independently
+rebuilt `d165508`'s dispatcher (`git show d165508:src/Callboard/Cli/CommandDispatcher.cs`) and
+confirmed `RunIndexRebuild` ran unconditionally inside `Dispatch`, with
+`EnforceNoUnconsumedArguments` applied only to the already-produced `CommandOutcome` afterward —
+the write-then-refuse defect is real at that commit, not asserted from memory. And I have already
+run the full suite at that exact tree state during my prior block A re-audits and seen `TEST_EXIT:0`
+green — so "the old test genuinely passed" isn't taken on the worker's word either. The new test
+(`IndexRebuild_WithTrailingToken_RefusesAndDoesNotWriteTheIndex`) is the precise negation
+(`Assert.False` on the same `File.Exists` call). The red-before-green property holds; the worker's
+account of evidence 1 is accurate and I'm satisfied without a hand-revert.
+
+**Evidence 2 (compile-time funnel) — confirmed by reading the actual code, not the doc comment.**
+`ParseIndexRebuild(string workingDirectory)` and `RunIndexRebuild(string workingDirectory)` take
+only a `string`; neither `ArgumentCursor` nor `CommandContext` is a name in scope in either body.
+`Run` is the sole caller of `.Execute()`, always after `EnforceNoUnconsumedArguments` runs on the
+`ParsePhaseResult`. The worker's own honesty about the limit (see the Func-vs-data-union question
+below) is correct and I'd have flagged it as overclaiming if it had gone unstated.
+
+**Invariants and precedence — all preserved, checked by reading `Run`, not inferred from the doc
+comment.** Exactly one JSON envelope line on every exit path (success, refusal, and the `catch`
+block's `WriteToolFailureEnvelope`) — unchanged shape, same single `output.WriteLine` per path.
+Non-zero exit whenever not an unqualified success — `ExitCodeFor`/`ToolFailureExitCode` untouched.
+`EnforceNoUnconsumedArguments` only overrides `Ready`, never a `Refused` result — same precedence as
+the old `Success`-only override, now expressed over the closed union via `Match` rather than a type
+test, so it's still exhaustive rather than a discard arm. Refusal / tool-failure / reported-failure
+three-way split is untouched: `RunIndexRebuild`'s corrupt-card-as-successful-`Failures`-list and the
+SQLite-I/O-failure-escapes-to-`catch` behaviour are byte-identical to `d165508`. §3's structural
+enforcement points are still structural, not downgraded: `git diff d165508 -- Program.cs
+BannedSymbols.txt` is empty (System.Console ban and the stdin-guard precondition weren't touched by
+this block at all), and argument consumption is still checked exactly once, from `Run`'s single
+call to `EnforceNoUnconsumedArguments`.
+
+**`CardFileFormat.cs` escape merge — verified behaviourally identical by differential testing, not
+by trusting the green suite.** Wrote a standalone program reimplementing the *old* sequential-
+`Replace`-chain escapers exactly as they existed at `d165508` (frontmatter/list-item) and
+pre-block-A (comment-header) alongside the *new* `EscapeUsing`/forward-table version, then compared
+them over every string up to length 4 built from the alphabet each escaper's table cares about
+(backslash, `\n`, `\r`, comma, space, plus a few plain letters — 7,381 exhaustive cases) and 60,000
+randomised strings mixing that alphabet with arbitrary Unicode code points up to U+02FF. Zero
+mismatches across all three escapers, 82,143 checks total. This is the two-independent-mutations
+discipline applied to a refactor rather than a guard: I didn't re-run the worker's round-trip tests,
+I built a second implementation from the pre-change source and diffed outputs directly.
+
+**Func-vs-data-union question — recommendation, not a finding.**
+
+(a) **The `Func`-carrying shape does leave a real, reachable gap.** `Ready(Func<CommandOutcome>
+Execute)` accepts any zero-arg delegate, including one that closes over an outcome already computed
+at parse time: `var outcome = RunSomething(x); return new Ready(() => outcome);` compiles today and
+would execute the side effect during `Parse`, before `EnforceNoUnconsumedArguments` ever runs — the
+exact O-3 shape, one level up. The worker was right not to claim this is closed.
+
+(b) **The data-union shape narrows the gap sharply but does not make it impossible.** If `Parse`
+returns a closed union of *parsed commands* (plain data — e.g. a record carrying the extracted
+`workingDirectory` string) and `Run`'s `Match` is the only place that calls a `Run*` handler, then a
+`Parse*` arm's code has **no reference at all** to any handler function — it can only construct
+data. To reproduce today's bypass, a future author would have to add a `CommandOutcome`-typed field
+to what's supposed to be an inert parsed-command record and populate it by calling the handler
+inside `Parse*` — which is a visible, self-evidently-wrong change to a type whose whole point is to
+carry nothing but arguments, not a plausible-looking convenience shortcut the way `() => outcome` is
+under the `Func` shape today. It is not a compile error (`CS0103` is what "cursor not in scope"
+achieves; nothing here forces the same for "handler not callable" without splitting handlers into a
+separately-accessed type or assembly, which is more machinery than this section needs), but it
+converts an easy, natural-looking mistake into a deliberately weird one — the same distinction
+between "doesn't compile" and "a reviewer notices immediately" that O-2's fix already leaned on one
+level down (deleting the disagreeable parameter rather than asserting the two values match).
+
+(c) **Cost against block C's dispatcher.** Block C adds several verbs (transition application, the
+`base` refusal, gate results, derived blocked). Each would need one small parsed-command record
+(the scalars its `Parse*` arm already extracts today, just given a name and returned as data instead
+of closed over) plus one arm in `Run`'s dispatch `Match` mapping that case to its handler — a few
+lines per verb, comparable to what `ParseIndexRebuild`'s existing `Ready(() => RunIndexRebuild(x))`
+already costs, not a rearchitecture. The cheapest point to make this change is now, with one verb
+converted, rather than after block C multiplies the case count under the `Func` shape.
+
+**Recommendation: adopt the data-union shape before block C**, on the same basis O-1/O-2/O-3 have
+each landed on — a convention that merely discourages the mistake has cost this section three
+remediation rounds so far, and the marginal cost of the data-union here is small relative to what
+block C is about to build on top of it. It is not a full compile-time close (say so honestly if you
+rule for it, the same way this block's own doc comment does for the leaf-verb guarantee), so
+whichever way you rule, block C's first card-writing verb should still carry its own test proving
+the specific refusal-prevents-the-write property for that verb — the funnel shape narrows the space
+of mistakes; it doesn't substitute for the verb-level proof.
+
+**Scope.** No task numbers ticked (correct — O-3 is a carried obligation, not a `tasks.md` item).
+Diff is contained to `CommandDispatcher.cs`, `ArgumentCursor.cs` (doc comments only), and the
+opportunistic `CardFileFormat.cs` escape merge — no new refusal code minted, matching the brief's
+constraint. Gates independently reproduced from a clean rebuild: `BUILD_EXIT:0`, `TEST_EXIT:0`
+(232/232), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+This block is done from my side, pending your ruling on the `Func`-vs-data-union question above —
+nothing blocks landing as-is if you decide the current shape is sufficient for now.
+
+---
+
+**[worker]** Adopted the data-union shape per the architect's ruling. `ParsePhaseResult.Ready(Func<CommandOutcome>
+Execute)` is gone.
+
+**New shape.** `ParseResult` (renamed from `ParsePhaseResult`) is now `Ready(ParsedCommand Command)` /
+`Refused(CommandOutcome.Refusal)` — same private-ctor-plus-`Match` closed union as before, just
+holding data instead of a delegate. `ParsedCommand` is a new closed union, one case per verb —
+`Version` and `IndexRebuild(string WorkingDirectory)` — each an inert record with no reference to any
+`Run*` handler function, no delegate field, nothing `CommandOutcome`-typed. `Run`'s dispatch is now a
+single nested `Match`: `parseResult.Match(onReady: ready => ready.Command.Match(onVersion: ... =>
+RunVersion(), onIndexRebuild: parsed => RunIndexRebuild(parsed.WorkingDirectory)), onRefused: ...)` —
+the only place in the file either handler is called. `EnforceNoUnconsumedArguments` is unchanged in
+shape: it still only overrides `Ready`, still via `Match`, never touches `Refused`.
+
+**Every `Parse*` arm now literally cannot name a handler.** `ParseIndex` and `ParseIndexRebuild` build
+`ParsedCommand` values only — `ParseIndexRebuild` returns `new ParseResult.Ready(new
+ParsedCommand.IndexRebuild(workingDirectory))`, nothing else, and `RunIndexRebuild` does not appear
+anywhere in either method. That is the whole of what the ruling asked for: reproducing the bypass now
+means adding a `CommandOutcome`-typed field to `ParsedCommand.IndexRebuild` and populating it by
+calling `RunIndexRebuild` inside `ParseIndexRebuild` — a change to the shape of a record advertised as
+inert input data, not a natural-looking shortcut a stored `Func` invited.
+
+**Honest framing, matching the ruling's instruction.** This is **not** the `CS0103`-grade guarantee —
+nothing stops a future `ParsedCommand` case from growing such a field and it would still compile. What
+changed is the shape of the mistake: from "wrap a precomputed value in the same delegate type every
+correct handler uses" to "add a domain-typed field to what the type's own doc comment calls inert."
+The class doc comment states both halves explicitly now: the reduced-but-not-eliminated risk for the
+data-union generally, and the genuine `CS0103` guarantee that still holds specifically for
+`RunIndexRebuild`/`ParseIndexRebuild` not taking `CommandContext`/`ArgumentCursor`. Recorded here as
+the DEVLOG statement the ruling asked for, not just in code.
+
+**Untouched, verified:** `RunVersion`/`RunIndexRebuild` bodies unchanged; `CommandOutcome`,
+`CliEnvelope`, `WriteEnvelope`, `WriteToolFailureEnvelope`, `ExitCodeFor`, the `catch` in `Run`, all
+byte-for-byte the same. `CardFileFormat.cs` untouched per instruction. `Program.cs` and
+`BannedSymbols.txt` untouched (no reason to touch them — no new `System.Console` call, no new banned
+API). All three refusal/tool-failure/reported-failure paths still behave identically —
+`Index_WithNoSubcommand_...`, `IndexRebuild_OnSqliteIoFailure_...`, and
+`IndexRebuild_ReportsParseFailuresInASuccessfulResult` all still pass unmodified.
+
+**Test/doc updates.** Updated the doc comments in `CommandDispatcher.cs`, `ArgumentCursor.cs` and the
+test file that referred to the now-gone `Execute` delegate — same content, describing dispatch as
+"`Run`'s match over `ParsedCommand`" instead. No test assertions changed; the reflection-based
+signature test (`IndexRebuildHandlerAndItsParseFunction_TakeNoCursorOrContext_...`) still passes
+unmodified since `RunIndexRebuild`'s and `ParseIndexRebuild`'s parameter lists didn't change.
+
+**Gates (re-run after this change):** `BUILD_EXIT:0` `TEST_EXIT:0` (232/232) `FORMAT_EXIT:0`
+`VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Re-audit of the data-union reshape, block B (O-3, no task numbers).
+
+**Verdict: Request changes** — on the doc comment / DEVLOG framing only. Nothing here is a
+functional defect: every invariant, the escape merge, and the gates all hold. The problem is that
+the class doc comment (and the worker's DEVLOG account) describe the residual risk narrower than it
+actually is, and I can demonstrate the gap by compiling the cheaper bypass they don't mention.
+
+**1. Tried the bypass against the new shape — and found a cheaper one than either of us predicted.**
+
+I built two standalone copies of the actual `src/Callboard` tree (not the real repo — scratch
+copies, `dotnet build`, discarded after) and mutated `CommandDispatcher.cs` two different ways:
+
+- **The predicted bypass (field growth).** Added `CommandOutcome? Precomputed = null` to
+  `ParsedCommand.IndexRebuild`, then had `ParseIndexRebuild` populate it by calling
+  `RunIndexRebuild(workingDirectory)` eagerly. **Compiles clean, 0 warnings.** Confirms the worker's
+  own honest account: this specific mistake is still possible, just now a visible schema change.
+- **A cheaper bypass the doc comment doesn't mention.** Left `ParsedCommand.IndexRebuild`
+  completely untouched — no new field, no schema change at all — and added one line to
+  `ParseIndexRebuild`:
+  ```csharp
+  private static ParseResult ParseIndexRebuild(string workingDirectory)
+  {
+      RunIndexRebuild(workingDirectory); // side effect happens now, result discarded
+      return new ParseResult.Ready(new ParsedCommand.IndexRebuild(workingDirectory));
+  }
+  ```
+  **Compiles clean, 0 warnings.** `RunIndexRebuild` is an ordinary `private static` method on the
+  same class as every `Parse*` arm — nothing stops a parse arm from calling it directly and
+  discarding the result. This requires *less* code than the field-growth variant (one statement,
+  the return line untouched) and is *less* visible in review than either the field-growth bypass or
+  the old `Func`-shape bypass (`return new Ready(() => outcome)`), because it doesn't touch the
+  return statement's shape at all — it's just an ordinary-looking extra line above it.
+
+**So: is it harder than before? Not uniformly, and the doc comment currently implies it is.** The
+field-growth path genuinely got harder — that part of the worker's account and the doc comment's
+second paragraph is accurate. But the call-and-discard path was **exactly as available under the
+old `Func` shape** (nothing there stopped `ParseIndexRebuild` from calling `RunIndexRebuild(x)` and
+discarding it either, while still returning `new Ready(() => RunIndexRebuild(x))`), so the reshape
+didn't touch that path at all — it's neither harder nor easier, just not addressed. The class doc
+comment's paragraph ("nothing stops a future `ParsedCommand` case from growing a
+`CommandOutcome`-typed field... What it does buy is that doing so is a visibly wrong shape...")
+reads as if field-growth is *the* residual gap. It isn't the only one, and it isn't the cheapest
+one. That's the finding: not that the ruling was wrong, but that its own documentation of what it
+bought is incomplete in a way that could mislead a block C worker into thinking discard-call is
+somehow also covered.
+
+**One mitigating fact, verified empirically, not assumed:** for the one verb this section has, the
+*existing* O-3 evidence test catches both bypasses. I ran
+`IndexRebuild_WithTrailingToken_RefusesAndDoesNotWriteTheIndex` against my call-and-discard mutant
+and it went red exactly as expected (`Assert.False(File.Exists(...))` failed — the file existed).
+This is real coverage today, but it's incidental: that test exists to prove the O-3 fix for this
+verb, not to enforce "no parse arm calls a handler" as a general property, and it would have caught
+the equivalent mistake just as well under the old `Func` shape. Nothing generalises this to a
+future verb without its own equivalent test — which is the same recommendation I made last round
+and restate here: block C's first card-writing verb still needs its own refusal-prevents-the-write
+test, regardless of which dispatch shape lands.
+
+**Requested fix:** rewrite the class doc comment's second paragraph (and the worker's DEVLOG
+summary, since it repeats the same framing) to state plainly that the residual gap includes a
+call-and-discard variant requiring no schema change at all — not just the field-growth variant —
+and that neither is compile-time-prevented; what's actually bought is (a) the field-growth mistake
+now looks wrong on sight, and (b) `RunIndexRebuild`/`ParseIndexRebuild` genuinely cannot observe the
+cursor (`CS0103`, unchanged from last round, not new to this reshape — it doesn't depend on the
+data-union shape at all). This is a doc-comment-accuracy fix, not a redesign; I'm not asking for a
+third dispatch shape.
+
+**2. Handlers reachable from exactly one place — true today, confirmed by enumeration, not
+assumed.** `grep -n "RunVersion()\|RunIndexRebuild("` over the whole file (the only place a
+`private static` member can be called from) finds exactly two call sites for each — both inside
+`Run`'s nested `Match` (lines 183–184 of the current `CommandDispatcher.cs`). No other file
+references either method (both are `private`). This is accurate as a statement about the code that
+exists right now. It is not, and the doc comment now correctly does **not** claim it is, a property
+the compiler enforces — my bypass 1 above adds a second call site with zero friction.
+
+**3. Everything from the last round re-confirmed after the reshape.**
+- Exactly one JSON line on every exit path, including the exception `catch` — `Run`'s structure is
+  otherwise untouched; only the `outcome` computation changed from `parseResult.Match(onReady:
+  ready => ready.Execute(), ...)` to the nested `Match` over `ParsedCommand`.
+- Non-zero exit whenever not an unqualified success — `ExitCodeFor` byte-identical.
+- `EnforceNoUnconsumedArguments` still overrides only `Ready`, never `Refused`, via exhaustive
+  `Match` — unchanged in shape, confirmed by reading, not just the worker's claim.
+- Refusal / tool-failure / reported-failure three-way split — `RunIndexRebuild`'s
+  `Failures`-as-successful-result and the uncaught-SQLite-exception-to-`catch` path are
+  byte-identical to what I read last round.
+- `git diff d165508 -- src/Callboard/Program.cs src/Callboard/BannedSymbols.txt` is still empty —
+  §3's structural enforcement points untouched.
+
+**4. Doc comments judged as written today — one overstatement, addressed above (finding 1). No
+other doc-comment claim in this diff overstates what it should**, including the class doc comment's
+first paragraph and the `ParsedCommand` union's own doc comment, both of which are accurate about
+what the funnel does and does not guarantee once finding 1 is folded in.
+
+**5. `CardFileFormat.cs` confirmed untouched since my differential testing settled it** —
+`git diff d165508 -- CardFileFormat.cs` is byte-identical to the diff I audited last round (same 68
+lines, same forward-table `EscapeUsing` merge). No re-verification needed.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (232/232),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report.
+
+**To be direct about your question:** the ruling didn't buy nothing, but it bought less than its
+own doc comment currently claims, and in one specific dimension (call-and-discard) it bought
+nothing at all — that path was equally open before. I'd land this once the doc comment is corrected
+to say so; I would not reverse the ruling itself, since the field-growth hardening is real and the
+cost was genuinely small, as predicted.
+
+---
+
+**[worker]** Doc-comment fix (finding 1, required) plus structural fix attempted (finding 2, time-boxed) — both landed.
+
+**1. Doc comment / DEVLOG accuracy, corrected.** The class doc comment's second paragraph no longer
+frames field-growth as *the* residual gap. It now states plainly: the reshape (and, before that,
+this remediation's structural split) hardened field-growth and stashing a precomputed result, and
+did nothing for a parse arm calling a handler directly and discarding the result — that path was
+exactly as open under the original `Func` shape as under the data-union shape, because nothing about
+either shape stopped a `Parse*` method from also being able to *name* `RunIndexRebuild`. That's the
+gap the structural fix below closes for real, not by narrowing the shape of the mistake but by
+removing the name from scope. My own DEVLOG account of the data-union round repeated the same
+narrow framing; it's superseded by this post and by the class doc comment, which is now the single
+place stating the guarantee.
+
+**2. Structural fix: parsing and handlers split into separate top-level classes. Landed clean —
+no ripple.** `CommandParser` (new file, `src/Callboard/Cli/CommandParser.cs`) now holds `Parse`,
+`ParseIndex`, `ParseIndexRebuild` — everything that used to live in `CommandDispatcher` for the
+parse side. `RunVersion` and `RunIndexRebuild` stay `private static` on `CommandDispatcher`, and
+`CommandParser` is a **sibling top-level class**, not nested — nesting would not have worked, since
+a nested type can see its enclosing type's private members regardless of the nested type's own
+accessibility (documented as such in `CommandParser`'s own class doc comment, so a future author
+doesn't reach for that shape and rediscover why it fails). `ParseResult` and `ParsedCommand` moved
+from `private` to `internal` on `CommandDispatcher` so `CommandParser` can construct and return
+them — that widening is the data types becoming shared, not the handlers; the handlers stay exactly
+as private as before.
+
+**Verified, not assumed — same method the reviewer used.** Built two standalone scratch copies of
+`src/Callboard` (`dotnet build`, discarded after, real tree untouched — confirmed by `git status`
+before and after). Mutated `ParseIndexRebuild` to add `CommandDispatcher.RunIndexRebuild(workingDirectory);`
+as a bare statement before its existing `return`, i.e. exactly the reviewer's cheaper bypass, moved
+into the new split. Result: `CommandParser.cs(78,27): error CS0122: 'CommandDispatcher.RunIndexRebuild(string)'
+is inaccessible due to its protection level`. The bypass the reviewer found does not compile against
+the landed shape.
+
+**Time-box: contained, not ripple.** The move touched exactly three files (`CommandDispatcher.cs`,
+new `CommandParser.cs`, and the one reflection test's `typeof(CommandDispatcher)` →
+`typeof(CommandParser)` for `ParseIndexRebuild`). No parse helper needed a private-to-dispatcher
+member it lost access to; no member needed to widen past `internal`; `Run`'s body changed by exactly
+one call-site rename (`Parse(...)` → `CommandParser.Parse(...)`); both invariants (one JSON line;
+non-zero exit whenever not an unqualified success) are visibly intact on every exit path in `Run`,
+unchanged in structure. This was the "stays contained" branch, not the "ripples" branch — no revert
+needed.
+
+**What a future author can still write that compiles, stated exactly (also now in the class doc
+comment).** A parse arm can no longer name a handler — `CommandParser` has no access to
+`CommandDispatcher.RunVersion`/`RunIndexRebuild` at all, so both the reviewer's field-growth bypass
+and its cheaper call-and-discard bypass are `CS0122` from `CommandParser`. What is **not** ruled
+out: code added *inside* `CommandDispatcher` itself — where the handlers live — calling
+`RunIndexRebuild(...)` from somewhere other than `Run`'s dispatch match (e.g. a hypothetical future
+private helper on `CommandDispatcher` that isn't `Run`). That would still compile. The guarantee is
+therefore precisely "the parse phase cannot cause a handler to run early," not "no code path can" —
+narrower than a first reading of "handlers are private, parsing is a separate class" might suggest,
+and the class doc comment now says so in those words rather than leaving it implied.
+
+**Gates (re-run after both fixes):** `BUILD_EXIT:0` `TEST_EXIT:0` (232/232) `FORMAT_EXIT:0`
+`VALIDATE_EXIT:0`. Independently re-confirmed: `git diff d165508 -- src/Callboard/Program.cs
+src/Callboard/BannedSymbols.txt` empty (0 lines); `git diff d165508 -- src/Callboard/Cards/CardFileFormat.cs`
+unchanged from what the reviewer already audited (107 lines, same content).
+
+→ @reviewer
+
+---
+
+**[reviewer]** Final pass, block B (O-3, no task numbers). Split verified two more ways than the
+worker's own reproduction — one of the two I found is a genuinely new route the doc comment doesn't
+yet disclose, though it predates this diff and I'm not treating it as a blocker.
+
+**Verdict: Approve.** The core fix is sound and the doc comment's central claim is honest and
+correctly scoped. Two residual routes I found (below) are worth naming for completeness but neither
+undermines what this block actually delivers, and neither is something this block introduced.
+
+**1. Reproduced CS0122 independently, then tried to get around the split three ways.**
+
+- **Same-shape reproduction, different call site.** Not the worker's own `ParseIndexRebuild`
+  mutation — I added `CommandDispatcher.RunIndexRebuild(context.WorkingDirectory);` inside
+  `ParseIndex` instead (a different method, same class file, scratch copy of the real tree). Got
+  exactly `CS0122: 'CommandDispatcher.RunIndexRebuild(string)' is inaccessible due to its
+  protection level`. The split holds for a mutation I chose myself, not just the one the worker
+  tried.
+- **Reflection.** `typeof(CommandDispatcher).GetMethod("RunIndexRebuild",
+  BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(...)` from inside `CommandParser` compiles
+  clean, and I ran it end-to-end against a real temp repo: `exitCode=1` (correctly refused,
+  `unrecognised-argument`), **`dbExists=True`** — the write happened anyway. This is a genuine,
+  working, not merely compiling, bypass. It isn't new to this design, though — reflection defeats
+  `private` throughout .NET, and this exact caveat is already precedented in this codebase
+  (`BlockCardFields`'s doc comment: "a caller with... raw reflection over the private backing
+  fields... could still defeat it; none of those are reachable from this codebase's own call
+  sites"). Nothing in the real `CommandParser.cs` uses reflection, and the test file's own comment
+  on `IndexRebuildHandlerAndItsParseFunction_...` already says as much ("reflection with
+  BindingFlags.NonPublic bypasses C# accessibility checks entirely, so no test can observe that
+  guarantee"). Not a finding — already disclosed, just in the test file rather than the class doc
+  comment. Nit: mirror that sentence into the class doc comment for consistency, since that's where
+  the guarantee is stated as a claim.
+- **`InternalsVisibleTo`.** Confirmed `AssemblyInfo.cs` grants `Callboard.Tests` access to
+  `internal` members. This doesn't open a new route to a handler: `InternalsVisibleTo` only affects
+  `internal`-declared members, and both handlers stay `private` — `CS0122` from the test assembly
+  too, not `CS0122`-avoided. Checked, not just assumed.
+- **A third route I found that neither of us named: recursing through `Run` itself.**
+  `CommandDispatcher.Run(...)` is `internal static` (has to be — `Program.cs` and the test project
+  both call it). Nothing stops a `Parse*` arm from calling it recursively: I added
+  `CommandDispatcher.Run(["index","rebuild"], TextWriter.Null, TextReader.Null, TextWriter.Null,
+  false, context.WorkingDirectory);` inside `ParseIndex`'s `"rebuild"` arm — compiles clean. I
+  didn't run this one end-to-end (the mechanism is obvious: the inner call's own
+  `EnforceNoUnconsumedArguments` passes cleanly since I constructed a trailing-token-free inner
+  argv, so its own write proceeds, all before the *outer* call's own funnel has run). This route
+  **predates this block entirely** — `Run` has always been `internal`, unrelated to today's split —
+  and it requires reconstructing a full command invocation with its own writers and argv, which is
+  about as visibly strange in review as code gets; I'm not asking for it to be closed. But it does
+  mean the claim "the parse phase itself cannot cause a handler to run early" is not, read
+  literally, exhaustively true — see finding under (3) below.
+
+**2. The widening judged — coherent, doesn't defeat itself.** `git diff d165508` over
+`CommandDispatcher.cs` shows exactly two accessibility changes: `ParseResult` and `ParsedCommand`
+(the two outer union types) went `private` → `internal`; their nested cases were already
+`internal`; both handler methods and `EnforceNoUnconsumedArguments` stayed `private`. Confirmed by
+grepping every `private`/`internal` line in the diff, not sampling. The widening is *only* on data
+— `CommandParser` can now construct and return these records, exactly what the split needs — and
+by itself grants no path to either handler: both remain callable only from within
+`CommandDispatcher`, and the routes that do reach them (reflection, recursive `Run`) don't go
+through the widened types at all; they're orthogonal capabilities that exist regardless of whether
+`ParseResult`/`ParsedCommand` are `private` or `internal`. This is not the self-defeating shape you
+flagged as the risk — the widening buys exactly what it needs to buy and nothing more.
+
+**3. The residual claim, judged as written today.** "The parse phase itself cannot cause a handler
+to run early" is accurate against the bypass shapes both of us set out to close (direct handler
+reference, field-growth, call-and-discard) — all three are now `CS0122`. It is not accurate against
+the two routes in (1): reflection and recursive-`Run`. I don't think this is a **new** overstatement
+in the sense the last round's finding was — that one described a cheap, natural, directly-relevant
+gap the doc comment implied didn't exist. These two are different in kind: reflection is a
+CLR-wide property nothing in this codebase closes anywhere (see precedent), and recursive-`Run`
+predates this diff and requires deliberately reconstructing a whole invocation. I'd call this
+**accurate for the class of mistake O-3 is actually about** (a handler's side effect landing before
+its own command's argument check has resolved) and **narrower than its literal wording** for the
+general case. Recommend a short addition to the doc comment's final paragraph naming both — not
+because either is dangerous, but because this DEVLOG thread has twice now caught a doc comment that
+was true of the cases its author tested and silent about the ones they didn't, and the fix each
+time was cheap. Nit, not a blocker — I'm not withholding approval over it.
+
+**4. Test file — confirmed, one retarget, comments only.** `git diff d165508` over
+`CommandDispatcherTests.cs`'s `Assert.` lines shows exactly the same two assertion changes I
+verified last round (the `Assert.All(...)` line and the `Assert.False(File.Exists(...))` inversion)
+— nothing new. The only change since last round is `typeof(CommandDispatcher)` →
+`typeof(CommandParser)` on line 263 for `parseIndexRebuild`, which is the correct retarget now that
+the method lives on the sibling class, plus the comment block above it (now explicitly naming the
+reflection caveat, per (1) above). No assertion weakened.
+
+**5. Standing set re-confirmed after the file split — all held, by reading, not by re-trusting the
+report.**
+- Exactly one JSON line on every exit path, including the exception `catch` — `Run`'s try/catch
+  structure, `WriteEnvelope`, `WriteToolFailureEnvelope` all byte-identical to what I read in the
+  prior round; only `CommandParser.Parse` replaced the inline `Parse` call.
+- Non-zero exit whenever not an unqualified success — `ExitCodeFor` untouched.
+- `EnforceNoUnconsumedArguments` still overrides only `Ready`, never `Refused`, via exhaustive
+  `Match` — same body as last round, still in `CommandDispatcher.cs`, not moved.
+- Refusal / tool-failure / reported-failure three-way split — `RunIndexRebuild`'s body untouched;
+  the SQLite-failure-escapes-to-`catch` path unchanged.
+- `git diff d165508 -- src/Callboard/Program.cs src/Callboard/BannedSymbols.txt` — empty, confirmed
+  fresh this round.
+- `git diff d165508 -- src/Callboard/Cards/CardFileFormat.cs` — 107 lines, same content I
+  differential-tested two rounds ago (spot-checked the `EscapeUsing`/forward-table lines are still
+  present and unchanged).
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (232/232),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report.
+
+Block B is done from my side. The two nits in (1)/(3) — mirroring the reflection caveat into the
+class doc comment, and naming the recursive-`Run` route — are cheap enough to fold in now if you
+want the doc comment airtight, or park in `## NEXT` as a documentation note; neither should hold up
+landing.
+
+---
+
+**[worker]** Doc-comment-only fix per the architect's last note — disclosed the two routes the reviewer named that the residual-guarantee paragraph didn't mention. No behaviour, signature, or test change.
+
+**Two additions to the class doc comment's guarantee paragraph, both stated as open, neither closed:**
+
+1. **Reflection.** `private` is a compile-time modifier, not a runtime one:
+   `typeof(CommandDispatcher).GetMethod("RunIndexRebuild", BindingFlags.NonPublic | BindingFlags.Static)`
+   compiles and invokes the handler directly, same property the codebase already concedes for
+   `BlockCardFields`'s private backing fields — mirrored the same disclosure sentence shape here so
+   the two agree, as asked.
+2. **Recursive `Run`.** `Run` is necessarily `internal` (`Program.cs` and the test project both call
+   it), so a parse arm could call `Run` again with a self-constructed argv and compile clean. Named
+   as predating this section entirely and unrelated to the parse/handler split.
+
+**Wording, verbatim shape.** The guarantee now reads: an ordinary compile-time call from the parse
+phase cannot reach a handler — that's `CS0122` — while (1) a same-class call from somewhere other
+than `Run`'s dispatch match, (2) reflection, and (3) recursion through `Run` all remain open, none
+introduced by this block and none closed by it. Only the class doc comment's second `<para>` changed
+— confirmed by diff inspection before running gates: the paragraph boundaries and every other member
+in the file are byte-identical to the previous round.
+
+**Gates (re-run after the doc-comment fix):** `BUILD_EXIT:0` `TEST_EXIT:0` (232/232) `FORMAT_EXIT:0`
+`VALIDATE_EXIT:0`.
+
+No handoff — architect is landing block B directly per its note.
+
 ## NEXT
 
 

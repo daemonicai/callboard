@@ -13,6 +13,48 @@ namespace Callboard.Cli;
 /// without spawning a process or a real console. Two invariants hold on every exit path, including
 /// the one where the tool itself breaks: exactly one JSON line reaches stdout, and the process
 /// exits non-zero whenever that line was not an unqualified success.
+/// <para>
+/// <b>Parse, then execute (obligation O-3, DEVLOG §5).</b> <see cref="CommandParser.Parse"/> is the
+/// only place argv tokens are read: it walks the command tree, consumes what each verb recognises
+/// from the shared <see cref="ArgumentCursor"/>, and returns a <see cref="ParseResult"/> — either a
+/// <see cref="ParseResult.Refused"/> the parse phase already decided, or a
+/// <see cref="ParseResult.Ready"/> wrapping a <see cref="ParsedCommand"/>: an <em>inert</em> record
+/// describing what was asked for, holding whatever values the verb needs. <see cref="Run"/> checks
+/// <see cref="ArgumentCursor.HasUnconsumedTokens"/> against the parse result — via
+/// <see cref="EnforceNoUnconsumedArguments"/> — and only once that has passed does it exhaustively
+/// match the resulting <see cref="ParsedCommand"/> to call the one handler function that performs
+/// its side effect.
+/// </para>
+/// <para>
+/// <b>What is actually guaranteed, stated precisely (DEVLOG §5, third review round).</b> The
+/// handler functions (<see cref="RunVersion"/>, <see cref="RunIndexRebuild"/>) are <c>private</c>
+/// members of <em>this</em> class, while <see cref="CommandParser"/> — which builds every
+/// <see cref="ParsedCommand"/> — is a separate top-level class with no access to them: calling
+/// <c>RunIndexRebuild(...)</c> from inside <c>CommandParser</c> is <c>CS0122</c>
+/// ("inaccessible due to its protection level"), the same grade of guarantee that closed obligation
+/// O-1. That rules out a parse arm calling a handler and discarding or stashing the result, because
+/// a parse arm cannot name a handler at all — for an ordinary call, at compile time. It does
+/// <em>not</em> rule out a handler running early by three other routes, none introduced by this
+/// class and none closed by it: (1) code added inside <em>this</em> class — where the handlers
+/// live — calling <c>RunIndexRebuild(...)</c> from somewhere other than <see cref="Run"/>'s
+/// dispatch match, which would still compile; (2) reflection — <c>private</c> is a compile-time
+/// access modifier, not a runtime one, so <c>typeof(CommandDispatcher).GetMethod("RunIndexRebuild",
+/// BindingFlags.NonPublic | BindingFlags.Static)</c> compiles and invokes the handler directly,
+/// same as the codebase already concedes for <see cref="Cards.BlockCardFields"/>'s private backing
+/// fields — none of these routes are reachable from this codebase's own call sites, which is the
+/// guarantee actually worth having here; and (3) recursion through <see cref="Run"/> itself — it
+/// must stay <c>internal</c> because <c>Program.cs</c> and the test project both call it, so a
+/// parse arm could in principle call <c>Run</c> again with a self-constructed argv array and
+/// compile clean, a route that predates this section entirely and is unrelated to the parse/handler
+/// split. The property this section can actually claim is narrower than "no handler ever runs
+/// early" on every one of these axes: it is "an ordinary compile-time call from the parse phase
+/// cannot reach a handler", because the parse phase and the handlers are now different types and
+/// only the handlers' own class can name them by an ordinary call — reflection and recursive
+/// <see cref="Run"/> remain open regardless. <see cref="RunIndexRebuild"/> also still takes only the
+/// already-extracted <see langword="string"/> working directory, never <see cref="CommandContext"/>
+/// or <see cref="ArgumentCursor"/>, so it specifically cannot observe an unparsed cursor — that part
+/// is <c>CS0103</c> and unrelated to which class anything lives in.
+/// </para>
 /// </summary>
 internal static class CommandDispatcher
 {
@@ -50,21 +92,94 @@ internal static class CommandDispatcher
     /// from (needed to resolve the real repository root — <see cref="RepoRootResolver"/> — for any
     /// command that touches the record or the derived index). Bundled rather than passed as loose
     /// parameters because every verb from §2 on needs some subset of these, and
-    /// <see cref="Dispatch"/> never has to change shape to hand a new command whichever of these
-    /// it needs. Only members an already-briefed need has asked for belong here — this is not a
-    /// place to speculate ahead of a section. There is deliberately no output/error writer here:
-    /// a handler's output is its <see cref="ICommandResult"/>, and <see cref="Run"/> is the only
-    /// place permitted to write to stdout or stderr — handing every handler those writers would
-    /// turn "exactly one JSON line on stdout" from something only the dispatcher can enforce into
-    /// something every future handler must individually refrain from breaking (§3 obligation 2:
-    /// enforced structurally by a banned-API analyzer forbidding <c>System.Console</c> everywhere
-    /// but <c>Program.cs</c>, not by this comment).
+    /// <see cref="CommandParser.Parse"/> never has to change shape to hand a new command whichever
+    /// of these it needs. Only members an already-briefed need has asked for belong here — this is
+    /// not a place to speculate ahead of a section. There is deliberately no output/error writer
+    /// here: a handler's output is its <see cref="ICommandResult"/>, and <see cref="Run"/> is the
+    /// only place permitted to write to stdout or stderr — handing every handler those writers
+    /// would turn "exactly one JSON line on stdout" from something only the dispatcher can enforce
+    /// into something every future handler must individually refrain from breaking (§3 obligation
+    /// 2: enforced structurally by a banned-API analyzer forbidding <c>System.Console</c>
+    /// everywhere but <c>Program.cs</c>, not by this comment).
+    /// <para>
+    /// <see cref="CommandContext"/> — and the <see cref="ArgumentCursor"/> it carries — belongs to
+    /// the <em>parse</em> phase only (O-3, DEVLOG §5). A <see cref="ParsedCommand"/> never carries
+    /// this type; see the class doc comment.
+    /// </para>
     /// </summary>
     internal sealed record CommandContext(
         ArgumentCursor Arguments,
         TextReader Input,
         bool IsInputRedirected,
         string WorkingDirectory);
+
+    /// <summary>
+    /// Closed union over what the parse phase produces for one command: either it has already
+    /// decided to refuse — an unknown command, a missing or unknown subcommand, or, once the funnel
+    /// applies it in <see cref="EnforceNoUnconsumedArguments"/>, an unrecognised trailing token —
+    /// or it is <see cref="Ready"/>, wrapping a <see cref="ParsedCommand"/> that still hasn't been
+    /// dispatched to a handler. Private constructor and an abstract <see cref="Match{TResult}"/>,
+    /// same shape as <see cref="CommandOutcome"/>, so a third case is a compile error everywhere
+    /// this is consumed rather than a silently-ignored default. Declared <see langword="internal"/>
+    /// (not <see langword="private"/>) so <see cref="CommandParser"/>, a separate top-level class,
+    /// can construct and return it — the split that keeps the handler functions unreachable from
+    /// parsing needs this type shared, unlike the handlers themselves, which stay <c>private</c> to
+    /// this class.
+    /// </summary>
+    internal abstract record ParseResult
+    {
+        private ParseResult()
+        {
+        }
+
+        internal abstract TResult Match<TResult>(
+            Func<Ready, TResult> onReady,
+            Func<Refused, TResult> onRefused);
+
+        internal sealed record Ready(ParsedCommand Command) : ParseResult
+        {
+            internal override TResult Match<TResult>(Func<Ready, TResult> onReady, Func<Refused, TResult> onRefused) =>
+                onReady(this);
+        }
+
+        internal sealed record Refused(CommandOutcome.Refusal Refusal) : ParseResult
+        {
+            internal override TResult Match<TResult>(Func<Ready, TResult> onReady, Func<Refused, TResult> onRefused) =>
+                onRefused(this);
+        }
+    }
+
+    /// <summary>
+    /// Closed union over the commands the parse phase can hand to <see cref="Run"/> for dispatch —
+    /// one case per verb, each carrying only the already-extracted values that verb's handler
+    /// needs and nothing else. No case references a handler function, stores a delegate, or
+    /// otherwise carries a <see cref="CommandOutcome"/>. <see cref="Run"/> is the only place these
+    /// are matched to a handler, and only after <see cref="EnforceNoUnconsumedArguments"/> has
+    /// passed. Declared <see langword="internal"/>, same reason as <see cref="ParseResult"/>:
+    /// <see cref="CommandParser"/> builds these values and needs to see the type to do so.
+    /// </summary>
+    internal abstract record ParsedCommand
+    {
+        private ParsedCommand()
+        {
+        }
+
+        internal abstract TResult Match<TResult>(
+            Func<Version, TResult> onVersion,
+            Func<IndexRebuild, TResult> onIndexRebuild);
+
+        internal sealed record Version : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild) =>
+                onVersion(this);
+        }
+
+        internal sealed record IndexRebuild(string WorkingDirectory) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild) =>
+                onIndexRebuild(this);
+        }
+    }
 
     internal static int Run(
         string[] args,
@@ -81,7 +196,12 @@ internal static class CommandDispatcher
         try
         {
             var context = new CommandContext(arguments, input, isInputRedirected, workingDirectory);
-            var outcome = EnforceNoUnconsumedArguments(Dispatch(command, context), arguments);
+            var parseResult = EnforceNoUnconsumedArguments(CommandParser.Parse(command, context), arguments);
+            var outcome = parseResult.Match(
+                onReady: ready => ready.Command.Match(
+                    onVersion: static _ => RunVersion(),
+                    onIndexRebuild: parsed => RunIndexRebuild(parsed.WorkingDirectory)),
+                onRefused: refused => refused.Refusal);
 
             WriteEnvelope(output, RecognisedCommand(command, arguments), outcome);
 
@@ -99,88 +219,56 @@ internal static class CommandDispatcher
     /// <summary>
     /// The envelope's <c>command</c> field: <paramref name="command"/> plus every token
     /// <paramref name="arguments"/> actually recognised, space-joined — never the raw argv a
-    /// caller passed. Read <em>after</em> <see cref="Dispatch"/> (and, on the failure path, after
-    /// whatever ran before an exception escaped) so a two-token verb like <c>index rebuild</c>
-    /// reports both tokens, while an unrecognised subcommand — never taken from the cursor,
-    /// because <see cref="RunIndex"/> only takes what it matches — reports just <c>index</c>. A
-    /// machine caller has to be able to tell which command produced an envelope; <c>args[0]</c>
-    /// alone stopped being enough to say that the moment this section introduced a two-token verb.
+    /// caller passed. Read <em>after</em> <see cref="CommandParser.Parse"/> (and, on the failure
+    /// path, after whatever ran before an exception escaped) so a two-token verb like
+    /// <c>index rebuild</c> reports both tokens, while an unrecognised subcommand — never taken
+    /// from the cursor, because <see cref="CommandParser.ParseIndex"/> only takes what it matches —
+    /// reports just <c>index</c>. A machine caller has to be able to tell which command produced an
+    /// envelope; <c>args[0]</c> alone stopped being enough to say that the moment this section
+    /// introduced a two-token verb.
     /// </summary>
     private static string RecognisedCommand(string command, ArgumentCursor arguments) =>
         arguments.ConsumedTokens.Count == 0
             ? command
             : $"{command} {string.Join(' ', arguments.ConsumedTokens)}";
 
-    private static CommandOutcome Dispatch(string command, CommandContext context) => command switch
-    {
-        "version" => RunVersion(),
-        "index" => RunIndex(context),
-        _ => new CommandOutcome.Refusal(
-            "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index."),
-    };
-
     /// <summary>
-    /// The argument-boundary enforcement point (§3 obligation 3, carried from §1, restructured
-    /// after the reviewer proved a per-arm wrapper is a bypassable convention, not a guarantee: a
-    /// dispatch arm that skips the wrapper compiles and runs clean). This is the <em>only</em>
-    /// place unconsumed tokens are checked, and every command funnels through it — <see cref="Run"/>
-    /// calls it once, on whatever <see cref="Dispatch"/> returned, using the same
-    /// <see cref="ArgumentCursor"/> every handler drew from. A dispatch arm has no way to opt out:
-    /// there is no wrapper to remember to call, and nothing a handler returns can make this method
-    /// skip the check. Only overrides a <see cref="CommandOutcome.Success"/> — a handler that
-    /// ignored a token must not have its success stand. A <see cref="CommandOutcome.Refusal"/>
-    /// passes through untouched: the handler already stopped the caller, and its own reason is
-    /// always more specific than a generic unconsumed-token complaint (an unknown command should
-    /// read "no such command", not "unrecognised argument", even when a trailing token happens to
-    /// be present too). Uses <see cref="CommandOutcome.Match{TResult}"/>, not a type test, so this
-    /// stays exhaustive over the closed union.
+    /// The argument-boundary enforcement point (§3 obligation 3, carried from §1, restructured for
+    /// O-3 in §5 so it runs on the <em>parse</em> result and gates whether <see cref="Run"/> ever
+    /// dispatches the wrapped <see cref="ParsedCommand"/> to a handler, rather than on an outcome a
+    /// handler already produced). This is the <em>only</em> place unconsumed tokens are checked,
+    /// and every command funnels through it — <see cref="Run"/> calls it once, on whatever
+    /// <see cref="CommandParser.Parse"/> returned, using the same <see cref="ArgumentCursor"/>
+    /// every parse arm drew from, and only after this returns does <see cref="Run"/> ever dispatch
+    /// a <see cref="ParseResult.Ready"/>'s command to a handler. A parse arm has no way to opt out:
+    /// there is no wrapper to remember to call, and nothing a parse arm returns can make this
+    /// method skip the check. Only overrides a <see cref="ParseResult.Ready"/> — a verb whose parse
+    /// arm already refused (unknown command, missing or unknown subcommand) keeps its own, more
+    /// specific reason: an unknown command should read "no such command", not "unrecognised
+    /// argument", even when a trailing token happens to be present too. Uses
+    /// <see cref="ParseResult.Match{TResult}"/>, not a type test, so this stays exhaustive over the
+    /// closed union.
     /// </summary>
-    private static CommandOutcome EnforceNoUnconsumedArguments(CommandOutcome outcome, ArgumentCursor arguments) =>
+    private static ParseResult EnforceNoUnconsumedArguments(ParseResult result, ArgumentCursor arguments) =>
         !arguments.HasUnconsumedTokens
-            ? outcome
-            : outcome.Match(
-                onSuccess: _ => new CommandOutcome.Refusal(
+            ? result
+            : result.Match(
+                onReady: _ => new ParseResult.Refused(new CommandOutcome.Refusal(
                     "unrecognised-argument",
-                    $"unrecognised: '{arguments.FirstUnconsumed}'."),
-                onRefusal: refusal => refusal);
+                    $"unrecognised: '{arguments.FirstUnconsumed}'.")),
+                onRefused: refused => refused);
 
     /// <summary>
     /// Establishes the argument-boundary convention every later verb follows: a command declares
-    /// what it accepts by how much it takes from the <see cref="ArgumentCursor"/> before
-    /// <see cref="EnforceNoUnconsumedArguments"/> checks what remains after <see cref="Dispatch"/>
-    /// returns. <c>version</c> takes nothing, so its body contains no argument check at all.
+    /// what it accepts by how much it takes from the <see cref="ArgumentCursor"/> during
+    /// <see cref="CommandParser.Parse"/>, before <see cref="EnforceNoUnconsumedArguments"/> checks
+    /// what remains. <c>version</c> takes nothing, so its handler — dispatched from
+    /// <see cref="Run"/>'s match over <see cref="ParsedCommand"/> — contains no argument check at
+    /// all. <see langword="private"/>: <see cref="CommandParser"/> cannot name this method (see the
+    /// class doc comment), which is the point.
     /// </summary>
     private static CommandOutcome RunVersion() =>
         new CommandOutcome.Success(new VersionResult { Version = CurrentVersion });
-
-    /// <summary>
-    /// <c>index</c>'s only job is routing to a subcommand — currently just <c>rebuild</c>. No
-    /// subcommand, or one this dispatcher does not recognise, refuses and names what does exist.
-    /// Peeks rather than taking: a token this method does not recognise is left in
-    /// <see cref="CommandContext.Arguments"/> unconsumed, both so
-    /// <see cref="CommandDispatcher.EnforceNoUnconsumedArguments"/> still sees it (not load-bearing
-    /// here — the refusal already stands on its own) and, the reason it matters, so
-    /// <see cref="RecognisedCommand"/> never reports a subcommand the dispatcher rejected as part
-    /// of the recognised command name.
-    /// </summary>
-    private static CommandOutcome RunIndex(CommandContext context)
-    {
-        switch (context.Arguments.Peek())
-        {
-            case null:
-                return new CommandOutcome.Refusal(
-                    "missing-subcommand",
-                    "'index' requires a subcommand. Known subcommands: rebuild.");
-            case "rebuild":
-                context.Arguments.TryTake();
-                return RunIndexRebuild(context);
-            case var subcommand:
-                return new CommandOutcome.Refusal(
-                    "unknown-subcommand",
-                    $"no such 'index' subcommand: '{subcommand}'. Known subcommands: rebuild.");
-        }
-    }
 
     /// <summary>
     /// The first real verb after <c>version</c>: rebuilds the derived index from the primary
@@ -191,16 +279,21 @@ internal static class CommandDispatcher
     /// degraded-mode requirement, that a corrupt card must not stop the loop. A SQLite I/O failure
     /// while writing the index is not caught here either: it propagates to <see cref="Run"/>'s own
     /// <see langword="catch"/> and becomes a tool failure, because the board isn't refusing —
-    /// enforcement is merely unavailable.
+    /// enforcement is merely unavailable. Called only from <see cref="Run"/>'s dispatch match over
+    /// the <see cref="ParsedCommand.IndexRebuild"/> <see cref="CommandParser.ParseIndexRebuild"/>
+    /// builds, and only after <see cref="EnforceNoUnconsumedArguments"/> has already confirmed no
+    /// trailing token remains (O-3): this write can no longer happen and then be refused away.
+    /// <see langword="private"/>: <see cref="CommandParser"/> cannot name this method (see the class
+    /// doc comment) — calling it from a parse arm is <c>CS0122</c>, not merely discouraged.
     /// </summary>
-    private static CommandOutcome RunIndexRebuild(CommandContext context)
+    private static CommandOutcome RunIndexRebuild(string workingDirectory)
     {
-        var repoRoot = RepoRootResolver.Resolve(context.WorkingDirectory);
+        var repoRoot = RepoRootResolver.Resolve(workingDirectory);
         if (repoRoot is null)
         {
             return new CommandOutcome.Refusal(
                 "repo-root-not-found",
-                $"no git repository found above '{context.WorkingDirectory}'; run callboard from inside the repository.");
+                $"no git repository found above '{workingDirectory}'; run callboard from inside the repository.");
         }
 
         var databasePath = IndexPaths.DatabasePath(repoRoot);
