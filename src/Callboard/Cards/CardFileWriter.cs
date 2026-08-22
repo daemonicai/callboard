@@ -27,6 +27,54 @@ internal static class CardFileWriter
         builder.Append("created: ").Append(FormatTimestamp(frontmatter.Created)).Append('\n');
         builder.Append("updated: ").Append(FormatTimestamp(frontmatter.Updated)).Append('\n');
 
+        // §5's five block-only fields: emitted, in this fixed order, only for a block card, and
+        // only the ones actually recorded — the same "present only when set" convention
+        // BuildHeaderFields below already applies to a comment's optional reply-to/to/resolves, not
+        // the "always present, empty when unset" convention section above uses. A freshly created
+        // block card with none of the five set round-trips to exactly the same nine-field shape as
+        // before this field existed, rather than gaining five blank lines. A card of any other kind
+        // never reaches here with non-empty BlockFields (CardFileParser only ever populates it for
+        // kind block), so this block is silently a no-op for every other kind rather than needing
+        // its own guard.
+        var isBlockCard = frontmatter.Kind.Match(
+            onBlock: static () => true,
+            onQuestion: static () => false,
+            onFinding: static () => false,
+            onObligation: static () => false,
+            onRule: static () => false,
+            onHazard: static () => false,
+            onDecision: static () => false);
+
+        if (isBlockCard)
+        {
+            var blockFields = card.BlockFields;
+
+            if (blockFields.Base is { } baseCommit)
+            {
+                builder.Append("base: ").Append(CardFileFormat.EscapeFrontmatterValue(baseCommit)).Append('\n');
+            }
+
+            if (blockFields.ReviewedState is { } reviewedState)
+            {
+                builder.Append("reviewed_state: ").Append(CardFileFormat.EscapeFrontmatterValue(reviewedState)).Append('\n');
+            }
+
+            if (blockFields.Tasks.Length > 0)
+            {
+                builder.Append("tasks: ").Append(CardFileFormat.JoinFrontmatterList(blockFields.Tasks)).Append('\n');
+            }
+
+            if (blockFields.Round is { } round)
+            {
+                builder.Append("round: ").Append(round.ToString(CultureInfo.InvariantCulture)).Append('\n');
+            }
+
+            if (blockFields.BlockedBy.Length > 0)
+            {
+                builder.Append("blocked_by: ").Append(CardFileFormat.JoinFrontmatterList(blockFields.BlockedBy)).Append('\n');
+            }
+        }
+
         // Unknown fields (a §5/§6 field this build does not model, or a hand-added line) are
         // re-emitted after the known ones rather than interleaved back into their original
         // position — the parser records only the value at each known key, not a full original

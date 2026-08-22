@@ -305,18 +305,18 @@ public sealed class CardFileRoundTripTests
             "section: 1\n" +
             "created: 2026-08-19T09:00:00+00:00\n" +
             "updated: 2026-08-19T09:00:00+00:00\n" +
-            "base: B-0099\n" + // a §5 field this build's schema does not model
+            "future-field: B-0099\n" + // a later section's field this build's schema does not model
             "---\n" +
             "body\n";
 
         var parsed = AssertSuccess(CardFileParser.Parse(raw));
-        Assert.Equal(("base", "B-0099"), Assert.Single(parsed.UnknownFrontmatterFields));
+        Assert.Equal(("future-field", "B-0099"), Assert.Single(parsed.UnknownFrontmatterFields));
 
         // Not dropped on the next write — the extensibility rule this remediation states: a
         // read-modify-write cycle (what AppendComment does at the CardStore layer) must not
         // silently destroy a field this build does not itself understand.
         var reparsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(parsed)));
-        Assert.Equal(("base", "B-0099"), Assert.Single(reparsed.UnknownFrontmatterFields));
+        Assert.Equal(("future-field", "B-0099"), Assert.Single(reparsed.UnknownFrontmatterFields));
         Assert.Equal(parsed.Frontmatter, reparsed.Frontmatter);
         Assert.Equal(parsed.Body, reparsed.Body);
     }

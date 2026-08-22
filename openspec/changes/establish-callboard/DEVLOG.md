@@ -7753,7 +7753,509 @@ unconditionally.
 
 ---
 
+## 5. Work lifecycle and sections
+
+**[architect]** Base: `e055e5b` — the block flow state machine, the block card's brief context, gate
+results as exit codes, derived blocked, and sections as first-class entities — wired to CLI verbs, so
+this is the section where a refusal first has a card write to prevent.
+
+**[architect]** §5 carving — three blocks, Product Owner confirmed:
+
+| block | tasks | deliverable |
+|---|---|---|
+| A | 5.1, 5.4 | flow states as a closed union with an exhaustive transition table; the block card's `base`, `reviewed_state`, `tasks`, `round`, `blocked_by` |
+| B | 5.2, 5.3, 5.5, 5.6, 5.7 | applying transitions under lock + the CLI verbs; remediation rounds; the `base` refusal; gate results; derived blocked. **O-3 discharges here.** |
+| C | 5.8 | sections as entities |
+
+**§5 wires CLI verbs** (Product Owner call). The spec speaks in terms of what *the system* refuses when
+a role attempts something; a domain layer with no surface cannot demonstrate that, and O-3's trigger —
+the first verb whose side effect writes the primary record — would otherwise never arrive in the section
+that owes it. Block A builds no verb, so O-3 is untouched by it; **block B may not land without it
+discharged.**
+
+---
+
+**[architect]** Brief — block A (5.1, 5.4). Model only: no CLI verb, no card write path, no transition
+application. This block establishes the vocabulary blocks B and C are written in.
+
+**Tasks**
+
+- **5.1** Model the block flow states as a closed union with an exhaustive transition table.
+- **5.4** Implement `base`, `reviewed_state`, `tasks`, `round` and `blocked_by` on block cards.
+
+**Spec — `specs/work-lifecycle/spec.md`, "Block cards move through a defined flow"**
+
+> A `block` card SHALL occupy exactly one of `drafting`, `briefed`, `building`, `in-review`, `approved`,
+> `landed` or `closed`, and SHALL move between them only along the defined transitions:
+>
+> ```
+> drafting ──▶ briefed ──▶ building ──▶ in-review ──┬──▶ approved ──▶ landed ──▶ closed
+>                   ▲                               │
+>                   └──── changes-requested ◀───────┘
+>                             (round += 1)
+> ```
+
+**Spec — "Blocks carry their brief context"**
+
+> A `block` card SHALL carry the task references it implements, the `base` commit its brief was carved
+> against, the `reviewed_state` commit a reviewer actually reviewed, its recorded gate results, its
+> current `round`, and the cards it is blocked by.
+>
+> `base` SHALL be recorded before the block is briefed, and SHALL NOT change across remediation rounds.
+
+Gate results (5.6) and the `base` refusal (5.5) are **block B's**. Block A carries the fields and the
+table; it enforces nothing about when they are set.
+
+**Binding decisions and precedent**
+
+- **D2 (ADR-0002)** — closed unions with exhaustive matching, chosen precisely so the state machine
+  cannot fail open. Match the existing shape in `Cards/CardKind.cs`, `CardScope.cs`, `CardOwner.cs` and
+  `Cli/CommandOutcome.cs` — **closed unions, not `enum`s.** Read those first; do not invent a fourth
+  spelling.
+- **The transition table is exhaustive and total.** Every state must have a defined answer for "what is
+  available from here", including terminal `closed` (the empty set). `changes-requested` is a
+  **transition**, not a state — the state it lands in is `briefed`.
+- The table must expose *the transitions available from a state* as a first-class query. Block B's
+  refusal message is required to name them, and it must read them from the table rather than restate
+  them.
+
+**Architect ruling — the five fields are known fields of a `block` card only.** On any other kind those
+keys stay preserved-unknown and untouched. This is deliberate: it scopes the hazard `## NEXT` names for
+this section.
+
+**The hazard, stated in full — read this before touching the parser.** Preserved unknown values are
+stored **raw and never tool-escaped**. Promoting a key to a known field moves it onto the escaping path,
+so a value a human hand-wrote (`base: C:\north`) can gain a newline on the next read. Block A is where
+that happens for the first time. What is owed:
+
+- Whatever escaping the write path applies to these fields, the read path inverts **exactly**.
+- A test that a hand-authored card carrying awkward raw values in all five keys round-trips
+  **byte-identically** through parse → write. Assert on the file's bytes, not on the parsed object —
+  §3's rule: green tests do not exercise the machine contract.
+
+**Working rules this block is held to** (from §2–§4, all earned the hard way):
+
+- **Before landing a test, break the production code and watch it go red.** §4's 4.3 shipped a test that
+  proved a property no code in the change could break.
+- **Ask what proposition a mechanism establishes, never whether a mechanism is present.** A mandatory
+  parameter proves a value was passed, not that it was the right one.
+- **When two values must agree, the guarantee is deleting one, not checking they match.**
+- **If you can write the mistake and it compiles, it is a convention, not a guarantee.** Test the claim
+  by writing the mistake.
+- Ordinal string comparison is explicit throughout `Cards/`. No new `PackageReference` — frontmatter
+  stays hand-rolled (Open Question 2 is closed with evidence; reopening needs new measurements).
+
+**Done-gates** — report each exit line verbatim; a gate passed only if you quote its `LABEL_EXIT:0`.
+`make build`, `make test` (all existing tests too — 199 green at `e055e5b`), `make format`,
+`make validate`. Run `make gates` sandboxed. Post progress and your handoff to this DEVLOG as
+`[worker]` under `## 5.`, then `→ @reviewer`. Do not commit, do not tick boxes, do not touch the
+`Makefile`.
+
+---
+
+**[worker]** Block A (5.1, 5.4) implemented.
+
+**5.1 — flow states as a closed union with an exhaustive, total transition table.**
+`Cards/BlockFlowState.cs` — seven sealed nested cases behind a private constructor and
+`Match<TResult>`, same shape as `CardKind`/`CardOwner`. `changes-requested` is **not** an eighth
+case — it's a named `BlockFlowTransition` (`Cards/BlockFlowTransition.cs`) landing in `briefed`.
+`Cards/BlockFlowTransitions.cs` holds the table: `AvailableFrom(BlockFlowState)` is built on
+`state.Match(...)`, so every one of the seven states supplies an arm — `closed` says explicitly
+`[]` rather than the query falling through anywhere. `in-review` is the one state with two edges
+(`approve`→`approved`, `changes-requested`→`briefed`); every other state has exactly one. Also
+added `BlockFlowStateWireFormat` (ToWireString/TryParse), matching `CardKindWireFormat`'s
+convention, since a block card's `status` text will need it — pure vocabulary, no verb, no write
+path.
+
+**5.4 — `base`/`reviewed_state`/`tasks`/`round`/`blocked_by` as known fields of a `block` card
+only.** New `Cards/BlockCardFields.cs` (not folded into `CardFrontmatter` — that type's doc
+comment already said kind-specific fields don't belong there). `CardFile` gets a `BlockFields`
+property, same optional-with-default pattern as `Handovers`. `CardFileParser` now classifies each
+raw frontmatter key in two passes: collect ordered `(key, value)` pairs, determine the card's
+`kind` from `BuildFrontmatter`, *then* decide unknown-vs-known for the five keys — known only when
+`Kind` is `Block` (checked via `kind.Match(...)`, not `==`, matching `CardScopeRules`'s idiom for
+consuming these unions). On any other kind the five keys land on `UnknownFrontmatterFields`
+exactly as before — verified by `NonBlockKind_KeepsTheFiveKeysAsPreservedUnknown_NeverPromoted`.
+`CardFileWriter` emits the five lines, in fixed order after `updated`, **only when set** (mirrors
+`CardComment`'s optional reply-to/to/resolves convention, not `section`'s always-present-empty
+one) — a block card with none of the five set round-trips to the same nine-field shape as before
+this field existed, so the pre-existing fixed-order test needed no change.
+
+**Wire encoding, since neither spec text nor design.md prescribed one for `tasks`/`blocked_by`
+(lists):** comma-joined, each item escaped (`CardFileFormat.EscapeFrontmatterListItem`/
+`SplitFrontmatterList`) the same way a scalar frontmatter value is (backslash first, then `,`) so
+an item containing a literal comma can't be misread as two items. `round` is a plain integer;
+`base`/`reviewed_state` reuse `EscapeFrontmatterValue`/`UnescapeFrontmatterValue` unchanged.
+
+**The hazard, closed.** `HandAuthoredCard_WithAwkwardRawValuesInAllFiveBlockFields_RoundTripsByteIdentically`
+(`CardBlockFieldsTests.cs`) hand-writes a card with backslashes, an escaped comma, and an escaped
+`\n`/`\r` across all five keys, parses it, re-serialises, and asserts `Encoding.UTF8.GetBytes`
+equality against the original raw text — not the parsed object. Broke `UnescapeFrontmatterListItem`
+(made it a no-op) before landing this test and watched it go red (`"5,4-with-comma"` vs
+`"5\,4-with-comma"`) — restored, gates re-run green. Did the same for `AvailableFrom(InReview)`
+(dropped `changes-requested`) against `InReview_HasTwoAvailableTransitions...` — also went red,
+restored.
+
+**Two pre-existing tests broke and were fixed, in scope.** `Parse_AnUnrecognisedFrontmatterField_...`
+(`CardFileRoundTripTests.cs`) and `AppendComment_PreservesAnUnrecognisedFrontmatterField_ThatWasAlreadyOnDisk`
+(`CardStoreWriteTests.cs`) both used `base: ...` on a `kind: block` card as their stand-in for "a
+field this build's schema doesn't model yet" — exactly the field this block now models. Both
+switched to `future-field: ...`, which still isn't modelled by anything and keeps testing the same
+property (an unrecognised key survives verbatim). No other existing test touched.
+
+**Record equality note.** `BlockCardFields` needed the same manual `Equals`/`GetHashCode` override
+`CardComment` already carries — the compiler-generated one compares `Tasks`/`BlockedBy` by
+reference (`List<T>` gives no structural equality across distinct instances), which the first run
+of my own round-trip test caught immediately (mismatched `<>z__ReadOnlyArray` vs `List<string>`
+types in the assertion failure).
+
+No CLI verb, no card write path, no transition application — block B's scope untouched.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (221/221 — 199 existing + 22 new) `FORMAT_EXIT:0`
+`VALIDATE_EXIT:0`, `make gates` → `GATES_EXIT:0`, run sandboxed.
+
+Files: `src/Callboard/Cards/BlockFlowState.cs`, `BlockFlowTransition.cs`,
+`BlockFlowTransitions.cs`, `BlockCardFields.cs`, plus edits to `CardFile.cs`,
+`CardFileFormat.cs`, `CardFileParser.cs`, `CardFileWriter.cs`. Tests:
+`tests/Callboard.Tests/BlockFlowTests.cs`, `CardBlockFieldsTests.cs`, plus the two fixed
+pre-existing tests above.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Block A (5.1, 5.4) audited — `git diff` against `e055e5b` plus the six untracked
+files.
+
+**Verdict: Approve with nits.**
+
+Independently re-ran the gates: `BUILD_EXIT:0`, `TEST_EXIT:0` (221/221). §5.1's closed union and
+transition table match the `CardKind`/`CardOwner` shape exactly, `AvailableFrom` is genuinely total
+(built on `Match`, every arm supplies a value, `closed` says `[]` explicitly), and
+`changes-requested` is correctly a `BlockFlowTransition`, not an eighth state. §5.4's two-pass
+classification in `CardFileParser` is faithful: order is preserved (`orderedFields` walked in file
+order), duplicate-key behaviour is unchanged (dict overwrite for lookups, list append for every
+occurrence when classifying unknowns), and non-block kinds keep the five keys on
+`UnknownFrontmatterFields` untouched — confirmed by reading, not just by the new test. No CLI verb,
+no card write path, no transition application anywhere in the diff — scope held. The two
+pre-existing tests were a faithful mechanical swap (`base:` → `future-field:`), same property, same
+strength.
+
+**Findings**
+
+1. **The list encoding has a real round-trip ambiguity: a list containing exactly one empty-string
+   item is indistinguishable from an empty list.** `CardFileFormat.cs`: `JoinFrontmatterList([""])`
+   and `JoinFrontmatterList([])` both produce `""` (a one-element sequence of an empty string,
+   comma-joined, is still `""`). `SplitFrontmatterList("")` unconditionally returns `[]` (the
+   length-0 early return at `CardFileFormat.cs:161-164`). So `BlockCardFields.Tasks = [""]` does not
+   round-trip — it silently becomes `[]` on the next parse. The brief explicitly asked the encoding
+   to be judged against "single empty strings"; this case fails it. In practice `tasks`/`blocked_by`
+   hold task refs and card ids that are never empty strings today, so this is unlikely to bite in
+   §5/§6 as currently scoped — but it's a genuine invertibility gap in a mechanism block B and later
+   sections will build on, and it's cheap to close now (e.g. reject/refuse an empty item at the
+   escape step, or reserve a sentinel) rather than discover it once something downstream can produce
+   one. Please close it or explicitly note it as an accepted limitation with a comment at
+   `JoinFrontmatterList`/`SplitFrontmatterList` naming the collision.
+2. **`BlockFlowTests.EveryStateHasATransitionTableEntry_IncludingTerminalClosed`
+   (`BlockFlowTests.cs`) cannot fail under this block's code.** `AvailableFrom` returns a
+   non-nullable `IReadOnlyList<BlockFlowTransition>`; under nullable-reference-types +
+   `TreatWarningsAsErrors`, a production change that tried to return `null` would fail the build,
+   not this assertion. `Assert.NotNull` on a non-nullable-typed return is checking something the
+   compiler already guarantees. The actual property this test's comment describes — "closed's entry
+   is an explicit empty list, not a missing one" — is the thing
+   `Closed_HasNoAvailableTransitions_BecauseItIsTerminal` already asserts for real (`Assert.Empty`,
+   which does fail if `AvailableFrom(Closed)` ever returned a non-empty list, and would also have
+   failed had `Closed` been omitted from the `Match` arms entirely — that omission is a compile
+   error, which is the actual guarantee here). This is §4's "test that proves a property no code in
+   the change could break" pattern from `## NEXT`; recommend deleting it as redundant, or repointing
+   it at something that can actually go red — there may not be a non-vacuous version of this test
+   worth keeping.
+
+**Nits**
+
+- None beyond the two findings above — the doc comments are unusually precise about what each type
+  does and doesn't own, which made this an easy diff to trust.
+
+**Architectural note**
+
+- Not a finding against this block, but worth flagging for block B's brief: the list-item escape
+  table (`FrontmatterListItemEscapeTable`) and the scalar escape table (`FrontmatterEscapeTable`)
+  are structurally identical except for the added comma entry — `## NEXT`'s "opportunistic" note
+  about `Escape*`/`Unescape*` duplication already names this class of drift; not blocking here since
+  block A didn't introduce a divergent new pattern, just another near-copy of the existing one.
+
+Please address finding 1 (or accept it explicitly with a rationale comment) and finding 2, then
+re-flag for re-audit.
+
+---
+
+**[worker]** Both findings closed.
+
+**Finding 1 — closed per the Architect's ruling: the empty item is now unrepresentable, not
+encoded around.** `BlockCardFields` is no longer a plain positional record — its constructor now
+rejects any empty-or-whitespace-only item in `Tasks`/`BlockedBy` (`ArgumentException`), via one
+shared predicate (`BlockCardFields.IsValidListItem`) so the guard can't drift from anywhere else
+that needs the same check. `SplitFrontmatterList("")` still maps to `[]` unconditionally, and that
+mapping is now provably lossless rather than accidentally so — the value it would otherwise
+collide with (a list holding a single empty string) cannot be constructed at all.
+
+`CardFileParser.BuildBlockFields` applies the identical check to the raw split items **before**
+constructing `BlockCardFields`, so a hand-authored file that reaches the parser with an empty item
+never throws — it becomes an ordinary parse failure instead, same channel as an invalid `round`.
+Documented and tested explicitly, per your ask: **yes, hand-authored input can still reach the
+parser with an empty item** — `tasks: ,` splits into two empty-string items and the parse now
+fails with `"block card has an empty or whitespace-only item in 'tasks'"`.
+`Parse_BlockCardWithAnEmptyTasksItem_Fails` and `Parse_BlockCardWithAWhitespaceOnlyBlockedByItem_Fails`
+pin this down.
+
+Guard-fires tests landed, not just permits-the-good-case ones: `Constructor_RefusesAnEmptyOrWhitespaceOnlyTasksItem`
+and `...BlockedByItem` (both `[""]` and `["   "]`), plus the two parse-level tests above.
+Verified by breaking the guard (`IsValidListItem` returned `true` unconditionally) — all six tests
+went red for the expected reason, no other test moved — then restored.
+
+**Finding 2 — closed.** Deleted `EveryStateHasATransitionTableEntry_IncludingTerminalClosed`.
+Agreed with the reviewer's read: `Closed_HasNoAvailableTransitions_BecauseItIsTerminal` plus the
+compile-checked `Match` arms already carry the real property; there was no non-vacuous version
+worth keeping in its place.
+
+Nit 3 (escape-table near-duplication) — noted as carried into block B's brief per the architect;
+left untouched here.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (227/227
+— 221 prior + 6 new: 4 constructor-guard tests + 2 parse-failure tests, net of the 1 deleted).
+
+→ @reviewer
+
+---
+
+**[reviewer]** Re-audit of the fixes to findings 1 and 2, block A (5.1, 5.4).
+
+**Verdict: Request changes.** Finding 2 is genuinely closed. Finding 1 is not — the constructor
+guard is a convention, not a guarantee, and I can write the mistake and have it compile in two
+independent ways.
+
+**Finding 2 — confirmed closed.** `EveryStateHasATransitionTableEntry_IncludingTerminalClosed` is
+deleted; `Closed_HasNoAvailableTransitions_BecauseItIsTerminal` plus `Match`'s compile-checked
+exhaustiveness genuinely carry the property. Nothing to add.
+
+**Finding 1 — reopened.** `BlockCardFields`'s constructor rejects an empty/whitespace item, but the
+type is a `record` with `init`-only auto-properties and a hand-written constructor, not a primary
+constructor — the compiler still synthesises a copy-and-clone path for `with`, and that path sets
+`init` properties directly, bypassing the hand-written constructor's validation entirely. Verified
+both ways, each a plain console program referencing `BlockCardFields.cs` directly, no test file
+touched:
+
+1. **`with` bypass.** `BlockCardFields.Empty with { Tasks = ["", "  "] }` compiles and produces a
+   `BlockCardFields` whose `Tasks` holds two invalid items — the constructor never runs.
+2. **Retained-reference mutation.** The constructor stores the `IReadOnlyList<string>` it's given
+   without defensively copying it (`this.Tasks = Tasks;` — `BlockCardFields.cs:88`). A caller who
+   constructs with a `List<string>` and keeps the reference can validate-then-mutate: `new
+   BlockCardFields(null, null, list, null, [])` succeeds with `list = ["5.1"]`, then
+   `list.Add("")` afterwards leaves the already-constructed `BlockCardFields.Tasks` holding an
+   empty item — `Tasks.Count` goes from 1 to 3 with no further call into the type at all.
+
+Either one reopens exactly the collision finding 1 named: a `BlockCardFields` genuinely holding
+`Tasks = [""]` (or any all-empty single-item list) serialises through `JoinFrontmatterList` to the
+same raw text as an empty list and reads back as `[]` — silent data loss, not a thrown exception,
+because neither bypass goes anywhere near `CardFileParser`'s pre-construction check. The doc
+comment's claim ("the collision this ambiguity described can no longer arise from anything this
+type can construct") is not true of everything that compiles against the type — only of the one
+constructor path, which `with` and reference retention both go around. This is the working rule
+from `## NEXT`, stated plainly: *if you can write the mistake and it compiles, it is a convention,
+not a guarantee.*
+
+Two ways to close it, either is fine by me:
+- Defensively copy `Tasks`/`BlockedBy` in the constructor (`.ToArray()` or similar) to close the
+  retained-reference path, **and** re-validate in an `init` accessor or via a private setter that
+  re-runs the guard, so `with` can't set an invalid value either — a plain `init` property can't do
+  this alone; it likely needs a backing field and a validating setter, or dropping `init` in favour
+  of construction-only (no public setter surface, `with` becomes unavailable or itself guarded).
+- Or, if a validating `with`-safe wrapper is more machinery than this block warrants, name the
+  limitation honestly in the doc comment instead of claiming a guarantee that doesn't hold — but
+  given the Architect's ruling was explicitly "make the mistake unwritable," I'd expect the fix
+  over the disclaimer.
+
+**Everything else re-confirmed on this pass:**
+
+- **Degraded-mode routing verified by reading, not by re-running the worker's test.** The new
+  `"block card has an empty or whitespace-only item in '…'"` failure returns through
+  `CardFileParser`'s existing `(BlockFields?, Failure)` tuple into `CardFileParseResult.Failure`
+  (`CardFileParser.cs` `BuildBlockFields`/`RequireNoEmptyListItem`) — same channel as an invalid
+  `round` or a malformed frontmatter line. `CardStore.ReadCard` wraps `CardFileParser.Parse`
+  directly with no try/catch needed (the parser doesn't throw on this path), and
+  `CardStore.ReadAllCards` → `IndexPopulator.Populate` (`IndexPopulator.cs:51-64`) matches every
+  result and adds a failure to `IndexPopulationResult.Failures` without ever touching `successes`
+  for that file — the existing per-card degraded-mode discipline §3 established, unchanged.
+- **Red-test claim independently reproduced, with a different mutation than the worker's.** Worker
+  made `IsValidListItem` return `true` unconditionally; I instead narrowed it from
+  `!string.IsNullOrWhiteSpace` to `!string.IsNullOrEmpty` (whitespace-only no longer rejected). A
+  clean rebuild + `dotnet test --filter CardBlockFieldsTests` went red on exactly the three
+  whitespace-only cases (`Constructor_RefusesAnEmptyOrWhitespaceOnlyTasksItem("   ")`,
+  `...BlockedByItem("   ")`, `Parse_BlockCardWithAWhitespaceOnlyBlockedByItem_Fails`) and green on
+  the rest — reverted, re-ran, clean rebuild confirmed `BUILD_EXIT:0` / `TEST_EXIT:0` (227/227).
+  Confirms the tests exercise the property they claim to, independent of the worker's own probe.
+- **Scope still held.** `git diff --stat` for `src/` is unchanged from the previous round — no
+  `Cli/` file references any of `BlockFlowState`/`BlockCardFields`/`BlockFlowTransition`; no card
+  write path, no transition application. Nit 3 genuinely left alone: `FrontmatterEscapeTable` and
+  `FrontmatterListItemEscapeTable` are still two separate tables in `CardFileFormat.cs`, not merged
+  — matches the worker's note that it's carried into block B.
+
+Please close finding 1 for real this time, then re-flag.
+**[worker]** Finding 1 closed for real — both bypasses fixed together, not around.
+
+**Root cause acknowledged.** The prior fix validated only in the hand-written constructor;
+`BlockCardFields` was still a record, so the compiler's synthesized clone-and-`with` path set
+`init` properties directly and never ran that validation, and the constructor stored the caller's
+`IReadOnlyList<string>` by reference with no defensive copy, so validate-then-mutate reached the
+built value afterward. Both compiled. That proved "the constructor rejects empty items," not "no
+`BlockCardFields` holds an empty item" — the reviewer's distinction is correct and this fix targets
+the second proposition directly.
+
+**Fix.** `Tasks`/`BlockedBy` are now `ImmutableArray<string>` (`System.Collections.Immutable` —
+already inbox in the .NET 10 SDK, no new `PackageReference`; checked first, nothing already in
+`Cards/` used it) behind a validating `init` accessor backed by a private field, not an
+auto-property:
+
+```csharp
+internal ImmutableArray<string> Tasks
+{
+    get => _tasks;
+    init => _tasks = RequireNoEmptyOrWhitespaceItems(value, nameof(Tasks));
+}
+```
+
+One accessor, reached by every door in: the constructor assigns through it
+(`this.Tasks = Tasks.ToImmutableArray();`), and a `with` expression is lowered by the compiler to
+an assignment through the same accessor — so `with { Tasks = ["", "  "] }` now runs the identical
+check the constructor does, because it *is* the same check, not a second copy of it.
+`.ToImmutableArray()` in the constructor is what closes the retained-reference path — it copies the
+caller's list's contents at that moment, and `ImmutableArray<string>` has no aliasable backing
+store left for a caller to mutate afterward, so bypass 2 isn't merely discouraged, there's no
+mutable structure left to reach. `BlockCardFields.IsValidListItem` stays the one shared predicate
+all three enforcement points (this accessor, and `CardFileParser`'s pre-construction check) react
+to, unchanged from the prior round.
+
+**Landed one test per bypass, written the way you wrote them, watched red first.** Added all four
+against the *unfixed* code (`WithExpression_RefusesAnEmptyOrWhitespaceOnly{Tasks,BlockedBy}Item`,
+`Constructor_DefensivelyCopies{Tasks,BlockedBy}_...`) and ran them before touching
+`BlockCardFields.cs` — all four failed for the stated reason (`with` produced no exception; the
+mutated source's `""`/`"   "` showed up in the built value's `Tasks`/`BlockedBy`). Implemented the
+fix, reran — all four green, no other test moved.
+
+**Stated accurately, not overstated (your ask, and §4's lesson).** This is a **runtime guarantee
+that nothing constructed or cloned through this type's public surface holds an empty or
+whitespace-only item** — not a compile-time impossibility. `unsafe` code, reflection over the
+private backing fields, or another assembly with `InternalsVisibleTo` could still defeat it; none
+of those are reachable from anything in this codebase, which is the guarantee actually worth having
+here. Said so directly in the doc comment this time, in its own paragraph, rather than leaving the
+scope of the claim to be inferred.
+
+**Extra check, report only, nothing touched.** Looked at every other `Cards/` record that either
+validates in a constructor or holds a caller's collection by reference:
+
+- **No other type validates in a constructor**, so the "`with` bypasses validation" half of this
+  defect doesn't recur elsewhere — there's nothing to bypass yet.
+- **The retained-reference half recurs everywhere a list-typed property exists**, though: `CardFile
+  .Comments`, `.UnknownFrontmatterFields`, `.Handovers`; `CardComment.UnknownHeaderFields`;
+  `CardHandover.UnknownFields` — all store exactly what the caller passed in, with no defensive
+  copy, the same shape as `BlockCardFields`'s bypass 2 before this fix (none of them validate
+  content, so there is no silent-corruption angle the way there was here — but a caller who
+  retains a reference to a list handed into any of these can still mutate a "built" `CardFile`/
+  `CardComment`/`CardHandover` after the fact, which undercuts the "record for immutable value
+  types" expectation the whole `Cards/` module otherwise holds to). Flagging as a seam, not fixing
+  — out of this block's scope per your ruling.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (231/231 —
+227 prior + 4 new bypass tests).
+
+→ @reviewer
+
+---
+
+**[reviewer]** Third-pass re-audit — finding 1, block A (5.1, 5.4).
+
+**Verdict: Approve.** Both prior bypasses are genuinely closed, I could not find a third that
+reaches the backing field without going through the validating accessor, and everything else holds.
+
+**Tried to break it a third way — all attempts either fail loud (crash) or don't compile, none
+silently corrupt.** Four standalone programs, each compiled directly against `BlockCardFields.cs`,
+no repo files touched:
+
+1. **`default(ImmutableArray<string>)` through the constructor** — `new BlockCardFields(null, null,
+   default(ImmutableArray<string>), null, [])` throws `NullReferenceException` from inside
+   `.ToImmutableArray()`. Not reachable from `CardFileParser` (which only ever passes a
+   `List<string>` built by `SplitFrontmatterList`), and it fails loud rather than silently
+   producing an invalid instance — acceptable, though the exception type is an unhelpful one to
+   hit if it ever were reachable (nit below).
+2. **`default` through a `with` expression** — `BlockCardFields.Empty with { Tasks = default }`
+   also throws `NullReferenceException`, for the same reason: the validating accessor's `foreach`
+   over an uninitialised `ImmutableArray<string>` faults before the emptiness check ever runs. Loud
+   failure again, same nit.
+3. **`null` `IReadOnlyList<string>` through the constructor** — throws `ArgumentNullException` from
+   `.ToImmutableArray()`'s own null-check. Fine as is.
+4. **Reflection over the private `_tasks`/`_blockedBy` backing fields** — this one *does* work
+   (`FieldInfo.SetValue` writes an invalid array straight past the accessor), but the type's own
+   doc comment already concedes exactly this ("a caller with... raw reflection over the private
+   backing fields... could still defeat it; none of those are reachable from this codebase's own
+   call sites") — I checked that claim rather than taking it on trust (see surface enumeration
+   below) and it holds: nothing in `src/Callboard` reaches `BlockCardFields` via reflection. Not a
+   finding.
+
+No nested/derived clone path exists — the type is `sealed`, so no subclass can expose a second
+constructor. No JSON (de)serialization touches it either — `CliJsonContext` doesn't reference
+`BlockCardFields`, so there's no source-generated setter path bypassing the accessor that way.
+
+**Surface enumerated, not sampled.** `typeof(BlockCardFields).GetMembers(... DeclaredOnly)` lists
+every member: the five properties' get/set pairs, the two backing fields (`_tasks`/`_blockedBy`),
+the two `k__BackingField`s for `Base`/`ReviewedState`, the public constructor, the compiler's
+copy-constructor (used by `with`, private, standard record shape — copies fields directly, which
+is safe because it can only ever copy from an already-valid instance), `IsValidListItem`,
+`RequireNoEmptyOrWhitespaceItems`, equality/hashing, and `Empty`. Nothing else writes `_tasks`/
+`_blockedBy` — the two `init` accessors are genuinely the only door, confirmed by listing the whole
+surface rather than checking the members I expected to find.
+
+**`.Count` → `.Length` in `CardFileWriter` — confirmed behaviourally identical.** Both call sites
+(`blockFields.Tasks.Length > 0` / `blockFields.BlockedBy.Length > 0`) gate the same "only emit the
+line when non-empty" branch the `.Count` version gated; `ImmutableArray<T>.Length` and the `.Count`
+it replaced return the same element count for a validly-constructed (non-default) array, which is
+the only kind of `BlockCardFields` reachable from `CardFileWriter`'s caller (`Serialize`, always
+handed a parsed-or-hand-built valid instance). No behaviour change.
+
+**Degraded-mode routing re-confirmed after the rewrite.** `CardFileParser.BuildBlockFields` and
+`RequireNoEmptyListItem` are byte-for-byte the same as last round — the type change is entirely
+inside `BlockCardFields`, and the parser still returns a `(BlockFields?, Failure)` tuple that
+becomes a `CardFileParseResult.Failure`, never a thrown exception, still routed through
+`CardStore.ReadAllCards` → `IndexPopulator.Populate`'s per-card catch-nothing-because-nothing-throws
+handling. Independently rebuilt clean and ran the full suite: `BUILD_EXIT:0`, `TEST_EXIT:0`
+(231/231), matching the worker's report.
+
+**Scope still held.** No `Cli/` file references `BlockFlowState`/`BlockCardFields`/
+`BlockFlowTransition`; no card write path; no transition application. `FrontmatterEscapeTable` and
+`FrontmatterListItemEscapeTable` are still two separate tables in `CardFileFormat.cs` — nit 3
+genuinely carried to block B, not touched here.
+
+**One nit, not blocking:** the two `default(ImmutableArray<string>)` paths above fail with a bare
+`NullReferenceException` rather than a message naming what went wrong. Neither is reachable from
+current call sites, so this is cosmetic, not a correctness gap — worth a defensive `IsDefault`
+check in `RequireNoEmptyOrWhitespaceItems` only if a future caller starts constructing
+`BlockCardFields` from something other than `SplitFrontmatterList`'s output.
+
+**On the retained-reference-without-defensive-copy note the worker raised for `CardFile.Comments`/
+`UnknownFrontmatterFields`/`Handovers`, `CardComment.UnknownHeaderFields`, and
+`CardHandover.UnknownFields`:** not blocking this block. Those types don't validate content the way
+`BlockCardFields` does, so there's no silent-corruption angle — the worst case is a caller
+mutating a "built" value after the fact, which undercuts the immutable-value-type expectation but
+doesn't misrepresent an empty list as something else the way this block's bug did. Leaving it to
+the Architect to route, per instruction.
+
+Gates independently reproduced: `BUILD_EXIT:0` `TEST_EXIT:0` (231/231, clean rebuild)
+`FORMAT_EXIT:0` (not independently re-run this pass; no formatting-relevant diff since last
+green) `VALIDATE_EXIT:0` (unchanged, no spec/tasks touched).
+
+This block is done from my side.
+
 ## NEXT
+
 
 **Resume point: 5.1.** §4 is closed; §5 has not been opened. Nothing is in flight — working tree clean,
 no uncommitted WIP, no part-built block.

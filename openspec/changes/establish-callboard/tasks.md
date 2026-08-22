@@ -40,10 +40,10 @@
 
 ## 5. Work lifecycle and sections
 
-- [ ] 5.1 Model the block flow states as a closed union with an exhaustive transition table
+- [x] 5.1 Model the block flow states as a closed union with an exhaustive transition table
 - [ ] 5.2 Implement transitions recording acting role and timestamp; refuse undefined transitions naming what is available
 - [ ] 5.3 Implement remediation as the same card at an incremented round, ticking no task
-- [ ] 5.4 Implement `base`, `reviewed_state`, `tasks`, `round` and `blocked_by` on block cards
+- [x] 5.4 Implement `base`, `reviewed_state`, `tasks`, `round` and `blocked_by` on block cards
 - [ ] 5.5 Refuse briefing a block with no `base` recorded
 - [ ] 5.6 Implement gate results as label-to-exit-code, with narrative claims carrying no weight
 - [ ] 5.7 Derive blocked from a non-empty `blocked_by`, preserving flow state throughout

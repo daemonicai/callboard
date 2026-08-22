@@ -121,6 +121,73 @@ internal static class CardFileFormat
     /// <summary>Reverses <see cref="EscapeCommentHeaderValue"/>.</summary>
     internal static string UnescapeCommentHeaderValue(string value) => UnescapeUsing(value, CommentHeaderEscapeTable);
 
+    private static readonly IReadOnlyDictionary<char, char> FrontmatterListItemEscapeTable =
+        new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r', [','] = ',' };
+
+    /// <summary>
+    /// Escapes one item of a comma-joined list-valued frontmatter field (§5's <c>tasks</c> and
+    /// <c>blocked_by</c>): the same backslash/newline/carriage-return escaping
+    /// <see cref="EscapeFrontmatterValue"/> applies to a scalar value, plus the list separator
+    /// itself, so an item containing a literal comma cannot be misread as two items. A backslash
+    /// is escaped first, same invertibility discipline as every other escaper here.
+    /// </summary>
+    internal static string EscapeFrontmatterListItem(string value) =>
+        value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace(",", "\\,", StringComparison.Ordinal);
+
+    /// <summary>Reverses <see cref="EscapeFrontmatterListItem"/>.</summary>
+    internal static string UnescapeFrontmatterListItem(string value) => UnescapeUsing(value, FrontmatterListItemEscapeTable);
+
+    /// <summary>
+    /// Joins already-unescaped list items into the one-line raw frontmatter value
+    /// <see cref="SplitFrontmatterList"/> reverses. An empty list serialises to
+    /// <see cref="string.Empty"/> and reads back as an empty list — the same convention
+    /// <see cref="CardFrontmatter.Section"/> uses for "field present, nothing recorded".
+    /// </summary>
+    internal static string JoinFrontmatterList(IReadOnlyList<string> items) =>
+        string.Join(",", items.Select(EscapeFrontmatterListItem));
+
+    /// <summary>
+    /// Splits a raw comma-joined frontmatter list value back into its unescaped items, scanning
+    /// for an unescaped comma rather than a naive <c>Split(',')</c> — a comma preceded by a
+    /// backslash (escaped by <see cref="EscapeFrontmatterListItem"/>) is content, not a
+    /// separator. <see cref="string.Empty"/> yields an empty list.
+    /// </summary>
+    internal static IReadOnlyList<string> SplitFrontmatterList(string raw)
+    {
+        if (raw.Length == 0)
+        {
+            return [];
+        }
+
+        var items = new List<string>();
+        var current = new System.Text.StringBuilder();
+        for (var i = 0; i < raw.Length; i++)
+        {
+            if (raw[i] == '\\' && i + 1 < raw.Length)
+            {
+                current.Append(raw[i]).Append(raw[i + 1]);
+                i++;
+                continue;
+            }
+
+            if (raw[i] == ',')
+            {
+                items.Add(UnescapeFrontmatterListItem(current.ToString()));
+                current.Clear();
+                continue;
+            }
+
+            current.Append(raw[i]);
+        }
+
+        items.Add(UnescapeFrontmatterListItem(current.ToString()));
+        return items;
+    }
+
     /// <summary>
     /// The one unescape shape both <see cref="UnescapeFrontmatterValue"/> and
     /// <see cref="UnescapeCommentHeaderValue"/> reduce to: scan for a backslash, and if the

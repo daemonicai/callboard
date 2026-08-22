@@ -136,15 +136,17 @@ public sealed class CardStoreWriteTests : IDisposable
     {
         var path = Path.Combine(_directory, "b-0006.md");
 
-        // Written directly, bypassing CardFile/CardStore, standing in for a §5 field a newer
-        // build (or a human) already added to this card — this build's own schema does not model
-        // "base" (CardFrontmatter.cs's own doc comment names it as a future field), which is
-        // exactly the case this test asserts AppendComment must not silently destroy.
+        // Written directly, bypassing CardFile/CardStore, standing in for a later section's field
+        // a newer build (or a human) already added to this card — this build's own schema does
+        // not model "future-field", which is exactly the case this test asserts AppendComment
+        // must not silently destroy. (§5's own five block-only fields — base, reviewed_state,
+        // tasks, round, blocked_by — are now known fields of a block card, so this test uses a
+        // genuinely unmodelled key rather than one of them.)
         var raw =
             "---\n" +
             "id: B-0006\nkind: block\ntitle: Title\nstatus: open\nowner: worker\nscope: change\nsection: 2\n" +
             "created: 2026-08-20T09:00:00+00:00\nupdated: 2026-08-20T09:00:00+00:00\n" +
-            "base: B-0001\n" +
+            "future-field: B-0001\n" +
             "---\n" +
             "Body.\n";
         File.WriteAllText(path, raw, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -153,7 +155,7 @@ public sealed class CardStoreWriteTests : IDisposable
         AssertSuccess(CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName));
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
-        Assert.Equal(("base", "B-0001"), Assert.Single(read.UnknownFrontmatterFields));
+        Assert.Equal(("future-field", "B-0001"), Assert.Single(read.UnknownFrontmatterFields));
         Assert.Equal(comment, Assert.Single(read.Comments));
     }
 

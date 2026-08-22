@@ -27,6 +27,15 @@ internal static class CardFileParser
         "id", "kind", "title", "status", "owner", "scope", "section", "created", "updated",
     };
 
+    // §5's five fields — known only when the card's own kind is block (Architect ruling, §5 block
+    // A brief). Checked separately from KnownFrontmatterKeys because that decision needs the
+    // card's kind, which is itself one of the frontmatter lines being classified — see the two-pass
+    // handling in Parse below.
+    private static readonly HashSet<string> BlockOnlyFrontmatterKeys = new(StringComparer.Ordinal)
+    {
+        "base", "reviewed_state", "tasks", "round", "blocked_by",
+    };
+
     // The six comment-header fields this build recognises. Same rule, same reason, applied to the
     // per-comment header instead of the frontmatter block.
     private static readonly HashSet<string> KnownCommentHeaderKeys = new(StringComparer.Ordinal)
@@ -59,7 +68,7 @@ internal static class CardFileParser
         cursor++;
 
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
-        var unknownFrontmatterFields = new List<(string Key, string RawValue)>();
+        var orderedFields = new List<(string Key, string RawValue)>();
 
         while (true)
         {
@@ -85,11 +94,7 @@ internal static class CardFileParser
             var key = line[..separatorIndex];
             var value = line[(separatorIndex + 2)..];
             fields[key] = value;
-
-            if (!KnownFrontmatterKeys.Contains(key))
-            {
-                unknownFrontmatterFields.Add((key, value));
-            }
+            orderedFields.Add((key, value));
 
             cursor++;
         }
@@ -98,6 +103,48 @@ internal static class CardFileParser
         if (frontmatterResult.Failure is { } frontmatterFailure)
         {
             return Failure(frontmatterFailure);
+        }
+
+        // frontmatterResult.Failure is null here, so Frontmatter is guaranteed non-null by
+        // BuildFrontmatter's own contract — this is the only point at which the card's kind is
+        // known, so classifying the §5 keys as known-or-unknown has to wait until here.
+        var isBlockCard = frontmatterResult.Frontmatter!.Kind.Match(
+            onBlock: static () => true,
+            onQuestion: static () => false,
+            onFinding: static () => false,
+            onObligation: static () => false,
+            onRule: static () => false,
+            onHazard: static () => false,
+            onDecision: static () => false);
+
+        var unknownFrontmatterFields = new List<(string Key, string RawValue)>();
+        foreach (var (key, value) in orderedFields)
+        {
+            if (KnownFrontmatterKeys.Contains(key))
+            {
+                continue;
+            }
+
+            if (isBlockCard && BlockOnlyFrontmatterKeys.Contains(key))
+            {
+                continue;
+            }
+
+            unknownFrontmatterFields.Add((key, value));
+        }
+
+        var blockFields = BlockCardFields.Empty;
+        if (isBlockCard)
+        {
+            var blockFieldsResult = BuildBlockFields(fields);
+            if (blockFieldsResult.Failure is { } blockFieldsFailure)
+            {
+                return Failure(blockFieldsFailure);
+            }
+
+            // blockFieldsResult.Failure is null here, so BlockFields is guaranteed non-null by
+            // BuildBlockFields's own contract.
+            blockFields = blockFieldsResult.BlockFields!;
         }
 
         var bodyLines = new List<string>();
@@ -202,7 +249,7 @@ internal static class CardFileParser
 
         // frontmatterResult.Failure is null here, so Frontmatter is guaranteed non-null by BuildFrontmatter's own contract.
         return new CardFileParseResult.Success(
-            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers));
+            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields));
     }
 
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
@@ -284,6 +331,87 @@ internal static class CardFileParser
         }
 
         return (new CardFrontmatter(id, kind, title, status, owner, scope, section, created, updated), null);
+    }
+
+    /// <summary>
+    /// Extracts §5's five known-on-a-block-card fields from a frontmatter <paramref name="fields"/>
+    /// dictionary already confirmed to belong to a <c>block</c> card — see the <c>isBlockCard</c>
+    /// gate in <see cref="Parse"/>, the only caller. An absent field, or one present with an empty
+    /// raw value, parses to <see langword="null"/> (scalars) or an empty list (<c>tasks</c>/
+    /// <c>blocked_by</c>) — "not yet recorded", the same convention <see cref="CardFrontmatter.Section"/>
+    /// uses. Two things can fail: <c>round</c>, on any non-empty value that is not a valid integer,
+    /// and an empty or whitespace-only item inside <c>tasks</c> or <c>blocked_by</c> — a hand-authored
+    /// file that reaches this parser with, say, <c>tasks: ,</c> (a raw value that splits into two
+    /// empty items) fails here rather than reaching <see cref="BlockCardFields"/>'s own constructor
+    /// guard as an unhandled exception (reviewer finding 1, §5 block A review — see
+    /// <see cref="BlockCardFields"/>'s doc comment for why that item is unrepresentable at all).
+    /// </summary>
+    private static (BlockCardFields? BlockFields, string? Failure) BuildBlockFields(
+        IReadOnlyDictionary<string, string> fields)
+    {
+        var baseCommit = ParseOptionalFrontmatterValue(fields, "base");
+        var reviewedState = ParseOptionalFrontmatterValue(fields, "reviewed_state");
+
+        var tasks = fields.TryGetValue("tasks", out var tasksText)
+            ? CardFileFormat.SplitFrontmatterList(tasksText)
+            : (IReadOnlyList<string>)[];
+
+        if (RequireNoEmptyListItem(tasks, "tasks") is { } tasksFailure)
+        {
+            return (null, tasksFailure);
+        }
+
+        var blockedBy = fields.TryGetValue("blocked_by", out var blockedByText)
+            ? CardFileFormat.SplitFrontmatterList(blockedByText)
+            : (IReadOnlyList<string>)[];
+
+        if (RequireNoEmptyListItem(blockedBy, "blocked_by") is { } blockedByFailure)
+        {
+            return (null, blockedByFailure);
+        }
+
+        int? round = null;
+        if (fields.TryGetValue("round", out var roundText) && roundText.Length > 0)
+        {
+            if (!int.TryParse(roundText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedRound))
+            {
+                return (null, $"block card has invalid round: '{roundText}'");
+            }
+
+            round = parsedRound;
+        }
+
+        return (new BlockCardFields(baseCommit, reviewedState, tasks, round, blockedBy), null);
+    }
+
+    /// <summary>
+    /// The parse-time half of the same rule <see cref="BlockCardFields"/>'s constructor enforces
+    /// at construction time — see <see cref="BlockCardFields.IsValidListItem"/>, which both this
+    /// and that guard react to. Applied before construction so untrusted input that violates it
+    /// (an empty raw list item straight off the wire) becomes a parse <see cref="string"/> failure
+    /// here, never an exception escaping from the constructor.
+    /// </summary>
+    private static string? RequireNoEmptyListItem(IReadOnlyList<string> items, string fieldName)
+    {
+        foreach (var item in items)
+        {
+            if (!BlockCardFields.IsValidListItem(item))
+            {
+                return $"block card has an empty or whitespace-only item in '{fieldName}'";
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ParseOptionalFrontmatterValue(IReadOnlyDictionary<string, string> fields, string key)
+    {
+        if (!fields.TryGetValue(key, out var rawValue) || rawValue.Length == 0)
+        {
+            return null;
+        }
+
+        return CardFileFormat.UnescapeFrontmatterValue(rawValue);
     }
 
     private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)

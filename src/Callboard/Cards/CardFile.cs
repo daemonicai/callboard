@@ -28,12 +28,25 @@ namespace Callboard.Cards;
 /// positional auto-property, is never null — <see langword="null"/> normalises to empty once, here,
 /// rather than every reader having to guard against it.
 /// </param>
+/// <param name="BlockFields">
+/// The five §5 fields (<c>base</c>, <c>reviewed_state</c>, <c>tasks</c>, <c>round</c>,
+/// <c>blocked_by</c>) known only on a <c>block</c> card — see <see cref="BlockCardFields"/>'s own
+/// doc comment. <see cref="CardFileParser"/> only ever populates this with non-empty content when
+/// <see cref="CardFrontmatter.Kind"/> is <see cref="CardKind.Block"/>; for every other kind it is
+/// <see cref="BlockCardFields.Empty"/>, and any of the five keys found on such a card's frontmatter
+/// land on <see cref="UnknownFrontmatterFields"/> instead, exactly as an unrecognised key would.
+/// The constructor parameter accepts <see langword="null"/> for the same reason
+/// <paramref name="Handovers"/>'s does — see that parameter's doc comment.
+/// </param>
 internal sealed record CardFile(
     CardFrontmatter Frontmatter,
     string Body,
     IReadOnlyList<CardComment> Comments,
     IReadOnlyList<(string Key, string RawValue)> UnknownFrontmatterFields,
-    IReadOnlyList<CardHandover>? Handovers = null)
+    IReadOnlyList<CardHandover>? Handovers = null,
+    BlockCardFields? BlockFields = null)
 {
     public IReadOnlyList<CardHandover> Handovers { get; init; } = Handovers ?? [];
+
+    public BlockCardFields BlockFields { get; init; } = BlockFields ?? BlockCardFields.Empty;
 }
