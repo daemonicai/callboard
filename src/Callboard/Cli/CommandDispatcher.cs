@@ -111,7 +111,8 @@ internal static class CommandDispatcher
         ArgumentCursor Arguments,
         TextReader Input,
         bool IsInputRedirected,
-        string WorkingDirectory);
+        string WorkingDirectory,
+        Func<DateTimeOffset> Clock);
 
     /// <summary>
     /// Closed union over what the parse phase produces for one command: either it has already
@@ -166,20 +167,59 @@ internal static class CommandDispatcher
 
         internal abstract TResult Match<TResult>(
             Func<Version, TResult> onVersion,
-            Func<IndexRebuild, TResult> onIndexRebuild);
+            Func<IndexRebuild, TResult> onIndexRebuild,
+            Func<BlockTransition, TResult> onBlockTransition);
 
         internal sealed record Version : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition) =>
                 onVersion(this);
         }
 
         internal sealed record IndexRebuild(string WorkingDirectory) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition) =>
                 onIndexRebuild(this);
         }
+
+        /// <param name="FilePath">The card file to transition — a path, not a symbolic id: no
+        /// section before §5 built an id-to-path lookup that does not depend on the (non-
+        /// authoritative, possibly-absent) derived index, and inventing one is out of this
+        /// block's scope. <see cref="Callboard.Cards.CardStore"/>'s own write surface is already
+        /// path-addressed throughout (<c>WriteCard</c>, <c>AppendComment</c>,
+        /// <c>TransferOwnership</c>), so this stays consistent with it rather than being the one
+        /// verb that resolves identities.</param>
+        /// <param name="TransitionName">The wire name of the edge to apply
+        /// (<see cref="Callboard.Cards.BlockFlowTransition.Name"/>) — not yet validated against the
+        /// card's actual current state, since that needs the file read the execute phase performs.</param>
+        /// <param name="ActingRole">Parsed and validated during the parse phase (a
+        /// <see cref="Callboard.CardOwner"/> wire value needs no file access to check) —
+        /// recorded, not authorised: §5 records who declares they are acting, restricting who may
+        /// is 8.13/9.4's job.</param>
+        /// <param name="BaseCommit">The <c>--base</c> flag's value, or <see langword="null"/> if not
+        /// supplied. Legality (required only for a transition landing on <c>briefed</c>, and
+        /// immutable once recorded) depends on the card's current state, so it is checked in the
+        /// execute phase, not here.</param>
+        internal sealed record BlockTransition(
+            string FilePath, string TransitionName, CardOwner ActingRole, string? BaseCommit, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition) =>
+                onBlockTransition(this);
+        }
     }
+
+    /// <summary>
+    /// The lock timeout every CLI-invoked card write uses by default (§5 block C) — 5 seconds,
+    /// unless <see cref="Run"/>'s own <c>lockTimeout</c> parameter overrides it. That parameter
+    /// exists for exactly one reason: a CLI-level test proving the <c>tool-failure</c> disposition
+    /// on a genuine lock timeout needs a seam short enough to run in milliseconds, the same reason
+    /// <see cref="Run"/> already takes an overridable <c>clock</c> rather than reading
+    /// <see cref="DateTimeOffset.UtcNow"/> directly (reviewer finding, second remediation round:
+    /// the domain-level tool-failure tests proved <c>CardStore</c> constructs the right union case,
+    /// not that the CLI routes it correctly — a real, short-timeout run through <see cref="Run"/>
+    /// is what closes that gap, not another domain-level test).
+    /// </summary>
+    private static readonly TimeSpan DefaultLockTimeout = TimeSpan.FromSeconds(5);
 
     internal static int Run(
         string[] args,
@@ -187,20 +227,25 @@ internal static class CommandDispatcher
         TextReader input,
         TextWriter error,
         bool isInputRedirected,
-        string workingDirectory)
+        string workingDirectory,
+        Func<DateTimeOffset>? clock = null,
+        TimeSpan? lockTimeout = null)
     {
         var command = args.Length > 0 ? args[0] : string.Empty;
         var remainingArgs = args.Length > 0 ? args[1..] : Array.Empty<string>();
         var arguments = new ArgumentCursor(remainingArgs);
+        var resolvedClock = clock ?? (static () => DateTimeOffset.UtcNow);
+        var resolvedLockTimeout = lockTimeout ?? DefaultLockTimeout;
 
         try
         {
-            var context = new CommandContext(arguments, input, isInputRedirected, workingDirectory);
+            var context = new CommandContext(arguments, input, isInputRedirected, workingDirectory, resolvedClock);
             var parseResult = EnforceNoUnconsumedArguments(CommandParser.Parse(command, context), arguments);
             var outcome = parseResult.Match(
                 onReady: ready => ready.Command.Match(
                     onVersion: static _ => RunVersion(),
-                    onIndexRebuild: parsed => RunIndexRebuild(parsed.WorkingDirectory)),
+                    onIndexRebuild: parsed => RunIndexRebuild(parsed.WorkingDirectory),
+                    onBlockTransition: parsed => RunBlockTransition(parsed, resolvedLockTimeout)),
                 onRefused: refused => refused.Refusal);
 
             WriteEnvelope(output, RecognisedCommand(command, arguments), outcome);
@@ -317,6 +362,72 @@ internal static class CommandDispatcher
                 Reason = violation.Reason,
             })],
         });
+    }
+
+    /// <summary>
+    /// The first verb whose side effect writes a card (§5 block C, O-3's card-writing trigger).
+    /// Applies one block flow transition under the card's lock via
+    /// <see cref="CardStore.ApplyBlockTransition"/> and maps its closed-union outcome to a
+    /// <see cref="CommandOutcome"/> — an undefined transition, a missing or immutable
+    /// <c>base</c>, and a target that isn't a block card each get their own refusal code, read
+    /// from <see cref="BlockFlowTransitions.AvailableFrom"/> for the undefined-transition case
+    /// rather than a second hand-maintained list of the same edges. <see langword="private"/>:
+    /// <see cref="CommandParser"/> cannot name this method (see the class doc comment).
+    /// </summary>
+    private static CommandOutcome RunBlockTransition(ParsedCommand.BlockTransition parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var outcome = CardStore.ApplyBlockTransition(
+            repoRoot, parsed.FilePath, parsed.TransitionName, parsed.ActingRole, parsed.Timestamp, parsed.BaseCommit, lockTimeout, parsed.ChangeName);
+
+        return outcome.Match<CommandOutcome>(
+            onApplied: applied => new CommandOutcome.Success(new BlockTransitionResult
+            {
+                FilePath = parsed.FilePath,
+                Transition = applied.Transition.Name,
+                From = applied.Transition.From.ToWireString(),
+                To = applied.Transition.To.ToWireString(),
+                ActingRole = parsed.ActingRole.ToWireString(),
+                Timestamp = parsed.Timestamp,
+                Base = applied.Card.BlockFields.Base,
+                Round = applied.Card.BlockFields.Round,
+            }),
+            onUndefinedTransition: undefined => new CommandOutcome.Refusal(
+                "undefined-transition",
+                $"no transition '{parsed.TransitionName}' from '{undefined.CurrentState.ToWireString()}'. " +
+                $"Available: {(undefined.Available.Count == 0 ? "none" : string.Join(", ", undefined.Available.Select(static t => t.Name)))}."),
+            onBaseNotRecorded: static _ => new CommandOutcome.Refusal(
+                "base-not-recorded",
+                "a brief must name the commit it was carved against — pass --base or record one before briefing."),
+            onBaseImmutable: immutable => new CommandOutcome.Refusal(
+                "base-immutable",
+                $"'base' is already recorded as '{immutable.Recorded}' and cannot change across rounds; supplied '{immutable.Attempted}'."),
+            onNotABlockCard: notABlock => new CommandOutcome.Refusal(
+                "not-a-block-card",
+                $"'{parsed.FilePath}' is a '{notABlock.Kind.ToWireString()}' card; flow transitions only apply to a block card."),
+            onCardNotFound: notFound => new CommandOutcome.Refusal(
+                "card-not-found",
+                $"no card file exists at '{notFound.FilePath}' to transition."),
+            onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            // Neither refusal-shaped (reviewer finding, first remediation round): a corrupt card
+            // or a broken write is not the caller being wrong, it is enforcement being
+            // unavailable — the same disposition index rebuild's own SQLite I/O failures reach by
+            // simply not being caught anywhere between the write and Run's own catch. Throwing
+            // here, rather than returning a Refusal, is what routes this to the same tool-failure
+            // exit (ToolFailureExitCode) through that same catch, instead of a mapping at this
+            // call site silently re-collapsing the two dispositions the type above went to the
+            // trouble of keeping apart.
+            onCardCorrupt: corrupt => throw new InvalidOperationException(
+                $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
     private static int ExitCodeFor(CommandOutcome outcome) => outcome.Match(

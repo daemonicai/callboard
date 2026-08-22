@@ -1,3 +1,5 @@
+using Callboard.Cards;
+
 namespace Callboard.Cli;
 
 /// <summary>
@@ -30,9 +32,10 @@ internal static class CommandParser
     {
         "version" => new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.Version()),
         "index" => ParseIndex(context),
+        "block" => ParseBlock(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index.")),
+            $"no such command: '{command}'. Known commands: version, index, block.")),
     };
 
     /// <summary>
@@ -75,4 +78,120 @@ internal static class CommandParser
     /// </summary>
     private static CommandDispatcher.ParseResult ParseIndexRebuild(string workingDirectory) =>
         new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.IndexRebuild(workingDirectory));
+
+    /// <summary>
+    /// <c>block</c>'s only job is routing to a subcommand — currently just <c>transition</c>. Same
+    /// peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseBlock(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'block' requires a subcommand. Known subcommands: transition."));
+            case "transition":
+                context.Arguments.TryTake();
+                return ParseBlockTransition(context);
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>block transition</c>'s <see cref="CommandDispatcher.ParsedCommand.BlockTransition"/>:
+    /// two positional tokens (card file path, transition name) followed by <c>--role</c> (required),
+    /// and the optional <c>--base</c>/<c>--change</c> flags. Everything decidable from argv alone is
+    /// decided here — including <c>--role</c>'s validity, a <see cref="CardOwner"/> wire-format check
+    /// that needs no file access — so only what genuinely depends on the card's on-disk state
+    /// (whether the named transition is legal from its current status, whether <c>base</c> is
+    /// already recorded) is left to the execute phase (O-3). A flag this method does not recognise
+    /// is left unconsumed, the same "peek, don't take" discipline <see cref="ParseIndex"/> already
+    /// uses, so the funnel's own <c>unrecognised-argument</c> refusal covers it without a second,
+    /// verb-specific code for the same fact.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseBlockTransition(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'block transition' requires a card file path and a transition name."));
+        }
+
+        var transitionName = context.Arguments.TryTake();
+        if (transitionName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'block transition' requires a transition name."));
+        }
+
+        string? roleText = null;
+        string? baseCommit = null;
+        string? changeName = null;
+
+        while (context.Arguments.Peek() is { } flag)
+        {
+            if (flag == "--role")
+            {
+                context.Arguments.TryTake();
+                roleText = context.Arguments.TryTake();
+                if (roleText is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-flag-value", "'--role' requires a value."));
+                }
+
+                continue;
+            }
+
+            if (flag == "--base")
+            {
+                context.Arguments.TryTake();
+                baseCommit = context.Arguments.TryTake();
+                if (baseCommit is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-flag-value", "'--base' requires a value."));
+                }
+
+                continue;
+            }
+
+            if (flag == "--change")
+            {
+                context.Arguments.TryTake();
+                changeName = context.Arguments.TryTake();
+                if (changeName is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-flag-value", "'--change' requires a value."));
+                }
+
+                continue;
+            }
+
+            break;
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block transition' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.BlockTransition(
+            filePath, transitionName, role, baseCommit, changeName, context.WorkingDirectory, context.Clock()));
+    }
 }

@@ -97,15 +97,18 @@ public sealed class CardCommentImmutabilityTests
 
         var expectedMembers = new[]
         {
-            "AppendComment",                     // read-modify-write: reads, appends one comment, writes — never drops one
-            "AppendCommentUnderExistingLock",     // same, lock already held by the caller
-            "AtomicWrite",                        // the shared byte-writer every path above funnels through; it writes whatever CardFileWriter.Serialize(card) produces for the CardFile each of those paths built — none of them builds one with a truncated Comments list
-            "ReadAllCards",                       // read-only
-            "ReadCard",                           // read-only
-            "TransferOwnership",                  // read-modify-write: overwrites Owner/Handovers only; Comments passes through the `success.Card with { ... }` unchanged
-            "TransferOwnershipUnderExistingLock", // same, lock already held
-            "WithLock",                           // lock-acquisition plumbing; never touches a CardFile
-            "WriteCard",                          // create-only (this fix) — see WriteCard_RefusesToOverwriteAnExistingCard_SoItCannotDropAComment below for the direct proof
+            "AppendComment",                       // read-modify-write: reads, appends one comment, writes — never drops one
+            "AppendCommentUnderExistingLock",       // same, lock already held by the caller
+            "ApplyBlockTransition",                 // §5 block C: read-modify-write on Frontmatter.Status/BlockFields/Transitions only; Comments passes through the `card with { ... }` unchanged
+            "ApplyBlockTransitionUnderExistingLock", // same, lock already held
+            "AtomicWrite",                          // the shared byte-writer every path above funnels through; it writes whatever CardFileWriter.Serialize(card) produces for the CardFile each of those paths built — none of them builds one with a truncated Comments list
+            "ReadAllCards",                         // read-only
+            "ReadCard",                             // read-only
+            "TransferOwnership",                    // read-modify-write: overwrites Owner/Handovers only; Comments passes through the `success.Card with { ... }` unchanged
+            "TransferOwnershipUnderExistingLock",   // same, lock already held
+            "WithLock",                             // lock-acquisition plumbing (CardWriteResult overload); never touches a CardFile
+            "WithLock",                             // §5 block C: the same plumbing generalised over TResult so ApplyBlockTransition can return a CardBlockTransitionOutcome; never touches a CardFile — two overloads, two entries, same method name
+            "WriteCard",                            // create-only (this fix) — see WriteCard_RefusesToOverwriteAnExistingCard_SoItCannotDropAComment below for the direct proof
         };
 
         Assert.Equal(expectedMembers.OrderBy(name => name, StringComparer.Ordinal), actualMembers);
@@ -164,12 +167,20 @@ public sealed class CardCommentImmutabilityTests
     private static void AssertSuccess(CardWriteResult result) =>
         result.Match<object?>(
             onSuccess: static _ => null,
-            onFailure: failure => throw new Xunit.Sdk.XunitException($"expected write success, got failure: {failure.Reason}"));
+            onNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected write success, got NotFound: '{notFound.FilePath}'"),
+            onAlreadyExists: alreadyExists => throw new Xunit.Sdk.XunitException($"expected write success, got AlreadyExists: '{alreadyExists.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"));
 
     private static void AssertFailure(CardWriteResult result) =>
         result.Match<object?>(
             onSuccess: static _ => throw new Xunit.Sdk.XunitException("expected write failure (create-only refusal), got success"),
-            onFailure: static _ => null);
+            onNotFound: static _ => null,
+            onAlreadyExists: static _ => null,
+            onLayoutMismatch: static _ => null,
+            onCorrupt: static _ => null,
+            onToolFailure: static _ => null);
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

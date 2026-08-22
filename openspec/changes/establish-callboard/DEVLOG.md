@@ -8878,6 +8878,860 @@ in the file are byte-identical to the previous round.
 
 No handoff — architect is landing block B directly per its note.
 
+---
+
+**[architect]** Block B is **landed** as `99a61b6`, committed as a `fix` and ticking nothing — O-3 is a
+carried obligation, not a task. Gates re-run by me before the commit: `BUILD_EXIT:0` `TEST_EXIT:0`
+(232/232) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+**O-3 is DISCHARGED.** `Parse` returns an inert `ParsedCommand` union carrying data and never a handler;
+parsing lives in a sibling `CommandParser`, so the handlers stay `private` to `CommandDispatcher` and
+calling one from the parse phase is `CS0122`; `Run`'s exhaustive match is the only place a handler is
+reached. The evidence test asserts `index rebuild extra-token` refuses **and leaves no index behind**,
+and the test it replaces asserted the opposite and passed — that inversion is what establishes
+red-before-green, since the worker boundary hook prevents a worker from reverting to watch it fail.
+
+**Three shapes were tried, and the first two each proved a narrower proposition than their prose
+claimed.** Carrying a `Func<CommandOutcome>` let a parse arm execute eagerly and return a constant. The
+data union hardened that and did **nothing** for call-and-discard — one line, `RunIndexRebuild(x);`,
+result thrown away, which was exactly as cheap under the old shape. The class split closes both.
+**Reflection and a recursive `Run` remain open**, both predate this block, neither is closed by it, and
+both are now named in the class doc comment rather than implied away.
+
+**The section's second working rule, and it is expensive to relearn:** *the reviewer settled every one of
+these by compiling a bypass; not one was settled by reading.* Block A took three rounds this way, block B
+took four. Both auditors' most valuable work was **writing the mistake and seeing whether the compiler
+allowed it** — and in block B's case, running the reflection bypass end to end and watching the index get
+written despite a correct refusal. When §5 asks "is this a guarantee or a convention", the only answer
+worth recording is one where someone tried it.
+
+**Worker honesty is load-bearing and it worked.** The worker twice declared what it could *not*
+demonstrate — that it hadn't watched the test go red, and that a future verb's parse arm could still
+execute eagerly — instead of reporting a clean pass. Both declarations are what got the gaps settled
+properly. That is the behaviour the loop wants; a report that had claimed a clean pass would have landed
+a hole.
+
+---
+
+**[architect]** §5 re-carved again — **five blocks.** Block C as carved bundled the whole state machine,
+the first CLI verbs, gate results and blocked derivation into one deliverable. That is too much for the
+block that introduces the **first card write path** — the highest-risk surface in the section, and the
+one every later section builds on. 5.6 and 5.7 are card-field features that do not depend on the
+transition machinery, so they separate cleanly:
+
+| block | tasks | deliverable |
+|---|---|---|
+| A | 5.1, 5.4 | **landed `d165508`** |
+| B | — | **landed `99a61b6`** — O-3 discharged |
+| C | 5.2, 5.3, 5.5 | transition application under lock + the first CLI verbs; remediation rounds; the `base` refusal |
+| D | 5.6, 5.7 | gate results as label-to-exit-code; derived blocked |
+| E | 5.8 | sections as entities |
+
+---
+
+**[architect]** Brief — block C (5.2, 5.3, 5.5). **This block writes the first card.** Everything §1–§4
+built exists to make this block safe; read the brief accordingly.
+
+**Tasks**
+
+- **5.2** Implement transitions recording acting role and timestamp; refuse undefined transitions,
+  naming what is available.
+- **5.3** Implement remediation as the same card at an incremented round, ticking no task.
+- **5.5** Refuse briefing a block with no `base` recorded.
+
+**Spec — `specs/work-lifecycle/spec.md`**
+
+> Every transition SHALL record the acting role and the time it occurred.
+>
+> - **WHEN** a role attempts to move a `drafting` block directly to `approved`
+> - **THEN** the system refuses and states the transitions available from `drafting`
+
+> A block returned for changes SHALL return to `briefed` with its `round` incremented, on the same card.
+> The system SHALL NOT create a new card for a remediation, and a remediation SHALL NOT tick any task.
+> One card's thread SHALL therefore constitute the complete audit trail of one unit of work across all
+> its rounds.
+
+> `base` SHALL be recorded before the block is briefed, and SHALL NOT change across remediation rounds.
+>
+> - **WHEN** a block is moved to `briefed` with no `base` recorded
+> - **THEN** the system refuses and states that a brief must name the commit it was carved against
+
+**Binding constraints — these are not suggestions**
+
+- **`WriteCard` is create-only and full replacement is not coming back.** §4 narrowed it twice, on
+  purpose, to close a defect. **Model transitions as targeted locked read-modify-writes on
+  `TransferOwnership`'s pattern.** If you find yourself wanting a whole-card write, you have the wrong
+  design — stop and post, do not widen the store's surface.
+- **Every operation that establishes or relies on ownership verifies its effect immediately before
+  acting on it**, and treats a mismatch as a **lost race**, not an error. Four separate `CardLock`
+  defects in §2 were one violation of this rule.
+- **Refusal availability comes from block A's table, never restated.** 5.2's message must name the
+  transitions available from the current state by *reading `AvailableFrom`*. A second hand-maintained
+  list of the same facts is exactly the duplication §4's supervisor blocked on.
+- **The transition verbs run on block B's funnel.** Parse fully, refuse in the parse phase, then execute.
+  **The reviewer's standing note, which I am making a requirement:** the funnel narrows the mistake space
+  but does not substitute for verb-level proof — **the first card-writing verb owes its own test that a
+  refusal leaves no card written and no card modified.** Not a variant of the index test; its own.
+- **Timestamps need a seam, and the codebase rule is that test seams are threaded parameters, never
+  shared statics** (set in §2, held since). Thread a clock; do not reach for `DateTimeOffset.UtcNow`
+  inside the domain.
+- **Acting role is recorded, not authorised, in this block.** Restricting *who* may approve is 8.13 and
+  9.4. Record what the caller declares; refuse nothing on role grounds yet, and do not build a
+  half-version of §8's rule that §8 then has to unpick.
+- **`round` starts where block A's field says it does and is incremented only by the changes-requested
+  transition.** A remediation ticks **no** task — if anything in your implementation can tick one, that
+  is a defect, not a feature.
+
+**Refusal codes — name every one you mint, in your DEVLOG post.** §9 turns the refusal set into a closed
+union and inherits your list; existing members are `unknown-command`, `missing-subcommand`,
+`unknown-subcommand`, `unrecognised-argument`, `repo-root-not-found`. §4 minted none. **Every refusal
+lands with a test that it *fires*** — 9.12 asks for exactly this and §2's traversal guard survived three
+rounds while guarding nothing, so treat it as live now.
+
+**Also inherited:** archived cards are indexed indistinguishably from live ones (the cost of §3's R1).
+**A queue or lookup that does not filter them will offer archived work as live** — the filter is owed
+wherever this block reads cards back.
+
+**Owed evidence**
+
+1. A refusal of an undefined transition that names the available ones, read from the table.
+2. A refusal of a brief with no `base`, and a demonstration that `base` cannot change across rounds.
+3. **A refusal leaves the record byte-identical** — assert on the card file's bytes, not on the outcome
+   object. §3's rule: green tests do not exercise the machine contract.
+4. Every test you land, watched red first. If a test cannot be made to fail, say so rather than
+   landing it.
+
+**Done-gates** — `make build`, `make test`, `make format`, `make validate`, or `make gates` sandboxed in
+one pass. Quote every `LABEL_EXIT:<n>` verbatim. Post as `[worker]` under `## 5.` and hand off
+`→ @reviewer`. No commit, no ticks, no `Makefile`.
+
+**[worker]** Block C (5.2, 5.3, 5.5) implemented — the first card write, on the CLI's first
+card-writing verb.
+
+**`block transition <path> <name> --role <role> [--base <commit>] [--change <name>]`**, a new
+domain read-decide-write on `CardStore` (`ApplyBlockTransition`/`...UnderExistingLock`, targeted
+locked RMW on `TransferOwnership`'s pattern — no whole-card write anywhere, `WriteCard` untouched).
+The path is a card *file path*, not a symbolic id: no section before §5 built an id-to-path lookup
+independent of the non-authoritative index, and inventing one was out of scope — this stays
+consistent with `CardStore`'s own path-addressed surface throughout.
+
+- **5.2.** Legality reads `BlockFlowTransitions.AvailableFrom(currentState)` directly — never a
+  second list — and an undefined transition (unknown name, or one not available from the card's
+  actual state) refuses `undefined-transition`, naming what's available. Acting role and timestamp
+  are recorded per-transition, append-only, as a new `CardBlockTransitionEntry` sequence
+  (`CardFile.Transitions`) — modelled the same way card-model already modelled ownership
+  (`CardHandover`), because "every transition SHALL record the acting role and the time it
+  occurred" is the identical shape to "every ownership change SHALL record", which §4's reviewer
+  already found two overwritable scalars cannot satisfy. New delimiter line
+  (`<!-- callboard:transition by=… name=… from=… to=… timestamp=… -->`), added to
+  `CardFileFormat`/`CardFileParser`/`CardFileWriter` mirroring the handover line exactly, including
+  delimiter-lookalike escaping (`LooksLikeDelimiterOrEscapedDelimiter` now covers it) and unknown-
+  field preservation. Role is recorded, not authorised — parsed and validated in the *parse* phase
+  (a `CardOwner` wire-format check needs no file access), nothing refused on role grounds.
+- **5.3.** `changes-requested` increments `round` (`(Round ?? 0) + 1`); any transition landing on
+  `briefed` for the first time starts it at 1. No task-completion field exists anywhere on
+  `BlockCardFields` for a remediation to flip, so "ticks no task" holds structurally — asserted by
+  a test that `Tasks` survives a full brief→claim→submit→changes-requested cycle unchanged.
+- **5.5.** A transition landing on `briefed` requires `base` already recorded or supplied this
+  call (`base-not-recorded` otherwise); once recorded, a differing `--base` on any later call
+  refuses `base-immutable` naming both values — demonstrated end-to-end through a full remediation
+  round (brief→…→changes-requested, same base re-supplied, then a different one refused, base
+  still unchanged after).
+- **O-3, verb-level:** the parse phase (`ParseBlockTransition`) decides role, and the two
+  positional/flag-shape refusals, fully before dispatch; the execute phase
+  (`RunBlockTransition`/`CardStore.ApplyBlockTransition`) does one read-decide-write under the
+  card's lock, so an undefined transition, a missing/immutable base, or a non-block target never
+  reaches the write. Clock threaded as `CommandContext.Clock : Func<DateTimeOffset>` (captured once
+  during parsing into the inert `ParsedCommand.BlockTransition.Timestamp`), `Run`'s new optional
+  `clock` parameter defaulting to `DateTimeOffset.UtcNow` only at the composition root — no
+  `UtcNow` inside the domain.
+
+**Refusal codes minted (§9 inherits this list):** `undefined-transition`, `base-not-recorded`,
+`base-immutable`, `not-a-block-card`, `card-write-failed` (execute phase); `missing-argument`,
+`missing-flag-value`, `missing-role`, `unrecognised-role` (parse phase, `block transition`
+specifically) — plus `missing-subcommand`/`unknown-subcommand` reused unchanged for `block` routing
+and `unrecognised-argument` reused unchanged (no new code) for a trailing unrecognised flag, via
+the existing funnel.
+
+**Owed evidence, delivered:**
+1. `ApplyBlockTransition_UndefinedTransition_NamesTheTransitionsAvailableFromCurrentState` +
+   CLI-level `BlockTransition_UndefinedTransition_Refuses_NamesAvailableTransitions_…` — both read
+   the available list off `undefined.Available`/the refusal message, never a second list.
+2. `ApplyBlockTransition_BriefWithNoBaseRecordedAndNoneSupplied_Refuses` (CLI:
+   `BlockTransition_BriefWithNoBaseRecordedOrSupplied_Refuses`) for the missing-base half;
+   `ApplyBlockTransition_BaseCannotChangeAcrossRemediationRounds` drives a full round and asserts
+   base is still `"commit-abc"` after a refused change attempt.
+3. `ApplyBlockTransition_UndefinedTransition_LeavesTheCardFileByteIdentical` (domain) and
+   `BlockTransition_UndefinedTransition_Refuses_…_AndLeavesTheCardByteIdentical` +
+   `BlockTransition_TrailingUnrecognisedToken_RefusesThroughTheFunnel_AndLeavesTheCardByteIdentical`
+   (CLI, verb-level per the brief's explicit requirement) — all assert `File.ReadAllBytes` before
+   vs. after, not the outcome object.
+4. Watched red, not just asserted clean: mutated out the base-immutable check (test went red on
+   `Applied` instead of `BaseImmutable`); mutated the undefined-transition guard to fall through to
+   `Applied` (both the domain and the byte-identical test went red); mutated the CLI flag loop to
+   silently swallow an unrecognised flag instead of leaving it unconsumed (the funnel test went red,
+   `1` unrecognised-argument refusal expected, `0` observed). All three reverted and confirmed
+   byte-identical to the pre-mutation source before re-running gates. Also watched the new
+   transition-delimiter-escaping round-trip test go red by removing `TransitionLinePrefix` from
+   `LooksLikeDelimiterOrEscapedDelimiter` — parse failure, as expected, then reverted.
+
+**`CardStore`'s static-method-surface inventory test** (§4's own regression guard) required and got
+updated: `ApplyBlockTransition`/`ApplyBlockTransitionUnderExistingLock` added, each annotated that
+it leaves `Comments` untouched (`card with { ... }`, never rebuilt); `WithLock` now appears twice
+(a second, `TResult`-generic overload added so `ApplyBlockTransition` can return a
+`CardBlockTransitionOutcome` through the same acquire/dispose/timeout plumbing the
+`CardWriteResult` overload already had, rather than a hand-copied duplicate) — both entries listed,
+each with its own comment.
+
+**Could not demonstrate, stated rather than assumed clean:** I did not attempt to reproduce a
+concurrent-transition race (two `block transition` calls racing the same card's lock) — §2's
+`CardLock` concurrency guarantees are unchanged by this block (still one lock file per card path,
+still `WithLock`), and no task in 5.2/5.3/5.5 asks for a new concurrency proof, but I have not
+personally re-run that hammer loop against this new call path the way §2 did for `AppendComment`.
+If that guarantee matters for this specific verb, it's worth a supervisor note rather than an
+assumption on my part.
+
+**Gates (sandboxed):** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`
+(`make gates`, single pass). 257/257 tests (232 pre-existing, unchanged and still green; 25 new: 9
+domain-level `CardBlockTransitionTests`, 8 CLI-level `CommandDispatcherBlockTransitionTests`, 8
+format round-trip in `CardFileRoundTripTests`).
+
+Tasks completed: 5.2, 5.3, 5.5. No task ticked in `tasks.md` (Architect's job).
+
+→ @reviewer
+
+---
+
+**[reviewer]** Block C (5.2, 5.3, 5.5) audited — `git diff 99a61b6`, the first card write.
+
+**Verdict: Request changes.** Finding 1 (`card-write-failed`) is a real, blocking misclassification
+that §9 would otherwise inherit and cement. Finding 2 is cheap and should land with it. Findings 3–6
+all held up under independent execution.
+
+**1. `card-write-failed` is misclassified — confirmed, and worse than "sounds like it."**
+`CommandDispatcher.cs`'s `onWriteFailed: failed => new CommandOutcome.Refusal("card-write-failed",
+failed.Reason)` maps **every** branch of `CardBlockTransitionOutcome.WriteFailed` to one refusal
+code. Reading every construction site in `CardStore.cs`, that union member covers six genuinely
+different conditions:
+
+| condition | site | right classification |
+|---|---|---|
+| lock timeout | `ApplyBlockTransition`, `onTimedOut` | **tool-failure** — textbook "enforcement unavailable," same shape as `index rebuild`'s uncaught SQLite failure |
+| I/O failure writing the temp file / rename | `AtomicWrite`'s `catch (IOException or UnauthorizedAccessException)`, surfaced via `onFailure` | **tool-failure** — same reasoning, same precedent |
+| no card file at that path | `ApplyBlockTransitionUnderExistingLock` | legitimate refusal — caller-correctable, same shape as `repo-root-not-found` |
+| layout mismatch | `AnchoredCardPath.TryCreate` failure | legitimate refusal — caller supplied a path outside the expected structure |
+| unrecognised `status` on the card | `BlockFlowStateWireFormat.TryParse` failure | a corrupt card — per `## NEXT`'s own standing rule ("a corrupt card = neither [refusal nor tool-failure]"), this should not be a refusal at all |
+| card fails to parse at all | `ReadCard`'s `onFailure` | same as above |
+
+**Why this matters beyond taxonomy purity:** a refusal tells the caller "you did something
+illegitimate, stop and correct your request." A lock timeout or a disk I/O failure is not the
+caller's mistake — retrying the identical `block transition` call a moment later might well
+succeed. Routing it through `CommandOutcome.Refusal` tells an agent to change its behaviour when
+the correct instruction is "the tool couldn't verify anything right now." This is exactly the
+`RefusalExitCode`-vs-`ToolFailureExitCode` distinction `CommandDispatcher.cs`'s own doc comment
+states in absolute terms ("those are opposite instructions to the caller, so they cannot share a
+code") — and `card-write-failed` currently shares a code across both.
+
+**Confirmed no test exercises the misclassified branches.** `CardBlockTransitionTests.cs` has
+exactly one `WriteFailed` test — `ApplyBlockTransition_WhenNoCardExistsAtThatPath_Fails` — which
+covers the one sub-case that genuinely *is* a refusal. Nothing exercises a lock timeout or a
+write-I/O failure reaching `card-write-failed`, which is exactly why this shipped: the untested
+branches are the wrong ones.
+
+**Recommended fix:** split `CardBlockTransitionOutcome.WriteFailed` rather than patching the CLI
+mapping alone — a single string-typed catch-all is what let six different conditions collapse into
+one code in the first place, and `CardWriteResult.Failure` (used by `AppendComment`/
+`TransferOwnership`, no CLI verb yet) has the identical shape, so this will recur the moment §6+
+wires a verb on top of either. Minimum shape: keep a domain-refusal case for "no card at path" /
+"layout mismatch" (and, if you want it explicit, a distinct case for a corrupt/unparseable target,
+resolved as **not** a member of the closed refusal set per `## NEXT`); let the lock-timeout and
+`AtomicWrite` I/O-failure paths **not** become a `CardBlockTransitionOutcome` value at all — either
+let the underlying exception escape uncaught to `Run`'s own `catch` (mirroring `index rebuild`'s
+SQLite-failure precedent exactly), or introduce a distinct non-refusal outcome case the CLI maps to
+`ToolFailureExitCode` explicitly.
+
+**2. Refusal code minimality — eight of nine hold up; `missing-role` doesn't.**
+`undefined-transition`/`base-not-recorded`/`base-immutable`/`not-a-block-card` are each a distinct,
+spec-named domain fact — keep all four. `missing-flag-value` (a flag token present, no value
+follows) is meaningfully distinct from `missing-argument` (a required token absent entirely) — the
+caller's fix differs in each case. `unrecognised-role` (present but invalid) correctly pairs with
+`missing-role` the same way the existing `missing-subcommand`/`unknown-subcommand` pair already
+does — good precedent, not redundancy.
+
+**`missing-role` is a redundant near-synonym of `missing-argument`.** Compare the two positional
+arguments (file path, transition name) — both use the *same* `missing-argument` code with
+different messages ("requires a card file path and a transition name" vs. "requires a transition
+name"). `--role` is *also* a required argument that was never supplied at all — structurally
+identical to the positional case — yet it gets its own bespoke code instead of reusing
+`missing-argument`, for no principled reason: nothing distinguishes "a required positional is
+absent" from "a required flag is absent" in a way that would change what the caller does about it
+(supply the thing). This is the inconsistency worth fixing: either every "which argument is
+missing" case gets its own code (it doesn't — `--base`/`--change` don't), or none beyond the
+existing `missing-argument`/`missing-flag-value` pair should. Recommend collapsing `missing-role`
+into `missing-argument`, keeping `unrecognised-role` as is. Cheap: one string literal, one test
+assertion.
+
+**3. Write path verified by execution, not by reading the worker's claims.**
+- **Byte-identical tests are genuine and verb-specific**, not a copy of the index test:
+  `ApplyBlockTransition_UndefinedTransition_LeavesTheCardFileByteIdentical` (domain) and two CLI
+  ones (`...AndLeavesTheCardByteIdentical`) all assert `File.ReadAllBytes` before/after, matching
+  §3's "assert on bytes, not the outcome object" rule.
+- **Independently mutated two guards, differently from the worker's own mutations, and watched
+  both fail for the expected reason** (scratch copy, reverted after): inverted the
+  `base-not-recorded` condition (`transition.To == Briefed` → `!= Briefed`) — the corresponding
+  test went red with `Applied` instead of `BaseNotRecorded`, exactly as expected. Disabled the
+  `base-immutable` check — `ApplyBlockTransition_BaseCannotChangeAcrossRemediationRounds` went red
+  the same way. Neither is the mutation the worker's own DEVLOG account describes, so this is a
+  second, independent confirmation, not a re-reading of the first.
+- **The read-decide-write genuinely shares one held lock**, matching `TransferOwnershipUnderExistingLock`'s
+  proven shape exactly: `File.Exists`, `ReadCard`, the legality/base/round decision, and the write
+  all happen inside `ApplyBlockTransitionUnderExistingLock`, called only from inside `WithLock`'s
+  callback — no gap between check and act, so there's no new "verify effect before acting" race to
+  introduce (there's nothing released and reacquired within the operation).
+- **`WriteCard` is genuinely untouched** — confirmed by `git diff 99a61b6 -- CardStore.cs`, which
+  shows zero lines removed from `WriteCard` itself, and independently by re-enumerating
+  `CardStore`'s entire static method surface via reflection myself (12 methods: the 9 listed
+  `internal static` plus `WithLock`×2 overloads and `AtomicWrite`, both `private`) against
+  `CardCommentImmutabilityTests.cs`'s updated `CardStore_EntireStaticMethodSurface_IsExplicitlyAccountedFor`
+  expected list — they match exactly, and that test's filter has no `Where` clause narrowing what
+  it admits (§4's own remediation for exactly this class of gap), so it's the whole surface, not a
+  sample.
+- **Interrupted write cannot produce a corrupt card** — `AtomicWrite` (temp-file-then-rename,
+  `File.Move(overwrite: true)`, the platform fact §2 hammer-tested as genuinely atomic) is reused
+  unmodified; `ApplyBlockTransitionUnderExistingLock` calls the same shared method every other
+  write path does. This is inheritance of an already-proven property, not a new implementation to
+  re-prove.
+
+**4. Concurrency — no new hammer loop owed; judgment, not assumption.** `git diff 99a61b6 --
+src/Callboard/Cards/CardLock.cs` is empty: the lock primitive itself is byte-for-byte unchanged.
+`ApplyBlockTransitionUnderExistingLock` is structurally isomorphic to
+`TransferOwnershipUnderExistingLock` — one lock acquisition via `WithLock`, one read, pure
+in-memory decision logic, one write — with no new I/O pattern or second lock/release cycle that
+`TransferOwnership`'s already-hammer-tested shape didn't have. The concurrency guarantee lives in
+`CardLock`/`WithLock`/`AtomicWrite`, none of which changed; new business logic riding on an
+unchanged, already-proven substrate doesn't need its own hammer loop to inherit that proof. **Not
+blocking.** Soft recommendation, not a requirement: block C is the first verb where two
+*different* roles (worker submitting, reviewer approving) might plausibly race on the same card in
+real use, which §2's hammer loops (single-actor-shaped) didn't specifically model — a cheap
+two-thread test (two concurrent `ApplyBlockTransition` calls attempting different legal
+transitions on the same card, asserting one `Applied` and one cleanly `WriteFailed`-or-serialized,
+never a torn file) would be nice defense-in-depth. I would not send the worker back for this alone.
+
+**5. `round`/remediation — confirmed structurally and by mutation.** No task-completion field
+exists anywhere on `BlockCardFields` (`Base`, `ReviewedState`, `Tasks`, `Round`, `BlockedBy` — none
+of these represent "done"), and `tasks.md` is untouched anywhere in this diff (`git diff 99a61b6 |
+grep tasks.md` — no hits) — so "ticks no task" holds because there is nothing in the diff's own
+surface capable of doing so, not merely because no test caught it doing so. Independently
+re-verified `base` immutability across rounds via my own mutation (finding 3, above) rather than
+re-running the worker's; `ApplyBlockTransition_ChangesRequested_ReturnsToBriefed_IncrementsRound_AndLeavesTasksUntouched`
+drives a real 4-transition cycle and asserts `Round == 2`, same card `Id`, `Tasks` unchanged.
+
+**6. New delimiter — format rules and preserved-unknown-fields hold.** `TransitionLinePrefix`
+mirrors `HandoverLinePrefix` exactly, feeds the same `LooksLikeDelimiterOrEscapedDelimiter` guard,
+and the body-scanning loop in `CardFileParser.Parse` stops on `IsTransitionLine` the same way it
+already stops on `IsHandoverLine`. Both requested proofs are present as real tests, not assumed:
+`RoundTrips_CardWithoutATransition_LeavesTheSequenceEmpty` (an older-shape block card with zero
+transition lines parses to an empty sequence and re-serialises without gaining one) and
+`RoundTrips_BodyContainingTextThatLooksLikeATransitionDelimiter_AndInjectsNoTransitionEntry` (a
+transition-delimiter-shaped line inside the body round-trips as narrative, not as a parsed entry).
+Unknown-field preservation on a transition line is also tested
+(`RoundTrips_TransitionWithAnUnrecognisedField_PreservesItVerbatim`), matching the same
+extensibility rule §2 established.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (257/257),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report.
+
+Please address finding 1 (blocking) and finding 2 (cheap, should land with it), then re-flag for
+re-audit.
+
+**[worker]** Both findings addressed — the disposition split fixed at the type, not the CLI mapping,
+in both the new type and the shared one the reviewer named.
+
+**Finding 1 (blocking) — fixed in both `CardBlockTransitionOutcome` and `CardWriteResult`.**
+
+- **`CardBlockTransitionOutcome.WriteFailed(string)` deleted**, replaced with four distinct cases:
+  `CardNotFound(FilePath)` and `LayoutMismatch(Reason)` (refusal-shaped, caller-correctable) versus
+  `CardCorrupt(FilePath, Reason)` and `ToolFailure(Reason)` (neither/tool-failure-shaped).
+  `RunBlockTransition` now maps the first two to `Refusal("card-not-found", …)` /
+  `Refusal("card-layout-mismatch", …)`, and the latter two to a **thrown**
+  `InvalidOperationException` — which reaches `Run`'s own outer `catch` and becomes a genuine
+  tool-failure envelope/exit code, the same route `index rebuild`'s SQLite I/O failures already
+  take. No third case was added to `CommandOutcome`; the fix is entirely "let it propagate", per
+  the reviewer's own structural diagnosis.
+- **`CardWriteResult.Failure(string)` deleted too**, replaced with `NotFound`/`AlreadyExists`/
+  `LayoutMismatch` (refusal-shaped) and `Corrupt`/`ToolFailure` (not). Every construction site in
+  `CardStore.cs` and `AnchoredCardPath.cs` (11 sites) now constructs the specific case its cause
+  actually is — lock timeout and `AtomicWrite` I/O failure → `ToolFailure`; "no card at that path"
+  → `NotFound`; "already exists" (`WriteCard`'s create-only refusal) → `AlreadyExists`; layout/root
+  mismatch → `LayoutMismatch`; a corrupt read inside `AppendCommentUnderExistingLock`/
+  `TransferOwnershipUnderExistingLock` → `Corrupt`. `AnchoredCardPath.TryCreate`'s `out` parameter
+  is now typed `CardWriteResult.LayoutMismatch?`, not the deleted `Failure?`, so the one case it can
+  ever construct is enforced at the signature, not by convention. No CLI verb is wired over
+  `AppendComment`/`TransferOwnership` yet (§8's job), so this doesn't yet get its own CLI-level
+  mapping test — but the type itself can no longer collapse the three dispositions the way
+  `WriteFailed` did, which is what the reviewer asked to close before §8 arrives.
+- **Ripple, found by the compiler, not by grep:** every `.Match` call site against the old 2-case
+  `CardWriteResult` broke — six test files' `AssertSuccess`/`AssertFailure` helpers
+  (`CardIdentityArchiveSurvivalTests`, `IndexInvariantTests`, `CardStoreConcurrencyTests`,
+  `CardOwnershipTransferTests`, `CardStoreWriteTests`, `CardCommentImmutabilityTests`) plus two
+  inline `.Match` calls the build surfaced that a `grep` for `AssertSuccess`/`AssertFailure` alone
+  would have missed (`CardStoreCorruptionTests.WriteGoodCard`, `IndexPopulatorTests`'s seed-card
+  helper). All updated to the six-arm shape; none changed what they assert beyond the new arm
+  names — `Assert.Contains("does not live in the directory", …)` and the missing-path substring
+  checks still pass because `LayoutMismatch.Reason`/a rebuilt `NotFound` message carry the same
+  text. This is the ripple the brief flagged as possibly needing to stop and report — it stayed
+  small enough (11 production construction sites, 8 test call sites, all mechanical) to carry here
+  rather than punt to §8.
+- **Tests per branch, watched red first** (all four): `ApplyBlockTransition_WhenTheCardFileIsCorrupt_
+  ReturnsCardCorrupt_NotARefusalShapedOutcome`, `ApplyBlockTransition_WhenTheLockIsHeldByAnotherCaller_
+  ReturnsToolFailure_NotARefusalShapedOutcome`, `ApplyBlockTransition_WhenThePathDoesNotLiveInThe
+  DeclaredChangesDirectory_ReturnsLayoutMismatch_…` (domain level), plus
+  `BlockTransition_CardNotFound_RefusesWithCardNotFoundCode`,
+  `BlockTransition_LayoutMismatch_RefusesWithCardLayoutMismatchCode`, and
+  `BlockTransition_CorruptCard_ExitsAsToolFailure_NotARefusal` (CLI level — this last one is the
+  exact defect the reviewer found: mutated `onCardCorrupt` back to a `Refusal("card-write-failed", …)`
+  and watched exit code assert `2` vs actual `1` fail; mutated the two refusal codes back to
+  `"card-write-failed"` and watched both string-equality assertions fail; both reverted, both
+  confirmed byte-identical to source before re-running gates).
+- **Lock-timeout tool-failure proof stays at the domain level, not CLI.** `DefaultLockTimeout` is a
+  private `CommandDispatcher` constant (5s), not yet parameterised for a test seam, so a CLI-level
+  lock-contention test would need a genuine multi-second wait or a new test-only override — out of
+  proportion for this remediation. The domain-level test above (`CardLock.Acquire` held directly,
+  `ApplyBlockTransition` called with a 200ms timeout) proves the same disposition at the layer that
+  actually decides it.
+
+**Finding 2 — `missing-role` collapsed into `missing-argument`.** Both `CommandParser.
+ParseBlockTransition`'s call site and the CLI test asserting it updated; message text unchanged
+("'block transition' requires '--role <role>'."), only the code.
+
+**Refusal set, restated (§9 inherits this):** `undefined-transition`, `base-not-recorded`,
+`base-immutable`, `not-a-block-card`, `card-not-found`, `card-layout-mismatch` (execute phase);
+`missing-argument`, `missing-flag-value`, `unrecognised-role` (parse phase); plus
+`missing-subcommand`/`unknown-subcommand`/`unrecognised-argument` reused unchanged. `card-write-failed`
+is retired — no code path constructs it any more. `tool-failure` is not a member of this set (per
+§3's own standing note) — it is the generic envelope `WriteToolFailureEnvelope` already builds for
+any escaping exception, unchanged by this block.
+
+**Optional two-thread `block transition` test — skipped, per the reviewer's own permission.** The
+reviewer already confirmed `CardLock.cs` has zero diff and the new path is structurally isomorphic
+to the already-hammered `TransferOwnershipUnderExistingLock`; a fresh hammer loop on this call path
+specifically would exercise the same lock machinery §2 already proved under real contention, not a
+new risk this block introduces. Adding one now grows the diff for a guarantee already established
+one layer down.
+
+**Gates (sandboxed, full rebuild):** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0` (`make gates`, single pass). 263/263 tests (257 prior + 6 new: 4 domain-level, 2
+CLI-level, covering the disposition-per-branch requirement and the collapsed refusal code).
+
+**Self-reported DEVLOG-editing near-miss (disclosed, not requested — no one caught this but me).**
+Landing this post, my first insertion attempt located "## NEXT" by `str.rfind`, which matched the
+literal substring inside a pinned bullet's own prose (`` `## NEXT` heading `` — the "Tooling" note's
+own example) rather than the true heading line, three sections deep into the pinned body. That cut
+off and discarded the tail of the pinned `## NEXT` content (the last two "Notes owed to later
+sections" bullets and the whole "Environment — resolved" subsection) and left my post spliced into
+the middle of a sentence, with a stray second `## NEXT` at file end. Caught before reporting back,
+by re-reading the file rather than trusting the edit had landed cleanly. Fixed by: recovering the
+exact deleted text from `git diff` against `HEAD` (available because that text predates this
+session's changes and was never itself touched again), splicing it back in byte-for-byte, and
+moving this post to its correct position — before the heading, not inside the pinned body a worker
+post must never touch. Verified after the fix: exactly one `## NEXT` in final position, the
+recovered tail diffs to nothing against the pre-corruption version, and this post now reads
+directly after the reviewer's `re-audit.` line. This is the exact failure mode the "Tooling" note
+two bullets above exists to prevent — I re-broke the rule it documents while relying on it, which
+is worth naming rather than quietly fixing and moving on.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Second-remediation re-audit, block C. The disposition split is genuinely correct and
+`WriteFailed`/`Failure` are genuinely unwritable — but the refusal-set verification you asked for
+(point 4) surfaced a real, demonstrated gap in exactly the mechanism this remediation exists to
+protect.
+
+**Verdict: Request changes.** Not because anything is wrong in production — everything I could
+exercise end-to-end behaves correctly. Because four members of the refusal set you asked me to
+re-verify have **zero test coverage of their literal wire code**, and one of those four is the
+`onToolFailure` CLI mapping that is the entire subject of this remediation round.
+
+**1. The disposition split, verified by execution — genuinely unwritable, not merely unused.**
+`CardBlockTransitionOutcome.WriteFailed` is deleted from the source, not deprecated; the closed
+union's `Match` signature has nine arms now (`Applied`/`UndefinedTransition`/`BaseNotRecorded`/
+`BaseImmutable`/`NotABlockCard`/`CardNotFound`/`LayoutMismatch`/`CardCorrupt`/`ToolFailure`), so the
+old conflation cannot be reconstructed anywhere in this codebase without adding a case back — it's
+gone from the type, not just from the call sites. Ran three independent end-to-end checks against
+the **real, unmutated** production binary (a standalone program calling `CommandDispatcher.Run`
+directly, no test harness):
+
+- A corrupt card via `block transition`: exit code `2` (`ToolFailureExitCode`), exactly **one**
+  newline in stdout, envelope `{"ok":false,...,"refusal":{"code":"tool-failure",...}}`, stderr
+  populated with the specific diagnostic. Confirms `onCardCorrupt`'s throw genuinely reaches `Run`'s
+  catch and produces the right shape, for real, not through the test harness.
+- A genuine lock timeout (held the card's `CardLock` directly, then called `Run`, waited out the
+  real 5-second `DefaultLockTimeout`): same shape — exit `2`, one JSON line, `"tool-failure"`,
+  message reads `"timed out after 5s waiting for the lock on '...'; currently held by pid ...".`
+  This is the exact `onToolFailure` arm, proven correct in production, independent of any test.
+- Also independently mutated `"card-not-found"` → `"card-not-found-WRONG"` in a scratch copy (not
+  the one the worker's own account describes) and watched
+  `BlockTransition_CardNotFound_RefusesWithCardNotFoundCode` fail on the string comparison — that
+  branch's test is real.
+
+**2. `CardWriteResult`'s wider blast radius — no §4 behaviour changed underneath.** Read every
+construction site in the diff (`WriteCard`, `AppendComment`, `AppendCommentUnderExistingLock`,
+`TransferOwnership`, `TransferOwnershipUnderExistingLock`, `AnchoredCardPath.TryCreate`): each is a
+pure retyping — same `if`/condition, same trigger, only the constructed case changed to a more
+specific one. No control flow moved. `AppendCommentUnderExistingLock`'s `success.Card with { ... }`
+comment-append shape and `TransferOwnershipUnderExistingLock`'s handover-append shape are
+byte-identical to what I audited two rounds ago. `AnchoredCardPath.TryCreate`'s `out` parameter is
+now typed `CardWriteResult.LayoutMismatch?` (not the deleted `Failure?`) — a genuine, structural
+tightening: that method can no longer even *compile* a call that assumes it might report anything
+but a layout problem. One consequence worth naming, not blocking: `NotFound`/`AlreadyExists` now
+carry only a `FilePath`, not the old operation-specific sentence ("...to append a comment to." vs.
+"...to transfer ownership of."); test helpers reconstruct approximate text for their own
+assertions, decoupled from what `CardStore` actually emits. Since no CLI verb is wired over
+`AppendComment`/`TransferOwnership` yet, nothing today depends on that wording — but whoever wires
+one in §8 will need to compose their own operation-specific message from the structured fields, the
+same discipline `RunBlockTransition` already follows for `CardNotFound`.
+
+**3. The throw-to-outer-catch route loses nothing, confirmed end-to-end, not by reading the test
+file.** Both invariants held in both live runs above: exactly one JSON line, non-zero exit. A
+thrown tool-failure is indistinguishable from a genuine escaped bug **by design** — same code
+(`"tool-failure"`), same exit (`2`) — matching `index rebuild`'s own established precedent exactly
+(an uncaught SQLite failure gets the identical generic treatment). The two are only distinguishable
+via the stderr diagnostic text, which both live runs above show is populated and specific
+(`"card '...' could not be read as a block card: ..."` vs. `"timed out after 5s waiting for the
+lock..."`) — a human debugging can tell them apart; a machine caller isn't meant to, and isn't
+supposed to react differently either way (proceed unenforced). Nothing new here; this block
+inherits, not invents, that shape.
+
+**4. The refusal set, re-verified — and here's the finding.** Full current set, from
+`CommandDispatcher.cs`/`CommandParser.cs`: `undefined-transition`, `base-not-recorded`,
+`base-immutable`, `not-a-block-card`, `card-not-found`, `card-layout-mismatch`, `missing-argument`,
+`missing-flag-value`, `unrecognised-role`, plus the reused `missing-subcommand`/
+`unknown-subcommand`/`unrecognised-argument`/`repo-root-not-found`. `card-write-failed` and
+`missing-role` are retired and unreachable (both deleted from the closed union / collapsed at the
+call site). `tool-failure` correctly stays out of this set, per `## NEXT`'s own standing note — it's
+the generic escaping-exception envelope, not a domain refusal.
+
+**Checked, not assumed, that each fires — and four don't, independently confirmed by mutating each
+in a scratch copy of the real tree and running the full suite:**
+
+| code | CLI-level string-literal test? | confirmed by mutation |
+|---|---|---|
+| `undefined-transition` | yes | — |
+| `base-not-recorded` | yes | — |
+| `card-not-found` | yes | mutated, red (this round) |
+| `card-layout-mismatch` | yes | — |
+| `missing-argument` | yes | — |
+| `unrecognised-role` | yes | — |
+| **`base-immutable`** | **no — domain-level type assertion only** | **mutated `"base-immutable"` → wrong string; full suite (263/263) stayed green** |
+| **`not-a-block-card`** | **no — domain-level type assertion only** | **same mutation, same result: green** |
+| **`missing-flag-value`** | **no CLI test for the `--role` construction site (of 3)** | **mutated that one site; full suite stayed green** |
+| **`onToolFailure`'s CLI mapping** | **no test at all — domain-level `CardBlockTransitionOutcome.ToolFailure` construction is tested, the CLI's `throw` is not** | **reverted the CLI mapping to `Refusal("card-write-failed", ...)` — the exact defect this whole round exists to close — full suite (263/263) stayed green** |
+
+The last row is the one that matters most: **the specific line this remediation was about can be
+silently reverted to the original defect, and nothing catches it.** The worker disclosed this
+honestly ("Lock-timeout tool-failure proof stays at the domain level, not CLI... a genuine
+multi-second wait or a new test-only override [would be] out of proportion") — but the domain-level
+test only proves `CardStore.ApplyBlockTransition` constructs the right *union case*; it says nothing
+about whether `CommandDispatcher.RunBlockTransition` maps that case to a thrown exception rather
+than a refusal, which is the exact thing that broke the first time.
+
+**Recommended fix, cheap and precedented:** thread the lock timeout through `Run` as an optional
+parameter the same way `clock` already is (`Func<DateTimeOffset>? clock = null` → add
+`TimeSpan? lockTimeout = null`, defaulting to the current 5s at the composition root). A CLI-level
+test can then hold the lock and pass a short override (50–200ms, the same magnitude the
+domain-level test already uses) without a real multi-second wait, and assert
+`ToolFailureExitCode`/`"tool-failure"` the same way `BlockTransition_CorruptCard_ExitsAsToolFailure_NotARefusal`
+already does for the sibling arm. `base-immutable`/`not-a-block-card`/the remaining
+`missing-flag-value` sites are cheaper still — each already has a domain-level test proving the
+right case is constructed; each just needs one CLI-level sibling asserting the literal string, the
+same shape `BlockTransition_CardNotFound_RefusesWithCardNotFoundCode` already is.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (263/263),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report. (One environment note, not a
+finding: my first clean-rebuild attempt hit `NU1900` — the sandbox's NuGet egress restriction after
+deleting `obj`/`bin` forced a fresh restore; a `dotnet restore` with the documented sandbox override
+resolved it, matching `## NEXT`'s existing note that restore is the one command needing it.)
+
+Please close the `onToolFailure` CLI-mapping gap (the one that matters) and, ideally in the same
+pass, the three cheaper string-literal gaps, then re-flag.
+
+**[worker]** All four gaps closed, and the standard applied to the whole refusal set this block
+mints — every code now has a CLI-level test asserting the literal emitted string, not just a
+domain-level outcome-object assertion.
+
+**The sharpest gap — `onToolFailure`'s CLI mapping.** `lockTimeout` threaded through `Run` as an
+optional `TimeSpan?` parameter, exactly the way `clock` already is (`resolvedLockTimeout = lockTimeout
+?? DefaultLockTimeout`), and forwarded into `RunBlockTransition`. `BlockTransition_LockTimeout_
+ExitsAsToolFailure_NotARefusal` holds the card's lock directly via `CardLock.Acquire` in the test
+itself, then calls `CommandDispatcher.Run` with `lockTimeout: TimeSpan.FromMilliseconds(200)` — a
+genuine lock contention through the real `Run` entry point, not a domain-level construction, and it
+runs in under a second, not 5 real seconds. **Watched red exactly as demanded:** reverted
+`onToolFailure`'s throw back to `Refusal("card-write-failed", …)` — the precise reversion the
+reviewer performed — and the test caught it (`Expected: 2, Actual: 1`). Reverted, confirmed
+byte-identical to source before re-running gates.
+
+**`base-immutable` and `not-a-block-card` — CLI-level siblings added.**
+`BlockTransition_BaseImmutable_RefusesWithBaseImmutableCode` briefs a card with `base: commit-abc`
+through a real `Run` call, then attempts a second real `Run` call with a different `--base` and
+asserts the emitted code, plus that the card's recorded base is still `commit-abc` afterwards.
+`BlockTransition_NotABlockCard_RefusesWithNotABlockCardCode` writes a `question`-kind card at a
+valid change-scoped path and asserts the code `block transition` emits against it. Both watched red
+by mutating their refusal's code string to `"undefined-transition"` and confirming the assertion
+fails; both reverted.
+
+**`missing-flag-value` — the reviewer's own finding, generalised.** All three construction sites
+(`--role`, `--base`, `--change` each dangling with no following value) now have their own test.
+Watched each independently: mutated one site's code string at a time (three separate mutation
+rounds), and each time exactly the one test naming that flag went red while the other two stayed
+green — proving the three tests are genuinely tied to their own sites, not accidentally covering
+each other.
+
+**Applied to the rest of the set, not just the four named.** `missing-argument` has three
+construction sites too (missing file path, missing transition name, `--role` flag entirely absent —
+the last already covered by the pre-existing `BlockTransition_MissingRoleFlag_Refuses`, itself
+re-verified red this round). Added
+`BlockTransition_MissingFilePath_RefusesWithMissingArgumentCode` and
+`BlockTransition_MissingTransitionName_RefusesWithMissingArgumentCode` for the other two, each
+independently watched red by mutating its own site.
+
+**Every new test's red-then-green, summarised (nine mutation rounds, one file reverted between
+each, `diff` confirmed against a clean backup after every revert):**
+
+| test | mutated site | observed red |
+|---|---|---|
+| `BlockTransition_LockTimeout_ExitsAsToolFailure_NotARefusal` | `onToolFailure` → `Refusal("card-write-failed", …)` | exit `2` expected, `1` actual |
+| `BlockTransition_BaseImmutable_RefusesWithBaseImmutableCode` | `onBaseImmutable`'s code string | `"base-immutable"` expected, `"undefined-transition"` actual |
+| `BlockTransition_NotABlockCard_RefusesWithNotABlockCardCode` | `onNotABlockCard`'s code string | `"not-a-block-card"` expected, `"undefined-transition"` actual |
+| `BlockTransition_RoleFlagWithNoValue_RefusesWithMissingFlagValueCode` | `--role`'s missing-flag-value site | caught; `--base`/`--change` sites stayed green |
+| `BlockTransition_BaseFlagWithNoValue_RefusesWithMissingFlagValueCode` | `--base`'s missing-flag-value site | caught; the other two stayed green |
+| `BlockTransition_ChangeFlagWithNoValue_RefusesWithMissingFlagValueCode` | `--change`'s missing-flag-value site | caught; the other two stayed green |
+| `BlockTransition_MissingFilePath_RefusesWithMissingArgumentCode` | file-path-missing site | caught independently |
+| `BlockTransition_MissingTransitionName_RefusesWithMissingArgumentCode` | transition-name-missing site | caught independently |
+| `BlockTransition_MissingRoleFlag_Refuses` (pre-existing, re-verified) | `--role`-entirely-absent site | caught independently |
+
+**Refusal set, restated once more (§9 inherits this, and it is now unchanged from the prior
+round):** `undefined-transition`, `base-not-recorded`, `base-immutable`, `not-a-block-card`,
+`card-not-found`, `card-layout-mismatch` (execute phase, all now CLI-tested); `missing-argument`
+(three sites, all CLI-tested), `missing-flag-value` (three sites, all CLI-tested),
+`unrecognised-role` (parse phase); plus `missing-subcommand`/`unknown-subcommand`/
+`unrecognised-argument` reused unchanged and already CLI-tested. `tool-failure` is the generic
+envelope, not a member of this set, and is now CLI-tested on both its arms (corrupt card, lock
+timeout).
+
+**Gates (sandboxed, full rebuild):** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0` (`make gates`, single pass). 271/271 tests (263 prior + 8 new).
+
+**DEVLOG edit anchored on the line-start `## NEXT` match only** (`grep -c "^## NEXT"` confirmed
+exactly one before and after this write) — not the substring search that corrupted this file two
+posts ago.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Third-remediation re-audit, block C — adversarial pass over the whole refusal set,
+not a re-check of the worker's own list.
+
+**Verdict: Request changes.** One real, demonstrated gap remains — a site the worker's own
+enumeration didn't cover. Everything else, including all nine of the worker's claimed fixes and
+eight additional sites I chose myself, held up under independent mutation.
+
+**1. My original four mutations, re-run against the current source — all four now go red.**
+Independently, in a scratch copy: reverted `onToolFailure`'s throw back to
+`Refusal("card-write-failed", …)` → `BlockTransition_LockTimeout_ExitsAsToolFailure_NotARefusal`
+caught it (`Expected: 2, Actual: 1`). Mutated `"base-immutable"`, `"not-a-block-card"`, and the
+`--role` `"missing-flag-value"` site independently — each caught by exactly the test named for it,
+nothing else moving. The gap from the second remediation round is closed.
+
+**2. Adversarial pass — sites the worker's table doesn't list.** Went through every refusal-code
+construction site in `CommandDispatcher.cs`/`CommandParser.cs` myself, not the worker's summary of
+which ones it touched, and mutated each independently (revert, `diff`-confirmed clean, before the
+next):
+
+| site | result |
+|---|---|
+| `undefined-transition` | caught |
+| `base-not-recorded` | caught |
+| `card-not-found` | caught |
+| `card-layout-mismatch` | caught |
+| `unrecognised-role` | caught |
+| `missing-argument` (file path missing) | caught |
+| `missing-argument` (transition name missing) | caught |
+| `missing-argument` (`--role` entirely absent, collapsed site) | caught |
+| `missing-subcommand`/`unknown-subcommand` for `block` (`ParseBlock`'s own sites, distinct from `ParseIndex`'s) | both caught, confirmed tied to `Block_MissingSubcommand_Refuses`/`Block_UnknownSubcommand_Refuses` specifically, not accidentally passing via `index`'s tests |
+| **`repo-root-not-found` for `block transition`** (`RunBlockTransition`'s own site, distinct from `RunIndexRebuild`'s) | **NOT caught — full 271-test suite stayed green** |
+
+**The gap: `RunBlockTransition` has its own `repo-root-not-found` construction site, and nothing
+tests it.** `index rebuild`'s sibling site has `IndexRebuild_OutsideAnyGitRepository_Refuses`;
+`block transition`'s does not. I mutated the code string in a scratch copy — full suite green.
+Confirmed the *production* code is correct, not merely untested: a live run of the real,
+unmutated binary against a directory with no `.git` produces the right refusal
+(`exitCode=1`, `"code":"repo-root-not-found"`) — this is a coverage gap, not a live defect, the
+same shape as the `onToolFailure` gap two rounds ago. Cheap to close: a `block transition` sibling
+of the existing `index rebuild` test, same shape.
+
+I also re-confirmed `onCardCorrupt`'s CLI mapping (unchanged this round) still holds via the
+existing `BlockTransition_CorruptCard_ExitsAsToolFailure_NotARefusal` and the live end-to-end run
+from the previous round — no new mutation needed since nothing touched that path this round.
+
+**3. The `lockTimeout` seam, judged.** `Run` gained `TimeSpan? lockTimeout = null`, resolved to
+`DefaultLockTimeout` (5s, unchanged) when absent — exactly the `clock` pattern. Three checks:
+- **Default behaviour unchanged.** `Program.cs` — the only production caller — still invokes `Run`
+  with the original six arguments; `clock` and `lockTimeout` both stay `null`, so production always
+  resolves to `DateTimeOffset.UtcNow` and the 5-second default. Confirmed by reading `Program.cs`:
+  zero diff from before this parameter existed.
+- **No new caller-reachable state.** `Run` is `internal`, reachable only from `Program.cs` (doesn't
+  use the parameter) and the test assembly (via `InternalsVisibleTo`, unchanged by this addition).
+  Nothing outside the test suite can supply a non-default `lockTimeout`.
+- **Threaded as a parameter, not a shared static** — `TimeSpan? lockTimeout` flows `Run` →
+  `resolvedLockTimeout` → `RunBlockTransition(parsed, resolvedLockTimeout)` →
+  `CardStore.ApplyBlockTransition(..., lockTimeout, ...)`, the same call-chain shape `clock` already
+  established and the codebase rule §2 set. No `[ThreadStatic]`, no ambient/global state.
+
+This is a test seam that changes nothing about shipped behaviour and adds no reachable surface —
+clean.
+
+**4. Is the test-per-site standard enforced by anything but diligence? No — and I just proved it
+isn't.** There is no structural check analogous to `CardStore_EntireStaticMethodSurface_
+IsExplicitlyAccountedFor` for refusal codes — nothing enumerates every `new
+CommandOutcome.Refusal("...", ...)` construction site in `Cli/` and cross-checks it against what
+the test suite actually asserts. The `repo-root-not-found` gap above is exactly what that absence
+costs: a genuine site, sitting right next to a sibling that *is* tested, went unnoticed by both the
+worker's list and my own first pass — I only found it by deliberately enumerating every site myself
+rather than trusting either list. **I'd recommend §9 weigh a structural check** (a source-scanning
+test extracting every refusal-code literal from `Cli/` and asserting it appears in at least one
+test's expected-code assertion would catch this class of gap without needing per-site reflection,
+since these are string literals, not methods) — that's a judgement call for §9's design, not
+something I'm asking this block to build; flagging it because you asked directly whether the
+standard is structural, and it plainly is not yet.
+
+**5. Standing set, re-confirmed after the new parameter — all held, checked directly, not
+inferred:**
+- One JSON line on every exit path, non-zero exit whenever not an unqualified success — confirmed
+  via the live corrupt-card and lock-timeout runs in the prior round, and `Run`'s try/catch/
+  `WriteEnvelope`/`WriteToolFailureEnvelope` structure is untouched by the `lockTimeout` addition
+  (only the resolved value threads through, no new exit path).
+- `EnforceNoUnconsumedArguments` unchanged — still gates only `Ready`, still exhaustive `Match`.
+- Three-way refusal/tool-failure/reported-failure split intact — `onCardCorrupt`/`onToolFailure`
+  still throw, everything refusal-shaped still returns `CommandOutcome.Refusal`.
+- `git diff 99a61b6 -- src/Callboard/Program.cs src/Callboard/BannedSymbols.txt` — still empty.
+- §4 surfaces (`AppendComment`, `TransferOwnership`, `WriteCard`) — no diff since two rounds ago;
+  this round touched only `CommandDispatcher.cs`/`CommandParser.cs` and the block-transition test
+  files.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (271/271),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report.
+
+Please add the one missing `block transition` / `repo-root-not-found` test (mirrors
+`IndexRebuild_OutsideAnyGitRepository_Refuses`) and re-flag. Given how narrow this is relative to
+the last two rounds, I'd expect this to be the last one.
+
+**[worker]** Closed — the one gap only.
+
+Added `BlockTransition_OutsideAnyGitRepository_RefusesWithRepoRootNotFoundCode`, mirroring
+`IndexRebuild_OutsideAnyGitRepository_Refuses`'s exact shape: a plain non-git `TempDirectory` (new
+helper, same pattern as the one already in `CommandDispatcherTests.cs`) as the working directory,
+`block transition` invoked against it, asserting `repo-root-not-found`. **Watched red**: mutated
+`RunBlockTransition`'s own construction site (line 383, distinct from `RunIndexRebuild`'s at line
+340 — confirmed I mutated the right one before running) from `"repo-root-not-found"` to
+`"undefined-transition"`; the new test caught it (`Expected: "repo-root-not-found", Actual:
+"undefined-transition"`). Reverted, diffed clean against the pre-mutation source, re-ran gates.
+
+No production code touched — confirmed by `git diff` scope: only
+`tests/Callboard.Tests/CommandDispatcherBlockTransitionTests.cs` changed this round.
+
+**Gates (sandboxed, full rebuild):** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0` (`make gates`, single pass). 272/272 tests (271 prior + 1 new).
+
+Line-start `## NEXT` anchor confirmed exactly once before and after this write
+(`grep -c "^## NEXT"`).
+
+→ @reviewer
+
+---
+
+**[reviewer]** Fourth-remediation re-audit — closes it. **Verdict: Approve.** Block C is done.
+
+**1. Mutated the exact site myself, independently.** Reverted `RunBlockTransition`'s
+`"repo-root-not-found"` literal to `"repo-root-not-found-WRONG"` in a scratch copy — a different
+regex-targeted edit than my own round-3 mutation, not a copy of it. Ran both
+`BlockTransition_OutsideAnyGitRepository_RefusesWithRepoRootNotFoundCode` and
+`IndexRebuild_OutsideAnyGitRepository_Refuses` together (`--filter
+FullyQualifiedName~OutsideAnyGitRepository`, 2 tests matched): the new test failed exactly as
+expected (`Expected: "repo-root-not-found"`, `Actual: "repo-root-not-found-WRONG"`), the index
+sibling stayed green. The two are genuinely independent — the new test catches its own site only,
+not by accident sharing coverage with the tested sibling it was modelled on. Reverted, confirmed
+byte-identical to source.
+
+**2. Production untouched, confirmed by more than the worker's word.** `git diff 99a61b6 --stat --
+src/Callboard/Cli/CommandDispatcher.cs src/Callboard/Cli/CommandParser.cs` reports the identical
+insertion/deletion counts (125/8 and 121/1 respectively) I recorded at the start of this round,
+before the worker's post — these two files have not moved by one line. `git status --short` shows
+the same twenty-file `src/`+existing-`tests/` footprint as every prior round, with
+`CommandDispatcherBlockTransitionTests.cs` (new test + `TempDirectory` helper, both read in full)
+the only content that's new since round 3. The diff is the one test file, as claimed.
+
+**Gates independently reproduced from a clean rebuild** (including a fresh `dotnet restore`, sandbox
+override, per the documented NuGet-egress exception): `BUILD_EXIT:0`, `TEST_EXIT:0` (272/272),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report.
+
+**3. Final verdict on block C as a whole, across all four rounds.**
+
+**Approve.** Every defect found across this block's review was a *misclassification* or a
+*coverage gap* — I never found the write path itself do the wrong thing. The core mechanism (the
+targeted locked read-decide-write mirroring `TransferOwnership`, byte-identical refusals, `base`
+immutability across rounds, `round` incrementing only on `changes-requested`, no task ever ticked,
+the new transition delimiter's round-trip and body-collision safety, `WriteCard` staying untouched)
+was sound from the first submission and has now survived independent mutation testing, by me,
+across all four rounds without a single production regression slipping through.
+
+What each round actually fixed:
+- **Round 1:** `card-write-failed` folded six unrelated dispositions (lock timeout, I/O failure,
+  missing card, layout mismatch, corrupt card, unrecognised status) into one refusal code —
+  blocking, because two of those six are tool-failures wearing a refusal's clothes. `missing-role`
+  was a redundant near-synonym of `missing-argument`.
+- **Round 2:** the fix split both `CardBlockTransitionOutcome` and the shared `CardWriteResult`
+  into proper closed unions — genuinely correct at the type level — but the CLI-level mapping of
+  the two non-refusal cases (`onCardCorrupt`, `onToolFailure`) and two of the four spec-named
+  refusal codes (`base-immutable`, `not-a-block-card`) had no test proving the mapping was right,
+  only that the domain type was. I demonstrated this by reverting each and watching the full suite
+  stay green.
+- **Round 3:** all four gaps closed, with a `lockTimeout` test seam (mirroring `clock` exactly, no
+  production behaviour change at the default) making a genuine CLI-level lock-contention test
+  possible. My own adversarial pass over every construction site — not the worker's list — found
+  one more: `RunBlockTransition`'s own `repo-root-not-found` site, sitting untested beside its
+  tested `index rebuild` sibling.
+- **Round 4 (this one):** that gap closed, independently confirmed.
+
+**Nothing open. Three things worth carrying to the section supervisor deliberately, not as
+findings against this block — context, so they don't surface cold:**
+
+1. **There is no structural check tying minted refusal codes to tests that prove they fire.** I
+   said this explicitly in round 3: the standard holds entirely on diligence, and real gaps
+   survived two independent enumeration passes (the worker's and my first one) before a third
+   caught the last one. This is systemic — worth §9's attention when the refusal set becomes a
+   formal closed union, not something to bolt onto this block now that it's closed.
+2. **`CardWriteResult.NotFound`/`AlreadyExists` now carry only structured fields** (e.g.
+   `FilePath`), not the old operation-specific sentence ("...to append a comment to." vs. "...to
+   transfer ownership of."). No CLI verb consumes `AppendComment`/`TransferOwnership` yet (§8's
+   job), so nothing depends on the old wording today — but whoever wires a verb on top of either
+   should compose their own contextual message from the structured fields, the discipline
+   `RunBlockTransition` already follows for its own `CardNotFound`.
+3. **`ApplyBlockTransitionUnderExistingLock`'s mapping of `AtomicWrite`'s result has two
+   structurally unreachable arms** (`onNotFound`/`onAlreadyExists` inside that specific `.Match` —
+   `AtomicWrite` itself never constructs either case). Not a defect — exhaustive matching over the
+   full six-case union is the right shape, and it's cheap defensive coverage if `AtomicWrite` ever
+   changes — just noting it's currently vestigial so it isn't mistaken for tested behaviour it
+   isn't.
+4. **The two-thread concurrency hammer loop was deliberately skipped** (round 2), on the basis that
+   `CardLock.cs` has zero diff and the new path is structurally isomorphic to the already-proven
+   `TransferOwnershipUnderExistingLock`. I stood behind that judgment then and still do — flagging
+   it only so the supervisor doesn't need to re-derive the reasoning if the question comes up.
+
+Ready to land. 5.2/5.3/5.5 tick cleanly against what's actually in the diff.
+
 ## NEXT
 
 

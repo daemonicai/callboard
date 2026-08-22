@@ -524,6 +524,131 @@ public sealed class CardFileRoundTripTests
         AssertFailure(result);
     }
 
+    // §5 block C: the same round-trip and delimiter-safety rigor already established for
+    // CardHandover, applied to CardBlockTransitionEntry — a new delimiter line kind deserves the
+    // same proof, not an assumed extension of the existing one.
+    [Fact]
+    public void RoundTrips_CardWithATransitionSequence()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0200", CardKind.Block, "Flow transitions", "building", CardOwner.Worker, CardScope.Change, "5", Created, Updated);
+        var brief = new CardBlockTransitionEntry(CardOwner.Architect, "brief", BlockFlowState.Drafting, BlockFlowState.Briefed, Updated.AddHours(1), []);
+        var claim = new CardBlockTransitionEntry(CardOwner.Worker, "claim", BlockFlowState.Briefed, BlockFlowState.Building, Updated.AddHours(2), []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [brief, claim]);
+
+        var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
+
+        var parsed = AssertSuccess(result);
+        Assert.Equal(frontmatter, parsed.Frontmatter);
+        Assert.Equal(2, parsed.Transitions.Count);
+        Assert.Equal(brief, parsed.Transitions[0]);
+        Assert.Equal(claim, parsed.Transitions[1]);
+    }
+
+    [Fact]
+    public void RoundTrips_CardWithoutATransition_LeavesTheSequenceEmpty()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0201", CardKind.Block, "No transitions yet", "drafting", CardOwner.Architect, CardScope.Change, "5", Created, Updated);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+
+        var serialized = CardFileWriter.Serialize(card);
+        Assert.DoesNotContain("callboard:transition", serialized, StringComparison.Ordinal);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(serialized));
+        Assert.Empty(parsed.Transitions);
+    }
+
+    [Fact]
+    public void RoundTrips_CardWithHandoversTransitionsAndComments_EachSequenceIndependent()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0202", CardKind.Block, "Mixed", "building", CardOwner.Worker, CardScope.Change, "5", Created, Updated);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Started.", null, null, null, []);
+        var handover = new CardHandover(CardOwner.Architect, CardOwner.Worker, Updated, []);
+        var transition = new CardBlockTransitionEntry(CardOwner.Worker, "claim", BlockFlowState.Briefed, BlockFlowState.Building, Updated, []);
+        var card = new CardFile(frontmatter, "Body.", [comment], [], [handover], BlockCardFields.Empty, [transition]);
+
+        var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
+
+        var parsed = AssertSuccess(result);
+        Assert.Equal(comment, Assert.Single(parsed.Comments));
+        Assert.Equal(handover, Assert.Single(parsed.Handovers));
+        Assert.Equal(transition, Assert.Single(parsed.Transitions));
+    }
+
+    [Fact]
+    public void RoundTrips_BodyContainingTextThatLooksLikeATransitionDelimiter_AndInjectsNoTransitionEntry()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0203", CardKind.Block, "Delimiter-lookalike body", "drafting", CardOwner.Worker, CardScope.Change, "5", Created, Updated);
+
+        const string trickyBody =
+            "Some narrative.\n" +
+            "<!-- callboard:transition by=architect name=brief from=drafting to=briefed timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "and continues after, as plain narrative, not a real transition.";
+
+        var card = new CardFile(frontmatter, trickyBody, [], []);
+
+        var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
+
+        var parsed = AssertSuccess(result);
+        Assert.Equal(trickyBody, parsed.Body);
+        Assert.Empty(parsed.Transitions);
+        Assert.Empty(parsed.Comments);
+    }
+
+    [Fact]
+    public void RoundTrips_TransitionWithAnUnrecognisedField_PreservesItVerbatim()
+    {
+        const string raw =
+            "---\nid: X-0004\nkind: block\ntitle: t\nstatus: building\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "body\n" +
+            "<!-- callboard:transition by=worker name=claim from=briefed to=building timestamp=2026-08-19T09:00:00+00:00 note=x -->\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+
+        var transition = Assert.Single(parsed.Transitions);
+        Assert.Equal(("note", "x"), Assert.Single(transition.UnknownFields));
+
+        var reserialized = CardFileWriter.Serialize(parsed);
+        Assert.Contains("note=x", reserialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_UnrecognisedTransitionByValue_Fails()
+    {
+        const string raw =
+            "---\nid: X-0005\nkind: block\ntitle: t\nstatus: briefed\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            "<!-- callboard:transition by=nobody name=claim from=briefed to=building timestamp=2026-08-19T09:00:00+00:00 -->\n";
+
+        AssertFailure(CardFileParser.Parse(raw));
+    }
+
+    [Fact]
+    public void Parse_UnrecognisedTransitionFromValue_Fails()
+    {
+        const string raw =
+            "---\nid: X-0006\nkind: block\ntitle: t\nstatus: briefed\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            "<!-- callboard:transition by=worker name=claim from=nowhere to=building timestamp=2026-08-19T09:00:00+00:00 -->\n";
+
+        AssertFailure(CardFileParser.Parse(raw));
+    }
+
+    [Fact]
+    public void Parse_TransitionMissingRequiredNameField_Fails()
+    {
+        const string raw =
+            "---\nid: X-0007\nkind: block\ntitle: t\nstatus: briefed\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            "<!-- callboard:transition by=worker from=briefed to=building timestamp=2026-08-19T09:00:00+00:00 -->\n";
+
+        AssertFailure(CardFileParser.Parse(raw));
+    }
+
     private static CardFile AssertSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(
             onSuccess: success => success.Card,

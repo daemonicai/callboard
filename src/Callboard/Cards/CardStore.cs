@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text;
 
 namespace Callboard.Cards;
@@ -83,7 +84,7 @@ internal static class CardStore
         var directory = Path.GetDirectoryName(filePath);
         if (string.IsNullOrEmpty(directory))
         {
-            return new CardWriteResult.Failure($"'{filePath}' has no containing directory to write into.");
+            return new CardWriteResult.LayoutMismatch($"'{filePath}' has no containing directory to write into.");
         }
 
         Directory.CreateDirectory(directory);
@@ -97,7 +98,7 @@ internal static class CardStore
         // NewCardFile.
         return WithLock(filePath, lockTimeout, _ =>
             File.Exists(filePath)
-                ? new CardWriteResult.Failure($"a card already exists at '{filePath}'; WriteCard only creates a new card — use AppendComment or TransferOwnership to update one.")
+                ? new CardWriteResult.AlreadyExists(filePath)
                 : AtomicWrite(anchored, CardFileWriter.Serialize(new CardFile(card.Frontmatter, card.Body, [], []))));
     }
 
@@ -138,7 +139,7 @@ internal static class CardStore
 
         if (!File.Exists(filePath))
         {
-            return new CardWriteResult.Failure($"no card file exists at '{filePath}' to append a comment to.");
+            return new CardWriteResult.NotFound(filePath);
         }
 
         var current = ReadCard(filePath);
@@ -155,7 +156,7 @@ internal static class CardStore
                 return AtomicWrite(anchored, CardFileWriter.Serialize(updated));
             },
             onFailure: failure =>
-                new CardWriteResult.Failure($"cannot append to '{filePath}': the card file is corrupt: {failure.Reason}"));
+                new CardWriteResult.Corrupt(filePath, failure.Reason));
     }
 
     /// <summary>
@@ -199,7 +200,7 @@ internal static class CardStore
 
         if (!File.Exists(filePath))
         {
-            return new CardWriteResult.Failure($"no card file exists at '{filePath}' to transfer ownership of.");
+            return new CardWriteResult.NotFound(filePath);
         }
 
         var current = ReadCard(filePath);
@@ -223,7 +224,133 @@ internal static class CardStore
                 return AtomicWrite(anchored, CardFileWriter.Serialize(updated));
             },
             onFailure: failure =>
-                new CardWriteResult.Failure($"cannot transfer ownership of '{filePath}': the card file is corrupt: {failure.Reason}"));
+                new CardWriteResult.Corrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// Applies one legal <see cref="BlockFlowState"/> edge to the block card at
+    /// <paramref name="filePath"/> (work-lifecycle "Block cards move through a defined flow", §5
+    /// block C): reads the current card, decides whether <paramref name="transitionName"/> is
+    /// legal from its current status by reading <see cref="BlockFlowTransitions.AvailableFrom"/>
+    /// (never a second hand-maintained list), and only if it is legal writes the new status, the
+    /// possibly-newly-recorded <c>base</c>, the possibly-incremented <c>round</c>, and an appended
+    /// <see cref="CardBlockTransitionEntry"/> — all under the card's lock, so the refusal and the
+    /// write share one read (obligation O-3: a refusal must prevent the side effect it refuses,
+    /// not merely follow it).
+    /// </summary>
+    /// <param name="baseCommit">The commit to record as <c>base</c> if the card does not already
+    /// have one recorded. Ignored (but still checked for a mismatch — see
+    /// <see cref="CardBlockTransitionOutcome.BaseImmutable"/>) once a <c>base</c> is already on the
+    /// card, since work-lifecycle requires it never change across rounds.</param>
+    internal static CardBlockTransitionOutcome ApplyBlockTransition(
+        string cardsRoot, string filePath, string transitionName, CardOwner actingRole, DateTimeOffset timestamp, string? baseCommit, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => ApplyBlockTransitionUnderExistingLock(heldLock, cardsRoot, transitionName, actingRole, timestamp, baseCommit, changeName),
+            onTimedOut: timedOut => new CardBlockTransitionOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="ApplyBlockTransition"/>. Same structural lock
+    /// precondition as <see cref="AppendCommentUnderExistingLock"/> and
+    /// <see cref="TransferOwnershipUnderExistingLock"/> (O-2's fix applied to every method on this
+    /// surface with the same shape) — the target is <see cref="CardLock.CardPath"/>, not a
+    /// separately supplied <c>filePath</c>.
+    /// </summary>
+    internal static CardBlockTransitionOutcome ApplyBlockTransitionUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string transitionName, CardOwner actingRole, DateTimeOffset timestamp, string? baseCommit, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardBlockTransitionOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardBlockTransitionOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                var isBlockCard = card.Frontmatter.Kind.Match(
+                    onBlock: static () => true,
+                    onQuestion: static () => false,
+                    onFinding: static () => false,
+                    onObligation: static () => false,
+                    onRule: static () => false,
+                    onHazard: static () => false,
+                    onDecision: static () => false);
+
+                if (!isBlockCard)
+                {
+                    return new CardBlockTransitionOutcome.NotABlockCard(card.Frontmatter.Kind);
+                }
+
+                if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
+                {
+                    return new CardBlockTransitionOutcome.CardCorrupt(
+                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
+                }
+
+                var available = BlockFlowTransitions.AvailableFrom(currentState);
+                var transition = available.FirstOrDefault(candidate => string.Equals(candidate.Name, transitionName, StringComparison.Ordinal));
+                if (transition is null)
+                {
+                    return new CardBlockTransitionOutcome.UndefinedTransition(currentState, available);
+                }
+
+                var recordedBase = card.BlockFields.Base;
+                if (recordedBase is not null && baseCommit is not null && !string.Equals(recordedBase, baseCommit, StringComparison.Ordinal))
+                {
+                    return new CardBlockTransitionOutcome.BaseImmutable(recordedBase, baseCommit);
+                }
+
+                var effectiveBase = recordedBase ?? baseCommit;
+                if (transition.To == BlockFlowState.Briefed && effectiveBase is null)
+                {
+                    return new CardBlockTransitionOutcome.BaseNotRecorded();
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardBlockTransitionOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                // "changes-requested" is work-lifecycle's own named increment; any other
+                // transition that lands the card on Briefed for the first time (the initial
+                // "brief") starts the round at 1 rather than leaving it unset.
+                var round = card.BlockFields.Round;
+                if (string.Equals(transition.Name, "changes-requested", StringComparison.Ordinal))
+                {
+                    round = (round ?? 0) + 1;
+                }
+                else if (transition.To == BlockFlowState.Briefed && round is null)
+                {
+                    round = 1;
+                }
+
+                var entry = new CardBlockTransitionEntry(actingRole, transition.Name, transition.From, transition.To, timestamp, []);
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Status = transition.To.ToWireString(), Updated = timestamp },
+                    BlockFields = card.BlockFields with { Base = effectiveBase, Round = round },
+                    Transitions = [.. card.Transitions, entry],
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardBlockTransitionOutcome>(
+                    onSuccess: _ => new CardBlockTransitionOutcome.Applied(updated, transition),
+                    onNotFound: notFound => new CardBlockTransitionOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardBlockTransitionOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardBlockTransitionOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardBlockTransitionOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardBlockTransitionOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardBlockTransitionOutcome.CardCorrupt(filePath, failure.Reason));
     }
 
     /// <summary>
@@ -270,7 +397,19 @@ internal static class CardStore
         return results;
     }
 
-    private static CardWriteResult WithLock(string filePath, TimeSpan lockTimeout, Func<CardLock, CardWriteResult> action)
+    private static CardWriteResult WithLock(string filePath, TimeSpan lockTimeout, Func<CardLock, CardWriteResult> action) =>
+        WithLock(filePath, lockTimeout, action, onTimedOut: static timedOut => new CardWriteResult.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The lock-acquire-then-run shape every locked write on this type shares, generalised over
+    /// its result type so <see cref="ApplyBlockTransition"/> — whose failure needs to be a
+    /// <see cref="CardBlockTransitionOutcome"/>, not a <see cref="CardWriteResult"/>, so the CLI
+    /// boundary can mint distinct refusal codes — reuses the same acquire/dispose/timeout logic as
+    /// the <see cref="CardWriteResult"/>-returning overload above, rather than a second
+    /// hand-copied implementation the two could drift apart from.
+    /// </summary>
+    private static TResult WithLock<TResult>(
+        string filePath, TimeSpan lockTimeout, Func<CardLock, TResult> action, Func<CardLockResult.TimedOut, TResult> onTimedOut)
     {
         var lockResult = CardLock.Acquire(filePath, lockTimeout);
         return lockResult.Match(
@@ -281,7 +420,7 @@ internal static class CardStore
                     return action(acquired.Lock);
                 }
             },
-            onTimedOut: timedOut => new CardWriteResult.Failure(timedOut.Message));
+            onTimedOut: onTimedOut);
     }
 
     /// <summary>
@@ -296,7 +435,7 @@ internal static class CardStore
         var directory = Path.GetDirectoryName(filePath);
         if (string.IsNullOrEmpty(directory))
         {
-            return new CardWriteResult.Failure($"'{filePath}' has no containing directory to write into.");
+            return new CardWriteResult.LayoutMismatch($"'{filePath}' has no containing directory to write into.");
         }
 
         Directory.CreateDirectory(directory);
@@ -320,7 +459,7 @@ internal static class CardStore
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return new CardWriteResult.Failure($"could not write '{filePath}': {ex.Message}");
+            return new CardWriteResult.ToolFailure($"could not write '{filePath}': {ex.Message}");
         }
         finally
         {

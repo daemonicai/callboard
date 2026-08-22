@@ -38,15 +38,28 @@ namespace Callboard.Cards;
 /// The constructor parameter accepts <see langword="null"/> for the same reason
 /// <paramref name="Handovers"/>'s does — see that parameter's doc comment.
 /// </param>
+/// <param name="Transitions">
+/// The block card's append-only flow-transition history (§5 block C, work-lifecycle: "Every
+/// transition SHALL record the acting role and the time it occurred"), one
+/// <see cref="CardBlockTransitionEntry"/> per applied <see cref="CardStore.ApplyBlockTransition"/>
+/// call, oldest first — its own sequence, for the same reason <paramref name="Handovers"/> is its
+/// own sequence rather than folded into <paramref name="Comments"/>. Never non-empty for a card
+/// whose <see cref="CardFrontmatter.Kind"/> is not <see cref="CardKind.Block"/>. The constructor
+/// parameter accepts <see langword="null"/> for the same reason <paramref name="Handovers"/>'s
+/// does.
+/// </param>
 internal sealed record CardFile(
     CardFrontmatter Frontmatter,
     string Body,
     IReadOnlyList<CardComment> Comments,
     IReadOnlyList<(string Key, string RawValue)> UnknownFrontmatterFields,
     IReadOnlyList<CardHandover>? Handovers = null,
-    BlockCardFields? BlockFields = null)
+    BlockCardFields? BlockFields = null,
+    IReadOnlyList<CardBlockTransitionEntry>? Transitions = null)
 {
     public IReadOnlyList<CardHandover> Handovers { get; init; } = Handovers ?? [];
 
     public BlockCardFields BlockFields { get; init; } = BlockFields ?? BlockCardFields.Empty;
+
+    public IReadOnlyList<CardBlockTransitionEntry> Transitions { get; init; } = Transitions ?? [];
 }

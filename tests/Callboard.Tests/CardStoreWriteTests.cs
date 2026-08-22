@@ -365,12 +365,20 @@ public sealed class CardStoreWriteTests : IDisposable
     private static void AssertSuccess(CardWriteResult result) =>
         result.Match<object?>(
             onSuccess: static _ => null,
-            onFailure: failure => throw new Xunit.Sdk.XunitException($"expected write success, got failure: {failure.Reason}"));
+            onNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected write success, got NotFound: '{notFound.FilePath}'"),
+            onAlreadyExists: alreadyExists => throw new Xunit.Sdk.XunitException($"expected write success, got AlreadyExists: '{alreadyExists.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"));
 
     private static string AssertFailure(CardWriteResult result) =>
         result.Match(
             onSuccess: static _ => throw new Xunit.Sdk.XunitException("expected write failure, got success."),
-            onFailure: failure => failure.Reason);
+            onNotFound: notFound => $"no card file exists at '{notFound.FilePath}'.",
+            onAlreadyExists: alreadyExists => $"a card already exists at '{alreadyExists.FilePath}'.",
+            onLayoutMismatch: layoutMismatch => layoutMismatch.Reason,
+            onCorrupt: corrupt => $"the card file is corrupt: {corrupt.Reason}",
+            onToolFailure: toolFailure => toolFailure.Reason);
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

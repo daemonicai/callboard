@@ -103,6 +103,17 @@ internal static class CardFileWriter
                 .Append('\n');
         }
 
+        // Transitions after handovers, before comments — the same fixed, deterministic layout
+        // convention as handovers-before-comments above; each sequence's own internal order
+        // (oldest first) is what the append-only guarantee is actually about.
+        foreach (var transition in card.Transitions)
+        {
+            builder.Append(CardFileFormat.TransitionLinePrefix)
+                .Append(BuildTransitionFields(transition))
+                .Append(CardFileFormat.TransitionLineSuffix)
+                .Append('\n');
+        }
+
         foreach (var comment in card.Comments)
         {
             builder.Append(CardFileFormat.CommentHeaderPrefix)
@@ -170,6 +181,23 @@ internal static class CardFileWriter
         fields.Append(" timestamp=").Append(FormatTimestamp(handover.Timestamp));
 
         foreach (var (key, rawValue) in handover.UnknownFields)
+        {
+            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+        }
+
+        return fields.ToString();
+    }
+
+    private static string BuildTransitionFields(CardBlockTransitionEntry transition)
+    {
+        var fields = new StringBuilder();
+        fields.Append("by=").Append(transition.By.ToWireString());
+        fields.Append(" name=").Append(transition.Name);
+        fields.Append(" from=").Append(transition.From.ToWireString());
+        fields.Append(" to=").Append(transition.To.ToWireString());
+        fields.Append(" timestamp=").Append(FormatTimestamp(transition.Timestamp));
+
+        foreach (var (key, rawValue) in transition.UnknownFields)
         {
             fields.Append(' ').Append(key).Append('=').Append(rawValue);
         }

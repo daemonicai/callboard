@@ -287,14 +287,22 @@ public sealed class IndexPopulatorTests : IDisposable
         var result = CardStore.WriteCard(_root, path, card, TimeSpan.FromSeconds(5), changeName);
         result.Match<object?>(
             onSuccess: static _ => null,
-            onFailure: failure => throw new Xunit.Sdk.XunitException($"setup write failed: {failure.Reason}"));
+            onNotFound: notFound => throw new Xunit.Sdk.XunitException($"setup write failed: no card at '{notFound.FilePath}'"),
+            onAlreadyExists: alreadyExists => throw new Xunit.Sdk.XunitException($"setup write failed: already exists at '{alreadyExists.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"setup write failed: {layoutMismatch.Reason}"),
+            onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"setup write failed: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"setup write failed: {toolFailure.Reason}"));
 
         foreach (var comment in comments ?? [])
         {
             var appended = CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), changeName);
             appended.Match<object?>(
                 onSuccess: static _ => null,
-                onFailure: failure => throw new Xunit.Sdk.XunitException($"setup append failed: {failure.Reason}"));
+                onNotFound: notFound => throw new Xunit.Sdk.XunitException($"setup append failed: no card at '{notFound.FilePath}'"),
+                onAlreadyExists: alreadyExists => throw new Xunit.Sdk.XunitException($"setup append failed: already exists at '{alreadyExists.FilePath}'"),
+                onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"setup append failed: {layoutMismatch.Reason}"),
+                onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"setup append failed: {corrupt.Reason}"),
+                onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"setup append failed: {toolFailure.Reason}"));
         }
     }
 

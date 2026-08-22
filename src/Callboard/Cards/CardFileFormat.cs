@@ -23,6 +23,15 @@ internal static class CardFileFormat
     internal const string HandoverLineSuffix = " -->";
 
     /// <summary>
+    /// A block flow-transition entry (work-lifecycle: "Every transition SHALL record the acting
+    /// role and the time it occurred", §5 block C): the same self-contained, no-body, no-footer
+    /// shape as <see cref="HandoverLinePrefix"/>, for the same reason — a transition carries no
+    /// prose, only <c>by</c>/<c>name</c>/<c>from</c>/<c>to</c>/<c>timestamp</c> fields.
+    /// </summary>
+    internal const string TransitionLinePrefix = "<!-- callboard:transition ";
+    internal const string TransitionLineSuffix = " -->";
+
+    /// <summary>
     /// True for a line that, written unescaped, would be misread as a structural delimiter on
     /// the next parse — the header prefix, the footer, or an already-escaped instance of either
     /// (any number of leading backslashes stripped still matches). Escaping is checked against
@@ -33,7 +42,8 @@ internal static class CardFileFormat
         var unescaped = line.TrimStart('\\');
         return unescaped.StartsWith(CommentHeaderPrefix, StringComparison.Ordinal)
             || string.Equals(unescaped, CommentFooter, StringComparison.Ordinal)
-            || unescaped.StartsWith(HandoverLinePrefix, StringComparison.Ordinal);
+            || unescaped.StartsWith(HandoverLinePrefix, StringComparison.Ordinal)
+            || unescaped.StartsWith(TransitionLinePrefix, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -72,6 +82,11 @@ internal static class CardFileFormat
     internal static bool IsHandoverLine(string line) =>
         line.StartsWith(HandoverLinePrefix, StringComparison.Ordinal)
             && line.EndsWith(HandoverLineSuffix, StringComparison.Ordinal);
+
+    /// <summary>An unescaped, self-contained block flow-transition entry line.</summary>
+    internal static bool IsTransitionLine(string line) =>
+        line.StartsWith(TransitionLinePrefix, StringComparison.Ordinal)
+            && line.EndsWith(TransitionLineSuffix, StringComparison.Ordinal);
 
     private static readonly IReadOnlyDictionary<char, char> FrontmatterEscapeTable =
         new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r' };

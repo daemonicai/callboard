@@ -49,6 +49,12 @@ internal static class CardFileParser
         "by", "to", "timestamp",
     };
 
+    // The five block-transition-line fields this build recognises (§5 block C). Same rule again.
+    private static readonly HashSet<string> KnownTransitionKeys = new(StringComparer.Ordinal)
+    {
+        "by", "name", "from", "to", "timestamp",
+    };
+
     internal static CardFileParseResult Parse(string rawText)
     {
         // CardFileWriter.Serialize always terminates its output with exactly one trailing '\n'
@@ -148,7 +154,7 @@ internal static class CardFileParser
         }
 
         var bodyLines = new List<string>();
-        while (cursor < lines.Length && !CardFileFormat.IsCommentHeader(lines[cursor]) && !CardFileFormat.IsHandoverLine(lines[cursor]))
+        while (cursor < lines.Length && !CardFileFormat.IsCommentHeader(lines[cursor]) && !CardFileFormat.IsHandoverLine(lines[cursor]) && !CardFileFormat.IsTransitionLine(lines[cursor]))
         {
             bodyLines.Add(CardFileFormat.UnescapeContentLine(lines[cursor]));
             cursor++;
@@ -167,6 +173,7 @@ internal static class CardFileParser
         // two interleaved parses identically.
         var comments = new List<CardComment>();
         var handovers = new List<CardHandover>();
+        var transitions = new List<CardBlockTransitionEntry>();
         while (cursor < lines.Length)
         {
             var headerLine = lines[cursor];
@@ -196,9 +203,34 @@ internal static class CardFileParser
                 continue;
             }
 
+            if (CardFileFormat.IsTransitionLine(headerLine))
+            {
+                var transitionFieldsText = headerLine[CardFileFormat.TransitionLinePrefix.Length..^CardFileFormat.TransitionLineSuffix.Length];
+                var transitionFieldsResult = ParseTransitionFields(transitionFieldsText);
+                if (transitionFieldsResult.Failure is { } transitionFieldsFailure)
+                {
+                    return Failure(transitionFieldsFailure);
+                }
+
+                cursor++;
+
+                // transitionFieldsResult.Failure is null here, so Fields/UnknownFields are
+                // guaranteed non-null by ParseTransitionFields's own contract.
+                var transitionResult = BuildBlockTransitionEntry(transitionFieldsResult.Fields!, transitionFieldsResult.UnknownFields!);
+                if (transitionResult.Failure is { } transitionFailure)
+                {
+                    return Failure(transitionFailure);
+                }
+
+                // transitionResult.Failure is null here, so Entry is guaranteed non-null by
+                // BuildBlockTransitionEntry's own contract.
+                transitions.Add(transitionResult.Entry!);
+                continue;
+            }
+
             if (!CardFileFormat.IsCommentHeader(headerLine))
             {
-                return Failure($"expected a comment header, a handover line, or end of file, found: '{headerLine}'");
+                return Failure($"expected a comment header, a handover line, a transition line, or end of file, found: '{headerLine}'");
             }
 
             if (!headerLine.EndsWith(CardFileFormat.CommentHeaderSuffix, StringComparison.Ordinal))
@@ -218,7 +250,7 @@ internal static class CardFileParser
             var commentBodyLines = new List<string>();
             while (cursor < lines.Length && !CardFileFormat.IsCommentFooter(lines[cursor]))
             {
-                if (CardFileFormat.IsCommentHeader(lines[cursor]) || CardFileFormat.IsHandoverLine(lines[cursor]))
+                if (CardFileFormat.IsCommentHeader(lines[cursor]) || CardFileFormat.IsHandoverLine(lines[cursor]) || CardFileFormat.IsTransitionLine(lines[cursor]))
                 {
                     return Failure($"missing comment footer before next block: '{lines[cursor]}'");
                 }
@@ -249,7 +281,7 @@ internal static class CardFileParser
 
         // frontmatterResult.Failure is null here, so Frontmatter is guaranteed non-null by BuildFrontmatter's own contract.
         return new CardFileParseResult.Success(
-            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields));
+            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions));
     }
 
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
@@ -422,6 +454,10 @@ internal static class CardFileParser
         ParseHandoverFields(string handoverFieldsText) =>
         ParseKeyValueTokens(handoverFieldsText, KnownHandoverKeys, "handover line");
 
+    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
+        ParseTransitionFields(string transitionFieldsText) =>
+        ParseKeyValueTokens(transitionFieldsText, KnownTransitionKeys, "transition line");
+
     /// <summary>
     /// The <c>key=value</c> token parsing comment headers and handover lines both use — one
     /// implementation so the two block kinds can never drift apart on how their header text is
@@ -546,6 +582,58 @@ internal static class CardFileParser
         }
 
         return (new CardHandover(by, to, timestamp, unknownFields), null);
+    }
+
+    private static (CardBlockTransitionEntry? Entry, string? Failure) BuildBlockTransitionEntry(
+        IReadOnlyDictionary<string, string> fields,
+        IReadOnlyList<(string Key, string RawValue)> unknownFields)
+    {
+        if (!fields.TryGetValue("by", out var byText))
+        {
+            return (null, "transition missing required field: by");
+        }
+
+        if (!CardOwnerWireFormat.TryParse(byText, out var by))
+        {
+            return (null, $"transition has unrecognised 'by': '{byText}'. Recognised owners: {CardOwnerWireFormat.RecognisedValues}.");
+        }
+
+        if (!fields.TryGetValue("name", out var name) || name.Length == 0)
+        {
+            return (null, "transition missing required field: name");
+        }
+
+        if (!fields.TryGetValue("from", out var fromText))
+        {
+            return (null, "transition missing required field: from");
+        }
+
+        if (!BlockFlowStateWireFormat.TryParse(fromText, out var from))
+        {
+            return (null, $"transition has unrecognised 'from': '{fromText}'. Recognised states: {BlockFlowStateWireFormat.RecognisedValues}.");
+        }
+
+        if (!fields.TryGetValue("to", out var toText))
+        {
+            return (null, "transition missing required field: to");
+        }
+
+        if (!BlockFlowStateWireFormat.TryParse(toText, out var to))
+        {
+            return (null, $"transition has unrecognised 'to': '{toText}'. Recognised states: {BlockFlowStateWireFormat.RecognisedValues}.");
+        }
+
+        if (!fields.TryGetValue("timestamp", out var timestampText))
+        {
+            return (null, "transition missing required field: timestamp");
+        }
+
+        if (!TryParseTimestamp(timestampText, out var timestamp))
+        {
+            return (null, $"transition has invalid timestamp: '{timestampText}'");
+        }
+
+        return (new CardBlockTransitionEntry(by, name, from, to, timestamp, unknownFields), null);
     }
 
     private static bool TryParseTimestamp(string value, out DateTimeOffset timestamp) =>

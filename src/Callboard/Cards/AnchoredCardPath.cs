@@ -41,7 +41,7 @@ internal sealed class AnchoredCardPath
     /// <c>CardStore</c> write must report.
     /// </summary>
     internal static AnchoredCardPath? TryCreate(
-        string cardsRoot, string filePath, CardScope scope, string? changeName, out CardWriteResult.Failure? failure)
+        string cardsRoot, string filePath, CardScope scope, string? changeName, out CardWriteResult.LayoutMismatch? failure)
     {
         string expectedRelativeDirectory;
         try
@@ -50,7 +50,7 @@ internal sealed class AnchoredCardPath
         }
         catch (ArgumentException ex)
         {
-            failure = new CardWriteResult.Failure(ex.Message);
+            failure = new CardWriteResult.LayoutMismatch(ex.Message);
             return null;
         }
 
@@ -69,7 +69,7 @@ internal sealed class AnchoredCardPath
 
         if (!string.Equals(actualFullDirectory, expectedFullDirectory, StringComparison.Ordinal))
         {
-            failure = new CardWriteResult.Failure(
+            failure = new CardWriteResult.LayoutMismatch(
                 $"'{filePath}' does not live in the directory a '{scope.ToWireString()}'-scoped card belongs " +
                 $"in under repository root '{cardsRoot}' ('{expectedFullDirectory}').");
             return null;

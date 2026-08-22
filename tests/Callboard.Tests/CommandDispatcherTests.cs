@@ -208,7 +208,8 @@ public sealed class CommandDispatcherTests
             Arguments: new ArgumentCursor([]),
             Input: TextReader.Null,
             IsInputRedirected: false,
-            WorkingDirectory: ".");
+            WorkingDirectory: ".",
+            Clock: static () => DateTimeOffset.UtcNow);
 
         var refusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
 
