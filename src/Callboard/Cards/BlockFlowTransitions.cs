@@ -36,10 +36,6 @@ internal static class BlockFlowTransitions
     private static readonly BlockFlowTransition Land = new("land", BlockFlowState.Approved, BlockFlowState.Landed);
     private static readonly BlockFlowTransition Close = new("close", BlockFlowState.Landed, BlockFlowState.Closed);
 
-    /// <summary>Every legal transition, in the order the diagram above lists them.</summary>
-    internal static readonly IReadOnlyList<BlockFlowTransition> All =
-        [Brief, Claim, SubmitForReview, Approve, ChangesRequested, Land, Close];
-
     /// <summary>
     /// The transitions legally available from <paramref name="state"/> — empty only for
     /// <c>closed</c>, the flow's one terminal state. <c>in-review</c> is the one state with two:

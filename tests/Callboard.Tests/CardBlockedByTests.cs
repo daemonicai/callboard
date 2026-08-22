@@ -47,14 +47,16 @@ public sealed class CardBlockedByTests : IDisposable
         Assert.Equal("building", beforeBlocking.Frontmatter.Status);
         Assert.False(beforeBlocking.BlockFields.BlockedBy.Length > 0);
 
-        AssertUpdated(CardStore.AddBlockedBy(_root, path, "Q-0001", Created, TimeSpan.FromSeconds(5), ChangeName));
+        var added = AssertUpdated(CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName));
+        Assert.Equal(CardOwner.Architect, added.ActingRole);
 
         var whileBlocked = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("building", whileBlocked.Frontmatter.Status);
         Assert.True(whileBlocked.BlockFields.BlockedBy.Length > 0);
         Assert.Equal(["Q-0001"], whileBlocked.BlockFields.BlockedBy);
 
-        AssertUpdated(CardStore.RemoveBlockedBy(_root, path, "Q-0001", Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName));
+        var removed = AssertUpdated(CardStore.RemoveBlockedBy(_root, path, "Q-0001", CardOwner.Reviewer, Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName));
+        Assert.Equal(CardOwner.Reviewer, removed.ActingRole);
 
         var afterUnblocked = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("building", afterUnblocked.Frontmatter.Status);
@@ -66,10 +68,10 @@ public sealed class CardBlockedByTests : IDisposable
     public void AddBlockedBy_AlreadyPresent_Refuses_AndLeavesTheCardByteIdentical()
     {
         var path = WriteInitialBlockCard("b-0002", "B-0002", BlockFlowState.Building);
-        AssertUpdated(CardStore.AddBlockedBy(_root, path, "Q-0001", Created, TimeSpan.FromSeconds(5), ChangeName));
+        AssertUpdated(CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName));
         var before = File.ReadAllBytes(path);
 
-        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName);
+        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName);
 
         var already = Assert.IsType<CardBlockedByOutcome.AlreadyBlockedBy>(outcome);
         Assert.Equal("Q-0001", already.BlockingCardId);
@@ -82,7 +84,7 @@ public sealed class CardBlockedByTests : IDisposable
         var path = WriteInitialBlockCard("b-0003", "B-0003", BlockFlowState.Building);
         var before = File.ReadAllBytes(path);
 
-        var outcome = CardStore.RemoveBlockedBy(_root, path, "Q-0001", Created, TimeSpan.FromSeconds(5), ChangeName);
+        var outcome = CardStore.RemoveBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
 
         var notBlockedBy = Assert.IsType<CardBlockedByOutcome.NotBlockedBy>(outcome);
         Assert.Equal("Q-0001", notBlockedBy.BlockingCardId);
@@ -97,7 +99,7 @@ public sealed class CardBlockedByTests : IDisposable
             "Q-0001", CardKind.Question, "A question", "open", CardOwner.Architect, CardScope.Change, "5", Created, Created);
         AssertWriteSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName));
 
-        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0002", Created, TimeSpan.FromSeconds(5), ChangeName);
+        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0002", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
 
         var notABlock = Assert.IsType<CardBlockedByOutcome.NotABlockCard>(outcome);
         Assert.Equal(CardKind.Question, notABlock.Kind);
@@ -108,7 +110,7 @@ public sealed class CardBlockedByTests : IDisposable
     {
         var path = Path.Combine(_directory, "missing.md");
 
-        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", Created, TimeSpan.FromSeconds(5), ChangeName);
+        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
 
         var notFound = Assert.IsType<CardBlockedByOutcome.CardNotFound>(outcome);
         Assert.Equal(path, notFound.FilePath);
@@ -119,7 +121,7 @@ public sealed class CardBlockedByTests : IDisposable
     {
         var path = WriteInitialBlockCard("b-0004", "B-0004", BlockFlowState.Building);
 
-        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", Created, TimeSpan.FromSeconds(5), "a-different-change");
+        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), "a-different-change");
 
         Assert.IsType<CardBlockedByOutcome.LayoutMismatch>(outcome);
     }
@@ -130,7 +132,7 @@ public sealed class CardBlockedByTests : IDisposable
         var path = Path.Combine(_directory, "corrupt.md");
         File.WriteAllText(path, "not a card file at all");
 
-        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", Created, TimeSpan.FromSeconds(5), ChangeName);
+        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
 
         var corrupt = Assert.IsType<CardBlockedByOutcome.CardCorrupt>(outcome);
         Assert.Equal(path, corrupt.FilePath);
@@ -144,7 +146,7 @@ public sealed class CardBlockedByTests : IDisposable
 
         try
         {
-            var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", Created, TimeSpan.FromMilliseconds(200), ChangeName);
+            var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromMilliseconds(200), ChangeName);
 
             Assert.IsType<CardBlockedByOutcome.ToolFailure>(outcome);
         }

@@ -482,9 +482,7 @@ internal static class CommandDispatcher
             onBaseImmutable: immutable => new CommandOutcome.Refusal(
                 "base-immutable",
                 $"'base' is already recorded as '{immutable.Recorded}' and cannot change across rounds; supplied '{immutable.Attempted}'."),
-            onNotABlockCard: notABlock => new CommandOutcome.Refusal(
-                "not-a-block-card",
-                $"'{parsed.FilePath}' is a '{notABlock.Kind.ToWireString()}' card; flow transitions only apply to a block card."),
+            onNotABlockCard: notABlock => WrongCardKind(parsed.FilePath, CardKind.Block, notABlock.Kind, "flow transitions only apply to a block card"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to transition."),
@@ -521,7 +519,7 @@ internal static class CommandDispatcher
         }
 
         var outcome = CardStore.RecordGateResult(
-            repoRoot, parsed.FilePath, parsed.Label, parsed.ExitCode, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+            repoRoot, parsed.FilePath, parsed.Label, parsed.ExitCode, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return outcome.Match<CommandOutcome>(
             onRecorded: recorded => new CommandOutcome.Success(new BlockGateResult
@@ -529,12 +527,14 @@ internal static class CommandDispatcher
                 FilePath = parsed.FilePath,
                 Label = recorded.Result.Label,
                 ExitCode = recorded.Result.ExitCode,
-                Passed = recorded.Result.ExitCode == 0,
+                // Routed through GateStatus (§5 remediation, DEVLOG §5 finding N2) rather than
+                // re-deriving "== 0" inline a second time — GateStatus.Passed is the one place
+                // that collapse is named, per its own doc comment.
+                Passed = recorded.Card.BlockFields.GateStatusOf(recorded.Result.Label).Passed,
+                ActingRole = recorded.ActingRole.ToWireString(),
                 Timestamp = parsed.Timestamp,
             }),
-            onNotABlockCard: notABlock => new CommandOutcome.Refusal(
-                "not-a-block-card",
-                $"'{parsed.FilePath}' is a '{notABlock.Kind.ToWireString()}' card; gate results only apply to a block card."),
+            onNotABlockCard: notABlock => WrongCardKind(parsed.FilePath, CardKind.Block, notABlock.Kind, "gate results only apply to a block card"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to record a gate result on."),
@@ -562,7 +562,7 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var outcome = CardStore.AddBlockedBy(repoRoot, parsed.FilePath, parsed.BlockingCardId, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+        var outcome = CardStore.AddBlockedBy(repoRoot, parsed.FilePath, parsed.BlockingCardId, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return MapBlockedByOutcome(outcome, parsed.FilePath, parsed.Timestamp);
     }
@@ -583,7 +583,7 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var outcome = CardStore.RemoveBlockedBy(repoRoot, parsed.FilePath, parsed.BlockingCardId, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+        var outcome = CardStore.RemoveBlockedBy(repoRoot, parsed.FilePath, parsed.BlockingCardId, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return MapBlockedByOutcome(outcome, parsed.FilePath, parsed.Timestamp);
     }
@@ -605,6 +605,7 @@ internal static class CommandDispatcher
                 FilePath = filePath,
                 BlockedBy = [.. updated.Card.BlockFields.BlockedBy],
                 Blocked = updated.Card.BlockFields.BlockedBy.Length > 0,
+                ActingRole = updated.ActingRole.ToWireString(),
                 Timestamp = timestamp,
             }),
             onAlreadyBlockedBy: already => new CommandOutcome.Refusal(
@@ -613,9 +614,7 @@ internal static class CommandDispatcher
             onNotBlockedBy: notBlockedBy => new CommandOutcome.Refusal(
                 "not-blocked-by",
                 $"'{filePath}' is not recorded as blocked by '{notBlockedBy.BlockingCardId}'."),
-            onNotABlockCard: notABlock => new CommandOutcome.Refusal(
-                "not-a-block-card",
-                $"'{filePath}' is a '{notABlock.Kind.ToWireString()}' card; blocked_by only applies to a block card."),
+            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "blocked_by only applies to a block card"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to update blocked_by on."),
@@ -655,9 +654,7 @@ internal static class CommandDispatcher
                 ActingRole = recorded.Entry.By.ToWireString(),
                 Timestamp = recorded.Entry.Timestamp,
             }),
-            onNotASectionCard: notASection => new CommandOutcome.Refusal(
-                "not-a-section-card",
-                $"'{parsed.FilePath}' is a '{notASection.Kind.ToWireString()}' card; verdicts only apply to a section card."),
+            onNotASectionCard: notASection => WrongCardKind(parsed.FilePath, CardKind.Section, notASection.Kind, "verdicts only apply to a section card"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to record a verdict on."),
@@ -698,9 +695,7 @@ internal static class CommandDispatcher
             onAlreadyClosed: already => new CommandOutcome.Refusal(
                 "already-closed",
                 $"'{already.FilePath}' is already closed."),
-            onNotASectionCard: notASection => new CommandOutcome.Refusal(
-                "not-a-section-card",
-                $"'{parsed.FilePath}' is a '{notASection.Kind.ToWireString()}' card; only a section card can be closed by this verb."),
+            onNotASectionCard: notASection => WrongCardKind(parsed.FilePath, CardKind.Section, notASection.Kind, "only a section card can be closed by this verb"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to close."),
@@ -736,21 +731,14 @@ internal static class CommandDispatcher
             onSuccess: success =>
             {
                 var card = success.Card;
-                var isSectionCard = card.Frontmatter.Kind.Match(
-                    onBlock: static () => false,
-                    onQuestion: static () => false,
-                    onFinding: static () => false,
-                    onObligation: static () => false,
-                    onRule: static () => false,
-                    onHazard: static () => false,
-                    onDecision: static () => false,
-                    onSection: static () => true);
 
-                if (!isSectionCard)
+                // Shares CardStore.IsSectionCard rather than re-implementing the eight-arm match
+                // (§5 remediation, DEVLOG §5 finding N7) — the earlier inline copy was exactly the
+                // "two doors, one predicate restated" shape 4.x's own remediation already fixed
+                // elsewhere on this type.
+                if (!CardStore.IsSectionCard(card))
                 {
-                    return new CommandOutcome.Refusal(
-                        "not-a-section-card",
-                        $"'{parsed.FilePath}' is a '{card.Frontmatter.Kind.ToWireString()}' card; 'section status' only reads a section card.");
+                    return WrongCardKind(parsed.FilePath, CardKind.Section, card.Frontmatter.Kind, "'section status' only reads a section card");
                 }
 
                 if (!SectionFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var status))
@@ -772,6 +760,24 @@ internal static class CommandDispatcher
             onFailure: failure => throw new InvalidOperationException(
                 $"card '{parsed.FilePath}' could not be read as a section card: {failure.Reason}"));
     }
+
+    /// <summary>
+    /// The one refusal every "this verb only applies to a <c>block</c>/<c>section</c> card" site
+    /// mints (§5 remediation, DEVLOG §5 finding N3) — collapsed from the two near-synonymous codes
+    /// <c>not-a-block-card</c> and <c>not-a-section-card</c>, which differed only in <em>which</em>
+    /// kind was expected, the same "differing only in which thing" shape the reviewer already
+    /// rejected for a would-be <c>missing-role</c> code. One code naming both
+    /// <paramref name="expected"/> and <paramref name="actual"/> says strictly more than either
+    /// narrower code did and scales to every kind this codebase adds, rather than minting one more
+    /// per kind. Six construction sites route through this: <see cref="RunBlockTransition"/>,
+    /// <see cref="RunBlockGate"/>, <see cref="MapBlockedByOutcome"/> (shared by both
+    /// <c>blocked_by</c> verbs), <see cref="RunSectionVerdict"/>, <see cref="RunSectionClose"/> and
+    /// <see cref="RunSectionStatus"/>.
+    /// </summary>
+    private static CommandOutcome.Refusal WrongCardKind(string filePath, CardKind expected, CardKind actual, string verbDescription) =>
+        new CommandOutcome.Refusal(
+            "wrong-card-kind",
+            $"'{filePath}' is a '{actual.ToWireString()}' card, not a '{expected.ToWireString()}' card; {verbDescription}.");
 
     private static int ExitCodeFor(CommandOutcome outcome) => outcome.Match(
         onSuccess: static _ => SuccessExitCode,

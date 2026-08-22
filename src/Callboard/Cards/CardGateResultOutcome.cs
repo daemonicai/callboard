@@ -28,7 +28,13 @@ internal abstract record CardGateResultOutcome
     /// <param name="Card">The card as written, carrying the newly recorded (or replaced) gate
     /// result.</param>
     /// <param name="Result">The gate result actually recorded.</param>
-    internal sealed record Recorded(CardFile Card, GateResult Result) : CardGateResultOutcome
+    /// <param name="ActingRole">The role that recorded this gate result (§5 remediation, DEVLOG §5
+    /// finding B1) — not persisted on <see cref="Result"/> itself (work-lifecycle only requires a
+    /// gate result to carry a label and an exit code), but required here so a caller mapping this
+    /// outcome to a CLI result can surface who recorded it without falling back to re-reading the
+    /// parsed command, the same way <see cref="CardSectionVerdictOutcome.Recorded.Entry"/> already
+    /// carries <c>By</c>.</param>
+    internal sealed record Recorded(CardFile Card, GateResult Result, CardOwner ActingRole) : CardGateResultOutcome
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onRecorded(this);

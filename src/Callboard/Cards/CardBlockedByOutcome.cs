@@ -37,7 +37,12 @@ internal abstract record CardBlockedByOutcome
         Func<ToolFailure, TResult> onToolFailure);
 
     /// <param name="Card">The card as written, carrying the updated <c>blocked_by</c> set.</param>
-    internal sealed record Updated(CardFile Card) : CardBlockedByOutcome
+    /// <param name="ActingRole">The role that made this change (§5 remediation, DEVLOG §5 finding
+    /// B1) — not persisted on the card (work-lifecycle's "Blocked is derived, not stored" gives
+    /// <c>blocked_by</c> no per-item history to attribute against), but required here for the same
+    /// reason <see cref="CardGateResultOutcome.Recorded.ActingRole"/> is: so a caller mapping this
+    /// outcome to a CLI result can surface who made it.</param>
+    internal sealed record Updated(CardFile Card, CardOwner ActingRole) : CardBlockedByOutcome
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onUpdated(this);

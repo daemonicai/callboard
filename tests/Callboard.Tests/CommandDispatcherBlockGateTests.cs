@@ -32,6 +32,7 @@ public sealed class CommandDispatcherBlockGateTests
         Assert.Equal("build", result.GetProperty("label").GetString());
         Assert.Equal(0, result.GetProperty("exitCode").GetInt32());
         Assert.True(result.GetProperty("passed").GetBoolean());
+        Assert.Equal("worker", result.GetProperty("actingRole").GetString());
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.True(read.BlockFields.GateStatusOf("build").Passed);
@@ -213,7 +214,7 @@ public sealed class CommandDispatcherBlockGateTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("not-a-block-card", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
     [Fact]
@@ -299,6 +300,47 @@ public sealed class CommandDispatcherBlockGateTests
         {
             holder.Dispose();
         }
+    }
+
+    // §5 remediation, round 2 (reviewer finding against the shipped block D binary): a card
+    // carrying gate_results in the pre-B2 two-part shape ("label=exitcode", exactly what the
+    // shipped block D binary wrote) must still accept a new gate recording through the CLI, not
+    // exit 2/tool-failure the moment any write path touches it. Broken and watched red first:
+    // before the parser's legacy branch landed, this reproduced exactly the reviewer's report —
+    // exitCode 2, "code":"tool-failure".
+    [Fact]
+    public void BlockGate_RecordingOnACardWithLegacyTwoPartGateResults_Succeeds()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteLegacyBlockCard(repo.Path, "b-0900", "B-0900");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "gate", path, "test", "1", "--role", "worker", "--change", ChangeName], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.True(read.BlockFields.GateStatusOf("build").Passed, "the legacy result must still read back as round 1's evidence.");
+        Assert.False(read.BlockFields.GateStatusOf("test").Passed);
+    }
+
+    private static string WriteLegacyBlockCard(string repoRoot, string fileStem, string id)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, fileStem + ".md");
+        var raw =
+            "---\n" +
+            $"id: {id}\nkind: block\ntitle: Title\nstatus: building\nowner: worker\nscope: change\nsection: 5\n" +
+            $"created: {FixedNow:O}\nupdated: {FixedNow:O}\n" +
+            "gate_results: build=0\n" + // exactly the pre-B2 two-part shape the shipped block D binary wrote
+            "---\n" +
+            "Body.\n";
+        File.WriteAllText(path, raw, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
     }
 
     private static string WriteInitialBlockCard(string repoRoot, string fileStem, string id)

@@ -148,48 +148,15 @@ internal static class CommandParser
         string? baseCommit = null;
         string? changeName = null;
 
-        while (context.Arguments.Peek() is { } flag)
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
-            if (flag == "--role")
-            {
-                context.Arguments.TryTake();
-                roleText = context.Arguments.TryTake();
-                if (roleText is null)
-                {
-                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                        "missing-flag-value", "'--role' requires a value."));
-                }
-
-                continue;
-            }
-
-            if (flag == "--base")
-            {
-                context.Arguments.TryTake();
-                baseCommit = context.Arguments.TryTake();
-                if (baseCommit is null)
-                {
-                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                        "missing-flag-value", "'--base' requires a value."));
-                }
-
-                continue;
-            }
-
-            if (flag == "--change")
-            {
-                context.Arguments.TryTake();
-                changeName = context.Arguments.TryTake();
-                if (changeName is null)
-                {
-                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                        "missing-flag-value", "'--change' requires a value."));
-                }
-
-                continue;
-            }
-
-            break;
+            ["--role"] = value => roleText = value,
+            ["--base"] = value => baseCommit = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
         }
 
         if (roleText is null)
@@ -311,11 +278,46 @@ internal static class CommandParser
     }
 
     /// <summary>
+    /// The one flag-loop every §5 verb's flag parsing now goes through (§5 remediation, DEVLOG §5
+    /// finding B1/N residue) — <paramref name="setters"/> names every flag this call recognises and
+    /// what to do with its value; a token that matches none of them is left unconsumed, the same
+    /// "peek, don't take" discipline <see cref="ParseIndex"/> uses, so the funnel's own
+    /// <c>unrecognised-argument</c> refusal covers it. <see cref="ParseBlockTransition"/> used to
+    /// keep its own hand-copied loop alongside this one — same shape, drawn from the same cursor,
+    /// with nothing tying the two together — because it also parses <c>--base</c> in the same pass;
+    /// that duplication is exactly where the acting-role fix (finding B1) landing in only two of
+    /// three verbs became invisible to a block reviewer looking at one call site at a time. Both
+    /// now build a <paramref name="setters"/> map over this one loop instead.
+    /// </summary>
+    private static CommandOutcome.Refusal? ConsumeKnownFlags(
+        CommandDispatcher.CommandContext context, IReadOnlyDictionary<string, Action<string>> setters)
+    {
+        while (context.Arguments.Peek() is { } flag)
+        {
+            if (!setters.TryGetValue(flag, out var setter))
+            {
+                break;
+            }
+
+            context.Arguments.TryTake();
+            var value = context.Arguments.TryTake();
+            if (value is null)
+            {
+                return new CommandOutcome.Refusal("missing-flag-value", $"'{flag}' requires a value.");
+            }
+
+            setter(value);
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// The <c>--role</c> (required)/<c>--change</c> (optional) flag pair every §5 block D verb
     /// takes, factored out once both <see cref="ParseBlockGate"/> and
-    /// <see cref="ParseBlockedByMutation"/> needed it — <see cref="ParseBlockTransition"/> is left
-    /// with its own inline copy (it also has <c>--base</c> interleaved in the same loop, so
-    /// factoring it out there would split one flag loop across two methods for no gain).
+    /// <see cref="ParseBlockedByMutation"/> needed it — built over the same <see cref="
+    /// ConsumeKnownFlags"/> loop <see cref="ParseBlockTransition"/> now uses for its own,
+    /// <c>--base</c>-inclusive flag set, so the two can no longer drift on how a flag is consumed.
     /// </summary>
     private static (CardOwner? Role, string? ChangeName, CommandOutcome.Refusal? Refusal) ParseRoleAndChangeFlags(
         CommandDispatcher.CommandContext context, string commandLabel)
@@ -323,33 +325,14 @@ internal static class CommandParser
         string? roleText = null;
         string? changeName = null;
 
-        while (context.Arguments.Peek() is { } flag)
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
-            if (flag == "--role")
-            {
-                context.Arguments.TryTake();
-                roleText = context.Arguments.TryTake();
-                if (roleText is null)
-                {
-                    return (null, null, new CommandOutcome.Refusal("missing-flag-value", "'--role' requires a value."));
-                }
-
-                continue;
-            }
-
-            if (flag == "--change")
-            {
-                context.Arguments.TryTake();
-                changeName = context.Arguments.TryTake();
-                if (changeName is null)
-                {
-                    return (null, null, new CommandOutcome.Refusal("missing-flag-value", "'--change' requires a value."));
-                }
-
-                continue;
-            }
-
-            break;
+            ["--role"] = value => roleText = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return (null, null, flagRefusal);
         }
 
         if (roleText is null)

@@ -544,13 +544,37 @@ internal static class CardFileParser
 
     /// <summary>
     /// Parses <c>gate_results</c>: a comma-joined list (the same <see cref="CardFileFormat.
-    /// SplitFrontmatterList"/> <c>tasks</c>/<c>blocked_by</c> use) of <c>label=exitcode</c> items.
-    /// Each item is split on its <em>first</em> <c>=</c> — <see cref="GateResult.IsValidLabel"/>
-    /// already refuses a label containing one, so the first (and only) <c>=</c> in a well-formed
-    /// item is always the label/exit-code boundary. Three things can fail: a missing <c>=</c>, an
-    /// empty or invalid label, and an exit code that is not a valid integer — each folded into a
-    /// parse failure here rather than reaching <see cref="BlockCardFields"/>'s own constructor
-    /// guard as an unhandled exception, same discipline as <see cref="RequireNoEmptyListItem"/>.
+    /// SplitFrontmatterList"/> <c>tasks</c>/<c>blocked_by</c> use) of <c>label=exitcode=round</c>
+    /// items (§5 remediation, DEVLOG §5 finding B2 — <c>round</c> added so an earlier round's
+    /// result stays distinguishable from the current one; see <see cref="GateResult.Round"/>'s own
+    /// doc comment). Each item is split on its <em>first</em> <c>=</c> — <see cref="GateResult.
+    /// IsValidLabel"/> already refuses a label containing one, so the first <c>=</c> in a
+    /// well-formed item is always the label/exit-code boundary — and the remainder is then checked
+    /// for a second <c>=</c> to find the exit-code/round boundary, since neither a valid integer
+    /// exit code nor a valid integer round can itself contain one.
+    ///
+    /// <para>
+    /// <b>The legacy two-part form (<c>label=exitcode</c>, no round) still parses (§5 remediation,
+    /// reviewer finding against the shipped block D binary).</b> B2's own remediation, in its first
+    /// pass, made every two-part <c>gate_results</c> item ever written by the shipped block D
+    /// binary unreadable — a real card, in the exact format the tool itself wrote it, refused as
+    /// malformed with no warning and no migration. "Anything the tool has ever written, the tool
+    /// can read" is unconditional (the same proposition block E's own remediation closed for a
+    /// card the tool writes and cannot immediately read back — this is that same defect displaced
+    /// in time: a card the tool wrote in the past and can no longer read now). A missing round
+    /// separator is therefore not a failure: <c>remainder</c> is read whole as the exit code and
+    /// <paramref name="fields"/>'s absent third part defaults to round <c>1</c> — the same default
+    /// <see cref="BlockCardFields.GateStatusOf"/> and <see cref="CardStore.
+    /// RecordGateResultUnderExistingLock"/> already apply when <c>round</c> itself is unset. This
+    /// is not a data migration (nothing rewrites the file); it is simply preserving what parses
+    /// today at the cost of one branch, rather than refusing a well-formed card because a later
+    /// format grew a field it did not have yet.
+    /// </para>
+    ///
+    /// Three things can fail: an empty or invalid label, an exit code that is not a valid integer,
+    /// and (three-part form only) a round that is not a valid integer — each folded into a parse
+    /// failure here rather than reaching <see cref="BlockCardFields"/>'s own constructor guard as
+    /// an unhandled exception, same discipline as <see cref="RequireNoEmptyListItem"/>.
     /// </summary>
     private static (IReadOnlyList<GateResult>? GateResults, string? Failure) ParseGateResults(
         IReadOnlyDictionary<string, string> fields)
@@ -562,34 +586,46 @@ internal static class CardFileParser
 
         var items = CardFileFormat.SplitFrontmatterList(raw);
         var results = new List<GateResult>(items.Count);
-        var seenLabels = new HashSet<string>(StringComparer.Ordinal);
+        var seenLabelsByRound = new HashSet<(string Label, int Round)>();
         foreach (var item in items)
         {
-            var separatorIndex = item.IndexOf('=');
-            if (separatorIndex < 0)
+            var labelSeparatorIndex = item.IndexOf('=');
+            if (labelSeparatorIndex < 0)
             {
-                return (null, $"block card has a malformed gate_results item (expected 'label=exitcode'): '{item}'");
+                return (null, $"block card has a malformed gate_results item (expected 'label=exitcode' or 'label=exitcode=round'): '{item}'");
             }
 
-            var label = item[..separatorIndex];
-            var exitCodeText = item[(separatorIndex + 1)..];
+            var label = item[..labelSeparatorIndex];
+            var remainder = item[(labelSeparatorIndex + 1)..];
 
             if (!GateResult.IsValidLabel(label))
             {
                 return (null, $"block card has an invalid gate_results label: '{label}'");
             }
 
+            // Legacy two-part form: no second '=', so remainder is the whole exit code and round
+            // defaults to 1 — see this method's own doc comment for why this is not a refusal.
+            var roundSeparatorIndex = remainder.IndexOf('=');
+            var exitCodeText = roundSeparatorIndex < 0 ? remainder : remainder[..roundSeparatorIndex];
+            var roundText = roundSeparatorIndex < 0 ? null : remainder[(roundSeparatorIndex + 1)..];
+
             if (!int.TryParse(exitCodeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var exitCode))
             {
                 return (null, $"block card has an invalid gate_results exit code for '{label}': '{exitCodeText}'");
             }
 
-            if (!seenLabels.Add(label))
+            var round = 1;
+            if (roundText is not null && (!int.TryParse(roundText, NumberStyles.Integer, CultureInfo.InvariantCulture, out round) || round < 1))
             {
-                return (null, $"block card has more than one gate_results entry for label '{label}'");
+                return (null, $"block card has an invalid gate_results round for '{label}': '{roundText}'");
             }
 
-            results.Add(new GateResult(label, exitCode));
+            if (!seenLabelsByRound.Add((label, round)))
+            {
+                return (null, $"block card has more than one gate_results entry for label '{label}' in round {round}");
+            }
+
+            results.Add(new GateResult(label, exitCode, round));
         }
 
         return (results, null);

@@ -35,6 +35,7 @@ public sealed class CommandDispatcherBlockedByTests
         var result = doc.RootElement.GetProperty("result");
         Assert.True(result.GetProperty("blocked").GetBoolean());
         Assert.Equal("Q-0001", Assert.Single(result.GetProperty("blockedBy").EnumerateArray()).GetString());
+        Assert.Equal("worker", result.GetProperty("actingRole").GetString());
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("building", read.Frontmatter.Status);
@@ -50,13 +51,14 @@ public sealed class CommandDispatcherBlockedByTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["block", "remove-blocker", path, "Q-0001", "--role", "worker", "--change", ChangeName], output, repo.Path);
+            ["block", "remove-blocker", path, "Q-0001", "--role", "reviewer", "--change", ChangeName], output, repo.Path);
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var result = doc.RootElement.GetProperty("result");
         Assert.False(result.GetProperty("blocked").GetBoolean());
         Assert.Empty(result.GetProperty("blockedBy").EnumerateArray());
+        Assert.Equal("reviewer", result.GetProperty("actingRole").GetString());
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("building", read.Frontmatter.Status);
@@ -204,7 +206,7 @@ public sealed class CommandDispatcherBlockedByTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("not-a-block-card", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
     // Shared site (MapBlockedByOutcome).

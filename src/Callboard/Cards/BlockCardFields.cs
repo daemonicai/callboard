@@ -112,11 +112,14 @@ internal sealed record BlockCardFields
     private readonly ImmutableArray<GateResult> _gateResults;
 
     /// <summary>The block's recorded gate results (work-lifecycle: "Gate results are recorded as
-    /// exit codes", §5 block D), at most one entry per <see cref="GateResult.Label"/> — recording
-    /// a second result for a label already present replaces it
-    /// (<see cref="CardStore.RecordGateResultUnderExistingLock"/>), it does not append a second,
-    /// ambiguous entry. Never contains a duplicate label or an invalid one — see
-    /// <see cref="GateResult.IsValidLabel"/>, enforced by the same three-door discipline
+    /// exit codes", §5 block D), at most one entry per <see cref="GateResult.Label"/>/
+    /// <see cref="GateResult.Round"/> pair — recording a second result for a label already present
+    /// <em>in the same round</em> replaces it (<see cref="CardStore.
+    /// RecordGateResultUnderExistingLock"/>), it does not append a second, ambiguous entry for that
+    /// round; a result recorded for a <em>different</em> round is a distinct entry, retained rather
+    /// than replaced (§5 remediation, DEVLOG §5 finding B2 — see <see cref="GateResult.Round"/>'s
+    /// own doc comment). Never contains a duplicate <c>(Label, Round)</c> pair or an invalid label —
+    /// see <see cref="GateResult.IsValidLabel"/>, enforced by the same three-door discipline
     /// <see cref="Tasks"/>/<see cref="BlockedBy"/> already apply (constructor, <c>with</c>, and
     /// <see cref="CardFileParser"/>'s own pre-construction check).</summary>
     internal ImmutableArray<GateResult> GateResults
@@ -149,12 +152,25 @@ internal sealed record BlockCardFields
 
     /// <summary>What the card reports for <paramref name="label"/> — see <see cref="GateStatus"/>'s
     /// own doc comment for why this reads exclusively from <see cref="GateResults"/> and nowhere
-    /// else, structurally, not by convention.</summary>
+    /// else, structurally, not by convention.
+    ///
+    /// <para>
+    /// <b>Only the current round's result is evidence (§5 remediation, DEVLOG §5 finding B2).</b> A
+    /// result recorded for an earlier round stays on <see cref="GateResults"/> — it is not
+    /// destroyed — but this method skips it: it is not evidence that <em>this</em> round's gates
+    /// pass, only that a past round's did. "Current round" is <see cref="Round"/> when set, or
+    /// <c>1</c> when not — the same default <see cref="CardStore.
+    /// ApplyBlockTransitionUnderExistingLock"/> uses the first time a block lands on
+    /// <see cref="BlockFlowState.Briefed"/>, so a gate recorded before the block's first brief still
+    /// reads back as round 1 rather than as belonging to no round at all.
+    /// </para>
+    /// </summary>
     internal GateStatus GateStatusOf(string label)
     {
+        var currentRound = Round ?? 1;
         foreach (var result in GateResults)
         {
-            if (string.Equals(result.Label, label, StringComparison.Ordinal))
+            if (result.Round == currentRound && string.Equals(result.Label, label, StringComparison.Ordinal))
             {
                 return GateStatus.Recorded(result.ExitCode);
             }
@@ -191,14 +207,16 @@ internal sealed record BlockCardFields
 
     /// <summary>
     /// The gate-results equivalent of <see cref="RequireNoEmptyOrWhitespaceItems"/>: every label
-    /// must be a valid one (<see cref="GateResult.IsValidLabel"/>), and no label may appear twice —
-    /// a second recording of the same label is an update (<see cref="CardStore.
-    /// RecordGateResultUnderExistingLock"/>), never a second, ambiguous entry this type could be
-    /// asked to disagree with itself over.
+    /// must be a valid one (<see cref="GateResult.IsValidLabel"/>), and no <c>(Label, Round)</c>
+    /// pair may appear twice — a second recording of the same label <em>in the same round</em> is
+    /// an update (<see cref="CardStore.RecordGateResultUnderExistingLock"/>), never a second,
+    /// ambiguous entry this type could be asked to disagree with itself over. A label recorded
+    /// again in a <em>different</em> round is a distinct, legitimately-retained entry — see
+    /// <see cref="GateResult.Round"/>'s own doc comment (§5 remediation, DEVLOG §5 finding B2).
     /// </summary>
     private static ImmutableArray<GateResult> RequireValidGateResults(ImmutableArray<GateResult> results)
     {
-        var seenLabels = new HashSet<string>(StringComparer.Ordinal);
+        var seenLabelsByRound = new HashSet<(string Label, int Round)>();
         foreach (var result in results)
         {
             if (!GateResult.IsValidLabel(result.Label))
@@ -209,11 +227,12 @@ internal sealed record BlockCardFields
                     nameof(results));
             }
 
-            if (!seenLabels.Add(result.Label))
+            if (!seenLabelsByRound.Add((result.Label, result.Round)))
             {
                 throw new ArgumentException(
-                    $"gate result label '{result.Label}' is recorded more than once — recording a gate result " +
-                    "again for a label already present replaces it, it does not add a second entry.",
+                    $"gate result label '{result.Label}' is recorded more than once for round {result.Round} — " +
+                    "recording a gate result again for a label already present in the same round replaces it, " +
+                    "it does not add a second entry.",
                     nameof(results));
             }
         }

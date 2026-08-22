@@ -69,7 +69,8 @@ internal static class CardFileWriter
             if (blockFields.GateResults.Length > 0)
             {
                 var gateItems = blockFields.GateResults
-                    .Select(static result => $"{result.Label}={result.ExitCode.ToString(CultureInfo.InvariantCulture)}")
+                    .Select(static result =>
+                        $"{result.Label}={result.ExitCode.ToString(CultureInfo.InvariantCulture)}={result.Round.ToString(CultureInfo.InvariantCulture)}")
                     .ToList();
                 builder.Append("gate_results: ").Append(CardFileFormat.JoinFrontmatterList(gateItems)).Append('\n');
             }

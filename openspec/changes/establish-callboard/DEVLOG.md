@@ -10815,6 +10815,636 @@ still zero diff.
 
 This closes my audit of §5. Ready for the supervisor.
 
+**[supervisor]** §5 section review — `git diff e055e5b..107fe7e`, five commits (blocks A–E), read as
+one design. **Verdict: Request changes.**
+
+The block reviewer's work is not in question and I have not re-run it. Every finding below is a
+**union** — none is visible in any single block's diff, and each sits in a seam between two changes
+that were correct in isolation, the same shape all three of §4's blockers had.
+
+**What holds.** Verified independently rather than inherited. The transition table is the spec's
+diagram edge-for-edge, `AvailableFrom` is total over the closed union, and `block transition` is the
+**only** path in the codebase that can write a block card's `status` — no other verb constructs a
+status-carrying write, so "which entry point bypasses the guard" has a structurally empty answer.
+`blocked` is genuinely underivable-as-storage: no field, no union case, no wire key. All six write
+paths §5 added go `WithLock` → read → decide → `AnchoredCardPath.TryCreate` → `AtomicWrite` with
+`Frontmatter.Updated` set — none skips the lock, the anchor or the rename. The eighth kind is
+integrated everywhere §4 established: `CardKind.Match` has eight arms so a missed case is a compile
+error, `CardIdentityPrefix` gives `S`, `CardScopeRules` constrains `section` to `change` by the same
+`(kind, scope)` refusal shape, `CardKindWireFormat.RecognisedValues` is derived from the dictionary
+rather than restated (so the refusal message names eight without anyone having edited it), and the
+index is kind-agnostic — `kind` is a `TEXT` column and `ObservedMaxIdByKind` keys off parsed data, so
+nothing in `Index/` needed to learn the eighth kind and the diff correctly shows `Index/` untouched.
+**`section status` genuinely answers without reading the section's cards** — `RunSectionStatus` reads
+exactly one file and there is no expression in its body that could resolve "the cards this section
+raised". No §5 write path touches the index; the index stays derived.
+
+---
+
+### Blockers
+
+### B1 — `--role` is required by six write verbs, recorded by three, silently discarded by three
+
+`block gate`, `block add-blocker` and `block remove-blocker` all require `--role`, validate it
+against `CardOwnerWireFormat`, and then **drop it**: `CommandParser.cs:315` (`ParseRoleAndChangeFlags`)
+hands the parsed `CardOwner` to the `ParsedCommand`, and `CommandDispatcher.cs:521`, `:568`, `:589`
+never pass it on — `CardStore.RecordGateResult` / `AddBlockedBy` / `RemoveBlockedBy`
+(`CardStore.cs:358`, `:429`, `:454`) have no acting-role parameter at all. It reaches neither the card
+nor the JSON envelope: `BlockGateResult` and `BlockedByResult` have no `actingRole`, while
+`BlockTransitionResult` and `SectionVerdictResult` do.
+
+This is block C's contract used differently by block D. Block C established `--role` = *the acting
+role, recorded*; block D copied the flag and not the meaning; block E then wired `section close` back
+to block C's meaning — so the surface now teaches two incompatible things about one flag. Block D's
+brief never asked for `--role` on these verbs and no post discusses dropping it, so this is drift,
+not a recorded trade-off. On a tool whose premise is an attributable process record, a verb that asks
+who is acting and then forgets is worse than one that never asked — and it makes `block gate`'s
+output, the artefact §9's "Landing requires recorded passing gates" will rest on, the only
+unattributed write §5 produces.
+
+**Fix shape:** one decision for all six verbs — record `--role`, or stop requiring it. Recording it
+is the smaller change and the one consistent with `CardBlockTransitionEntry` / `CardHandover`.
+
+### B2 — gate evidence survives a remediation round, and a failing run is overwritten without trace
+
+Two facts, each fine in its own block, wrong together:
+
+- `RecordGateResult` **upserts by label** (`CardStore.cs:399-405`): re-recording `build` replaces the
+  previous entry, so `build=1` then `build=0` leaves no record that `build` ever failed.
+- `ApplyBlockTransitionUnderExistingLock` (`CardStore.cs:326-335`) touches `Status`, `Base`, `Round`
+  and `Transitions` — and **not** `GateResults`. `changes-requested` therefore returns the card to
+  `briefed` at round 2 carrying round 1's `gate_results` verbatim, and nothing on the card associates
+  a gate result with the round it was recorded in.
+
+A block whose gates passed, was sent back for changes, and had its code rewritten still reports
+`build=0 test=0`, and §9 will read that as current evidence. Work-lifecycle also says "One card's
+thread SHALL therefore constitute the complete audit trail of one unit of work **across all its
+rounds**"; a label-keyed upsert with no round key is exactly the shape that cannot. Block D's review
+noticed the upsert and tested it (`RecordGateResult_SecondRecordingForSameLabel_ReplacesTheFirst`)
+without the round question arising, because block C's `round` and block D's `gate_results` never
+appear in the same diff.
+
+Note that block E reasoned the **opposite** way about the same shape of data one block later:
+`SectionVerdictEntry`'s doc comment argues verdicts must append rather than upsert because an earlier
+round's finding is part of the audit trail, and explicitly flags the divergence ("unlike
+`RecordGateResult`'s label-keyed upsert") without resolving it. One section, two opposite answers to
+"how do we record a repeatable event on a card".
+
+**Fix shape:** one decision covering both — gate results carry the `round` they were recorded at (and
+`GateStatusOf` answers for the current round), or `changes-requested` clears them. Either closes it;
+label-keyed and round-blind does not. State the resulting divergence from `SectionVerdictEntry` as a
+decision rather than a doc-comment aside.
+
+### B3 — `reviewed_state` has no write path anywhere, and no recorded deferral
+
+`grep -rn ReviewedState src/` returns the field, the writer, the parser and the equality override —
+and **no producer**. No `CardStore` method sets it, no verb accepts it, no flag exists. It is the one
+field of the five in 5.4 whose value is only knowable at the moment of an event §5 itself implements:
+`block transition <card> approve`. `base` got a write path only because 5.5 demanded a refusal about
+it; `reviewed_state` had no such task, so 5.1/5.2 left it to 5.4 and 5.4 was model-only. It fell
+between task boundaries.
+
+Work-lifecycle: "A `block` card SHALL carry … the `reviewed_state` commit a reviewer actually
+reviewed." `tasks` is in the same position but its unreachability is *coherent* — no card-creation
+verb exists at all yet, so nothing could set it, and the reviewer named that explicitly.
+`reviewed_state` has no such cover: the verb that should capture it shipped in this section.
+
+**Fix shape:** accept `--reviewed-state` on the `approve` transition and record it, or post an
+explicit `[architect]` deferral naming the section that owes it and add it to `## NEXT`. What is not
+acceptable is a spec field with no producer and no record that this was a choice — indistinguishable
+from having been forgotten, which is the argument `CardScopeRules` already makes for `block`'s
+unconstrained scope.
+
+---
+
+### Suggested remediation shape — one block
+
+1. `--role`: one decision, applied to all six write verbs (B1).
+2. Gate results: round-associate or clear on `changes-requested`, and state the choice against
+   `SectionVerdictEntry`'s opposite one (B2).
+3. `reviewed_state`: wire it onto `approve`, or record the deferral (B3).
+4. **One integrated lifecycle test**, which the section has none of: drive one card through
+   `drafting → briefed → building → in-review → changes-requested → briefed → … → closed` and assert
+   what it carries at each step — round, base immutability, gate results, `blocked_by`, flow state
+   preserved across block/unblock. Every edge and every field is tested in isolation; nothing tests
+   them composed, and B2 is precisely what such a test would have gone red on.
+5. While in there: delete `BlockFlowTransitions.All` (N1) and route `CommandDispatcher.cs:532`
+   through `GateStatus.Passed` (N2).
+
+Ticks nothing; `fix(establish-callboard): address supervisor findings (section 5)`.
+
+---
+
+### Answers to the four questions carried to me
+
+**The refusal set (23 codes) — acceptable to carry to §9, with one exception.** Enumerated
+independently; 23 confirmed: `unknown-command`, `missing-subcommand`, `unknown-subcommand`,
+`unrecognised-argument`, `repo-root-not-found` (§3's five), plus `missing-argument`,
+`missing-flag-value`, `unrecognised-role`, `unrecognised-verdict`, `invalid-gate-label`,
+`invalid-exit-code`, `invalid-blocking-card-id`, `invalid-range`, `card-not-found`,
+`card-layout-mismatch`, `not-a-block-card`, `not-a-section-card`, `undefined-transition`,
+`base-not-recorded`, `base-immutable`, `already-blocked-by`, `not-blocked-by`, `already-closed`. The
+set is coherent and the refusal / tool-failure / reported-failure split is applied identically by all
+six verbs. The exception: **`not-a-block-card` and `not-a-section-card` are near-synonyms by the
+reviewer's own `missing-role` bar** — they differ only in *which* kind was expected, which is the
+"differing only in which thing" test that rejected `missing-role`. The standard was applied correctly
+*within* each block; the pair spans blocks C and E, so no diff showed the synonym. Left as-is the
+pattern yields one code per kind as §6–§8 add verbs, and §9 inherits a union that grows with the kind
+list rather than the concept list. **Not a blocker** — one refactor, messages already correct — but
+§9 should not freeze the union before deciding it.
+
+**No structural check tying a minted code to a test that it fires — carry to §9, but freeze the list
+now.** §5 minted 18 of the 23 and the reviewer verified per-construction-site tests by mutation on
+each, so the *instances* are covered; what is missing is the check that the next one will be. That is
+9.12's shape and not worth a §5 remediation block. What §5 owes is the list — the 23 above, recorded
+in `## NEXT` as the retrofit set so §9 is not re-deriving it from `grep`.
+
+**The two-doors class — the four instances are closed; the class is not.** `IsValidRangeValue`,
+`IsValidLabel`, `IsValidListItem` and `IsBlockCard` are each one function called by name at every
+door, which is the right fix. Three residues remain, all the same shape, all invisible per block:
+`CommandDispatcher.cs:532` re-derives `ExitCode == 0` inline instead of calling `GateStatus.Passed`
+(N2) — the section named this exact lesson and left the fifth instance open; `RunSectionStatus`
+re-implements the eight-arm "is this a section card" match that `CardStore.IsSectionCard` already is
+(N7); and `ParseBlockTransition` keeps its own `--role` parse loop alongside
+`ParseRoleAndChangeFlags` (deliberate and documented — and the point where B1's drift became
+invisible). None blocks; N2 is cheap enough to fold in.
+
+**Does §5 make §8/§9 harder — mostly no, B2 excepted.** `section close` records who and when and
+refuses only `already-closed`, leaving the closing *conditions* to §9: a clean seam, documented at
+`CommandDispatcher.cs` and on `CardSectionCloseOutcome`, nothing half-built to unpick. Same for
+transition authorisation — the role is recorded, not authorised, and `CardBlockTransitionEntry.By` is
+exactly the hook 8.13/§9 needs. B2 is the one place §5 hands §9 a trap rather than a seam: "landing
+requires recorded passing gates" would be built on evidence that cannot distinguish this round's from
+a previous round's.
+
+---
+
+### Notes for the pinned NEXT — not for the fix block
+
+- **N1 — dead scaffolding.** `BlockFlowTransitions.All` (`BlockFlowTransitions.cs:40`) has **zero**
+  references in `src/` or `tests/`. Block A built it; block C consumed the table through
+  `AvailableFrom` and never needed it. It is also the only part of 5.1's "exhaustive transition
+  table" that nothing exercises.
+- **N2 — `Passed` is defined twice**: `GateStatus.Passed` and `CommandDispatcher.cs:532`. Both say
+  `== 0` today.
+- **N3 — `not-a-*-card` scales per kind.** See above.
+- **N4 — nothing addresses a card by identity.** All six §5 verbs take a **file path** positionally.
+  Card-model's "stable, human-quotable, kind-prefixed identity" is not an addressing mode anywhere in
+  the CLI. Consistent across §5 and fine as far as it goes — but §7/§8's "Narrative is retrieved by
+  identity" will introduce id addressing, and unless someone decides now, the surface forks into two
+  ways of naming a card. Decide before the first id-addressed verb, not after.
+- **N5 — `section verdict` is the one §5 verb that never parses the card's status.** `close` treats
+  an unrecognised status as corrupt; `status` throws (tool-failure); `verdict` doesn't look, so a
+  verdict can be appended to a `closed` section and to one whose status is garbage. Reachable only by
+  hand-edit, arguably harmless — but three reactions to one fact inside one block.
+- **N6 — `--base` is accepted on every transition**, not only those landing on `briefed`, and is
+  silently recorded if none is set: `block transition <card> close --base <sha>` writes `base`.
+- **N7 — `IsSectionCard` duplicated** in `RunSectionStatus`.
+- **N8 — deferred validations, as the reviewer listed them and re-checked by me:** verdict ranges are
+  never checked against git or against the section's own `base`; `CardFrontmatter.Section` is
+  unvalidated free text, so *nothing links a card to a section entity* today — card-model's "Cards
+  SHALL reference the section that raised them" holds only as a string; `blocked_by` items never
+  resolve to cards, so the **archived-card filter is deferred, not discharged**, and binds whoever
+  builds the first `blocked_by`-resolving read path.
+- **N9 — no CLI query verb reads `GateStatusOf` back.** `GateStatus.Absent` is proven at the domain
+  and wire layers only; work-lifecycle's "the card shows that gate as absent" holds against the
+  record (a human reads `gate_results` and sees no `build`), not against any tool output.
+  Legitimately §7/§8's — recorded so it is not assumed done.
+- **N10 — housekeeping.** Block E has no `[architect]` landing post, so nothing ties `107fe7e` to an
+  architect-run gate set; the worker's and the reviewer's clean-rebuild `BUILD_EXIT:0`,
+  `TEST_EXIT:0 (365/365)`, `FORMAT_EXIT:0`, `VALIDATE_EXIT:0` are both recorded, so the gates are
+  verifiable — the box-ticker's own run is the missing line. `make aot` / `AOT_EXIT:0` is still owed
+  at section close; `git diff e055e5b..HEAD -- '*.csproj'` is empty, so it is the formality §3's rule
+  says to run anyway. And the pinned `## NEXT` below still reads "Resume point: 5.1. §4 is closed; §5
+  has not been opened" — stale by five commits.
+
+Re-run me on the same `e055e5b..HEAD` range once the remediation block lands.
+
+---
+
+**[architect]** Block E landed as `107fe7e` — **the landing post the supervisor correctly noticed was
+missing.** Gates run by me before the commit: `BUILD_EXIT:0` `TEST_EXIT:0` (365/365) `FORMAT_EXIT:0`
+`VALIDATE_EXIT:0` `GATES_EXIT:0`. 5.8 ticked. Recording it now rather than leaving `107fe7e` as the one
+commit in this section with no architect-run gate set tied to it; the omission was mine, and "the
+supervisor caught it" is not the same as "it was recorded".
+
+---
+
+**[architect]** §5 supervisor verdict: **Request changes.** Three blockers, **every one a union** — none
+visible in any single block's diff, exactly as §4 predicted. The block reviewer was rigorous throughout
+(two real defects, many narrowed claims, all by execution) and could not have seen these by
+construction. Rulings below; a **remediation block** follows, ticking nothing.
+
+**B1 — `--role` required by six write verbs, recorded by three, discarded by three. ACCEPTED, fix it.**
+`block gate`, `block add-blocker` and `block remove-blocker` parse and validate `--role` and then drop
+it: the `CardStore` methods take no acting-role parameter, and their JSON results carry no `actingRole`
+where `BlockTransitionResult`/`SectionVerdictResult` do. This is drift, not a trade-off — block C set the
+contract, block D copied the flag without its meaning, block E returned to block C's meaning. It leaves
+`block gate`'s output, the artefact §9's landing rule rests on, as **the section's only unattributed
+write**. Thread the acting role through all three, record it, and surface it in the JSON the way blocks
+C and E already do.
+
+**B2 — gate evidence survives a remediation round. ACCEPTED, and the fix is (b) below.**
+`RecordGateResult` upserts by label and the `changes-requested` transition does not touch `GateResults`,
+so a card returning to round 2 carries round 1's gates verbatim with no round association. That
+contradicts "one card's thread is the complete audit trail across all its rounds" and hands §9 evidence
+it cannot trust. Two candidate fixes:
+
+- (a) clear `GateResults` on `changes-requested` — simple, and **destroys** round 1's evidence.
+- (b) **record the round each gate result was recorded in; only the current round's results count as
+  evidence; earlier rounds are retained.** ← this one.
+
+(b) is right because it is the answer **block E already reached one block later**: `SectionVerdictEntry`
+appends precisely because an earlier round is part of the trail. The supervisor is correct that its doc
+comment flagged the divergence without resolving it. One section, two opposite answers to "is superseded
+evidence part of the record", is exactly the drift a section review exists to catch.
+
+**B3 — `reviewed_state` has no producer. ACCEPTED as a real gap; ruling is an explicit deferral to 8.2,
+held in a test.** The field, writer, parser and equality override shipped with nothing that sets them.
+The supervisor is right that silence is unacceptable — but the right producer is **not** a flag bolted
+onto the `approve` transition. **8.2 is "Record `reviewed_state` as the exact state certified, including
+uncommitted content"**, which is a genuinely larger job than stamping a commit at approval, and building
+a lesser version here is precisely the half-version of §8 I told block E not to build.
+
+So: deferred to 8.2, and — per this change's own standing rule that **an accepted trade-off is held in a
+must-be-inverted test, not a bullet in a file someone rewrites** — the deferral lands as a test asserting
+no producer exists, which §8 must invert to proceed. The trigger is a task in this change's own plan,
+so the obligation is scheduled rather than lost.
+
+**On the near-synonyms: collapse `not-a-block-card` and `not-a-section-card` into one code.** The
+supervisor is right that they scale to one code per kind, and that is the `missing-role` bar the reviewer
+already applied. One code naming the expected and actual kind says strictly more and scales to eight.
+Decide it now rather than let §9 freeze eight of them.
+
+**Carried, not fixed:** the code-to-test structural check stays §9's (9.12's shape); §5 owes the frozen
+list, and it is now in the DEVLOG.
+
+---
+
+**[architect]** Brief — **remediation block (§5)**. Ticks nothing, gets no `N.M` numbers, commits as a
+`fix`. Every box in §5 is already ticked; the findings and the fix live in this thread, and that is the
+record.
+
+**Scope — the three blockers, the class residues, and the test that would have caught B2:**
+
+1. **B1** — thread the acting role through `RecordGateResult`, `AddBlockedBy` and `RemoveBlockedBy`
+   (`CardStore.cs:358`, `:429`, `:454`) and surface `actingRole` in their JSON results, matching
+   `BlockTransitionResult`/`SectionVerdictResult`. **Make the drift unwritable if you can**: if a write
+   method can be added that takes no acting role and still compiles, B1's fix is a convention.
+2. **B2** — gate results carry the round they were recorded in. Only the current round's results are
+   evidence; earlier rounds are retained, not destroyed. Follow `SectionVerdictEntry`'s append shape —
+   the section has already decided this question once and must not answer it twice.
+3. **B3** — a test asserting **no producer for `reviewed_state` exists**, written so §8 must invert it,
+   with a comment naming 8.2 as the trigger. Do not add a producer.
+4. **One integrated lifecycle test** the section entirely lacks: `drafting → briefed → building →
+   in-review → changes-requested → briefed → … → closed`, asserting `round`, `base` immutability, gate
+   results, `blocked_by` and flow state across the whole run. **B2 is exactly what it would have gone red
+   on** — write it so it would have.
+5. **Collapse `not-a-block-card`/`not-a-section-card`** into one code naming expected and actual kind.
+   Restate the final code list in your post; §9 inherits it.
+6. **The two-doors residues**, all three: `CommandDispatcher.cs:532` routed through `GateStatus.Passed`;
+   `RunSectionStatus`'s re-implementation of `IsSectionCard` collapsed to the shared predicate; and
+   `ParseBlockTransition`'s parallel `--role` loop unified — **that last one is where B1's drift became
+   invisible**, so it is not cosmetic.
+7. **Delete `BlockFlowTransitions.All`** — zero references in `src/` or `tests/`; block A scaffolding
+   that block C superseded. Dead scaffolding in a section that ships a state machine is worse than
+   untidy.
+
+**Do not** touch: `section close`'s conditions or transition authorisation (both correctly §9's), the
+archived-card filter (deferred, still binds a later section), or anything that would build a half-version
+of §8.
+
+**Standards, unchanged:** every test's proposition named before it is written, then broken to watch it go
+red; every refusal code a CLI-level test per construction site; conventions stated plainly as
+conventions. Gates `make build`/`test`/`format`/`validate` or `make gates` sandboxed, every
+`LABEL_EXIT:<n>` quoted verbatim; 365 tests stay green. Post as `[worker]` under `## 5.` with a
+line-start anchor, hand off `→ @reviewer`. No commit, no ticks, no `Makefile`.
+
+---
+
+**[worker]** §5 remediation block implemented — all seven items in the brief.
+
+**B1 — acting role threaded through, and locked to a regression test.** `CardStore.RecordGateResult`,
+`AddBlockedBy`, `RemoveBlockedBy` (and their `*UnderExistingLock` counterparts) now take
+`CardOwner actingRole`. It is not persisted onto the card (gate results carry only label/exit-code/round
+per work-lifecycle; `blocked_by` has no per-item history at all per "Blocked is derived, not stored") but
+is required to construct `CardGateResultOutcome.Recorded`/`CardBlockedByOutcome.Updated`, so
+`CommandDispatcher` reads it back off the outcome the same way `SectionVerdictResult` already reads
+`recorded.Entry.By` — not from the parsed command a second time. `BlockGateResult`/`BlockedByResult` gain
+`actingRole` in their JSON, matching `BlockTransitionResult`/`SectionVerdictResult`'s shape.
+
+Stated as a convention, not oversold as structural (nothing in C# can force a future *seventh* write verb
+to take an acting role): added `CardStoreActingRoleTests.TheSixWriteVerbMethods_EachTakeACardOwnerActingRoleParameter`,
+a reflection check over the six named methods' exact parameter shapes. Verified it actually fires —
+mutated `AddBlockedBy`'s expected shape to drop `CardOwner`, watched it fail with "expected
+CardStore.AddBlockedBy(...) — the well-known signature shape moved", then reverted.
+
+**B2 — gate results carry their round; only the current round is evidence.** `GateResult` gained a
+`Round` field. `RecordGateResultUnderExistingLock` computes the block's current round (`BlockFields.Round
+?? 1`, the same default `ApplyBlockTransitionUnderExistingLock` uses) and upserts by `(Label, Round)`
+rather than `Label` alone — a result from a *different* round is a new entry, retained, not replaced.
+`BlockCardFields.GateStatusOf` now filters to the current round before answering, so a stale pass from a
+superseded round no longer reads as current evidence. Wire format: `label=exitcode` → `label=exitcode=round`
+(parser and writer both updated; `RequireValidGateResults`'s uniqueness constraint moved from `Label` to
+`(Label, Round)`). This is exactly the shape `SectionVerdictEntry` already chose — the divergence the
+supervisor named is resolved in `SectionVerdictEntry`'s direction, as the architect ruled.
+
+**B3 — no producer added; the deferral is a must-be-inverted test.** `ReviewedStateProducerTests` scans
+`src/Callboard` (excluding `BlockCardFields.cs` and `CardFileWriter.cs`, the model/round-trip layer) and
+asserts no other file references `ReviewedState`. Its doc comment names 8.2 as the trigger: the moment 8.2
+adds a real producer, this test goes red and must be replaced with one proving the producer records the
+exact certified state.
+
+**Integrated lifecycle test.** `BlockLifecycleIntegrationTests` drives one card through
+`drafting → briefed → building → in-review → changes-requested → briefed → building → in-review → approved
+→ landed → closed`, asserting `round`, `base` immutability (including a mid-flow attempt to change it,
+refused without moving state), gate results across both rounds (round 1's passing `build` retained but not
+counted as evidence once round 2 is current — the exact B2 proposition), `blocked_by` orthogonal to flow
+state, and the full attributed transition history at close. This is the test the section had none of; B2
+is precisely what it would have gone red on before the fix — the same round-blind-vs-round-carrying
+distinction `RecordGateResult_ForADifferentRound_RetainsTheEarlierRoundsEntry_ButOnlyTheCurrentRoundIsEvidence`
+in `CardGateResultTests` proves directly at the domain layer, one level below the CLI-shaped verbs this
+test drives.
+
+**Collapsed `not-a-block-card`/`not-a-section-card` into `wrong-card-kind`.** One
+`CommandDispatcher.WrongCardKind` helper builds the refusal, naming both the expected and the actual kind
+(`'<path>' is a '<actual>' card, not a '<expected>' card; <verb-specific clause>.`). All six construction
+sites route through it: `RunBlockTransition`, `RunBlockGate`, `MapBlockedByOutcome` (shared by both
+`blocked_by` verbs), `RunSectionVerdict`, `RunSectionClose`, `RunSectionStatus`. A CLI-level test exists
+per site (all six pre-existed under the old codes and were updated in place), plus one explicit
+message-content assertion (`BlockTransition_NotABlockCard_RefusesWithNotABlockCardCode`) proving both
+kinds are actually named, not just the code string.
+
+**Final refusal-code list (23 → 22, one collapse), for §9 to inherit:** `unknown-command`,
+`missing-subcommand`, `unknown-subcommand`, `unrecognised-argument`, `repo-root-not-found`,
+`missing-argument`, `missing-flag-value`, `unrecognised-role`, `unrecognised-verdict`,
+`invalid-gate-label`, `invalid-exit-code`, `invalid-blocking-card-id`, `invalid-range`, `card-not-found`,
+`card-layout-mismatch`, `wrong-card-kind`, `undefined-transition`, `base-not-recorded`, `base-immutable`,
+`already-blocked-by`, `not-blocked-by`, `already-closed`.
+
+**Two-doors residues, all three closed.** `CommandDispatcher.RunBlockGate` now derives `passed` via
+`recorded.Card.BlockFields.GateStatusOf(recorded.Result.Label).Passed` instead of re-deriving `== 0`
+inline. `CardStore.IsSectionCard` is now `internal` and `RunSectionStatus` calls it directly instead of
+re-implementing the eight-arm match. `ParseBlockTransition`'s inline `--role`/`--base`/`--change` loop and
+`ParseRoleAndChangeFlags`'s `--role`/`--change` loop both now build a `Dictionary<string, Action<string>>`
+and call one shared `CommandParser.ConsumeKnownFlags` loop — the seam where B1's drift became invisible is
+gone; both verbs' flag handling is now provably the same code.
+
+**Deleted `BlockFlowTransitions.All`** — zero references confirmed (`grep -rn` over `src/`, `tests/`), the
+build stayed green without it.
+
+**Not touched, as briefed:** `section close`'s conditions/authorisation, the archived-card filter, no
+half-version of §8 beyond the B3 test itself.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (372/372, 365 baseline + 7 new: B2's new-round test, the missing-round
+parse-failure test, the same-label-different-rounds parse-success test, the matching constructor-accepts
+test, `ReviewedStateProducerTests`, `BlockLifecycleIntegrationTests`, `CardStoreActingRoleTests`)
+`FORMAT_EXIT:0` — `Change 'establish-callboard' is valid` `VALIDATE_EXIT:0` — `GATES_EXIT:0`.
+
+→ @reviewer
+
+---
+
+**[reviewer]** §5 remediation block audited — `git diff 107fe7e`, the three supervisor blockers
+plus the class residues. This is my first review of a diff spanning multiple already-landed blocks
+(C, D, E) at once, per the supervisor's own framing.
+
+**Verdict: Request changes.** One finding is a genuine, demonstrated round-trip defect — a breaking
+wire-format change with no back-compat path, in exactly the shape block E's own defect took.
+Everything else — B1's threading, B2's round semantics, B3's absence test, the `wrong-card-kind`
+collapse, and the unified flag-consumption loop — held up under independent execution.
+
+**1. B2's wire-format change breaks every card the shipped binary already wrote — confirmed live,
+against the real binary, and it is not a refusal, it is the tool-failure corruption class.**
+Hand-authored a card exactly as block D's *shipped* binary would have written one —
+`gate_results: build=0,test=1`, the two-part form, no third field — and ran it through the real,
+unmutated remediation binary two ways:
+
+- `CardFileParser.Parse` directly: **parse failure** — `"block card has a malformed gate_results
+  item for 'build' (expected 'label=exitcode=round'): 'build=0'"`.
+- `block gate <path> lint 0 --role worker ...` (recording an *unrelated* new gate result on that
+  same card): **`exitCode=2`, `"code":"tool-failure"`**, the exact `InvalidOperationException`
+  routing block E's own remediation closed for the empty-range case. `block transition <path>
+  submit-for-review ...` on the same card: identical failure.
+
+The card was never touched (`bytesUnchanged=True` on the failed writes) — this isn't a corrupting
+*write*, it's a card that was **valid under the format the tool itself shipped**, now permanently
+unreadable by every verb that touches it, with no warning, no migration, and no refusal a caller
+could act on (`tool-failure` means "proceed unenforced", not "here's what's wrong with your data").
+This is precisely the class your own brief named: *"a third `=` in a format that already had two
+separators is exactly where block E's defect lived."* It lived there again.
+
+**The fix belongs in the parser, not in a warning.** `ParseGateResults` should accept the two-part
+form as a legacy shape — the natural reading is `round = 1` when no round is present, which is both
+the safest assumption (any card written before round-tracking existed is, by construction, still on
+its first round unless something *else* already advanced it, and this remediation is landing
+before any real card content exists yet outside test fixtures) and consistent with `BlockFields.Round
+?? 1`'s existing default used everywhere else in this exact codebase. This is a parser-side
+addition (accept both `label=exitcode` and `label=exitcode=round`), not a data migration — no
+existing card needs touching, no separate tool, just the reader recognising a shape it used to be
+the only shape.
+
+**2. B2's round semantics — correct, and the distinction the brief asked about lives at the right
+layer.** Live-executed a full cycle: `brief → claim → submit-for-review`, record `build=0` in
+round 1 (`GateStatusOf("build")` → `Recorded`, `Passed=True`), then `changes-requested` to round 2
+— `GateStatusOf("build")` now correctly reports **`Absent`**, and the round-1 entry is **retained**
+in `BlockFields.GateResults` (`label=build exitCode=0 round=1`, still present, count unchanged).
+Recording round 2's own `build` result adds a *second* entry (`round=2`) rather than replacing the
+first — both survive. On the specific question of whether "never recorded" and "recorded in an
+earlier round" are distinguishable: `GateStatusOf` itself collapses both to `Absent`, and that is
+correct — it answers "is this current evidence", and both cases are honestly "no" to that
+question, the same deliberate-collapse-at-the-point-of-use pattern `GateStatus.Passed` already
+uses. The distinction is preserved one level down, in `GateResults` itself, which is queryable
+directly (confirmed: a label with no entry at all vs. a label with only a stale-round entry are
+trivially distinguishable by inspecting the list) — nothing was destroyed, only the *current-evidence*
+question's answer was correctly narrowed.
+
+**3. B1's reflection lock — the honesty is correct, and I agree it's the right call, having
+checked the structural alternative.** Independently reproduced the red-then-green, twice, with
+mutations different from the worker's own (which mutated `AddBlockedBy`'s type-erasure): removed
+`CardOwner actingRole` from `CloseSection`'s public signature entirely — this doesn't even reach
+the reflection test, because **eight-plus pre-existing tests calling `CloseSection` positionally
+fail to compile first** (`CS1501`), a stronger practical protection than the reflection lock alone
+provides, though not one that would catch a genuinely *new*, uncalled seventh write verb. Then,
+on `RecordSectionVerdict`, widened the parameter's *type* from `CardOwner` to `object` (compiles
+everywhere via an inserted cast, so no other test breaks) — the reflection test caught this one
+cleanly, red on `Assert.Contains(... p.ParameterType == typeof(CardOwner))`. I considered whether a
+genuinely structural form exists — e.g. routing all six writes through a shared delegate type whose
+signature bakes in `CardOwner`, making a non-conforming method a compile error at the point of
+registration — and judge it disproportionate: it would be the first place in this codebase that
+routes static methods through delegate-typed registration rather than being called directly, a
+larger architectural deviation than the drift it would prevent is worth, especially now that a
+dedicated regression test exists and the class has cost this section a section-review round already.
+The convention is the right call, correctly labelled as one.
+
+**4. B3's absence test — fires, doesn't move, can't pass by accident.** Appended a bare comment
+mentioning `ReviewedState` to an arbitrary production file (`CommandParser.cs`) in a scratch copy —
+red immediately, naming the offending file in the failure message. The test guards against passing
+vacuously if the scanned tree goes missing (`Assert.True(Directory.Exists(sourceRoot), ...)` fires
+loudly rather than quietly matching nothing), and resolves its own location via `[CallerFilePath]`,
+so it survives the test file itself being moved or renamed. One characteristic worth naming, not a
+defect: it's a raw text scan, so it will trip on a stray comment as readily as a real reference —
+which is the conservative failure direction for a must-be-inverted test (forces 8.2 to consciously
+address it rather than something subtler slipping past a more semantic check).
+
+**5. `wrong-card-kind` — confirmed no site lost coverage, message genuinely names both kinds.**
+Grepped every call site (6: `RunBlockTransition`, `RunBlockGate`, `MapBlockedByOutcome`,
+`RunSectionVerdict`, `RunSectionClose`, `RunSectionStatus`) against test files: exactly 6 CLI-level
+`wrong-card-kind` tests exist (3 in `CommandDispatcherSectionTests.cs` for the section verb's own 3
+sites, 1 each for the other 3), matching 1:1. Live-executed against the real binary (a `question`
+card through `block gate`): `"'…/q-0001.md' is a 'question' card, not a 'block' card; gate results
+only apply to a block card."` — both the expected and actual kind are genuinely named, not just the
+code string.
+
+**6. My own adversarial pass over `ConsumeKnownFlags`.** Mutated the shared loop to silently drop
+`--role`'s setter call across every consumer (the class of drift B1 was about, reintroduced at the
+now-shared site instead of per-verb) — **37 of 372 tests failed immediately**, across every verb
+that takes `--role`. The unification is not fragile; a defect there is loud precisely because it's
+shared, which is the property you'd want from having collapsed three near-identical loops into one.
+Separately checked: the loop `break`s (doesn't consume) on the first unrecognised flag, correctly
+leaving it for `EnforceNoUnconsumedArguments`'s O-3 funnel — confirmed by reading, unchanged from
+before the unification. Duplicate-flag handling ("last one wins" silently) is unchanged pre-existing
+behaviour, not something this refactor introduced.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (372/372),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report. `BlockFlowTransitions.All`
+confirmed deleted with zero remaining references, independently grepped.
+
+Please add back-compat parsing for the two-part `gate_results` form (finding 1) — the fix belongs
+in `ParseGateResults`, treating an absent third field as `round = 1` — and re-flag. Everything else
+here is ready as-is.
+
+---
+
+**[worker]** Fixed — legacy two-part `gate_results` now parses, per the ruling: accept
+`label=exitcode` in `ParseGateResults`, defaulting `round = 1`, alongside the new three-part
+`label=exitcode=round` shape. No refusal, no data migration — one added branch on whether the
+remainder after the label has a second `=`.
+
+**Reproduced the report first, on the reverted line.** Reverted the legacy branch, ran the four new
+tests below: `Parse_BlockCardWithALegacyTwoPartGateResultsItem_ParsesCleanly_TreatingItAsRoundOne`
+failed with the exact parser message the reviewer quoted (`"malformed gate_results item ...
+expected 'label=exitcode=round': 'build=0'"`); the two CLI tests failed with `Expected: 0 Actual:
+2` — the same `exitCode 2`/`tool-failure` the reviewer's own binary run reported. Restored the fix,
+confirmed green, diffed against the backup to confirm nothing else moved.
+
+**Owed items, all four:**
+
+1. `Parse_BlockCardWithALegacyTwoPartGateResultsItem_ParsesCleanly_TreatingItAsRoundOne`
+   (`CardBlockFieldsTests`) — proposition: a hand-authored two-part card (`gate_results:
+   build=0,test=1`, exactly what the shipped block D binary wrote) parses cleanly and both results
+   read back as round 1's evidence.
+2. `HandAuthoredCard_WithLegacyTwoPartGateResults_SurvivesAWriteThenReadRoundTrip`
+   (`CardBlockFieldsTests`) — proposition: the same card survives read → write → read; the
+   re-serialized form upgrades to three-part (round is now known), which is the point — the card is
+   never unreadable again, not that the bytes stay two-part forever.
+3. `BlockGate_RecordingOnACardWithLegacyTwoPartGateResults_Succeeds`
+   (`CommandDispatcherBlockGateTests`) — proposition: `block gate` recording an unrelated new
+   result on a legacy card succeeds, and the legacy result still reads as round 1's evidence
+   afterward. This is the reviewer's own `block gate` repro, as a permanent regression test.
+4. `BlockTransition_OnACardWithLegacyTwoPartGateResults_Succeeds`
+   (`CommandDispatcherBlockTransitionTests`) — proposition: `block transition ...
+   changes-requested` on the same shape of card succeeds; after the transition, round is 2 and the
+   legacy round-1 entry correctly stops counting as current evidence (B2's own rule, unchanged by
+   this fix) while staying on the card. This is the reviewer's `block transition` repro.
+
+All four confirmed red on the reverted line, green restored — verified above, not asserted.
+
+**The general-form question: is `gate_results` the only §5 field whose wire format changed after
+cards could exist?** Established, not asserted — by diffing every §5 commit's changes to
+`CardFileWriter.cs` for each frontmatter/line format's literal `Append(...)` shape:
+`base`/`reviewed_state`/`tasks`/`round`/`blocked_by` (block A, `d165508`), the block-transition
+history line `by=... name=... from=... to=... timestamp=...` (block C, `c1a3b38`), `gate_results`
+(block D, `a52cd7a`), and section's `base`/`closed_by`/`closed_at` plus the verdict line `by=...
+verdict=... range-from=... range-to=... timestamp=...` (block E, `107fe7e`) each appear in exactly
+**one** commit's diff, introduced once, format never touched again by a later commit — except
+`gate_results`, touched a second time by this remediation. **`gate_results` is the only field with
+this defect; every other §5 field's format was fixed at the commit that introduced it.**
+
+Gates re-run after the fix: `BUILD_EXIT:0` `TEST_EXIT:0` (375/375, +3 net over the prior post: the
+missing-round-fails test became the legacy-parses-cleanly test, plus the round-trip test and the
+two CLI tests) `FORMAT_EXIT:0` — `Change 'establish-callboard' is valid` `VALIDATE_EXIT:0`
+`GATES_EXIT:0`.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Closing pass, §5 remediation block. **Verdict: Approve.**
+
+**1. Re-ran the live reproduction — all three now succeed, and round-1 semantics are correct, not
+just non-crashing.** Direct parse of `gate_results: build=0,test=1`: both entries decode as
+`round=1`. `block gate <legacy-card> lint 0 --role worker ...`: `exitCode=0`, succeeds, the legacy
+entries untouched. The sharper check — a legacy card carried through a real lifecycle, not just
+read once: built one already `in-review` with `round: 1` and the legacy `gate_results` line,
+confirmed `GateStatusOf("build").Passed = True` (round 1, current), ran `block transition ...
+changes-requested` through the real binary — `exitCode=0`, round advances to 2, and
+`GateStatusOf("build").Passed` **correctly flips to `False`**: the legacy result stops counting as
+current evidence at exactly the same point a natively-recorded round-1 result would, while
+remaining on the card (`GateResults` count unchanged, `round=1` entries intact). A legacy result
+is not a special case anywhere past the parser — once it's `GateResult(Label, ExitCode, Round: 1)`,
+it's indistinguishable from one recorded natively in round 1.
+
+**2. Adversarial shapes — eleven cases, all correct, no looseness found.** Ran every case the
+question named plus several more, direct against `CardFileParser.Parse`:
+
+| shape | result |
+|---|---|
+| `build=0` (legacy) | parses, `round=1` |
+| `build=0=2` (three-part) | parses, `round=2` |
+| `build=0=1=2` (four-part) | refused: invalid round `'1=2'` |
+| `build=0=` (trailing `=`, empty round) | refused: invalid round `''` |
+| `build=0=  ` (whitespace-only round) | refused: invalid round `'  '` |
+| `a=b=5` (hand-authored label containing `=`) | refused: invalid exit code `'b'` for label `'a'` |
+| `build=0=0` / `build=0=-1` | both refused: round must be `≥ 1` |
+| `=` / `build=` | both refused (empty label / empty exit code) |
+| `a=1=2=3=4` (five separators) | refused: invalid round `'2=3=4'` |
+
+Every ambiguous or malformed shape is caught by `int.TryParse`'s strictness (a value like `"1=2"` or
+`"b"` is never silently truncated to its numeric prefix) or by the existing `round < 1` guard —
+none of them is silently misread as a *different, plausible-looking* valid entry, which was the
+real risk in a two-separator parser admitting two accepted lengths. `=` itself is never
+escapable at the list-item level (confirmed: the escape table only covers backslash/newline/CR/
+comma) — so it's always structurally significant and `IsValidLabel`'s ban on it is load-bearing,
+not redundant, exactly as block D's own doc comment already argued for the single-`=` case.
+
+**3. The general-form claim — verified independently, reader side, not just the writer side the
+worker checked.** `git log --oneline d165508..HEAD -- CardFileParser.cs`: three commits touched
+it after block A introduced `base`/`reviewed_state`/`tasks`/`round`/`blocked_by` — blocks C, D and
+E. Diffed each: block C and E's changes are additive only (new fields, new functions) with no
+lines touching the five original fields' parsing logic at all; block D's only touches to that
+region are two purely mechanical additions (`gate_results` appended to an existing key set, and
+threaded into an existing constructor call) — not a change to how any of the five is individually
+parsed. This remediation's own diff to `CardFileParser.cs` is two hunks, both confined to
+`ParseGateResults`. So: independently confirmed from the reader's side, using a different
+instrument (`git log`/`git show` on the parser file, not a diff of the writer's `Append` calls) —
+`gate_results` is the only §5 field whose *reading* logic was ever revisited after introduction,
+matching the writer-side result exactly rather than merely being consistent with it by coincidence.
+
+**4. Final verdict on the remediation block, and the three blockers for the supervisor's re-run.**
+**Approve.** All three genuinely closed, confirmed across this and the prior round:
+
+- **B1 — acting role recorded and surfaced.** `CardOwner` threaded through all six write methods,
+  read back into `BlockGateResult`/`BlockedByResult`'s JSON the same way
+  `BlockTransitionResult`/`SectionVerdictResult` already did. The regression lock is honestly
+  labelled a convention, and I independently confirmed that's the right call rather than settling
+  for the worker's own word on it — checked a structural alternative (delegate-typed method
+  registration) and found it disproportionate to the drift it would prevent, while also finding a
+  stronger-than-claimed incidental protection (removing the parameter from `CloseSection` fails to
+  *compile* before the reflection test even runs, because existing tests call it positionally).
+- **B2 — round semantics correct, this round confirmed through a real transition, not a
+  constructed `GateResult` in a unit test.** Current-round evidence flips correctly on
+  `changes-requested`; superseded rounds are retained, not destroyed; a legacy two-part result now
+  behaves identically to a natively-recorded round-1 one at every point checked.
+- **B3 — the absence test fires, doesn't move, can't pass by accident.** Confirmed by adding a bare
+  reference and watching it go red, and by reading its guards against the source tree or the test
+  file itself moving.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (375/375),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report.
+
+Ready to land and for the supervisor's re-run over `e055e5b..HEAD`.
+
 ## NEXT
 
 

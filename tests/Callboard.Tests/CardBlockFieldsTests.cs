@@ -27,7 +27,7 @@ public sealed class CardBlockFieldsTests
             Tasks: ["5.1", "5.4"],
             Round: 2,
             BlockedBy: ["Q-0007"],
-            GateResults: [new GateResult("build", 0), new GateResult("test", 1)]);
+            GateResults: [new GateResult("build", 0, 2), new GateResult("test", 1, 2)]);
         var card = new CardFile(frontmatter, "Body.", [], [], BlockFields: blockFields);
 
         var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
@@ -76,7 +76,7 @@ public sealed class CardBlockFieldsTests
             "base: C:\\north\n" +
             "reviewed_state: xyz\n" +
             "tasks: 5.1,5.4\n" +
-            "gate_results: build=0\n" +
+            "gate_results: build=0=1\n" +
             "round: 2\n" +
             "blocked_by: Q-0007\n" +
             "---\n" +
@@ -91,7 +91,7 @@ public sealed class CardBlockFieldsTests
                 ("base", @"C:\north"),
                 ("reviewed_state", "xyz"),
                 ("tasks", "5.1,5.4"),
-                ("gate_results", "build=0"),
+                ("gate_results", "build=0=1"),
                 ("round", "2"),
                 ("blocked_by", "Q-0007"),
             },
@@ -164,7 +164,7 @@ public sealed class CardBlockFieldsTests
             "base: C:\\\\north\\\\tmp\n" + // escaped form of the raw value C:\north\tmp
             "reviewed_state: line1\\nline2\\rline3\n" + // escaped form of a value with a real \n and \r
             "tasks: 5.1,5\\,4-with-comma,back\\\\slash\n" + // three items, one with an escaped comma, one with an escaped backslash
-            "gate_results: esc\\\\aped\\nlabel\\rhere=5,clean-gate=0\n" + // two items (',' separator); first label has an escaped backslash and an escaped newline/CR ('=' separator within each item)
+            "gate_results: esc\\\\aped\\nlabel\\rhere=5=3,clean-gate=0=1\n" + // two items (',' separator); first label has an escaped backslash and an escaped newline/CR ('=' separates label, exit code and round within each item)
             "round: 3\n" +
             "blocked_by: B-0001,Q-0002\\\\odd\n" +
             "---\n" +
@@ -177,7 +177,7 @@ public sealed class CardBlockFieldsTests
         Assert.Equal("line1\nline2\rline3", parsed.BlockFields.ReviewedState);
         Assert.Equal(["5.1", "5,4-with-comma", "back\\slash"], parsed.BlockFields.Tasks);
         Assert.Equal(
-            [new GateResult("esc\\aped\nlabel\rhere", 5), new GateResult("clean-gate", 0)],
+            [new GateResult("esc\\aped\nlabel\rhere", 5, 3), new GateResult("clean-gate", 0, 1)],
             parsed.BlockFields.GateResults);
         Assert.Equal(3, parsed.BlockFields.Round);
         Assert.Equal(["B-0001", "Q-0002\\odd"], parsed.BlockFields.BlockedBy);
@@ -346,7 +346,7 @@ public sealed class CardBlockFieldsTests
             "---\n" +
             "id: B-0306\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
-            "gate_results: build=not-a-number\n" +
+            "gate_results: build=not-a-number=1\n" +
             "---\n" +
             "body\n";
 
@@ -361,14 +361,69 @@ public sealed class CardBlockFieldsTests
             });
     }
 
+    // §5 remediation, round 2 (reviewer finding against the shipped block D binary): the first
+    // pass of B2's fix made the pre-B2 two-part shape ("label=exitcode", exactly what the shipped
+    // block D binary wrote to every gate result before this remediation existed) unreadable — a
+    // real, valid card refused as malformed with no warning. The proposition this test establishes:
+    // a hand-authored two-part card parses cleanly, and its legacy result reads back as round 1 —
+    // the same default GateStatusOf/RecordGateResultUnderExistingLock already apply when round
+    // itself is unset. Broken and watched red first: with the legacy branch removed from
+    // ParseGateResults (reverting to requiring the second '='), this raw text fails with "malformed
+    // gate_results item" instead of parsing.
     [Fact]
-    public void Parse_BlockCardWithADuplicateGateResultsLabel_Fails()
+    public void Parse_BlockCardWithALegacyTwoPartGateResultsItem_ParsesCleanly_TreatingItAsRoundOne()
+    {
+        const string raw =
+            "---\n" +
+            "id: B-0308\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
+            "gate_results: build=0,test=1\n" + // exactly the pre-B2 two-part shape — what the shipped block D binary wrote
+            "---\n" +
+            "body\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+
+        Assert.Equal(
+            [new GateResult("build", 0, 1), new GateResult("test", 1, 1)],
+            parsed.BlockFields.GateResults);
+        Assert.True(parsed.BlockFields.GateStatusOf("build").Passed);
+        Assert.False(parsed.BlockFields.GateStatusOf("test").Passed);
+    }
+
+    // The proposition this test establishes: a card carrying legacy two-part gate results survives
+    // a read-then-write-then-read round trip, staying parseable — proving the fix does not merely
+    // let the *first* read through while still corrupting the card the moment the tool touches it
+    // again. (The re-serialized form upgrades to the three-part shape — round is now known — which
+    // is expected: this proves the card is never again unreadable, not that the bytes stay
+    // identical, unlike the byte-identical hazard test above which covers the current three-part
+    // format only.)
+    [Fact]
+    public void HandAuthoredCard_WithLegacyTwoPartGateResults_SurvivesAWriteThenReadRoundTrip()
+    {
+        const string raw =
+            "---\n" +
+            "id: B-0310\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
+            "gate_results: build=0\n" +
+            "---\n" +
+            "body\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+
+        var reserialized = CardFileWriter.Serialize(parsed);
+        var reparsed = AssertSuccess(CardFileParser.Parse(reserialized));
+
+        Assert.Equal([new GateResult("build", 0, 1)], reparsed.BlockFields.GateResults);
+    }
+
+    [Fact]
+    public void Parse_BlockCardWithADuplicateGateResultsLabelInTheSameRound_Fails()
     {
         const string raw =
             "---\n" +
             "id: B-0307\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
-            "gate_results: build=0,build=1\n" +
+            "gate_results: build=0=1,build=1=1\n" +
             "---\n" +
             "body\n";
 
@@ -383,18 +438,48 @@ public sealed class CardBlockFieldsTests
             });
     }
 
+    // The same label recorded for two *different* rounds is not a duplicate — B2's whole point
+    // (a second CardBlockFieldsTests coverage of the production behaviour CardGateResultTests
+    // exercises through CardStore; this asserts the same rule holds at the model layer, on hand-
+    // authored input).
     [Fact]
-    public void Constructor_RefusesADuplicateGateResultsLabel()
+    public void Parse_BlockCardWithTheSameGateResultsLabelInDifferentRounds_Succeeds()
+    {
+        const string raw =
+            "---\n" +
+            "id: B-0309\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
+            "gate_results: build=0=1,build=1=2\n" +
+            "---\n" +
+            "body\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+
+        Assert.Equal(
+            [new GateResult("build", 0, 1), new GateResult("build", 1, 2)],
+            parsed.BlockFields.GateResults);
+    }
+
+    [Fact]
+    public void Constructor_RefusesADuplicateGateResultsLabelInTheSameRound()
     {
         Assert.Throws<ArgumentException>(() =>
-            new BlockCardFields(null, null, [], null, [], [new GateResult("build", 0), new GateResult("build", 1)]));
+            new BlockCardFields(null, null, [], null, [], [new GateResult("build", 0, 1), new GateResult("build", 1, 1)]));
+    }
+
+    [Fact]
+    public void Constructor_AcceptsTheSameGateResultsLabelInDifferentRounds()
+    {
+        var fields = new BlockCardFields(null, null, [], null, [], [new GateResult("build", 0, 1), new GateResult("build", 1, 2)]);
+
+        Assert.Equal(2, fields.GateResults.Length);
     }
 
     [Fact]
     public void Constructor_RefusesAGateResultsLabelContainingAnEqualsSign()
     {
         Assert.Throws<ArgumentException>(() =>
-            new BlockCardFields(null, null, [], null, [], [new GateResult("bu=ild", 0)]));
+            new BlockCardFields(null, null, [], null, [], [new GateResult("bu=ild", 0, 1)]));
     }
 
     private static CardFile AssertSuccess(CardFileParseResult result) =>

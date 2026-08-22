@@ -289,7 +289,14 @@ public sealed class CommandDispatcherBlockTransitionTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("not-a-block-card", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("wrong-card-kind", refusal.GetProperty("code").GetString());
+        // §5 remediation (finding N3): one code covering both "not a block card" and "not a
+        // section card" only says strictly as much as the two it replaces if the message still
+        // names which kind was expected and which was actually found.
+        var message = refusal.GetProperty("message").GetString();
+        Assert.Contains("'question'", message, StringComparison.Ordinal);
+        Assert.Contains("'block'", message, StringComparison.Ordinal);
     }
 
     // Reviewer finding (third remediation round) — the sharpest one: onToolFailure's CLI mapping
@@ -420,6 +427,54 @@ public sealed class CommandDispatcherBlockTransitionTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("repo-root-not-found", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // §5 remediation, round 2 (reviewer finding against the shipped block D binary): a transition
+    // on a card carrying gate_results in the pre-B2 two-part shape must still succeed — the
+    // reviewer reported "block transition fails identically" to "block gate" on such a card.
+    // Broken and watched red first, the same way as the sibling test in
+    // CommandDispatcherBlockGateTests: before the parser's legacy branch existed, this raw text
+    // reproduced exitCode 2 / "code":"tool-failure".
+    [Fact]
+    public void BlockTransition_OnACardWithLegacyTwoPartGateResults_Succeeds()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteLegacyBlockCardInReview(repo.Path, "b-0900", "B-0900");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "changes-requested", "--role", "reviewer", "--change", ChangeName], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("briefed", read.Frontmatter.Status);
+        Assert.Equal(2, read.BlockFields.Round);
+        // The legacy result is still on the card, readable — the reviewer's actual failure mode —
+        // and, now that changes-requested has moved the block to round 2, it correctly no longer
+        // counts as this round's evidence (B2's own rule, applied to a legacy-shaped entry too).
+        Assert.Equal([new GateResult("build", 0, 1)], read.BlockFields.GateResults);
+        Assert.False(read.BlockFields.GateStatusOf("build").Passed);
+    }
+
+    private static string WriteLegacyBlockCardInReview(string repoRoot, string fileStem, string id)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, fileStem + ".md");
+        var raw =
+            "---\n" +
+            $"id: {id}\nkind: block\ntitle: Title\nstatus: in-review\nowner: worker\nscope: change\nsection: 5\n" +
+            $"created: {FixedNow:O}\nupdated: {FixedNow:O}\n" +
+            "base: commit-abc\n" +
+            "round: 1\n" +
+            "gate_results: build=0\n" + // exactly the pre-B2 two-part shape the shipped block D binary wrote
+            "---\n" +
+            "Body.\n";
+        File.WriteAllText(path, raw, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
     }
 
     private static string WriteInitialBlockCard(string repoRoot, string fileStem, string id, BlockFlowState status)

@@ -9,12 +9,14 @@ namespace Callboard.Tests;
 /// 5.8 at the CLI boundary: <c>section verdict</c>, <c>section close</c> and <c>section status</c>
 /// (§5 block E). Same "own refusal code, own test, verified by reverting the exact line it guards"
 /// discipline §5 block C's fourth remediation round established. Every refusal code this block
-/// mints — <c>not-a-section-card</c> (three construction sites: verdict, close, status),
-/// <c>already-closed</c>, <c>unrecognised-verdict</c> — gets its own test here; the codes this
-/// block only reuses (<c>card-not-found</c>, <c>missing-argument</c>, <c>missing-flag-value</c>,
-/// <c>unrecognised-role</c>, <c>card-layout-mismatch</c>) already have their construction sites
-/// proven for <c>block gate</c>/<c>block transition</c> and are exercised here only enough to prove
-/// this verb's own parse arm actually reaches them.
+/// mints — <c>wrong-card-kind</c> (three of this block's own construction sites: verdict, close,
+/// status — three more live in <c>block transition</c>/<c>block gate</c>/the shared
+/// <c>blocked_by</c> mapping, collapsed with <c>not-a-block-card</c> into one code, §5 remediation,
+/// finding N3), <c>already-closed</c>, <c>unrecognised-verdict</c> — gets its own test here; the
+/// codes this block only reuses (<c>card-not-found</c>, <c>missing-argument</c>,
+/// <c>missing-flag-value</c>, <c>unrecognised-role</c>, <c>card-layout-mismatch</c>) already have
+/// their construction sites proven for <c>block gate</c>/<c>block transition</c> and are exercised
+/// here only enough to prove this verb's own parse arm actually reaches them.
 /// </summary>
 public sealed class CommandDispatcherSectionTests
 {
@@ -63,7 +65,7 @@ public sealed class CommandDispatcherSectionTests
         Assert.Equal("unrecognised-verdict", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
-    // Construction site 1 of 3 for "not-a-section-card": section verdict.
+    // Construction site 1 of 3 for "wrong-card-kind": section verdict.
     [Fact]
     public void SectionVerdict_TargetIsNotASectionCard_RefusesWithNotASectionCardCode()
     {
@@ -77,7 +79,7 @@ public sealed class CommandDispatcherSectionTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("not-a-section-card", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
     [Fact]
@@ -206,7 +208,7 @@ public sealed class CommandDispatcherSectionTests
         Assert.Equal("already-closed", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
-    // Construction site 2 of 3 for "not-a-section-card": section close.
+    // Construction site 2 of 3 for "wrong-card-kind": section close.
     [Fact]
     public void SectionClose_TargetIsNotASectionCard_RefusesWithNotASectionCardCode()
     {
@@ -218,7 +220,7 @@ public sealed class CommandDispatcherSectionTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("not-a-section-card", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
     [Fact]
@@ -251,7 +253,7 @@ public sealed class CommandDispatcherSectionTests
         Assert.Equal(0, result.GetProperty("verdictCount").GetInt32());
     }
 
-    // Construction site 3 of 3 for "not-a-section-card": section status.
+    // Construction site 3 of 3 for "wrong-card-kind": section status.
     [Fact]
     public void SectionStatus_TargetIsNotASectionCard_RefusesWithNotASectionCardCode()
     {
@@ -263,7 +265,7 @@ public sealed class CommandDispatcherSectionTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("not-a-section-card", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
     [Fact]
