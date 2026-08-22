@@ -168,17 +168,20 @@ internal static class CommandDispatcher
         internal abstract TResult Match<TResult>(
             Func<Version, TResult> onVersion,
             Func<IndexRebuild, TResult> onIndexRebuild,
-            Func<BlockTransition, TResult> onBlockTransition);
+            Func<BlockTransition, TResult> onBlockTransition,
+            Func<BlockGate, TResult> onBlockGate,
+            Func<BlockAddBlocker, TResult> onBlockAddBlocker,
+            Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker);
 
         internal sealed record Version : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
                 onVersion(this);
         }
 
         internal sealed record IndexRebuild(string WorkingDirectory) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
                 onIndexRebuild(this);
         }
 
@@ -203,8 +206,40 @@ internal static class CommandDispatcher
         internal sealed record BlockTransition(
             string FilePath, string TransitionName, CardOwner ActingRole, string? BaseCommit, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
                 onBlockTransition(this);
+        }
+
+        /// <param name="Label">The gate's label (e.g. <c>build</c>) — validated during parse
+        /// (<see cref="GateResult.IsValidLabel"/> needs no file access) since it is decidable from
+        /// argv alone, the same O-3 discipline <see cref="BlockTransition.ActingRole"/>
+        /// follows.</param>
+        /// <param name="ExitCode">The exit code the gate actually returned, parsed during parse —
+        /// "is this text a valid integer" needs no file access either.</param>
+        internal sealed record BlockGate(
+            string FilePath, string Label, int ExitCode, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
+                onBlockGate(this);
+        }
+
+        /// <param name="BlockingCardId">The id of the card this block is now blocked by. Not
+        /// resolved to an actual card during parse or execute — see the block D DEVLOG brief:
+        /// nothing in this section builds an id-to-card lookup, so this stays a plain string, the
+        /// same way <see cref="BlockTransition.FilePath"/> stays a path rather than a resolved
+        /// identity.</param>
+        internal sealed record BlockAddBlocker(
+            string FilePath, string BlockingCardId, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
+                onBlockAddBlocker(this);
+        }
+
+        internal sealed record BlockRemoveBlocker(
+            string FilePath, string BlockingCardId, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker) =>
+                onBlockRemoveBlocker(this);
         }
     }
 
@@ -245,7 +280,10 @@ internal static class CommandDispatcher
                 onReady: ready => ready.Command.Match(
                     onVersion: static _ => RunVersion(),
                     onIndexRebuild: parsed => RunIndexRebuild(parsed.WorkingDirectory),
-                    onBlockTransition: parsed => RunBlockTransition(parsed, resolvedLockTimeout)),
+                    onBlockTransition: parsed => RunBlockTransition(parsed, resolvedLockTimeout),
+                    onBlockGate: parsed => RunBlockGate(parsed, resolvedLockTimeout),
+                    onBlockAddBlocker: parsed => RunBlockAddBlocker(parsed, resolvedLockTimeout),
+                    onBlockRemoveBlocker: parsed => RunBlockRemoveBlocker(parsed, resolvedLockTimeout)),
                 onRefused: refused => refused.Refusal);
 
             WriteEnvelope(output, RecognisedCommand(command, arguments), outcome);
@@ -429,6 +467,128 @@ internal static class CommandDispatcher
                 $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
+
+    /// <summary>
+    /// <c>block gate</c> (§5 block D): records one gate's exit code via <see cref="CardStore.
+    /// RecordGateResult"/> and maps its closed-union outcome to a <see cref="CommandOutcome"/> —
+    /// same three-way refusal/tool-failure/reported-failure split <see cref="RunBlockTransition"/>
+    /// already applies, for the same reason. <see langword="private"/>: <see cref="CommandParser"/>
+    /// cannot name this method (see the class doc comment).
+    /// </summary>
+    private static CommandOutcome RunBlockGate(ParsedCommand.BlockGate parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var outcome = CardStore.RecordGateResult(
+            repoRoot, parsed.FilePath, parsed.Label, parsed.ExitCode, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+
+        return outcome.Match<CommandOutcome>(
+            onRecorded: recorded => new CommandOutcome.Success(new BlockGateResult
+            {
+                FilePath = parsed.FilePath,
+                Label = recorded.Result.Label,
+                ExitCode = recorded.Result.ExitCode,
+                Passed = recorded.Result.ExitCode == 0,
+                Timestamp = parsed.Timestamp,
+            }),
+            onNotABlockCard: notABlock => new CommandOutcome.Refusal(
+                "not-a-block-card",
+                $"'{parsed.FilePath}' is a '{notABlock.Kind.ToWireString()}' card; gate results only apply to a block card."),
+            onCardNotFound: notFound => new CommandOutcome.Refusal(
+                "card-not-found",
+                $"no card file exists at '{notFound.FilePath}' to record a gate result on."),
+            onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            // Neither refusal-shaped — same reasoning as RunBlockTransition's own mapping.
+            onCardCorrupt: corrupt => throw new InvalidOperationException(
+                $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
+    }
+
+    /// <summary>
+    /// <c>block add-blocker</c> (§5 block D): adds a blocking card id via <see cref="CardStore.
+    /// AddBlockedBy"/>. Never touches the card's <c>status</c> — see <see cref="CardBlockedByOutcome"/>'s
+    /// doc comment. <see langword="private"/>: <see cref="CommandParser"/> cannot name this
+    /// method.
+    /// </summary>
+    private static CommandOutcome RunBlockAddBlocker(ParsedCommand.BlockAddBlocker parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var outcome = CardStore.AddBlockedBy(repoRoot, parsed.FilePath, parsed.BlockingCardId, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+
+        return MapBlockedByOutcome(outcome, parsed.FilePath, parsed.Timestamp);
+    }
+
+    /// <summary>
+    /// <c>block remove-blocker</c> (§5 block D): the counterpart of
+    /// <see cref="RunBlockAddBlocker"/> — work-lifecycle's "clearing what blocked it requires no
+    /// state restoration" is why this method, like <see cref="RunBlockAddBlocker"/>, never
+    /// constructs a status-carrying write at all.
+    /// </summary>
+    private static CommandOutcome RunBlockRemoveBlocker(ParsedCommand.BlockRemoveBlocker parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var outcome = CardStore.RemoveBlockedBy(repoRoot, parsed.FilePath, parsed.BlockingCardId, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+
+        return MapBlockedByOutcome(outcome, parsed.FilePath, parsed.Timestamp);
+    }
+
+    /// <summary>
+    /// Shared by <see cref="RunBlockAddBlocker"/> and <see cref="RunBlockRemoveBlocker"/> — both
+    /// verbs return <see cref="CardBlockedByOutcome"/> and map every case the same way, including
+    /// the op-specific ones each can never itself produce (<see cref="RunBlockAddBlocker"/> never
+    /// sees <see cref="CardBlockedByOutcome.NotBlockedBy"/>; <see cref="RunBlockRemoveBlocker"/>
+    /// never sees <see cref="CardBlockedByOutcome.AlreadyBlockedBy"/>) — the exhaustive
+    /// <see cref="CardBlockedByOutcome.Match{TResult}"/> still forces both handled here regardless
+    /// of which verb is actually calling.
+    /// </summary>
+    private static CommandOutcome MapBlockedByOutcome(
+        CardBlockedByOutcome outcome, string filePath, DateTimeOffset timestamp) =>
+        outcome.Match<CommandOutcome>(
+            onUpdated: updated => new CommandOutcome.Success(new BlockedByResult
+            {
+                FilePath = filePath,
+                BlockedBy = [.. updated.Card.BlockFields.BlockedBy],
+                Blocked = updated.Card.BlockFields.BlockedBy.Length > 0,
+                Timestamp = timestamp,
+            }),
+            onAlreadyBlockedBy: already => new CommandOutcome.Refusal(
+                "already-blocked-by",
+                $"'{filePath}' is already recorded as blocked by '{already.BlockingCardId}'."),
+            onNotBlockedBy: notBlockedBy => new CommandOutcome.Refusal(
+                "not-blocked-by",
+                $"'{filePath}' is not recorded as blocked by '{notBlockedBy.BlockingCardId}'."),
+            onNotABlockCard: notABlock => new CommandOutcome.Refusal(
+                "not-a-block-card",
+                $"'{filePath}' is a '{notABlock.Kind.ToWireString()}' card; blocked_by only applies to a block card."),
+            onCardNotFound: notFound => new CommandOutcome.Refusal(
+                "card-not-found",
+                $"no card file exists at '{notFound.FilePath}' to update blocked_by on."),
+            onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            onCardCorrupt: corrupt => throw new InvalidOperationException(
+                $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
 
     private static int ExitCodeFor(CommandOutcome outcome) => outcome.Match(
         onSuccess: static _ => SuccessExitCode,

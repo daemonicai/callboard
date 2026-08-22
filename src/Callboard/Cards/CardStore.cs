@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 
@@ -273,16 +274,7 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
-                var isBlockCard = card.Frontmatter.Kind.Match(
-                    onBlock: static () => true,
-                    onQuestion: static () => false,
-                    onFinding: static () => false,
-                    onObligation: static () => false,
-                    onRule: static () => false,
-                    onHazard: static () => false,
-                    onDecision: static () => false);
-
-                if (!isBlockCard)
+                if (!IsBlockCard(card))
                 {
                     return new CardBlockTransitionOutcome.NotABlockCard(card.Frontmatter.Kind);
                 }
@@ -352,6 +344,210 @@ internal static class CardStore
             onFailure: failure =>
                 new CardBlockTransitionOutcome.CardCorrupt(filePath, failure.Reason));
     }
+
+    /// <summary>
+    /// Records one gate's exit code on the block card at <paramref name="filePath"/>
+    /// (work-lifecycle: "A gate result SHALL be recorded on the card as a label paired with the
+    /// exit code the gate returned", §5 block D) — reads the current card, and only if it is a
+    /// block card, writes the exit code under the card's lock, the same read-decide-write shape
+    /// <see cref="ApplyBlockTransition"/> established. Recording a second result for
+    /// <paramref name="label"/> replaces the one already recorded — see
+    /// <see cref="BlockCardFields.GateResults"/>'s own doc comment for why a label is upserted
+    /// rather than appended a second time.
+    /// </summary>
+    internal static CardGateResultOutcome RecordGateResult(
+        string cardsRoot, string filePath, string label, int exitCode, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => RecordGateResultUnderExistingLock(heldLock, cardsRoot, label, exitCode, timestamp, changeName),
+            onTimedOut: timedOut => new CardGateResultOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="RecordGateResult"/>. Same structural lock
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type — the target is
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>.
+    /// </summary>
+    internal static CardGateResultOutcome RecordGateResultUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string label, int exitCode, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardGateResultOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardGateResultOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsBlockCard(card))
+                {
+                    return new CardGateResultOutcome.NotABlockCard(card.Frontmatter.Kind);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardGateResultOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var result = new GateResult(label, exitCode);
+                var withoutExistingLabel = card.BlockFields.GateResults
+                    .Where(existing => !string.Equals(existing.Label, label, StringComparison.Ordinal))
+                    .ToImmutableArray();
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Updated = timestamp },
+                    BlockFields = card.BlockFields with { GateResults = withoutExistingLabel.Add(result) },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardGateResultOutcome>(
+                    onSuccess: _ => new CardGateResultOutcome.Recorded(updated, result),
+                    onNotFound: notFound => new CardGateResultOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardGateResultOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardGateResultOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardGateResultOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardGateResultOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardGateResultOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// Adds <paramref name="blockingCardId"/> to the block card at <paramref name="filePath"/>'s
+    /// <c>blocked_by</c> set (work-lifecycle: "Blocked is derived, not stored", §5 block D). Never
+    /// touches <see cref="CardFrontmatter.Status"/> — see <see cref="CardBlockedByOutcome"/>'s own
+    /// doc comment for why that is structural rather than a discipline this method happens to
+    /// follow.
+    /// </summary>
+    internal static CardBlockedByOutcome AddBlockedBy(
+        string cardsRoot, string filePath, string blockingCardId, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => AddBlockedByUnderExistingLock(heldLock, cardsRoot, blockingCardId, timestamp, changeName),
+            onTimedOut: timedOut => new CardBlockedByOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>The read-decide-write step of <see cref="AddBlockedBy"/>.</summary>
+    internal static CardBlockedByOutcome AddBlockedByUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string blockingCardId, DateTimeOffset timestamp, string? changeName = null) =>
+        UpdateBlockedByUnderExistingLock(
+            heldLock, cardsRoot, blockingCardId, timestamp, changeName,
+            apply: (current, id) => current.Contains(id, StringComparer.Ordinal)
+                ? (Updated: false, Result: current)
+                : (Updated: true, Result: current.Add(id)),
+            onNoChange: id => new CardBlockedByOutcome.AlreadyBlockedBy(id));
+
+    /// <summary>
+    /// Removes <paramref name="blockingCardId"/> from the block card at <paramref name="filePath"/>'s
+    /// <c>blocked_by</c> set — the "clearing what blocked it requires no state restoration" half of
+    /// work-lifecycle's "Blocked is derived, not stored": this never touches
+    /// <see cref="CardFrontmatter.Status"/> either, so the card's flow state is exactly what it was
+    /// before it was ever blocked, not something this method has to put back.
+    /// </summary>
+    internal static CardBlockedByOutcome RemoveBlockedBy(
+        string cardsRoot, string filePath, string blockingCardId, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => RemoveBlockedByUnderExistingLock(heldLock, cardsRoot, blockingCardId, timestamp, changeName),
+            onTimedOut: timedOut => new CardBlockedByOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>The read-decide-write step of <see cref="RemoveBlockedBy"/>.</summary>
+    internal static CardBlockedByOutcome RemoveBlockedByUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string blockingCardId, DateTimeOffset timestamp, string? changeName = null) =>
+        UpdateBlockedByUnderExistingLock(
+            heldLock, cardsRoot, blockingCardId, timestamp, changeName,
+            apply: (current, id) => current.Contains(id, StringComparer.Ordinal)
+                ? (Updated: true, Result: current.Remove(id))
+                : (Updated: false, Result: current),
+            onNoChange: id => new CardBlockedByOutcome.NotBlockedBy(id));
+
+    /// <summary>
+    /// The read-decide-write shape <see cref="AddBlockedByUnderExistingLock"/> and
+    /// <see cref="RemoveBlockedByUnderExistingLock"/> share — same structural lock precondition as
+    /// every other <c>*UnderExistingLock</c> method — differing only in how
+    /// <paramref name="apply"/> decides the new <c>blocked_by</c> set from the current one and what
+    /// <paramref name="onNoChange"/> refuses with when nothing needed to change.
+    /// </summary>
+    private static CardBlockedByOutcome UpdateBlockedByUnderExistingLock(
+        CardLock heldLock,
+        string cardsRoot,
+        string blockingCardId,
+        DateTimeOffset timestamp,
+        string? changeName,
+        Func<ImmutableArray<string>, string, (bool Updated, ImmutableArray<string> Result)> apply,
+        Func<string, CardBlockedByOutcome> onNoChange)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardBlockedByOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardBlockedByOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsBlockCard(card))
+                {
+                    return new CardBlockedByOutcome.NotABlockCard(card.Frontmatter.Kind);
+                }
+
+                var (updated, newBlockedBy) = apply(card.BlockFields.BlockedBy, blockingCardId);
+                if (!updated)
+                {
+                    return onNoChange(blockingCardId);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardBlockedByOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var updatedCard = card with
+                {
+                    Frontmatter = card.Frontmatter with { Updated = timestamp },
+                    BlockFields = card.BlockFields with { BlockedBy = newBlockedBy },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updatedCard));
+                return writeResult.Match<CardBlockedByOutcome>(
+                    onSuccess: _ => new CardBlockedByOutcome.Updated(updatedCard),
+                    onNotFound: notFound => new CardBlockedByOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardBlockedByOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardBlockedByOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardBlockedByOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardBlockedByOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardBlockedByOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>Shared by <see cref="ApplyBlockTransitionUnderExistingLock"/>,
+    /// <see cref="RecordGateResultUnderExistingLock"/> and <see cref="UpdateBlockedByUnderExistingLock"/>
+    /// — the one place "is this card's kind block" is decided, over the closed
+    /// <see cref="CardKind"/> union, so the three verbs cannot drift on what counts as a block
+    /// card.</summary>
+    private static bool IsBlockCard(CardFile card) => card.Frontmatter.Kind.Match(
+        onBlock: static () => true,
+        onQuestion: static () => false,
+        onFinding: static () => false,
+        onObligation: static () => false,
+        onRule: static () => false,
+        onHazard: static () => false,
+        onDecision: static () => false);
 
     /// <summary>
     /// Reads and parses one card file. I/O failures (the file vanished, permissions) are caught

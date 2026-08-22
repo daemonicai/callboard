@@ -16,7 +16,7 @@ public sealed class CardBlockFieldsTests
     private static readonly DateTimeOffset Updated = new(2026, 8, 20, 15, 30, 0, TimeSpan.Zero);
 
     [Fact]
-    public void RoundTrips_BlockCardCarryingAllFiveFields()
+    public void RoundTrips_BlockCardCarryingAllSixFields()
     {
         var frontmatter = new CardFrontmatter(
             "B-0200", CardKind.Block, "Carry brief context", "briefed", CardOwner.Worker,
@@ -26,7 +26,8 @@ public sealed class CardBlockFieldsTests
             ReviewedState: "def5678",
             Tasks: ["5.1", "5.4"],
             Round: 2,
-            BlockedBy: ["Q-0007"]);
+            BlockedBy: ["Q-0007"],
+            GateResults: [new GateResult("build", 0), new GateResult("test", 1)]);
         var card = new CardFile(frontmatter, "Body.", [], [], BlockFields: blockFields);
 
         var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
@@ -35,7 +36,7 @@ public sealed class CardBlockFieldsTests
     }
 
     [Fact]
-    public void RoundTrips_BlockCardWithNoneOfTheFiveFieldsSet_EmitsNoBlockLinesAtAll()
+    public void RoundTrips_BlockCardWithNoneOfTheSixFieldsSet_EmitsNoBlockLinesAtAll()
     {
         var frontmatter = new CardFrontmatter(
             "B-0201", CardKind.Block, "Nothing recorded yet", "drafting", CardOwner.Architect,
@@ -47,6 +48,7 @@ public sealed class CardBlockFieldsTests
         Assert.DoesNotContain("base:", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("reviewed_state:", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("tasks:", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("gate_results:", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("round:", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("blocked_by:", serialized, StringComparison.Ordinal);
 
@@ -55,9 +57,9 @@ public sealed class CardBlockFieldsTests
     }
 
     [Fact]
-    public void NonBlockKind_KeepsTheFiveKeysAsPreservedUnknown_NeverPromoted()
+    public void NonBlockKind_KeepsTheSixKeysAsPreservedUnknown_NeverPromoted()
     {
-        // The Architect ruling this block scopes the hazard to: the same five keys, hand-written
+        // The Architect ruling this block scopes the hazard to: the same six keys, hand-written
         // on a card of any other kind, must stay exactly where they were before this type
         // existed — on UnknownFrontmatterFields, untouched — never promoted onto BlockFields.
         const string raw =
@@ -74,6 +76,7 @@ public sealed class CardBlockFieldsTests
             "base: C:\\north\n" +
             "reviewed_state: xyz\n" +
             "tasks: 5.1,5.4\n" +
+            "gate_results: build=0\n" +
             "round: 2\n" +
             "blocked_by: Q-0007\n" +
             "---\n" +
@@ -88,6 +91,7 @@ public sealed class CardBlockFieldsTests
                 ("base", @"C:\north"),
                 ("reviewed_state", "xyz"),
                 ("tasks", "5.1,5.4"),
+                ("gate_results", "build=0"),
                 ("round", "2"),
                 ("blocked_by", "Q-0007"),
             },
@@ -126,13 +130,25 @@ public sealed class CardBlockFieldsTests
     /// unknown values are stored raw and never tool-escaped, so promoting a key to a known field
     /// moves it onto the escaping path — a hand-written value like <c>base: C:\north</c> can gain
     /// a newline on the next read if the write path's escaping isn't inverted exactly by the read
-    /// path. This is that test: a hand-authored card carrying awkward raw values in all five keys
+    /// path. This is that test: a hand-authored card carrying awkward raw values in all six keys
     /// (backslashes, an embedded escaped comma, an escaped newline and carriage return) round-trips
     /// byte-identically through parse → write — asserted on the file's bytes, per §3's rule that
     /// green tests on the parsed object do not exercise the machine contract.
+    ///
+    /// <para>
+    /// <b>Extended for <c>gate_results</c> (reviewer finding, §5 block D review):</b>
+    /// <c>gate_results</c> is the second key promoted to a known field after block A, and this
+    /// hazard test was never extended to cover it — a gap the reviewer closed with a scratch run
+    /// (mechanism verified sound) but the standard this section has held since block A is that the
+    /// verification lives in a committed test, not a scratch one. The added item exercises both
+    /// separators (the item-internal <c>=</c> and the list's <c>,</c>, via two items) plus the
+    /// escape character and an embedded newline/CR within a label — a label may contain either
+    /// (<see cref="GateResult.IsValidLabel"/> forbids only empty/whitespace-only, <c>=</c> and
+    /// <c>,</c>, not backslash or control characters).
+    /// </para>
     /// </summary>
     [Fact]
-    public void HandAuthoredCard_WithAwkwardRawValuesInAllFiveBlockFields_RoundTripsByteIdentically()
+    public void HandAuthoredCard_WithAwkwardRawValuesInAllSixBlockFields_RoundTripsByteIdentically()
     {
         const string raw =
             "---\n" +
@@ -148,6 +164,7 @@ public sealed class CardBlockFieldsTests
             "base: C:\\\\north\\\\tmp\n" + // escaped form of the raw value C:\north\tmp
             "reviewed_state: line1\\nline2\\rline3\n" + // escaped form of a value with a real \n and \r
             "tasks: 5.1,5\\,4-with-comma,back\\\\slash\n" + // three items, one with an escaped comma, one with an escaped backslash
+            "gate_results: esc\\\\aped\\nlabel\\rhere=5,clean-gate=0\n" + // two items (',' separator); first label has an escaped backslash and an escaped newline/CR ('=' separator within each item)
             "round: 3\n" +
             "blocked_by: B-0001,Q-0002\\\\odd\n" +
             "---\n" +
@@ -159,6 +176,9 @@ public sealed class CardBlockFieldsTests
         Assert.Equal("C:\\north\\tmp", parsed.BlockFields.Base);
         Assert.Equal("line1\nline2\rline3", parsed.BlockFields.ReviewedState);
         Assert.Equal(["5.1", "5,4-with-comma", "back\\slash"], parsed.BlockFields.Tasks);
+        Assert.Equal(
+            [new GateResult("esc\\aped\nlabel\rhere", 5), new GateResult("clean-gate", 0)],
+            parsed.BlockFields.GateResults);
         Assert.Equal(3, parsed.BlockFields.Round);
         Assert.Equal(["B-0001", "Q-0002\\odd"], parsed.BlockFields.BlockedBy);
 
@@ -180,7 +200,7 @@ public sealed class CardBlockFieldsTests
     public void Constructor_RefusesAnEmptyOrWhitespaceOnlyTasksItem(string badItem)
     {
         Assert.Throws<ArgumentException>(() =>
-            new BlockCardFields(null, null, ["5.1", badItem], null, []));
+            new BlockCardFields(null, null, ["5.1", badItem], null, [], []));
     }
 
     [Theory]
@@ -189,13 +209,13 @@ public sealed class CardBlockFieldsTests
     public void Constructor_RefusesAnEmptyOrWhitespaceOnlyBlockedByItem(string badItem)
     {
         Assert.Throws<ArgumentException>(() =>
-            new BlockCardFields(null, null, [], null, ["B-0001", badItem]));
+            new BlockCardFields(null, null, [], null, ["B-0001", badItem], []));
     }
 
     [Fact]
     public void Constructor_AcceptsTasksAndBlockedByWithNoEmptyItems()
     {
-        var fields = new BlockCardFields(null, null, ["5.1", "5.4"], null, ["B-0001"]);
+        var fields = new BlockCardFields(null, null, ["5.1", "5.4"], null, ["B-0001"], []);
 
         Assert.Equal(["5.1", "5.4"], fields.Tasks);
         Assert.Equal(["B-0001"], fields.BlockedBy);
@@ -227,7 +247,7 @@ public sealed class CardBlockFieldsTests
     public void Constructor_DefensivelyCopiesTasks_SoMutatingTheSourceListAfterConstructionLeavesTheBuiltValueUnchanged()
     {
         var source = new List<string> { "5.1" };
-        var fields = new BlockCardFields(null, null, source, null, []);
+        var fields = new BlockCardFields(null, null, source, null, [], []);
 
         source.Add("");
 
@@ -238,7 +258,7 @@ public sealed class CardBlockFieldsTests
     public void Constructor_DefensivelyCopiesBlockedBy_SoMutatingTheSourceListAfterConstructionLeavesTheBuiltValueUnchanged()
     {
         var source = new List<string> { "B-0001" };
-        var fields = new BlockCardFields(null, null, [], null, source);
+        var fields = new BlockCardFields(null, null, [], null, source, []);
 
         source.Add("   ");
 
@@ -295,6 +315,86 @@ public sealed class CardBlockFieldsTests
                 Assert.Contains("blocked_by", failure.Reason, StringComparison.Ordinal);
                 return null;
             });
+    }
+
+    [Fact]
+    public void Parse_BlockCardWithAMalformedGateResultsItem_Fails()
+    {
+        const string raw =
+            "---\n" +
+            "id: B-0305\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
+            "gate_results: build\n" + // no '=' — not "label=exitcode"
+            "---\n" +
+            "body\n";
+
+        var result = CardFileParser.Parse(raw);
+
+        result.Match<object?>(
+            onSuccess: success => throw new Xunit.Sdk.XunitException($"expected failure, got success: {success.Card}"),
+            onFailure: failure =>
+            {
+                Assert.Contains("gate_results", failure.Reason, StringComparison.Ordinal);
+                return null;
+            });
+    }
+
+    [Fact]
+    public void Parse_BlockCardWithAnInvalidGateResultsExitCode_Fails()
+    {
+        const string raw =
+            "---\n" +
+            "id: B-0306\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
+            "gate_results: build=not-a-number\n" +
+            "---\n" +
+            "body\n";
+
+        var result = CardFileParser.Parse(raw);
+
+        result.Match<object?>(
+            onSuccess: success => throw new Xunit.Sdk.XunitException($"expected failure, got success: {success.Card}"),
+            onFailure: failure =>
+            {
+                Assert.Contains("gate_results", failure.Reason, StringComparison.Ordinal);
+                return null;
+            });
+    }
+
+    [Fact]
+    public void Parse_BlockCardWithADuplicateGateResultsLabel_Fails()
+    {
+        const string raw =
+            "---\n" +
+            "id: B-0307\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
+            "gate_results: build=0,build=1\n" +
+            "---\n" +
+            "body\n";
+
+        var result = CardFileParser.Parse(raw);
+
+        result.Match<object?>(
+            onSuccess: success => throw new Xunit.Sdk.XunitException($"expected failure, got success: {success.Card}"),
+            onFailure: failure =>
+            {
+                Assert.Contains("gate_results", failure.Reason, StringComparison.Ordinal);
+                return null;
+            });
+    }
+
+    [Fact]
+    public void Constructor_RefusesADuplicateGateResultsLabel()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new BlockCardFields(null, null, [], null, [], [new GateResult("build", 0), new GateResult("build", 1)]));
+    }
+
+    [Fact]
+    public void Constructor_RefusesAGateResultsLabelContainingAnEqualsSign()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new BlockCardFields(null, null, [], null, [], [new GateResult("bu=ild", 0)]));
     }
 
     private static CardFile AssertSuccess(CardFileParseResult result) =>

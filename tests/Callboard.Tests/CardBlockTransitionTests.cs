@@ -276,7 +276,7 @@ public sealed class CardBlockTransitionTests : IDisposable
         var path = Path.Combine(_directory, fileStem + ".md");
         var frontmatter = new CardFrontmatter(
             id, CardKind.Block, "Title", status.ToWireString(), CardOwner.Architect, CardScope.Change, "5", Created, Created);
-        var blockFields = new BlockCardFields(baseCommit, null, tasks ?? [], null, []);
+        var blockFields = new BlockCardFields(baseCommit, null, tasks ?? [], null, [], []);
         var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;

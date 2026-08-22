@@ -45,8 +45,8 @@
 - [x] 5.3 Implement remediation as the same card at an incremented round, ticking no task
 - [x] 5.4 Implement `base`, `reviewed_state`, `tasks`, `round` and `blocked_by` on block cards
 - [x] 5.5 Refuse briefing a block with no `base` recorded
-- [ ] 5.6 Implement gate results as label-to-exit-code, with narrative claims carrying no weight
-- [ ] 5.7 Derive blocked from a non-empty `blocked_by`, preserving flow state throughout
+- [x] 5.6 Implement gate results as label-to-exit-code, with narrative claims carrying no weight
+- [x] 5.7 Derive blocked from a non-empty `blocked_by`, preserving flow state throughout
 - [ ] 5.8 Implement sections as entities carrying status, base commit and supervisor verdict
 
 ## 6. Findings

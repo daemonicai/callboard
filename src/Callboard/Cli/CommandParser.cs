@@ -80,8 +80,9 @@ internal static class CommandParser
         new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.IndexRebuild(workingDirectory));
 
     /// <summary>
-    /// <c>block</c>'s only job is routing to a subcommand — currently just <c>transition</c>. Same
-    /// peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// <c>block</c>'s only job is routing to a subcommand: <c>transition</c>, <c>gate</c> (§5
+    /// block D), <c>add-blocker</c> and <c>remove-blocker</c> (§5 block D). Same peek-don't-take
+    /// shape as <see cref="ParseIndex"/>, same reason.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseBlock(CommandDispatcher.CommandContext context)
     {
@@ -90,14 +91,25 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'block' requires a subcommand. Known subcommands: transition."));
+                    "'block' requires a subcommand. Known subcommands: transition, gate, add-blocker, remove-blocker."));
             case "transition":
                 context.Arguments.TryTake();
                 return ParseBlockTransition(context);
+            case "gate":
+                context.Arguments.TryTake();
+                return ParseBlockGate(context);
+            case "add-blocker":
+                context.Arguments.TryTake();
+                return ParseBlockedByMutation(context, static (filePath, blockingCardId, role, changeName, workingDirectory, timestamp) =>
+                    new CommandDispatcher.ParsedCommand.BlockAddBlocker(filePath, blockingCardId, role, changeName, workingDirectory, timestamp));
+            case "remove-blocker":
+                context.Arguments.TryTake();
+                return ParseBlockedByMutation(context, static (filePath, blockingCardId, role, changeName, workingDirectory, timestamp) =>
+                    new CommandDispatcher.ParsedCommand.BlockRemoveBlocker(filePath, blockingCardId, role, changeName, workingDirectory, timestamp));
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition."));
+                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition, gate, add-blocker, remove-blocker."));
         }
     }
 
@@ -193,5 +205,156 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.BlockTransition(
             filePath, transitionName, role, baseCommit, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>block gate</c>'s <see cref="CommandDispatcher.ParsedCommand.BlockGate"/>: three
+    /// positional tokens (card file path, gate label, exit code) followed by <c>--role</c>
+    /// (required) and the optional <c>--change</c> flag. The label
+    /// (<see cref="GateResult.IsValidLabel"/>) and the exit code (a valid integer) are both
+    /// argv-decidable, so both are validated here rather than left to the execute phase (O-3), the
+    /// same discipline <see cref="ParseBlockTransition"/> already applies to <c>--role</c>.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseBlockGate(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'block gate' requires a card file path, a gate label and an exit code."));
+        }
+
+        var label = context.Arguments.TryTake();
+        if (label is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'block gate' requires a gate label and an exit code."));
+        }
+
+        if (!GateResult.IsValidLabel(label))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "invalid-gate-label",
+                $"'{label}' is not a valid gate label — a label cannot be empty, whitespace-only, or contain '=' or ','."));
+        }
+
+        var exitCodeText = context.Arguments.TryTake();
+        if (exitCodeText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'block gate' requires an exit code."));
+        }
+
+        if (!int.TryParse(exitCodeText, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var exitCode))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "invalid-exit-code",
+                $"'{exitCodeText}' is not a valid exit code — it must be an integer."));
+        }
+
+        var flags = ParseRoleAndChangeFlags(context, "'block gate'");
+        if (flags.Refusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flags.Refusal);
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.BlockGate(
+            filePath, label, exitCode, flags.Role!, flags.ChangeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds either <c>block add-blocker</c>'s <see cref="CommandDispatcher.ParsedCommand.BlockAddBlocker"/>
+    /// or <c>block remove-blocker</c>'s <see cref="CommandDispatcher.ParsedCommand.BlockRemoveBlocker"/>
+    /// — the two verbs take identical argv shape (a card file path, a blocking card id,
+    /// <c>--role</c>, an optional <c>--change</c>) and differ only in which case they construct,
+    /// so <paramref name="build"/> is the one place that difference lives.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseBlockedByMutation(
+        CommandDispatcher.CommandContext context,
+        Func<string, string, CardOwner, string?, string, DateTimeOffset, CommandDispatcher.ParsedCommand> build)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "this command requires a card file path and a blocking card id."));
+        }
+
+        var blockingCardId = context.Arguments.TryTake();
+        if (blockingCardId is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "this command requires a blocking card id."));
+        }
+
+        var flags = ParseRoleAndChangeFlags(context, "this command");
+        if (flags.Refusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flags.Refusal);
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(
+            build(filePath, blockingCardId, flags.Role!, flags.ChangeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// The <c>--role</c> (required)/<c>--change</c> (optional) flag pair every §5 block D verb
+    /// takes, factored out once both <see cref="ParseBlockGate"/> and
+    /// <see cref="ParseBlockedByMutation"/> needed it — <see cref="ParseBlockTransition"/> is left
+    /// with its own inline copy (it also has <c>--base</c> interleaved in the same loop, so
+    /// factoring it out there would split one flag loop across two methods for no gain).
+    /// </summary>
+    private static (CardOwner? Role, string? ChangeName, CommandOutcome.Refusal? Refusal) ParseRoleAndChangeFlags(
+        CommandDispatcher.CommandContext context, string commandLabel)
+    {
+        string? roleText = null;
+        string? changeName = null;
+
+        while (context.Arguments.Peek() is { } flag)
+        {
+            if (flag == "--role")
+            {
+                context.Arguments.TryTake();
+                roleText = context.Arguments.TryTake();
+                if (roleText is null)
+                {
+                    return (null, null, new CommandOutcome.Refusal("missing-flag-value", "'--role' requires a value."));
+                }
+
+                continue;
+            }
+
+            if (flag == "--change")
+            {
+                context.Arguments.TryTake();
+                changeName = context.Arguments.TryTake();
+                if (changeName is null)
+                {
+                    return (null, null, new CommandOutcome.Refusal("missing-flag-value", "'--change' requires a value."));
+                }
+
+                continue;
+            }
+
+            break;
+        }
+
+        if (roleText is null)
+        {
+            return (null, null, new CommandOutcome.Refusal("missing-argument", $"{commandLabel} requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return (null, null, new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return (role, changeName, null);
     }
 }

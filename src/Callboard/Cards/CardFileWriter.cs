@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq;
 using System.Text;
 
 namespace Callboard.Cards;
@@ -62,6 +63,14 @@ internal static class CardFileWriter
             if (blockFields.Tasks.Length > 0)
             {
                 builder.Append("tasks: ").Append(CardFileFormat.JoinFrontmatterList(blockFields.Tasks)).Append('\n');
+            }
+
+            if (blockFields.GateResults.Length > 0)
+            {
+                var gateItems = blockFields.GateResults
+                    .Select(static result => $"{result.Label}={result.ExitCode.ToString(CultureInfo.InvariantCulture)}")
+                    .ToList();
+                builder.Append("gate_results: ").Append(CardFileFormat.JoinFrontmatterList(gateItems)).Append('\n');
             }
 
             if (blockFields.Round is { } round)

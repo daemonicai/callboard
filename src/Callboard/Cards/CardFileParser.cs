@@ -33,7 +33,7 @@ internal static class CardFileParser
     // handling in Parse below.
     private static readonly HashSet<string> BlockOnlyFrontmatterKeys = new(StringComparer.Ordinal)
     {
-        "base", "reviewed_state", "tasks", "round", "blocked_by",
+        "base", "reviewed_state", "tasks", "gate_results", "round", "blocked_by",
     };
 
     // The six comment-header fields this build recognises. Same rule, same reason, applied to the
@@ -413,7 +413,66 @@ internal static class CardFileParser
             round = parsedRound;
         }
 
-        return (new BlockCardFields(baseCommit, reviewedState, tasks, round, blockedBy), null);
+        var (gateResults, gateResultsFailure) = ParseGateResults(fields);
+        if (gateResultsFailure is not null)
+        {
+            return (null, gateResultsFailure);
+        }
+
+        return (new BlockCardFields(baseCommit, reviewedState, tasks, round, blockedBy, gateResults!), null);
+    }
+
+    /// <summary>
+    /// Parses <c>gate_results</c>: a comma-joined list (the same <see cref="CardFileFormat.
+    /// SplitFrontmatterList"/> <c>tasks</c>/<c>blocked_by</c> use) of <c>label=exitcode</c> items.
+    /// Each item is split on its <em>first</em> <c>=</c> — <see cref="GateResult.IsValidLabel"/>
+    /// already refuses a label containing one, so the first (and only) <c>=</c> in a well-formed
+    /// item is always the label/exit-code boundary. Three things can fail: a missing <c>=</c>, an
+    /// empty or invalid label, and an exit code that is not a valid integer — each folded into a
+    /// parse failure here rather than reaching <see cref="BlockCardFields"/>'s own constructor
+    /// guard as an unhandled exception, same discipline as <see cref="RequireNoEmptyListItem"/>.
+    /// </summary>
+    private static (IReadOnlyList<GateResult>? GateResults, string? Failure) ParseGateResults(
+        IReadOnlyDictionary<string, string> fields)
+    {
+        if (!fields.TryGetValue("gate_results", out var raw))
+        {
+            return (Array.Empty<GateResult>(), null);
+        }
+
+        var items = CardFileFormat.SplitFrontmatterList(raw);
+        var results = new List<GateResult>(items.Count);
+        var seenLabels = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in items)
+        {
+            var separatorIndex = item.IndexOf('=');
+            if (separatorIndex < 0)
+            {
+                return (null, $"block card has a malformed gate_results item (expected 'label=exitcode'): '{item}'");
+            }
+
+            var label = item[..separatorIndex];
+            var exitCodeText = item[(separatorIndex + 1)..];
+
+            if (!GateResult.IsValidLabel(label))
+            {
+                return (null, $"block card has an invalid gate_results label: '{label}'");
+            }
+
+            if (!int.TryParse(exitCodeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var exitCode))
+            {
+                return (null, $"block card has an invalid gate_results exit code for '{label}': '{exitCodeText}'");
+            }
+
+            if (!seenLabels.Add(label))
+            {
+                return (null, $"block card has more than one gate_results entry for label '{label}'");
+            }
+
+            results.Add(new GateResult(label, exitCode));
+        }
+
+        return (results, null);
     }
 
     /// <summary>

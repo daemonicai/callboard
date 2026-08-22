@@ -97,15 +97,23 @@ public sealed class CardCommentImmutabilityTests
 
         var expectedMembers = new[]
         {
+            "AddBlockedBy",                         // §5 block D: read-modify-write on BlockFields.BlockedBy only; never touches Frontmatter.Status or Comments
+            "AddBlockedByUnderExistingLock",        // same, lock already held
             "AppendComment",                       // read-modify-write: reads, appends one comment, writes — never drops one
             "AppendCommentUnderExistingLock",       // same, lock already held by the caller
             "ApplyBlockTransition",                 // §5 block C: read-modify-write on Frontmatter.Status/BlockFields/Transitions only; Comments passes through the `card with { ... }` unchanged
             "ApplyBlockTransitionUnderExistingLock", // same, lock already held
             "AtomicWrite",                          // the shared byte-writer every path above funnels through; it writes whatever CardFileWriter.Serialize(card) produces for the CardFile each of those paths built — none of them builds one with a truncated Comments list
+            "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy; never touches a CardFile's Comments
             "ReadAllCards",                         // read-only
             "ReadCard",                             // read-only
+            "RecordGateResult",                     // §5 block D: read-modify-write on BlockFields.GateResults only; never touches Frontmatter.Status or Comments — see the structural argument in GateStatus's doc comment
+            "RecordGateResultUnderExistingLock",    // same, lock already held
+            "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"
+            "RemoveBlockedByUnderExistingLock",     // same, lock already held
             "TransferOwnership",                    // read-modify-write: overwrites Owner/Handovers only; Comments passes through the `success.Card with { ... }` unchanged
             "TransferOwnershipUnderExistingLock",   // same, lock already held
+            "UpdateBlockedByUnderExistingLock",     // §5 block D: the read-decide-write shape AddBlockedByUnderExistingLock/RemoveBlockedByUnderExistingLock share; never touches Frontmatter.Status or Comments
             "WithLock",                             // lock-acquisition plumbing (CardWriteResult overload); never touches a CardFile
             "WithLock",                             // §5 block C: the same plumbing generalised over TResult so ApplyBlockTransition can return a CardBlockTransitionOutcome; never touches a CardFile — two overloads, two entries, same method name
             "WriteCard",                            // create-only (this fix) — see WriteCard_RefusesToOverwriteAnExistingCard_SoItCannotDropAComment below for the direct proof

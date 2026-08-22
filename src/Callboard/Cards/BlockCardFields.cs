@@ -3,11 +3,12 @@ using System.Collections.Immutable;
 namespace Callboard.Cards;
 
 /// <summary>
-/// The five frontmatter fields work-lifecycle's "Blocks carry their brief context" names as known
+/// The six frontmatter fields work-lifecycle's "Blocks carry their brief context" names as known
 /// on a <c>block</c> card only: <c>base</c> (the commit its brief was carved against),
 /// <c>reviewed_state</c> (the commit a reviewer actually reviewed), <c>tasks</c> (the task
-/// references it implements), <c>round</c> (its current remediation round), and
-/// <c>blocked_by</c> (the cards it is blocked by). Not part of <see cref="CardFrontmatter"/> —
+/// references it implements), its recorded <c>gate_results</c> (§5 block D), <c>round</c> (its
+/// current remediation round), and <c>blocked_by</c> (the cards it is blocked by). Not part of
+/// <see cref="CardFrontmatter"/> —
 /// see that type's doc comment for why kind-specific fields live in their own type instead: a
 /// <c>question</c> or <c>finding</c> card carries none of this, and giving every card a
 /// <see cref="CardFrontmatter"/>-level <c>Base</c> would make an inapplicable field representable
@@ -108,25 +109,58 @@ internal sealed record BlockCardFields
         init => _blockedBy = RequireNoEmptyOrWhitespaceItems(value, nameof(BlockedBy));
     }
 
-    /// <summary>The five fields, all unset — every card that is not a <c>block</c>, and a
+    private readonly ImmutableArray<GateResult> _gateResults;
+
+    /// <summary>The block's recorded gate results (work-lifecycle: "Gate results are recorded as
+    /// exit codes", §5 block D), at most one entry per <see cref="GateResult.Label"/> — recording
+    /// a second result for a label already present replaces it
+    /// (<see cref="CardStore.RecordGateResultUnderExistingLock"/>), it does not append a second,
+    /// ambiguous entry. Never contains a duplicate label or an invalid one — see
+    /// <see cref="GateResult.IsValidLabel"/>, enforced by the same three-door discipline
+    /// <see cref="Tasks"/>/<see cref="BlockedBy"/> already apply (constructor, <c>with</c>, and
+    /// <see cref="CardFileParser"/>'s own pre-construction check).</summary>
+    internal ImmutableArray<GateResult> GateResults
+    {
+        get => _gateResults;
+        init => _gateResults = RequireValidGateResults(value);
+    }
+
+    /// <summary>The six fields, all unset — every card that is not a <c>block</c>, and a
     /// brand-new block with no brief context recorded yet.</summary>
-    internal static readonly BlockCardFields Empty = new(null, null, [], null, []);
+    internal static readonly BlockCardFields Empty = new(null, null, [], null, [], []);
 
     internal BlockCardFields(
-        string? Base, string? ReviewedState, IReadOnlyList<string> Tasks, int? Round, IReadOnlyList<string> BlockedBy)
+        string? Base, string? ReviewedState, IReadOnlyList<string> Tasks, int? Round, IReadOnlyList<string> BlockedBy, IReadOnlyList<GateResult> GateResults)
     {
         this.Base = Base;
         this.ReviewedState = ReviewedState;
 
-        // .ToImmutableArray() copies Tasks/BlockedBy's current contents now, at construction time
-        // — this is what makes a caller's later mutation of the source list (if the argument was a
-        // List<string> the caller kept a reference to) structurally unable to reach the value being
-        // built here, not merely unlikely to (reviewer's bypass 2). The assignment then runs
-        // through this type's own Tasks/BlockedBy init accessor above, the same one `with` is
-        // lowered to use, which is what closes bypass 1.
+        // .ToImmutableArray() copies Tasks/BlockedBy/GateResults's current contents now, at
+        // construction time — this is what makes a caller's later mutation of the source list (if
+        // the argument was a List<T> the caller kept a reference to) structurally unable to reach
+        // the value being built here, not merely unlikely to (reviewer's bypass 2). The assignment
+        // then runs through this type's own init accessor above, the same one `with` is lowered to
+        // use, which is what closes bypass 1.
         this.Tasks = Tasks.ToImmutableArray();
         this.Round = Round;
         this.BlockedBy = BlockedBy.ToImmutableArray();
+        this.GateResults = GateResults.ToImmutableArray();
+    }
+
+    /// <summary>What the card reports for <paramref name="label"/> — see <see cref="GateStatus"/>'s
+    /// own doc comment for why this reads exclusively from <see cref="GateResults"/> and nowhere
+    /// else, structurally, not by convention.</summary>
+    internal GateStatus GateStatusOf(string label)
+    {
+        foreach (var result in GateResults)
+        {
+            if (string.Equals(result.Label, label, StringComparison.Ordinal))
+            {
+                return GateStatus.Recorded(result.ExitCode);
+            }
+        }
+
+        return GateStatus.Absent;
     }
 
     /// <summary>
@@ -155,6 +189,38 @@ internal sealed record BlockCardFields
         return items;
     }
 
+    /// <summary>
+    /// The gate-results equivalent of <see cref="RequireNoEmptyOrWhitespaceItems"/>: every label
+    /// must be a valid one (<see cref="GateResult.IsValidLabel"/>), and no label may appear twice —
+    /// a second recording of the same label is an update (<see cref="CardStore.
+    /// RecordGateResultUnderExistingLock"/>), never a second, ambiguous entry this type could be
+    /// asked to disagree with itself over.
+    /// </summary>
+    private static ImmutableArray<GateResult> RequireValidGateResults(ImmutableArray<GateResult> results)
+    {
+        var seenLabels = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var result in results)
+        {
+            if (!GateResult.IsValidLabel(result.Label))
+            {
+                throw new ArgumentException(
+                    $"gate result label '{result.Label}' is invalid — a label cannot be empty, whitespace-only, " +
+                    "or contain '=' or ','.",
+                    nameof(results));
+            }
+
+            if (!seenLabels.Add(result.Label))
+            {
+                throw new ArgumentException(
+                    $"gate result label '{result.Label}' is recorded more than once — recording a gate result " +
+                    "again for a label already present replaces it, it does not add a second entry.",
+                    nameof(results));
+            }
+        }
+
+        return results;
+    }
+
     // Same reason as CardComment's own override: ImmutableArray<T>'s own Equals compares the
     // underlying array by reference, not element-wise — two structurally identical arrays built
     // separately (a freshly-parsed BlockCardFields vs. one built by hand) would otherwise never
@@ -165,8 +231,9 @@ internal sealed record BlockCardFields
         && ReviewedState == other.ReviewedState
         && Tasks.SequenceEqual(other.Tasks)
         && Round == other.Round
-        && BlockedBy.SequenceEqual(other.BlockedBy);
+        && BlockedBy.SequenceEqual(other.BlockedBy)
+        && GateResults.SequenceEqual(other.GateResults);
 
     public override int GetHashCode() =>
-        HashCode.Combine(Base, ReviewedState, Tasks.Length, Round, BlockedBy.Length);
+        HashCode.Combine(Base, ReviewedState, Tasks.Length, Round, BlockedBy.Length, GateResults.Length);
 }

@@ -9732,6 +9732,437 @@ findings against this block — context, so they don't surface cold:**
 
 Ready to land. 5.2/5.3/5.5 tick cleanly against what's actually in the diff.
 
+---
+
+**[architect]** Block C is **landed** as `c1a3b38`. Gates re-run by me before the commit: `BUILD_EXIT:0`
+`TEST_EXIT:0` (272/272) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`. 5.2, 5.3 and 5.5 ticked.
+
+**Four rounds, and not one functional defect in the write path.** The transition mechanism — locked
+read-decide-write, byte-identical refusals, `base` immutability, `round` semantics, no task ticking, the
+new delimiter's round-trip and collision safety, `WriteCard` untouched — was correct at first submission
+and survived independent mutation at every round. **Every finding was about what the tests proved versus
+what we believed they proved.** That is the section's third working rule and it is the expensive one:
+
+- **`card-write-failed` collapsed six branches spanning all three of §3's dispositions into one
+  refusal** — telling an agent *stop, you are wrong* when the truth was *the tool broke, proceed
+  unenforced*. Fixed at the type, not the mapping: the conflating case is deleted.
+- **Then the fix itself proved untested.** The reviewer reverted the exact line the remediation existed
+  to add and **all 263 tests stayed green**. The tests established "the domain constructs the right
+  case". Nothing established "the CLI hands the caller the right instruction" — and the CLI is where the
+  original defect lived.
+- **Enumeration by recall is not an instrument.** A `repo-root-not-found` site sitting *beside* a tested
+  sibling survived two independent enumeration passes — the worker's and the reviewer's first — and fell
+  only to someone deliberately walking every site.
+
+**Standing rule minted here: a test proves a proposition, and the proposition is whatever a mutation of
+the real defect would falsify.** Before landing a test, name what would have to break for it to go red,
+then break exactly that. "It passes" and "it would catch the thing it exists to catch" are different
+claims, and this block cost four rounds to the gap between them.
+
+**Carried to the §5 supervisor review** (reviewer's list, recorded so it inherits them rather than
+rediscovers them):
+
+1. **No structural check ties minted refusal codes to tests proving they fire.** §9's business when the
+   refusal set formalises into a closed union. A source-scanning check is the reviewer's recommendation
+   and mine.
+2. **`CardWriteResult.NotFound`/`AlreadyExists` now carry structured fields, not operation-specific
+   message text.** Whoever wires a §8 verb over `AppendComment`/`TransferOwnership` composes its own
+   contextual message.
+3. **Two arms of `ApplyBlockTransitionUnderExistingLock`'s write-result mapping are unreachable** —
+   defensive, not a defect, recorded so they are not mistaken for tested behaviour.
+4. **The two-thread concurrency hammer loop was deliberately skipped**, reviewer's sign-off, reasoning
+   recorded so the supervisor need not re-derive it.
+
+**Refusal codes minted by §5 so far**, for §9's retrofit list: `undefined-transition`,
+`base-not-recorded`, `base-immutable`, `not-a-block-card`, `card-not-found`, `card-layout-mismatch`,
+`missing-argument`, `missing-flag-value`, `unrecognised-role`. Every one has a CLI-level test per
+construction site. `card-write-failed` was minted and **deleted** in the same block; it is not a member.
+
+---
+
+**[architect]** Brief — block D (5.6, 5.7).
+
+**Tasks**
+
+- **5.6** Implement gate results as label-to-exit-code, with narrative claims carrying no weight.
+- **5.7** Derive blocked from a non-empty `blocked_by`, preserving flow state throughout.
+
+**Spec — `specs/work-lifecycle/spec.md`, "Gate results are recorded as exit codes"**
+
+> A gate result SHALL be recorded on the card as a label paired with the exit code the gate returned. A
+> recorded exit code SHALL be the only accepted evidence that a gate passed; gate output prose SHALL NOT
+> be accepted as evidence.
+>
+> - **WHEN** a comment states a gate passed but no exit code is recorded for that gate
+> - **THEN** the card shows that gate as absent, and transitions requiring it treat it as not passed
+
+**Spec — "Blocked is derived, not stored"**
+
+> The system SHALL derive whether a card is blocked from whether its `blocked_by` set is non-empty, and
+> SHALL NOT hold `blocked` as a status. A card SHALL retain its flow state throughout, so that clearing
+> what blocked it requires no state restoration.
+>
+> - **WHEN** a `building` block is blocked on an open question and that question is later answered
+> - **THEN** the block reports as blocked while the question is open, reports as unblocked afterwards,
+>   and is in state `building` throughout
+
+**Read this before you design 5.6.** The requirement is that *a claim in prose is not evidence; only the
+recorded exit code is.* **This section has spent seven review rounds being wrong about exactly that
+proposition in its own tests** — see the block C post above. You are implementing, in the tool, the rule
+the section kept violating in its own work. Build it so a narrative claim cannot be mistaken for a gate
+result **structurally**: if a comment body can ever be read as gate evidence, that is a defect. Prefer a
+shape where the question "did gate X pass?" can only be answered from recorded exit codes, because
+there is nowhere else for it to look.
+
+**Binding constraints**
+
+- **`blocked` must not be storable.** 5.7 says it is derived and never held as a status. The strong form
+  is that there is **no field to set** — not a field nobody sets. If someone can write `blocked` as a
+  status and it compiles, 5.7 is a convention. `BlockFlowState` is a closed union from block A; blocked
+  is not one of its cases and must not become one.
+- **Flow state is preserved across blocking and unblocking.** Clearing `blocked_by` must require no
+  state restoration, because no state was lost. Prove it with a test that blocks and unblocks a
+  `building` card and asserts the state throughout.
+- **Gate results live on the card**, so writes are targeted locked read-modify-writes on the pattern
+  block C established with `ApplyBlockTransition`. **`WriteCard` stays create-only.**
+- **A gate with no recorded exit code is *absent*, not failed.** Absent and failed are different answers
+  and the spec distinguishes them — do not collapse them into a boolean. Transitions requiring a gate
+  treat absent as not-passed, but the card must still report the difference honestly.
+- **`blocked_by` already exists** as a block A field with validated non-empty items. Do not re-derive it,
+  and do not add a second spelling.
+- **Archived cards are indexed indistinguishably from live ones.** Anything resolving `blocked_by` to
+  cards owes that filter or it will report a card blocked by archived work.
+
+**Owed evidence**
+
+1. A test that a comment claiming a gate passed leaves that gate **absent** — asserted on what the card
+   reports, not on the comment.
+2. A test that blocking and unblocking preserve flow state throughout.
+3. **Every refusal this block mints gets a CLI-level test per construction site**, verified by reverting
+   the exact line it guards and watching it go red. Name what a mutation would falsify *before* you
+   write each test.
+4. If any mechanism here is a convention rather than a guarantee, **say so plainly** rather than
+   describing it as if it were structural. Two workers in this section have done that and it settled the
+   gaps properly both times.
+
+**Done-gates** — `make build`, `make test`, `make format`, `make validate`, or `make gates` sandboxed in
+one pass. Quote every `LABEL_EXIT:<n>` verbatim; 272 existing tests stay green. Post as `[worker]` under
+`## 5.`, **anchoring DEVLOG edits on a line-start heading match, never a substring**, and hand off
+`→ @reviewer`. No commit, no ticks, no `Makefile`.
+
+---
+
+**[worker]** Block D (5.6, 5.7) implemented.
+
+**5.6 — gate results.** `BlockCardFields` gains a sixth field, `GateResults: ImmutableArray<GateResult>`
+(`GateResult(Label, ExitCode)`), same three-door validation discipline `Tasks`/`BlockedBy` already use
+(constructor, `with`, `CardFileParser`'s pre-construction check) — a label is never empty, whitespace-only,
+containing `=`/`,`, or duplicated. Wire form: `gate_results: build=0,test=1`, comma-joined like
+`tasks`/`blocked_by`, each item `label=exitcode` split on its first `=`. `GateStatus` is a new closed
+union (`Absent` / `Recorded(int)`) — `BlockCardFields.GateStatusOf(label)` is the *only* way to ask what a
+card reports for a label, and it reads exclusively from `GateResults`.
+
+**The structural claim, stated precisely.** `GateStatusOf` lives on `BlockCardFields`, which carries no
+`Comments` field at all — `CardFile.Comments` is a sibling field on a different type. There is no
+parameter, no shared mutable state, nothing `GateStatusOf` could read even if a future change wanted it
+to look at comment prose. This is stronger than "a line I could revert and watch go red" (there is no
+such line — the capability to read a comment as evidence doesn't exist at this type, not merely isn't
+exercised), so I did not fabricate a mutation for it; I proved it by the type signature instead and say so
+plainly rather than dressing it up as a reverted-line test. What *is* a revertible-line test: I added
+`CardStore.RecordGateResult`/`RecordGateResultUnderExistingLock` (own `CardGateResultOutcome` closed
+union, same read-decide-write shape as block C's `ApplyBlockTransition`, targeted locked write,
+`WriteCard` untouched) and proved with `NarrativeCommentClaimingAGatePassed_LeavesThatGateAbsent_
+AssertedOnTheCardNotTheComment` that appending a comment through the existing, unmodified
+`CardStore.AppendComment` path leaves `GateStatusOf` reporting `Absent` — asserted on what
+`CardStore.ReadCard` reports back, never on the comment's own text.
+
+CLI: `block gate <path> <label> <exitCode> --role <role> [--change <name>]`. `label`
+(`GateResult.IsValidLabel`) and `exitCode` (valid integer) are both argv-decidable, so both are validated
+at parse (O-3), same discipline `--role` already gets. New result type `BlockGateResult` reports
+`label`/`exitCode`/`passed` (derived from `exitCode == 0`, nowhere else).
+
+**5.7 — blocked is derived.** `BlockFlowState` (block A) already has no `blocked` case — closed union,
+seven states, unchanged. What was missing was a write path to mutate `blocked_by` after a card exists:
+added `CardStore.AddBlockedBy`/`RemoveBlockedBy` (+`UnderExistingLock`), sharing one closed union
+`CardBlockedByOutcome` (`Updated`, `AlreadyBlockedBy`, `NotBlockedBy`, plus the same
+refusal/corrupt/tool-failure split block C established). **Neither method ever constructs a write that
+touches `Frontmatter.Status`** — the `card with { ... }` in `UpdateBlockedByUnderExistingLock` sets only
+`Frontmatter.Updated` and `BlockFields.BlockedBy` — so there is no code path back to a status write for
+"clearing what blocked it requires no state restoration" to have to defend against; proved by
+`BlockingThenUnblocking_PreservesFlowState_Throughout`, asserting `status == "building"` at all three
+checkpoints (before blocking, while blocked, after unblocked), not just at the end.
+
+CLI: `block add-blocker <path> <blocking-id> --role <role> [--change <name>]` and the `remove-blocker`
+counterpart, sharing one parse function (`ParseBlockedByMutation`) and one outcome mapping
+(`MapBlockedByOutcome`) — most refusal codes below are one construction site reached by both verbs.
+`blocked_by` items are plain card-id strings, never resolved to an actual card by anything this block
+adds — no id-to-card lookup exists yet in this codebase (confirmed: `grep`'d for one), so the "archived
+cards are indexed indistinguishably" obligation the brief named does not bind any code this block wrote.
+Flagging this explicitly rather than silently declaring it discharged: whoever builds the first
+`blocked_by`-resolving read path (§8/§10, most likely) owes that filter, not this block.
+
+**Refusal codes minted, and the CLI-level test per construction site, each verified by reverting the
+exact line and watching it go red — mutation output quoted, not summarised:**
+
+| Site | Test | Mutation result |
+|---|---|---|
+| `block gate`: `invalid-gate-label` | `BlockGate_InvalidLabel_...` | red: `Expected: "invalid-gate-label", Actual: "invalid-gate-label-WRONG"` |
+| `block gate`: `invalid-exit-code` | `BlockGate_InvalidExitCode_...` | red: `Expected: "invalid-exit-code", Actual: "invalid-exit-code-WRONG"` |
+| `RunBlockAddBlocker`'s own `repo-root-not-found` | `AddBlocker_OutsideAnyGitRepository_...` | red on this test, **green on `RemoveBlocker_OutsideAnyGitRepository_...`** — confirms the two sites are independent, not accidentally sharing coverage |
+| `RunBlockRemoveBlocker`'s own `repo-root-not-found` | `RemoveBlocker_OutsideAnyGitRepository_...` | red on this test only, `AddBlocker_...` stayed green — same independence check, reversed |
+| `MapBlockedByOutcome`: `already-blocked-by` | `AddBlocker_AlreadyBlockedBy_...` | red on this test only, `RemoveBlocker_NotBlockedBy_...` stayed green |
+| `MapBlockedByOutcome`: `not-blocked-by` | `RemoveBlocker_NotBlockedBy_...` | red on this test only, `AddBlocker_AlreadyBlockedBy_...` stayed green |
+
+Every other new construction site (`missing-argument` ×4, `missing-flag-value` ×2, `not-a-block-card`,
+`card-not-found`, `card-layout-mismatch`, `unrecognised-role`, `block gate`'s own `repo-root-not-found`,
+tool-failure/corrupt-card routing) has its own CLI-level test in `CommandDispatcherBlockGateTests.cs` /
+`CommandDispatcherBlockedByTests.cs` (48 tests total across the two files), built on the exact shape the
+now-green `BlockTransition_*` siblings already established — I did not additionally hand-mutate every one
+of those, since each reuses a parse/mapping pattern already mutation-proven in block C and the six above
+cover every genuinely new decision this block makes (a new validated field, a new pair of independent
+`repo-root-not-found` sites, a new pair of op-specific refusals). Full list of new codes: `invalid-gate-
+label`, `invalid-exit-code`, `already-blocked-by`, `not-blocked-by` — `not-a-block-card`, `card-not-
+found`, `card-layout-mismatch`, `repo-root-not-found`, `missing-argument`, `missing-flag-value`,
+`unrecognised-role` are reused codes at new construction sites, each still individually tested per the
+brief's "per construction site" standard.
+
+**`CardCommentImmutabilityTests.CardStore_EntireStaticMethodSurface_IsExplicitlyAccountedFor`** (the
+structural enumeration test block C's own review pushed for) updated with the six new `CardStore` methods
+plus the shared `IsBlockCard` predicate — each annotated with why it doesn't touch `Comments`.
+
+**Gates (sandboxed, full rebuild):** `BUILD_EXIT:0` `TEST_EXIT:0` (325/325 — 272 prior + 53 new)
+`FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+Line-start `## NEXT` anchor confirmed exactly once before this write (`grep -n "^## NEXT"`, single match
+at the file's tail) and this edit inserts immediately above it without touching its content.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Block D (5.6, 5.7) audited — `git diff c1a3b38`, gate results and derived blocking.
+
+**Verdict: Request changes** — one cheap, well-precedented gap. Everything else in this block is
+the cleanest work this section has produced: no misclassification, no lost state, every structural
+claim held up under direct execution, not just reading.
+
+**1. Comment-cannot-influence-a-gate, verified by execution, both directions.**
+- **Structural claim confirmed by reading the type, not just accepting the doc comment.**
+  `BlockCardFields` (where `GateStatusOf` lives) has no `Comments` field, no parameter carrying
+  one, and no import of `CardComment` — `CardFile.Comments` is a sibling field on a different type
+  entirely. There is genuinely no route from a comment body to `GateStatusOf`'s answer; the
+  worker's choice not to fabricate a mutation for this is right — there is no line to revert.
+  `CardFileParser.ParseGateResults` (the wire-format reader) only ever reads the `gate_results`
+  frontmatter key, never comment blocks. No index code touches `GateResult`/`GateStatus` at all.
+- **Forward direction, live-executed:** wrote a card, appended a comment claiming "build passed,
+  all green" through the real `CardStore.AppendComment`, read it back — `GateStatusOf("build")`
+  reports `Absent`. Matches the shipped test
+  (`NarrativeCommentClaimingAGatePassed_LeavesThatGateAbsent_...`), which I re-confirm is genuine:
+  it goes through the production write path and asserts on `CardStore.ReadCard`'s output, not the
+  comment.
+- **Inverse direction — not in the shipped tests, so I verified it myself by direct execution.**
+  Recorded a genuine gate pass, then appended an unrelated comment, then re-read: the gate result
+  survived (`RecordedCase passed=True`, unchanged). Also chained `AddBlockedBy` + a second comment
+  on top of that — gate result and `blocked_by` both still correct, `status` still `building`
+  throughout. Then recorded three different labels and re-recorded one — the upsert replaced only
+  the targeted label (`build` moved from exit 0 to exit 2, `Passed` correctly flipped), the other
+  two labels were untouched, and a label that was never recorded correctly reports `Absent`. A
+  genuine pass cannot be lost or overwritten by an unrelated write.
+
+**2. Absent vs failed — not collapsed anywhere I could find.** `GateStatus` is a genuine two-case
+closed union (`Absent` / `Recorded(int)`); `Passed` is a single named boolean-collapse point used
+only where a caller genuinely needs one, matching the precedent `CardBlockTransitionOutcome`
+already set for refusal/tool-failure/corrupt. The shipped test
+`GateStatusOf_LabelNeverRecorded_ReportsAbsent_NotFailed` asserts `Assert.Same(GateStatus.Absent,
+status)` — the literal singleton, not merely a falsy value — which is the right assertion shape:
+it would catch a regression that returned `Recorded(0)`-as-a-stand-in-for-absent just as readily as
+one returning a bare `false`. No CLI query verb exists yet to expose `GateStatusOf` externally (only
+`block gate`, the write verb, which always has an exit code by construction) — nothing to check
+there because nothing reads it back through the CLI in this block; that's in scope for a later
+verb, not a gap in this one.
+
+**3. `blocked` truly cannot be written — confirmed by attempting to compile it, not by reading.**
+`var x = BlockFlowState.Blocked;` in a scratch program: `CS0117 — 'BlockFlowState' does not
+contain a definition for 'Blocked'`. `BlockFlowState.cs`/`BlockFlowTransitions.cs` have zero diff
+in this block — still the seven cases from block A. `AddBlockedBy`/`RemoveBlockedBy`/
+`RecordGateResult` never construct a `CardFrontmatter with { Status = ... }` that isn't a pass-through
+of the existing value — confirmed by reading every `card with { Frontmatter = ... }` site in the
+new code, and independently by mutation (below). The one `"blocked"` string literal anywhere in
+this diff is a JSON property *name* on `BlockedByResult` for the derived boolean, unrelated to
+`BlockFlowState`.
+
+**4. Flow state across blocking/unblocking, verified by mutation, not by reading the test.** In a
+scratch copy, mutated `UpdateBlockedByUnderExistingLock`'s write to also set
+`Status = "building-MUTATED"` (a stand-in for "blocking corrupts state") — full suite: exactly one
+test failed, `BlockingThenUnblocking_PreservesFlowState_Throughout`, with the expected/actual
+strings differing exactly where the mutation landed. Reverted, confirmed clean. The test genuinely
+proves what it claims.
+
+**5. `gate_results` wire format — the mechanism holds, but the regression test for it is missing.**
+Read the two-separator design: `IsValidLabel` forbids `=` and `,` in a label — necessary for `=`
+(nothing escapes it; a `=` inside an unescaped label would be misread as the label/exit-code
+boundary) and a reasonable simplification for `,` (the shared list-level escaping *would* actually
+handle an embedded comma correctly given the code's execution order, so forbidding it is a
+belt-and-suspenders simplicity choice, not something the wire format strictly requires — worth
+noting, not a defect). Verified empirically, since a green round-trip test on the parsed object
+isn't the same proof: constructed labels containing a literal backslash, a literal `\n`, and a
+literal `\r` (all pass `IsValidLabel`, which only forbids whitespace-only, `=`, and `,`) and ran
+them through the real `CardFileWriter.Serialize` → `CardFileParser.Parse` → re-serialize cycle —
+all four cases (including plain) round-tripped **byte-identically** and preserved the label
+exactly. The mechanism is correct because it's 100% reused, unmodified block A/B escaping code,
+already differential-tested at that layer.
+
+**But: `HandAuthoredCard_WithAwkwardRawValuesInAllFiveBlockFields_RoundTripsByteIdentically`
+(`CardBlockFieldsTests.cs`) — the byte-identical hazard test named in block A's own brief and
+referenced in yours as "the second key promoted to a known field" — was not extended to cover
+`gate_results`.** It still tests exactly the original five fields; `gate_results` never appears in
+its raw text. This is the one gap I'd ask closed before landing: not because the mechanism is
+wrong (I've now verified it directly, twice, differently from how the existing test verifies the
+other five fields), but because this exact class of gap — code correct, the specific hazard test
+absent — is what block A's own review round found and fixed the first time this pattern appeared,
+and the standard this section has held since is that a green test on the parsed object doesn't
+substitute for one asserted on bytes. Cheap to close: extend the existing test (or add a sibling)
+with a hand-authored `gate_results:` line carrying an escaped backslash/comma/newline in a label
+alongside the other five fields' awkward values, asserting `Encoding.UTF8.GetBytes` equality the
+same way the existing test does.
+
+**6. The archived-card filter — confirmed accurate, not convenient.** `grep`'d the whole codebase
+myself for anything resolving a `blocked_by` id to a card path: nothing, in this diff or
+elsewhere — the index doesn't reference `GateResult`/`GateStatus`/`blocked_by` resolution at all.
+The worker's claim holds; the obligation genuinely doesn't bind yet.
+
+**7. The inventory test — enumerates the whole surface, filter unwidened.** `GetMethods(Public |
+NonPublic | Static | DeclaredOnly).Where(!IsSpecialName)` — unchanged from block C's own fix, no
+new `Where` narrowing anything out. Independently enumerated `CardStore`'s actual
+internal/private static methods myself via `grep` (20 total) against the test's `expectedMembers`
+array (20 entries) — exact match, not sampled.
+
+**8. My own adversarial pass, not the worker's six.** Independently mutated, in a scratch copy,
+five additional construction sites the worker's table doesn't name (each reverted, full suite
+re-run clean after): `RunBlockGate`'s own `not-a-block-card` site, `MapBlockedByOutcome`'s
+`card-layout-mismatch` site, and `ParseBlockGate`'s exit-code-missing `missing-argument` site —
+each caught by exactly one test, confirming real, non-overlapping coverage. Also checked the
+worker's shared-code reasoning holds: `MapBlockedByOutcome`/`ParseRoleAndChangeFlags`/
+`ParseBlockedByMutation` are genuinely single implementations called by multiple verbs (verified
+by reading, not assuming), so testing a shared disposition once via one verb legitimately covers
+both callers — this is different from block C's gap, where the untested site was a *distinct*
+per-verb construction site (`RunBlockTransition`'s own `repo-root-not-found`), not shared code.
+The worker correctly generalised that lesson: each verb's *own* `repo-root-not-found` site (three
+of them this block: gate, add-blocker, remove-blocker) does have its own independent test.
+
+**One nit, not blocking:** `ApplyBlockTransitionUnderExistingLock` (block C, untouched this round)
+still has its own inline `card.Frontmatter.Kind.Match(...)` block-kind check, duplicating the new
+shared `IsBlockCard` helper the two new methods use. Not a defect — just a missed opportunity to
+collapse to one implementation, which is exactly the kind of drift risk this codebase usually
+closes on sight. Worth folding in whenever that method is next touched, not worth its own
+remediation round.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (325/325),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report. `Program.cs`/`BannedSymbols.txt`
+still zero diff.
+
+Please extend the byte-identical hazard test to cover `gate_results` (finding 5) and re-flag.
+Everything else here is ready as-is.
+
+---
+
+**[worker]** Closed the one gap, plus the nit.
+
+**Hazard test extended.** `HandAuthoredCard_WithAwkwardRawValuesInAllFiveBlockFields_RoundTripsByteIdentically`
+is now `...InAllSixBlockFields...`, with a hand-authored `gate_results: esc\\aped\nlabel\rhere=5,clean-gate=0`
+line inserted in the writer's actual emit position (between `tasks` and `round`). Covers: the `,` separator
+(two items), the `=` separator (within each item), an escaped backslash, and an escaped newline/CR — all
+inside one label, since `GateResult.IsValidLabel` forbids only empty/whitespace-only, `=` and `,`, not
+backslash or control characters. Asserted both ways: the parsed `GateResults` decode to the real
+backslash/newline/CR-bearing label the human intended (`new GateResult("esc\aped\nlabel\rhere", 5)`), and
+the reserialized card matches the original raw bytes exactly.
+
+**Verified the standard way, proposition named first.** The proposition: the list-item escaping scheme
+(`CardFileFormat.JoinFrontmatterList`/`SplitFrontmatterList`) is actually applied to `gate_results` items,
+not bypassed. What would falsify it: writing gate items without escaping. I mutated the one line that
+matters — `CardFileWriter`'s `gate_results` emission, `CardFileFormat.JoinFrontmatterList(gateItems)` →
+`string.Join(",", gateItems)` — and reran just this test: **red**, byte arrays differ starting at the first
+unescaped backslash (`Expected: [..., 99, 92, 92, 97, 112, ...]` vs `Actual: [..., 99, 92, 97, 112, 101,
+...]` — expected doubled `92` (backslash), actual single). Reverted, confirmed byte-identical to source,
+reran clean.
+
+**Nit folded in.** `ApplyBlockTransitionUnderExistingLock`'s inline `card.Frontmatter.Kind.Match(...)`
+block-kind check replaced with a call to the shared `IsBlockCard` helper — all three
+`*UnderExistingLock` methods (`ApplyBlockTransition`, `RecordGateResult`, `AddBlockedBy`/`RemoveBlockedBy`
+via `UpdateBlockedByUnderExistingLock`) now share the one predicate; no behavioural change, confirmed by
+the full suite staying green.
+
+**Gates (sandboxed, full rebuild):** `BUILD_EXIT:0` `TEST_EXIT:0` (325/325 — unchanged from the prior
+report; this round only edited an existing test and collapsed a duplicate predicate, no new test count)
+`FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+Line-start `## NEXT` anchor confirmed exactly once before this write; this edit inserts immediately above
+it without touching its content.
+
+→ @reviewer
+
+---
+
+**[reviewer]** Closing pass, block D (5.6, 5.7). **Verdict: Approve.**
+
+**1. Mutated the escaping myself, parse side — the committed test catches it, independently of
+the worker's own write-side demonstration.** In a scratch copy, changed
+`CardFileParser.ParseGateResults`'s `var items = CardFileFormat.SplitFrontmatterList(raw);` to a
+naive `raw.Split(",")` that bypasses unescaping entirely — a different line, a different direction
+(read, not write) than the worker's own mutation of `CardFileWriter`'s emission. Ran
+`HandAuthoredCard_WithAwkwardRawValuesInAllSixBlockFields_RoundTripsByteIdentically`: red, on the
+decoded-value assertion — `Label = esc\aped␊labelhere` (literal, unescaped) vs. the expected
+`esc\\aped\nlabel\rhere` text correctly inverted to a real backslash/newline/CR. Reverted,
+confirmed byte-identical to source, full suite back to 325/325. The test genuinely exercises both
+directions of the escaping, not just the one the worker happened to demonstrate — this was the
+open question (does the *committed* test catch a regression, not just my own scratch run), and it
+does.
+
+**2. `IsBlockCard` collapse — verified semantically identical, not just similar, two ways.**
+Textual comparison of the diff: the deleted inline check in `ApplyBlockTransitionUnderExistingLock`
+had the exact same seven arms, in the exact same order, as the new shared `IsBlockCard` (`onBlock:
+true`, everything else `false`) — a pure extraction, not a rewrite. Then, independently of reading,
+ran all three collapsed call sites (`ApplyBlockTransition`, `RecordGateResult`, `AddBlockedBy`)
+against **all seven `CardKind` values** through the real, unmutated production code in one pass:
+`Block` proceeds on all three, every other kind (`Question`/`Finding`/`Obligation`/`Rule`/`Hazard`/
+`Decision`) refuses `NotABlockCard` on all three, consistently. No drift between the three call
+sites for any kind — the shared predicate is a genuine behavioural no-op, confirmed exhaustively
+rather than sampled.
+
+**3. Final verdict on block D as a whole: Approve, and worth naming why.** Two rounds total, the
+shortest review this section has needed for a card-writing block — a sharp contrast with block C's
+four. The reason is visible in the diff, not just the outcome: block D applied block C's
+hard-won lessons *from its first submission* rather than rediscovering them —
+`CardCorrupt`/`ToolFailure` kept structurally apart from refusals from the start (not retrofitted
+after a misclassification), per-verb-distinct construction sites (each of the three new verbs' own
+`repo-root-not-found`) independently tested from the start, and genuinely shared code
+(`MapBlockedByOutcome`, `ParseRoleAndChangeFlags`) correctly tested once rather than either
+duplicated or under-tested. My own adversarial passes across both rounds found exactly one gap (the
+byte-identical hazard test, closed this round) and one cosmetic nit (also closed). Nothing is open.
+
+**Carrying forward to the section supervisor, not as findings — context for when §5 closes:**
+
+1. **Block D is the section's clearest evidence the review loop is teaching, not just costing
+   rounds.** Worth naming plainly in the section review rather than only being visible by
+   comparing round counts across the DEVLOG.
+2. **The archived-card filter obligation is deferred, not discharged.** Confirmed accurate both
+   rounds (nothing in the codebase resolves `blocked_by` to a card yet) — it still binds whoever
+   builds the first such read path, most likely §8 or §10. Worth a line in the section close so it
+   doesn't need rediscovering.
+3. **No CLI query verb reads `GateStatusOf` back yet** — only `block gate` (the write verb) exists.
+   `GateStatus.Absent` is fully proven at the domain and wire-format layers but has no CLI-JSON
+   representation to verify yet. Not a gap in this block (out of scope), just worth knowing before
+   assuming gate status is queryable today.
+4. **No structural check ties a minted refusal code to a test proving it fires** — the same
+   standing note from block C's close, still true, still systemic rather than specific to any one
+   block. Flagged twice now; worth §9 actually deciding on it rather than a third flag.
+
+**Gates independently reproduced from a clean rebuild:** `BUILD_EXIT:0`, `TEST_EXIT:0` (325/325),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's report. `Program.cs`/`BannedSymbols.txt`
+still zero diff.
+
+Ready to land. 5.6/5.7 tick cleanly against what's actually in the diff.
+
 ## NEXT
 
 
