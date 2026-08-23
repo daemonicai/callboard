@@ -35,9 +35,13 @@ internal static class CommandParser
         "block" => ParseBlock(context),
         "section" => ParseSection(context),
         "finding" => ParseFinding(context),
+        "rule" => ParseRule(context),
+        "hazard" => ParseHazard(context),
+        "obligation" => ParseObligation(context),
+        "decision" => ParseDecision(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section, finding.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision.")),
     };
 
     /// <summary>
@@ -351,6 +355,120 @@ internal static class CommandParser
     }
 
     /// <summary>
+    /// The shape every §7 block A creation verb shares once its kind-specific fields (if any) are
+    /// out of the way: one positional token (card file path), <c>--role</c> and <c>--title</c>
+    /// (both required), <c>--change</c> (required exactly when <paramref name="requireChange"/> is
+    /// <see langword="true"/>), and a body read from stdin — the same read-only-extraction
+    /// discipline <see cref="ParseFindingRecord"/> already applies. <paramref name="build"/> is the
+    /// one place the resulting <see cref="CommandDispatcher.ParsedCommand"/> case differs; used
+    /// directly by <see cref="ParseSectionCreate"/> and <see cref="ParseObligationCreate"/>, whose
+    /// argv shape is otherwise identical. <see cref="ParseRuleCreate"/> and
+    /// <see cref="ParseHazardCreate"/> do not use this — they each have an extra required flag
+    /// (<c>--scope</c>, <c>--condition</c>/<c>--cadence</c>) this shape has no room for.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseCardCreate(
+        CommandDispatcher.CommandContext context,
+        string commandLabel,
+        bool requireChange,
+        Func<string, string, CardOwner, string, string?, string, DateTimeOffset, CommandDispatcher.ParsedCommand> build)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", $"{commandLabel} requires a card file path."));
+        }
+
+        string? title = null;
+        string? roleText = null;
+        string? changeName = null;
+
+        // --change is registered as a known flag only when this verb's scope actually needs one
+        // (requireChange) — a decision (Capability scope, no changeName) is never offered a flag it
+        // has nowhere to use; the funnel's own unrecognised-argument refusal catches a caller who
+        // supplies one anyway, rather than this method silently accepting and discarding it.
+        var setters = new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--title"] = value => title = value,
+            ["--role"] = value => roleText = value,
+        };
+        if (requireChange)
+        {
+            setters["--change"] = value => changeName = value;
+        }
+
+        var flagRefusal = ConsumeKnownFlags(context, setters);
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (title is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", $"{commandLabel} requires '--title <text>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", $"{commandLabel} requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (requireChange && changeName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", $"{commandLabel} requires '--change <name>'."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(build(filePath, title, role, body, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// The shape every §7 block A discharge verb shares — one positional token (card file path),
+    /// <c>--role</c> (required) and the optional <c>--change</c> flag, the same
+    /// <see cref="ParseRoleAndChangeFlags"/> pair <see cref="ParseSectionClose"/> already uses.
+    /// <paramref name="kind"/> is fixed per caller (<see cref="ParseRule"/>/<see cref="ParseHazard"/>/
+    /// <see cref="ParseObligation"/>/<see cref="ParseDecision"/>'s own <c>discharge</c> arm), never
+    /// read from argv — there is no <c>--kind</c> flag, because which of the four kinds is being
+    /// discharged is exactly what the top-level command word (<c>rule</c>/<c>hazard</c>/…) already
+    /// said.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseRegisterDischarge(
+        CommandDispatcher.CommandContext context, CardKind kind, string commandLabel)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", $"{commandLabel} requires a card file path."));
+        }
+
+        var flags = ParseRoleAndChangeFlags(context, commandLabel);
+        if (flags.Refusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flags.Refusal);
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RegisterDischarge(
+            kind, filePath, flags.Role!, flags.ChangeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
     /// <c>section</c>'s only job is routing to a subcommand: <c>verdict</c>, <c>close</c> and
     /// <c>status</c> (§5 block E). Same peek-don't-take shape as <see cref="ParseBlock"/>, same
     /// reason.
@@ -362,7 +480,10 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'section' requires a subcommand. Known subcommands: verdict, close, status."));
+                    "'section' requires a subcommand. Known subcommands: create, verdict, close, status."));
+            case "create":
+                context.Arguments.TryTake();
+                return ParseSectionCreate(context);
             case "verdict":
                 context.Arguments.TryTake();
                 return ParseSectionVerdict(context);
@@ -375,9 +496,21 @@ internal static class CommandParser
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'section' subcommand: '{subcommand}'. Known subcommands: verdict, close, status."));
+                    $"no such 'section' subcommand: '{subcommand}'. Known subcommands: create, verdict, close, status."));
         }
     }
+
+    /// <summary>
+    /// Builds <c>section create</c>'s <see cref="CommandDispatcher.ParsedCommand.SectionCreate"/>
+    /// (§7 block A, Product Owner ruling: "<c>section create</c> is in §7's scope"). One positional
+    /// token (card file path); <c>--role</c>, <c>--title</c> and <c>--change</c> are required. The
+    /// body is read from stdin during this parse, the same read-only-extraction discipline
+    /// <see cref="ParseFindingRecord"/> already applies.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseSectionCreate(CommandDispatcher.CommandContext context) =>
+        ParseCardCreate(context, "'section create'", requireChange: true, build:
+            (filePath, title, role, body, changeName, workingDirectory, timestamp) =>
+                new CommandDispatcher.ParsedCommand.SectionCreate(filePath, title, role, body, changeName!, workingDirectory, timestamp));
 
     /// <summary>
     /// Builds <c>section verdict</c>'s <see cref="CommandDispatcher.ParsedCommand.SectionVerdict"/>:
@@ -841,4 +974,289 @@ internal static class CommandParser
             filePath, title, section, changeName, role, body, instrument, extent, verifiedAt, raiseRequest, disposition,
             context.WorkingDirectory, context.Clock()));
     }
+
+    /// <summary>
+    /// <c>rule</c>'s only job is routing to a subcommand: <c>create</c> and <c>discharge</c> (§7
+    /// block A). Same peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseRule(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'rule' requires a subcommand. Known subcommands: create, discharge."));
+            case "create":
+                context.Arguments.TryTake();
+                return ParseRuleCreate(context);
+            case "discharge":
+                context.Arguments.TryTake();
+                return ParseRegisterDischarge(context, CardKind.Rule, "'rule discharge'");
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'rule' subcommand: '{subcommand}'. Known subcommands: create, discharge."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>rule create</c>'s <see cref="CommandDispatcher.ParsedCommand.RuleCreate"/> (§7
+    /// block A). <c>--scope</c> is the one flag no other creation verb here needs — <c>rule</c> is
+    /// the only kind <see cref="CardScopeRules"/> gives more than one legal scope, and its wire-
+    /// format validity is checked here (argv-decidable, O-3); whether the specific pairing is
+    /// actually legal is still <see cref="CardScopeRules.Validate"/>'s call at execute time, not
+    /// this method's.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseRuleCreate(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule create' requires a card file path."));
+        }
+
+        string? title = null;
+        string? roleText = null;
+        string? scopeText = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--title"] = value => title = value,
+            ["--role"] = value => roleText = value,
+            ["--scope"] = value => scopeText = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (title is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule create' requires '--title <text>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule create' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (scopeText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule create' requires '--scope <change|repository>'."));
+        }
+
+        if (!CardScopeWireFormat.TryParse(scopeText, out var scope))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-scope", $"unrecognised scope: '{scopeText}'. Recognised scopes: {CardScopeWireFormat.RecognisedValues}."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleCreate(
+            filePath, title, role, scope, body, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// <c>hazard</c>'s only job is routing to a subcommand: <c>create</c> and <c>discharge</c> (§7
+    /// block A). Same peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseHazard(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'hazard' requires a subcommand. Known subcommands: create, discharge."));
+            case "create":
+                context.Arguments.TryTake();
+                return ParseHazardCreate(context);
+            case "discharge":
+                context.Arguments.TryTake();
+                return ParseRegisterDischarge(context, CardKind.Hazard, "'hazard discharge'");
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'hazard' subcommand: '{subcommand}'. Known subcommands: create, discharge."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>hazard create</c>'s <see cref="CommandDispatcher.ParsedCommand.HazardCreate"/> (§7
+    /// block A, register: "Hazards carry a verification condition"). <b>The load-bearing refusal
+    /// site for register's "the system refuses and states the condition it requires" scenario</b> —
+    /// <c>--condition</c> and <c>--cadence</c> are both required, and a missing one is refused here,
+    /// naming exactly what is missing, rather than deferred to a later layer that would have to
+    /// reconstruct the same check. <b>Two distinct codes, not one (reviewer finding, block A
+    /// review round 1):</b> a missing <c>--condition</c> is <c>hazard-missing-condition</c>, a
+    /// missing <c>--cadence</c> is <c>hazard-missing-cadence</c> — an earlier version minted
+    /// <c>hazard-missing-condition</c> for both, which let a machine caller correct the wrong flag
+    /// on the first refusal and then be surprised by a second one. Two independently-triggerable
+    /// conditions get two codes; this is not the near-synonymous-code collapse <see cref="
+    /// CommandDispatcher.WrongCardKind"/>'s own doc comment describes, because that shape is one
+    /// code covering the same fact stated two ways, not two different facts sharing one code.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseHazardCreate(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'hazard create' requires a card file path."));
+        }
+
+        string? title = null;
+        string? roleText = null;
+        string? condition = null;
+        string? cadence = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--title"] = value => title = value,
+            ["--role"] = value => roleText = value,
+            ["--condition"] = value => condition = value,
+            ["--cadence"] = value => cadence = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (title is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'hazard create' requires '--title <text>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'hazard create' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (string.IsNullOrWhiteSpace(condition))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "hazard-missing-condition",
+                "'hazard create' requires '--condition <text>' — a hazard cannot be raised without a condition " +
+                "under which it can be verified still to hold."));
+        }
+
+        if (string.IsNullOrWhiteSpace(cadence))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "hazard-missing-cadence",
+                "'hazard create' requires '--cadence <text>' — a hazard cannot be raised without a cadence at " +
+                "which its condition is re-checked."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.HazardCreate(
+            filePath, title, role, body, condition, cadence, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// <c>obligation</c>'s only job is routing to a subcommand: <c>create</c> and <c>discharge</c>
+    /// (§7 block A). Same peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseObligation(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'obligation' requires a subcommand. Known subcommands: create, discharge."));
+            case "create":
+                context.Arguments.TryTake();
+                return ParseObligationCreate(context);
+            case "discharge":
+                context.Arguments.TryTake();
+                return ParseRegisterDischarge(context, CardKind.Obligation, "'obligation discharge'");
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'obligation' subcommand: '{subcommand}'. Known subcommands: create, discharge."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>obligation create</c>'s <see cref="CommandDispatcher.ParsedCommand.ObligationCreate"/>
+    /// (§7 block A). Scope is always <see cref="CardScope.Change"/>, so <c>--change</c> is required
+    /// — the same shape <see cref="ParseSectionCreate"/> already shares via <see cref="ParseCardCreate"/>.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseObligationCreate(CommandDispatcher.CommandContext context) =>
+        ParseCardCreate(context, "'obligation create'", requireChange: true, build:
+            (filePath, title, role, body, changeName, workingDirectory, timestamp) =>
+                new CommandDispatcher.ParsedCommand.ObligationCreate(filePath, title, role, body, changeName!, workingDirectory, timestamp));
+
+    /// <summary>
+    /// <c>decision</c>'s only job is routing to a subcommand: <c>create</c> and <c>discharge</c>
+    /// (§7 block A). Same peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseDecision(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'decision' requires a subcommand. Known subcommands: create, discharge."));
+            case "create":
+                context.Arguments.TryTake();
+                return ParseDecisionCreate(context);
+            case "discharge":
+                context.Arguments.TryTake();
+                return ParseRegisterDischarge(context, CardKind.Decision, "'decision discharge'");
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'decision' subcommand: '{subcommand}'. Known subcommands: create, discharge."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>decision create</c>'s <see cref="CommandDispatcher.ParsedCommand.DecisionCreate"/>
+    /// (§7 block A). Scope is always <see cref="CardScope.Capability"/>, which
+    /// <see cref="Cards.CardLayout.DirectoryFor"/> resolves without a change name — so, unlike
+    /// <see cref="ParseObligationCreate"/>/<see cref="ParseSectionCreate"/>, this does not accept
+    /// <c>--change</c> at all.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseDecisionCreate(CommandDispatcher.CommandContext context) =>
+        ParseCardCreate(context, "'decision create'", requireChange: false, build:
+            (filePath, title, role, body, _, workingDirectory, timestamp) =>
+                new CommandDispatcher.ParsedCommand.DecisionCreate(filePath, title, role, body, workingDirectory, timestamp));
 }

@@ -14696,6 +14696,405 @@ class it had to be shown six times — but nothing shipped that anyone had merel
 
 → @architect
 
+## 7. Register
+
+**[architect]** Base: `8d8e237` — §7 delivers the register: the two-state (`open`/`discharged`)
+lifecycle for `rule`, `hazard`, `obligation` and `decision`; `owed_by` on obligations and
+supersession links on decisions; repository-scoped storage that makes archive a directory-level
+filter with nothing in transit; rule promotion across scope preserving identity, text and thread;
+rules authored from findings recording `earned_from`; compaction into families recording `absorbs`
+with every absorbed rule still retrievable; architect-performed compaction at archive and
+agent-proposed, Product-Owner-decided repository compaction; citation counting with a soft ceiling as
+a review trigger and an uncited-rule human queue; the hazard verification condition and its
+discharge; and the refusal to write the project's agent instruction file.
+
+**[architect]** Section opened. **No block is briefed yet** — `## NEXT` item 1 says identity
+addressing must be *decided* here rather than carried a third time, and §7 is the section that adds
+four more card-to-card reference fields (`owed_by`, `supersedes`/`superseded_by`, `absorbs`,
+`earned_from`) on top of the one §6 already could not resolve. Putting it to the Product Owner first.
+
+❓ @product-owner — **how does one card refer to another?** Today it does not, really: a finding
+names its section by a free-text `section` label that two independently-writable fields happen to
+share, matched by ordinal equality inside a directory `CardLayout.DirectoryFor` gives `Section` and
+`Change` scope alike. `--section` is unvalidated and there is **no section-creation verb**, so the
+label can name a section card that does not exist. §6 fail-closed on this twice
+(`ambiguous-section-label`, and `Unreadable` for a finding raised before its section card exists).
+
+The options, as I read them:
+
+- **A — identity is the reference, and identity resolves.** Reference fields hold card ids
+  (`S-0003`, `F-0031`, `R-0007`). A resolver walks `callboard/` — live *and* `changes/archive/` —
+  to answer id → card, refusing on a duplicate id. Every §7 reference field, and §6's
+  finding→section link, goes through it. Requires a `section create` verb so a section card exists
+  to be referenced and `--section` can be validated against it. This is what card-model already
+  requires ("a card's identity SHALL remain valid and resolvable after the change that raised it is
+  archived") and what 7.7 requires ("every absorbed rule SHALL remain retrievable **by identity**").
+  Cost: a resolver block up front, and it pulls 11.1's retrieval-by-identity forward into §7.
+- **B — keep free-text labels, make them unique.** Refuse a second `section` card carrying a label
+  already used in the same change, so ordinal matching becomes sound and `ambiguous-section-label`
+  becomes unreachable. Much cheaper. But a label is change-local, so it cannot express
+  `earned_from` pointing at findings in another change or an archived one — which is exactly what a
+  repository-scoped rule authored from findings needs — and it does not survive a section rename.
+- **C — store repo-relative file paths.** Rejected on spec grounds, recorded so it is not
+  re-proposed: archive moves a card's file, and card-model requires identity to survive archive.
+
+I recommend **A**, carved as §7's block A before any register kind ships, and I would fold in the
+`workingDirectory` seam (`## NEXT` item 2) while the path-resolution code is open. The open question
+inside A is whether `section create` belongs here at all — §5 owned sections and is closed — or
+whether that is scope §7 should not take.
+
+**[product-owner]** Ruling on identity addressing, both parts:
+
+1. **Option A — identity is the reference, and identity resolves.** Reference fields hold card ids;
+   a resolver answers id → card across the live tree *and* `changes/archive/`, refusing on a
+   duplicate id. Free-text labels stop being an addressing mechanism. Option C stays rejected.
+2. **`section create` is in §7's scope**, folded into block A alongside the resolver, and
+   `--section` is validated against a real section card.
+
+**[architect]** Recorded. This closes `## NEXT` item 1 — identity addressing is decided, not
+carried. Consequences I am binding for every §7 block, so no worker has to re-derive them:
+
+- **The resolver is the only way a reference is followed.** No handler re-implements matching by
+  label, by path, or by directory enumeration order. `ambiguous-section-label` should become
+  unreachable from `finding status` once the finding→section link is an id.
+- **Duplicate id is a refusal, not a pick.** The resolver never resolves to "whichever sorted
+  first" — the defect §6 fail-closed on twice.
+- **The index is not the resolver.** ADR-0004: the index is derived and never authoritative, so
+  resolution reads the record. The index may cache it; it may not *be* it.
+- **Archive is still a directory move.** The resolver searching `changes/archive/` is what keeps
+  card-model's "identity survives archive" true without archive touching a single card file — the
+  same property §7.3 needs for "nothing in transit".
+- **`workingDirectory` gets fixed here** (`## NEXT` item 2). The path-resolution code is open in
+  this block anyway, and with the seam real, §6's `CurrentDirectoryMutatingTests` collection stops
+  being load-bearing.
+
+**[architect]** §7 block carve, posted so every worker can see where its own block sits:
+
+| block | tasks | what |
+|---|---|---|
+| **A** | 7.1, 7.11 | the two-state lifecycle and creation verbs for `rule`, `hazard`, `obligation`, `decision` — **and `section create`** |
+| **B** | *(none)* | addressing: the id resolver over live + archive, validated `--section`, the finding→section link rewired off the label, the `workingDirectory` seam |
+| **C** | 7.2 | `owed_by` on obligations, supersession links on decisions |
+| **D** | 7.3, 7.4 | repository-scoped storage; archive as a directory-level filter, with the test that rules/hazards/questions stay live and unmoved |
+| **E** | 7.5, 7.6 | promotion across scope preserving identity/text/thread; authoring from findings recording `earned_from` |
+| **F** | 7.7, 7.8, 7.9 | compaction into families; architect-performed at archive; agent-proposed repository compaction that applies nothing |
+| **G** | 7.10, 7.12 | citation counting, the soft ceiling as a review trigger, the uncited-rule queue; the refusal to write the agent instruction file |
+
+**7.11 sits in block A, not C.** "Refuse a hazard raised without a verification condition; discharge
+a hazard whose condition lapses" *is* the hazard's two-state lifecycle. Shipping `hazard create` in A
+without it would leave a verb in the tree that the spec forbids until C landed — the exact "ticked
+its task, doesn't satisfy its requirement" shape the supervisor exists to catch.
+
+**Block B ticks nothing by design.** Addressing is a §7 decision without a task number; it commits as
+a `fix`, and this thread is its record.
+
+---
+
+**[architect]** → @worker — **block A brief (7.1, 7.11).**
+
+**Deliver:** the two-state lifecycle for the four register kinds, the creation verb for each, and
+`section create`.
+
+**Spec — register, "Register kinds have a two-state lifecycle":**
+> `rule`, `hazard`, `obligation` and `decision` cards SHALL be `open` or `discharged` and SHALL NOT
+> occupy flow states. For `rule` and `decision`, `discharged` SHALL mean superseded rather than
+> completed.
+
+**Spec — register, "Hazards carry a verification condition":**
+> Each `hazard` card SHALL carry a condition under which it can be verified still to hold and a
+> cadence at which that condition is re-checked. A hazard whose condition no longer holds SHALL be
+> discharged. […] hazards are environment facts that go stale silently while rules are durable.
+>
+> Scenario: **WHEN** a hazard is raised without a condition under which it can be re-checked
+> **THEN** the system refuses and states the condition it requires.
+
+**What binds you:**
+
+1. **`SHALL NOT occupy flow states` is a refusal, not a comment.** A register card whose `status`
+   reads as a block flow state (`briefed`, `in-review`, …) must not be silently tolerated. Model the
+   two states as their own closed union with its own wire format — the shape `SectionFlowState` and
+   `BlockFlowState` already have; do not widen either of those to carry `discharged`.
+2. **Identity comes from the committed counter**, via `CardIdentityAllocator`, never from the index
+   (ADR-0004: derived, never authoritative). Five kinds now allocate; `CardStore.RecordFinding` is
+   the worked example of allocate-then-write under lock, including its rollback-by-content on
+   failure.
+3. **Scope is `CardScopeRules`' table, not your choice**: obligation → `change`, hazard →
+   `repository`, decision → `capability`, rule → `change` *or* `repository`, section → `change`.
+   Route every creation through `CardScopeRules.Validate`; do not restate the table.
+4. **Layout is `CardLayout.DirectoryFor`** (ADR-0003), and writes go through `CardStore`'s existing
+   locked, atomic-rename path (D7). No new way to put a card on disk.
+5. **A hazard cannot be created without its condition and cadence.** Refuse at creation and *state
+   the condition required* — the scenario asks for the message, not just the refusal.
+6. **`discharged` means superseded for `rule` and `decision`.** In this block that is the state's
+   meaning only; the *links* (`supersedes`/`superseded_by`) are block C's. Carry the vocabulary, not
+   the enforcement — §6 block A's convention.
+
+**Explicitly NOT in this block — do not build these, another block owns each:**
+
+- **`owed_by` on obligations** — block C, and it must wait for block B's resolver. **Do not invent a
+  free-text `owed_by`**; that is the exact defect §7 was opened to stop repeating.
+- **`supersedes` / `superseded_by`** — block C. **`earned_from`** — block E. **`absorbs`** — block F.
+  **Citation counts** — block G.
+- **The id resolver, validated `--section`, the finding→section rewiring, the `workingDirectory`
+  seam** — all block B. `section create` here makes a section card exist; validating that *another*
+  card's `--section` names one is B's.
+- **Promotion across scope** — block E. `section create` takes a scope-correct card to disk; moving
+  one between scopes is not yours.
+
+**Done-gates — all four, and quote the exit line, never the output:**
+`make build` → `BUILD_EXIT:0`, `make test` → `TEST_EXIT:0` (your new tests **and** all 492 existing),
+`make format` → `FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`. `make gates` runs the set.
+
+**Boundaries:** you do not commit, you do not tick a box in `tasks.md`, and you do not edit the
+`Makefile` — if you need a target changed, stop and post here. Post progress to this thread as you
+go, and hand off with `→ @reviewer` when the gates are green.
+
+**[worker]** Implemented block A (7.1, 7.11):
+
+- `RegisterLifecycleState` — a new closed union (`open`/`discharged`), its own wire format file,
+  alongside `BlockFlowState`/`SectionFlowState`, never widening either. `CardStore.
+  DischargeRegisterCardUnderExistingLock` is where "SHALL NOT occupy flow states" actually runs: a
+  register card whose `status` doesn't parse via `RegisterLifecycleStateWireFormat.TryParse` (a
+  hand-edited flow-state value) is reported as `invalid-register-status`, a real exercised refusal,
+  not a comment.
+- `RegisterCardFields` (condition, cadence, discharged_by, discharged_at) — kind-specific fields for
+  the four register kinds, parsed/written the same way `SectionCardFields`/`FindingCardFields` are.
+  `condition`/`cadence` are hazard-only in practice (nothing else ever sets them).
+- `CardStore.CreateCard` — one shared creation path for `rule create`, `hazard create`,
+  `obligation create`, `decision create` and `section create`: identity from
+  `CardIdentityAllocator`, scope routed unconditionally through `CardScopeRules.Validate` (even for
+  a kind whose scope is fixed — no verb restates the table), directory from
+  `CardLayout.DirectoryFor`, write through `CardStore.WriteCard`'s existing locked atomic-rename
+  path. No dual-lock complexity — one card per call, unlike `RecordFinding`.
+- `CardStore.DischargeRegisterCard`/`UnderExistingLock` — open→discharged, records
+  `discharged_by`/`discharged_at`, refuses `already-discharged` and the flow-state case above.
+  7.11: the hazard "condition lapsed" scenario is just this same general verb applied to a hazard —
+  no hazard-specific discharge path needed.
+- CLI: five creation verbs (`rule|hazard|obligation|decision create`, `section create`) and a
+  shared `rule|hazard|obligation|decision discharge`. `hazard create` refuses at parse time
+  (argv-decidable) when `--condition`/`--cadence` is missing or blank, naming which one, satisfying
+  register's "the system refuses and states the condition it requires" scenario at the message-text
+  level, not just the refusal code.
+- Did **not** build: `owed_by`, `supersedes`/`superseded_by`, `earned_from`, `absorbs`, citation
+  counting, the id resolver, validated `--section`, the finding→section rewiring, the
+  `workingDirectory` seam, promotion across scope — all named out of scope in the brief, all left
+  alone.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (518 tests total: 492 existing +
+26 new, all green). New tests: `CardCreateTests`, `CardRegisterDischargeTests`,
+`CommandDispatcherRegisterTests` — domain-level and CLI-level coverage for every kind's creation,
+the scope-refusal path, already-exists, already-discharged, wrong-card-kind, the flow-state refusal,
+and the hazard missing-condition/missing-cadence refusals with message-text assertions.
+
+→ @reviewer
+
+**[reviewer]** Audit of block A (7.1, 7.11). Gates re-run and confirmed independently:
+`BUILD_EXIT:0`, `TEST_EXIT:0` (518/518), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the worker's
+report.
+
+**Verdict: Request changes.** One blocker, small.
+
+**Blocker**
+
+1. **`hazard create`'s missing-cadence refusal is minted under the wrong code.**
+   `CommandParser.ParseHazardCreate` (`src/Callboard/Cli/CommandParser.cs:1163-1169`) refuses a
+   missing `--condition` with code `hazard-missing-condition` — correct — and then refuses a
+   missing `--cadence` under **the same code**, `hazard-missing-condition`, rather than a distinct
+   `hazard-missing-cadence`. The message text does say cadence, but a machine caller reading
+   `refusal.code` cannot tell the two failures apart without parsing prose, which is exactly what a
+   refusal code exists to make unnecessary. This isn't a case of two near-synonymous codes that
+   should collapse (the §6 precedent) — it's the opposite defect: one code silently covering two
+   distinct, independently-triggerable conditions. It's also load-bearing for the register
+   scenario the block was briefed against ("the system refuses and states the condition it
+   requires") — a caller who fixes `--condition` in response to this code, having actually been
+   missing `--cadence`, gets a second refusal it had no way to anticipate.
+   `tests/Callboard.Tests/CommandDispatcherRegisterTests.cs:106-118`
+   (`HazardCreate_MissingCadence_Refuses`) asserts the current, wrong code as if it were intended
+   behaviour — the test needs updating alongside the fix, not just the production code.
+
+**Everything else checked clean:**
+
+- **Scope discipline.** Grepped the whole diff for `owed_by`, `supersedes`/`superseded_by`,
+  `earned_from`, `absorbs`, the resolver, validated `--section`, the finding→section rewiring,
+  `workingDirectory`, promotion across scope — none present. `RegisterCardFields`'s own doc comment
+  names them as later blocks' additions without adding any of them. No free-text card-to-card
+  reference field was invented anywhere in this diff.
+- **"SHALL NOT occupy flow states" is a real, exercised refusal**, not a comment.
+  `RegisterLifecycleState` is its own closed union in its own file, never folded into
+  `BlockFlowState`/`SectionFlowState` (confirmed neither type was touched by this diff — `git diff`
+  shows no change to either file). `DischargeRegisterCardUnderExistingLock`
+  (`CardStore.cs:770-776`) refuses via `RegisterLifecycleStateWireFormat.TryParse` when a register
+  card's `status` doesn't parse, and `CardRegisterDischargeTests.
+  DischargeRegisterCard_StatusIsAFlowState_RefusesRatherThanTreatingItAsOpen`
+  (`CardRegisterDischargeTests.cs:124-146`) proves it fires against a hand-constructed `briefed`
+  status and that the file is left untouched — real evidence, not an assertion about intent.
+- **7.11's refusal states the condition.** `ParseHazardCreate`'s missing-`--condition` message
+  reads "a hazard cannot be raised without a condition under which it can be verified still to
+  hold" — the scenario's own wording, checked at parse time (argv-decidable), and
+  `HazardCreate_MissingCondition_Refuses_AndStatesTheConditionRequired` asserts the message text,
+  not just the refusal.
+- **Refusal completeness, minus the one blocker above.** New codes this block mints:
+  `scope-refused`, `hazard-missing-condition` (bugged, see above), `already-discharged`,
+  `invalid-register-status`, `not-a-register-card`, `unrecognised-scope`. None duplicate an
+  existing one from the 30-code baseline at `8d8e237`; `not-a-register-card` is distinct from
+  `wrong-card-kind` on legitimate grounds — `wrong-card-kind` names one expected kind, but register
+  discharge accepts four, so its signature doesn't fit. None of the new refusal sites fall open: every
+  `CardCreateOutcome`/`CardRegisterDischargeOutcome` case is matched exhaustively with no `_` arm
+  (`MapCardCreateOutcome`, `RunRegisterDischarge` — `CommandDispatcher.cs:1182-1246`).
+- **Storage correctness.** `CreateCard` (`CardStore.cs:723-753`) validates scope via
+  `CardScopeRules.Validate` before any identity is allocated (a refused scope burns no identity —
+  proven by `CreateCard_ScopeRefused_NeverAllocatesAnIdentity`), allocates via
+  `CardIdentityAllocator.Allocate` (never the index), resolves the path via
+  `AnchoredCardPath.TryCreate`/`CardLayout.DirectoryFor`, and writes through the existing
+  `WriteCard` → `WithLock` → `AtomicWrite` path — no new write mechanism. `DischargeRegisterCard`
+  follows the same `WithLock`/read-decide-write shape `CloseSection` already uses, single card, no
+  dual-lock complexity needed. No caller restates the scope table — `RunRuleCreate` et al. all
+  route the caller's fixed or chosen scope through `CardScopeRules.Validate` unconditionally,
+  matching the brief.
+- **AOT.** `CardCreateResult` and `CardRegisterDischargeResult` are both registered on
+  `CliJsonContext` (`CliJsonContext.cs:29-30`); no reflection-based `JsonSerializer` overload
+  appears anywhere in the diff.
+- **Round-trip fidelity.** `RegisterCardFields`'s four keys are parsed by
+  `CardFileParser.BuildRegisterFields` and written by `CardFileWriter` only when the card's kind is
+  one of the four register kinds; unknown fields still fall through to
+  `unknownFrontmatterFields` as before. `CreateCard_Hazard_CarriesConditionAndCadence` proves a
+  round trip through disk, not just an in-memory assertion. (The O-4 compatibility corpus wasn't
+  extended with fixtures for these four new emittable keys — correctly out of scope, per the
+  DEVLOG's own note that the corpus's forward half is documentation-only until 9.12.)
+- **Storage layout / identity infra** (`CardLayout`, `CardIdentityPrefix`, `CardIdentityAllocator`,
+  `CardScopeRules`) — none of these files appear in the diff; block A correctly reused all of them
+  rather than restating anything, and they already covered the four register kinds from earlier
+  sections.
+- Nothing in this diff touches the `Makefile`, `tasks.md`, `CLAUDE.md` or `.claude/`.
+
+**Nits**
+
+- None beyond the blocker — the doc comments are unusually thorough and the mechanical
+  `CardCommentImmutabilityTests` sweep was updated for every new method (`CreateCard`,
+  `DischargeRegisterCard`, `DischargeRegisterCardUnderExistingLock`, `IsRegisterCard`), consistent
+  with §6's "enumerate mechanically" rule.
+
+**Architectural notes**
+
+- `CardCreateOutcome.ScopeRefused` uses one generic `scope-refused` code across all five creation
+  verbs (rule/hazard/obligation/decision/section) rather than a per-kind code — consistent with the
+  project's stated preference for fewer, more general codes, worth confirming that stays true once
+  block C's `owed_by`/`supersedes` scope interactions land.
+
+Fix the one blocker (and its test) and this is ready to re-audit.
+
+**[worker]** Fixed the blocker. `ParseHazardCreate`'s missing-`--cadence` refusal now mints its own
+`hazard-missing-cadence` code, distinct from missing-`--condition`'s `hazard-missing-condition` —
+two independently-triggerable conditions, two codes. Kept both bespoke (didn't fold either into
+`missing-argument`/`missing-flag-value`): 7.11's scenario requires the refusal to *state the
+condition it requires*, in the scenario's own wording ("a hazard cannot be raised without a
+condition under which it can be verified still to hold" / "...without a cadence at which its
+condition is re-checked"), which the generic codes' shared message shape doesn't carry — this
+isn't the §6 near-synonymous-code collapse (one code, two spellings of the same fact); it's the
+opposite shape (one code was wrongly covering two different facts), so the fix is two codes, not
+one generic one. Doc comment on `ParseHazardCreate` now says this explicitly, citing
+`WrongCardKind`'s own doc comment for why this case doesn't fit that precedent.
+`HazardCreate_MissingCadence_Refuses` (the test that pinned the wrong code) is now
+`HazardCreate_MissingCadence_Refuses_WithItsOwnDistinctCode`, asserting `hazard-missing-cadence`
+and the message text. Nothing else touched — no other file in the diff changed.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (518/518, unchanged count — the
+fix renamed one existing test, added none).
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the fix. Gates re-run independently: `BUILD_EXIT:0`, `TEST_EXIT:0`
+(518/518), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**1. Blocker fixed.** `ParseHazardCreate` (`CommandParser.cs:1160-1173`) now returns
+`hazard-missing-condition` when `--condition` is absent/blank and `hazard-missing-cadence` when
+`--cadence` is — two distinct codes, each naming what is actually missing, no cross-reporting.
+`CommandDispatcherRegisterTests.cs:104-124` (`HazardCreate_MissingCadence_Refuses_
+WithItsOwnDistinctCode`) now pins `hazard-missing-cadence` with a message-text assertion for
+"cadence"; the sibling condition test still pins `hazard-missing-condition`. Confirmed by reading
+the code, not the report.
+
+**2. The refusal set now stands at 37**, up from the 30-code baseline at `8d8e237` — re-derived
+mechanically over every `CommandOutcome.Refusal(` construction site in `src/Callboard` (git-tracked
+files only), same method as the §6 close derivation. Block A contributes 7: `already-discharged`,
+`hazard-missing-cadence`, `hazard-missing-condition`, `invalid-register-status`,
+`not-a-register-card`, `scope-refused`, `unrecognised-scope`.
+
+On the justification itself: the doc comment's distinction — "two independently-triggerable
+conditions get two codes; this is not the near-synonymous-code collapse `WrongCardKind` describes,
+because that shape is one code covering the same fact stated two ways, not two different facts
+sharing one code" — doesn't fully hold up against this codebase's own practice, and I said I'd give
+my honest read since I flagged the shape risk, so here it is plainly:
+
+`--title` and `--role` are also two independently-triggerable, genuinely different facts, missing
+in the very same function (`ParseHazardCreate`, lines 1145-1155), and both still route through the
+one generic `missing-argument` code, disambiguated only by message text — exactly the pattern the
+new doc comment argues is insufficient for `--condition`/`--cadence`. The rule as stated ("two
+different facts, two codes") isn't actually the rule this handler follows; title/role prove the
+codebase's working answer is "generic code, message carries the specific fact" for an ordinary
+missing flag. If that's the real dividing line, `hazard create`'s own `--title`/`--role` checks
+five lines above should already have failed it and don't.
+
+I don't think this rises to a second blocker, for two reasons the first round's finding didn't
+have: the failure mode I raised — one code silently covering two facts, so a caller who "fixes" the
+wrong one gets blindsided by a second refusal — is gone either way once the codes are distinct, and
+`missing-argument`/`missing-flag-value` disambiguated by message text (my original suggested fix)
+would have closed it exactly as well as the two bespoke codes did. Register's own scenario text
+("the system refuses and states the condition it requires") is about message content, which both
+answers satisfy identically. So this is a real precedent inconsistency worth the Architect's
+attention before block B's resolver mints more codes on one reading or the other, but it isn't a
+correctness, ADR, or scope problem, and I'd rather flag it accurately than block a second time on a
+question of code-granularity taste where I already got the substantive bug fixed. Recorded as an
+architectural note, not a blocker.
+
+**3. Scoped to exactly what I flagged.** `git diff HEAD --stat` shows only `CommandParser.cs`
+moved (417 → 424 lines, +7 — the split refusal plus its doc-comment addition) and `DEVLOG.md`;
+every other tracked file in the diff (`CardFile.cs`, `CardFileParser.cs`, `CardFileWriter.cs`,
+`CardStore.cs`, `NewCardFile.cs`, `CliJsonContext.cs`, `CommandDispatcher.cs`,
+`CardCommentImmutabilityTests.cs`) is byte-identical to round 1 by line count. Read the untracked
+test files directly rather than trusting the report: only `CommandDispatcherRegisterTests.cs`
+changed, and only the one test (renamed, new assertion, new comment) — `CardCreateTests.cs` and
+`CardRegisterDischargeTests.cs` are unchanged. Nothing rode along.
+
+**Verdict: Approve.**
+
+**Architectural note for block B and beyond:** the `missing-argument`-with-message-text pattern vs.
+bespoke-code-per-missing-flag question above is unresolved as a matter of house style, not fixed by
+this block either way — worth a short ruling before more blocks mint codes under one implicit
+reading or the other.
+
+→ @architect
+
+**[architect]** Settling the reviewer's architectural note on refusal-code granularity, before block
+B mints any more codes. **The worker's two codes stand — but not for the reason it gave.**
+
+The worker's stated rule was "two independently-triggerable facts get two codes". The reviewer is
+right that this does not describe this codebase: `--title` and `--role` are two independently
+triggerable facts in one handler and share the generic `missing-argument`, separated by message text
+alone. Left as stated, that rule would licence a bespoke code for every absent flag in §7's remaining
+six blocks, and the supervisor would rightly read the result as codes applied unevenly.
+
+**The rule, stated so it can be applied rather than re-argued:**
+
+> A refusal the **spec names** gets its own code. An **incidental** missing flag gets
+> `missing-argument` / `missing-flag-value`.
+
+`hazard-missing-condition` and `hazard-missing-cadence` both clear that bar — register's "Hazards
+carry a verification condition" mandates both fields and gives the condition its own scenario
+("refuses **and states the condition it requires**"), so a caller has a legitimate interest in
+detecting *that* refusal specifically rather than "some flag was absent". `--title` and `--role` do
+not clear it, and correctly keep the generic code.
+
+This also explains why the `WrongCardKind` collapse is not the counter-precedent the worker's doc
+comment reaches for: those two codes named the *same* fact and differed only in which kind was
+expected. These two name different spec-mandated fields. Someone should fix that doc comment's
+argument when block B is next in this file — the conclusion is right, the reasoning is not.
+
+**Refusal set: 37** — the 30 standing at `8d8e237` plus block A's seven, re-derived mechanically by
+the reviewer rather than counted forward from a remembered baseline. That baseline has been wrong by
+arithmetic twice in this change; it is derived here for the third time and should be derived again,
+never incremented.
+
 ## NEXT
 
 

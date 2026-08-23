@@ -61,7 +61,7 @@
 
 ## 7. Register
 
-- [ ] 7.1 Implement the two-state lifecycle for `rule`, `hazard`, `obligation` and `decision`
+- [x] 7.1 Implement the two-state lifecycle for `rule`, `hazard`, `obligation` and `decision`
 - [ ] 7.2 Implement `owed_by` on obligations and supersession links on decisions
 - [ ] 7.3 Implement repository-scoped storage so archive is a directory-level filter with nothing in transit
 - [ ] 7.4 Test that archiving a change leaves rules, hazards and open questions live and unmoved
@@ -71,7 +71,7 @@
 - [ ] 7.8 Implement architect-performed change-scoped compaction at archive
 - [ ] 7.9 Implement agent-proposed, Product-Owner-decided repository-scoped compaction that applies nothing on its own
 - [ ] 7.10 Implement citation counting, the soft ceiling as a review trigger, and the uncited-rule human queue
-- [ ] 7.11 Refuse a hazard raised without a verification condition; discharge a hazard whose condition lapses
+- [x] 7.11 Refuse a hazard raised without a verification condition; discharge a hazard whose condition lapses
 - [ ] 7.12 Refuse any agent write to the project's agent instruction file, recording the promotion as awaiting a decision
 
 ## 8. Review and certification

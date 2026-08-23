@@ -36,5 +36,13 @@ namespace Callboard.Cards;
 /// default) means "not a finding, or no finding fields to carry", normalised the same way
 /// <see cref="CardFile"/>'s own <see cref="CardFile.FindingFields"/> property does.
 /// </para>
+///
+/// <para>
+/// <b><see cref="RegisterFields"/> (§7 block A addition):</b> the same "known in full at creation"
+/// reasoning as <see cref="FindingFields"/> — a hazard's <c>condition</c>/<c>cadence</c> are refused
+/// at creation when absent (register: "the system refuses and states the condition it requires"),
+/// so they are never filled in by a later verb. <see langword="null"/> means the same thing it does
+/// for <see cref="FindingFields"/>: "not a register kind, or no register fields to carry".
+/// </para>
 /// </summary>
-internal sealed record NewCardFile(CardFrontmatter Frontmatter, string Body, FindingCardFields? FindingFields = null);
+internal sealed record NewCardFile(CardFrontmatter Frontmatter, string Body, FindingCardFields? FindingFields = null, RegisterCardFields? RegisterFields = null);

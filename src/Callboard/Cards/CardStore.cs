@@ -100,7 +100,7 @@ internal static class CardStore
         return WithLock(filePath, lockTimeout, _ =>
             File.Exists(filePath)
                 ? new CardWriteResult.AlreadyExists(filePath)
-                : AtomicWrite(anchored, CardFileWriter.Serialize(new CardFile(card.Frontmatter, card.Body, [], [], FindingFields: card.FindingFields))));
+                : AtomicWrite(anchored, CardFileWriter.Serialize(new CardFile(card.Frontmatter, card.Body, [], [], FindingFields: card.FindingFields, RegisterFields: card.RegisterFields))));
     }
 
     /// <summary>
@@ -699,6 +699,143 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// Creates a brand-new <paramref name="kind"/> card at <paramref name="filePath"/> (§7 block A):
+    /// the four register kinds' creation verbs and <c>section create</c> — one card, no dual-lock
+    /// complexity <see cref="RecordFinding"/> needs. <b>Scope is validated through
+    /// <see cref="CardScopeRules.Validate"/> here, unconditionally</b> — every caller passes its own
+    /// kind's scope (a caller-chosen value for <see cref="CardKind.Rule"/>, a fixed one for every
+    /// other kind this method is called for), and this method never trusts a caller's fixed value
+    /// as valid on its own say-so: it always asks the table, so a caller cannot restate — and
+    /// silently drift from — the rule <see cref="CardScopeRules"/> already owns. Checked before any
+    /// identity is allocated, so a refused scope never burns an identity number.
+    /// <paramref name="initialStatus"/> is the wire text the caller's own lifecycle type already
+    /// computed (<see cref="RegisterLifecycleStateWireFormat"/> for a register kind,
+    /// <see cref="SectionFlowStateWireFormat"/> for a section) — this method does not choose it,
+    /// the same "carries the vocabulary, not a second copy of it" discipline every wire-format type
+    /// in this codebase already follows.
+    /// </summary>
+    internal static CardCreateOutcome CreateCard(
+        string cardsRoot,
+        string filePath,
+        CardKind kind,
+        CardScope scope,
+        string title,
+        string initialStatus,
+        CardOwner actingRole,
+        string body,
+        RegisterCardFields? registerFields,
+        DateTimeOffset timestamp,
+        TimeSpan lockTimeout,
+        string? changeName)
+    {
+        var scopeValidation = CardScopeRules.Validate(kind, scope);
+        if (scopeValidation is CardScopeValidationResult.Refused refused)
+        {
+            return new CardCreateOutcome.ScopeRefused(refused.Reason);
+        }
+
+        var (id, allocationFailure) = AllocateIdentity(cardsRoot, kind, lockTimeout);
+        if (allocationFailure is not null)
+        {
+            return new CardCreateOutcome.ToolFailure(allocationFailure);
+        }
+
+        var frontmatter = new CardFrontmatter(id!, kind, title, initialStatus, actingRole, scope, string.Empty, timestamp, timestamp);
+        var cardFile = new CardFile(frontmatter, body, [], [], FindingFields: null, RegisterFields: registerFields);
+
+        var writeResult = WriteCard(cardsRoot, filePath, new NewCardFile(frontmatter, body, RegisterFields: registerFields), lockTimeout, changeName);
+        return writeResult.Match<CardCreateOutcome>(
+            onSuccess: _ => new CardCreateOutcome.Created(cardFile),
+            onNotFound: notFound => new CardCreateOutcome.ToolFailure(
+                $"unexpected 'not found' writing a brand-new card at '{notFound.FilePath}'."),
+            onAlreadyExists: alreadyExists => new CardCreateOutcome.AlreadyExists(alreadyExists.FilePath),
+            onLayoutMismatch: layoutMismatch => new CardCreateOutcome.LayoutMismatch(layoutMismatch.Reason),
+            onCorrupt: corrupt => new CardCreateOutcome.ToolFailure(
+                $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
+            onToolFailure: toolFailure => new CardCreateOutcome.ToolFailure(toolFailure.Reason));
+    }
+
+    /// <summary>
+    /// Discharges the register card at <paramref name="filePath"/> (register: "Register kinds have
+    /// a two-state lifecycle", §7 block A) — reads the current card, and only if it is one of the
+    /// four register kinds, its status parses as <see cref="RegisterLifecycleState"/>, and it is not
+    /// already discharged, writes <c>status: discharged</c> plus <c>discharged_by</c>/
+    /// <c>discharged_at</c> under the card's lock. Same "record the acting role and the time"
+    /// discipline <see cref="CloseSection"/> already applies to a section's own close.
+    /// </summary>
+    internal static CardRegisterDischargeOutcome DischargeRegisterCard(
+        string cardsRoot, string filePath, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => DischargeRegisterCardUnderExistingLock(heldLock, cardsRoot, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardRegisterDischargeOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="DischargeRegisterCard"/>. Same structural lock
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type — the target is
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>.
+    /// </summary>
+    internal static CardRegisterDischargeOutcome DischargeRegisterCardUnderExistingLock(
+        CardLock heldLock, string cardsRoot, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardRegisterDischargeOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardRegisterDischargeOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsRegisterCard(card))
+                {
+                    return new CardRegisterDischargeOutcome.NotARegisterCard(card.Frontmatter.Kind);
+                }
+
+                // register: "SHALL NOT occupy flow states" — a real, exercised refusal, not merely
+                // a documented intention. See RegisterLifecycleState's own doc comment.
+                if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
+                {
+                    return new CardRegisterDischargeOutcome.InvalidStatus(filePath, card.Frontmatter.Status);
+                }
+
+                if (currentState == RegisterLifecycleState.Discharged)
+                {
+                    return new CardRegisterDischargeOutcome.AlreadyDischarged(filePath);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardRegisterDischargeOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Status = RegisterLifecycleState.Discharged.ToWireString(), Updated = timestamp },
+                    RegisterFields = card.RegisterFields with { DischargedBy = actingRole, DischargedAt = timestamp },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardRegisterDischargeOutcome>(
+                    onSuccess: _ => new CardRegisterDischargeOutcome.Discharged(updated),
+                    onNotFound: notFound => new CardRegisterDischargeOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardRegisterDischargeOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardRegisterDischargeOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardRegisterDischargeOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardRegisterDischargeOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardRegisterDischargeOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
     /// Records a clean finding (findings: "Clean findings are cards") and, when
     /// <paramref name="raiseRequest"/> is supplied, the <c>obligation</c> or <c>hazard</c> its
     /// declared blind spot is raised as — in the same operation (§6 block B Architect ruling: "one
@@ -1212,6 +1349,21 @@ internal static class CardStore
         onRule: static () => false,
         onHazard: static () => false,
         onDecision: static () => false,
+        onSection: static () => false);
+
+    /// <summary>The <see cref="IsBlockCard"/>/<see cref="IsSectionCard"/>/<see cref="IsFindingCard"/>
+    /// counterpart for the four register kinds (§7 block A), <see langword="internal"/> for the
+    /// same reason <see cref="IsSectionCard"/> is — so <see cref="Callboard.Cli.CommandDispatcher"/>
+    /// shares this predicate rather than re-implementing the same eight-arm match a fourth
+    /// time.</summary>
+    internal static bool IsRegisterCard(CardFile card) => card.Frontmatter.Kind.Match(
+        onBlock: static () => false,
+        onQuestion: static () => false,
+        onFinding: static () => false,
+        onObligation: static () => true,
+        onRule: static () => true,
+        onHazard: static () => true,
+        onDecision: static () => true,
         onSection: static () => false);
 
     /// <summary>

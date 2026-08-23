@@ -197,6 +197,45 @@ internal static class CardFileWriter
             }
         }
 
+        // §7 block A's four register-only fields — same "present only when set" convention as the
+        // block/section/finding fields above, and the same guarantee that a card of any other kind
+        // never reaches here with non-default RegisterFields (CardFileParser only ever populates it
+        // for the four register kinds).
+        var isRegisterCard = frontmatter.Kind.Match(
+            onBlock: static () => false,
+            onQuestion: static () => false,
+            onFinding: static () => false,
+            onObligation: static () => true,
+            onRule: static () => true,
+            onHazard: static () => true,
+            onDecision: static () => true,
+            onSection: static () => false);
+
+        if (isRegisterCard)
+        {
+            var registerFields = card.RegisterFields;
+
+            if (registerFields.Condition is { } condition)
+            {
+                builder.Append("condition: ").Append(CardFileFormat.EscapeFrontmatterValue(condition)).Append('\n');
+            }
+
+            if (registerFields.Cadence is { } cadence)
+            {
+                builder.Append("cadence: ").Append(CardFileFormat.EscapeFrontmatterValue(cadence)).Append('\n');
+            }
+
+            if (registerFields.DischargedBy is { } dischargedBy)
+            {
+                builder.Append("discharged_by: ").Append(dischargedBy.ToWireString()).Append('\n');
+            }
+
+            if (registerFields.DischargedAt is { } dischargedAt)
+            {
+                builder.Append("discharged_at: ").Append(FormatTimestamp(dischargedAt)).Append('\n');
+            }
+        }
+
         // Unknown fields (a §5/§6 field this build does not model, or a hand-added line) are
         // re-emitted after the known ones rather than interleaved back into their original
         // position — the parser records only the value at each known key, not a full original

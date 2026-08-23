@@ -107,8 +107,12 @@ public sealed class CardCommentImmutabilityTests
             "AtomicWrite",                          // the shared byte-writer every path above funnels through; it writes whatever CardFileWriter.Serialize(card) produces for the CardFile each of those paths built — none of them builds one with a truncated Comments list
             "CloseSection",                         // §5 block E: read-decide-write on Frontmatter.Status/SectionFields.ClosedBy/ClosedAt only; never touches Comments
             "CloseSectionUnderExistingLock",        // same, lock already held
+            "CreateCard",                           // §7 block A: allocates an identity, validates scope, writes one brand-new card via WriteCard — never touches an existing card's Comments, it only ever creates
+            "DischargeRegisterCard",                // §7 block A: read-decide-write on Frontmatter.Status/RegisterFields.DischargedBy/DischargedAt only; never touches Comments
+            "DischargeRegisterCardUnderExistingLock", // same, lock already held
             "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy; never touches a CardFile's Comments
             "IsFindingCard",                        // §6 block C: the IsBlockCard/IsSectionCard counterpart for CardKind.Finding, shared with CommandDispatcher.RunFindingStatus; never touches a CardFile's Comments
+            "IsRegisterCard",                       // §7 block A: the IsBlockCard/IsSectionCard/IsFindingCard counterpart for the four register kinds; never touches a CardFile's Comments
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments
             "ReadAllCards",                         // read-only
             "ReadCard",                             // read-only

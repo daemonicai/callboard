@@ -66,6 +66,15 @@ namespace Callboard.Cards;
 /// and <paramref name="SectionFields"/> already apply. The constructor parameter accepts
 /// <see langword="null"/> for the same reason <paramref name="Handovers"/>'s does.
 /// </param>
+/// <param name="RegisterFields">
+/// The §7 block A fields (<c>condition</c>, <c>cadence</c>, <c>discharged_by</c>,
+/// <c>discharged_at</c>) known only on a <c>rule</c>, <c>hazard</c>, <c>obligation</c> or
+/// <c>decision</c> card — see <see cref="Cards.RegisterCardFields"/>'s own doc comment.
+/// <see cref="CardFileParser"/> only ever populates this with non-default content when
+/// <see cref="CardFrontmatter.Kind"/> is one of those four, exactly the same convention
+/// <paramref name="FindingFields"/> already applies. The constructor parameter accepts
+/// <see langword="null"/> for the same reason <paramref name="Handovers"/>'s does.
+/// </param>
 internal sealed record CardFile(
     CardFrontmatter Frontmatter,
     string Body,
@@ -75,7 +84,8 @@ internal sealed record CardFile(
     BlockCardFields? BlockFields = null,
     IReadOnlyList<CardBlockTransitionEntry>? Transitions = null,
     SectionCardFields? SectionFields = null,
-    FindingCardFields? FindingFields = null)
+    FindingCardFields? FindingFields = null,
+    RegisterCardFields? RegisterFields = null)
 {
     public IReadOnlyList<CardHandover> Handovers { get; init; } = Handovers ?? [];
 
@@ -86,4 +96,6 @@ internal sealed record CardFile(
     public SectionCardFields SectionFields { get; init; } = SectionFields ?? Cards.SectionCardFields.Empty;
 
     public FindingCardFields FindingFields { get; init; } = FindingFields ?? Cards.FindingCardFields.Empty;
+
+    public RegisterCardFields RegisterFields { get; init; } = RegisterFields ?? Cards.RegisterCardFields.Empty;
 }

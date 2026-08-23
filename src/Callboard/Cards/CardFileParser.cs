@@ -56,6 +56,14 @@ internal static class CardFileParser
         "extent_fingerprint", "disposition",
     };
 
+    // §7 block A's four fields — known only when the card's own kind is one of the four register
+    // kinds (rule, hazard, obligation, decision), the same two-pass reasoning as
+    // FindingOnlyFrontmatterKeys above.
+    private static readonly HashSet<string> RegisterOnlyFrontmatterKeys = new(StringComparer.Ordinal)
+    {
+        "condition", "cadence", "discharged_by", "discharged_at",
+    };
+
     // The six comment-header fields this build recognises. Same rule, same reason, applied to the
     // per-comment header instead of the frontmatter block.
     private static readonly HashSet<string> KnownCommentHeaderKeys = new(StringComparer.Ordinal)
@@ -170,6 +178,19 @@ internal static class CardFileParser
             onDecision: static () => false,
             onSection: static () => false);
 
+        // §7 block A: the four register kinds share one frontmatter field set — a rule/hazard/
+        // obligation/decision card is what CardStore.IsRegisterCard also decides over, same
+        // exhaustive match shape.
+        var isRegisterCard = frontmatterResult.Frontmatter!.Kind.Match(
+            onBlock: static () => false,
+            onQuestion: static () => false,
+            onFinding: static () => false,
+            onObligation: static () => true,
+            onRule: static () => true,
+            onHazard: static () => true,
+            onDecision: static () => true,
+            onSection: static () => false);
+
         var unknownFrontmatterFields = new List<(string Key, string RawValue)>();
         foreach (var (key, value) in orderedFields)
         {
@@ -189,6 +210,11 @@ internal static class CardFileParser
             }
 
             if (isFindingCard && FindingOnlyFrontmatterKeys.Contains(key))
+            {
+                continue;
+            }
+
+            if (isRegisterCard && RegisterOnlyFrontmatterKeys.Contains(key))
             {
                 continue;
             }
@@ -236,6 +262,20 @@ internal static class CardFileParser
             // findingFieldsResult.Failure is null here, so FindingFields is guaranteed non-null by
             // BuildFindingFields's own contract.
             findingFields = findingFieldsResult.FindingFields!;
+        }
+
+        var registerFields = RegisterCardFields.Empty;
+        if (isRegisterCard)
+        {
+            var registerFieldsResult = BuildRegisterFields(fields);
+            if (registerFieldsResult.Failure is { } registerFieldsFailure)
+            {
+                return Failure(registerFieldsFailure);
+            }
+
+            // registerFieldsResult.Failure is null here, so RegisterFields is guaranteed non-null
+            // by BuildRegisterFields's own contract.
+            registerFields = registerFieldsResult.RegisterFields!;
         }
 
         var bodyLines = new List<string>();
@@ -396,7 +436,7 @@ internal static class CardFileParser
 
         // frontmatterResult.Failure is null here, so Frontmatter is guaranteed non-null by BuildFrontmatter's own contract.
         return new CardFileParseResult.Success(
-            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts, findingFields));
+            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts, findingFields, registerFields));
     }
 
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
@@ -647,6 +687,49 @@ internal static class CardFileParser
         }
 
         return (new FindingCardFields(instrument, extent!, verifiedAt, blindSpot!, extentFingerprint, disposition!), null);
+    }
+
+    /// <summary>
+    /// Extracts §7 block A's four known-on-a-register-card fields from a frontmatter
+    /// <paramref name="fields"/> dictionary already confirmed to belong to a <c>rule</c>/
+    /// <c>hazard</c>/<c>obligation</c>/<c>decision</c> card — see the <c>isRegisterCard</c> gate in
+    /// <see cref="Parse"/>, the only caller. All four follow the same "absent or empty parses to
+    /// null" convention <see cref="BuildSectionFields"/> already uses for <c>closed_by</c>/
+    /// <c>closed_at</c> — <c>discharged_by</c>/<c>discharged_at</c> are recorded together
+    /// (<see cref="CardStore.DischargeRegisterCardUnderExistingLock"/> is the only writer of
+    /// either), but this parser accepts either alone rather than refusing a hand-edited file,
+    /// degraded-mode legibility (ADR-0003) over strict round-trip enforcement, the same latitude
+    /// <see cref="BuildSectionFields"/> already gives.
+    /// </summary>
+    private static (RegisterCardFields? RegisterFields, string? Failure) BuildRegisterFields(
+        IReadOnlyDictionary<string, string> fields)
+    {
+        var condition = ParseOptionalFrontmatterValue(fields, "condition");
+        var cadence = ParseOptionalFrontmatterValue(fields, "cadence");
+
+        CardOwner? dischargedBy = null;
+        if (fields.TryGetValue("discharged_by", out var dischargedByText) && dischargedByText.Length > 0)
+        {
+            if (!CardOwnerWireFormat.TryParse(dischargedByText, out var parsedDischargedBy))
+            {
+                return (null, $"register card has unrecognised 'discharged_by': '{dischargedByText}'. Recognised owners: {CardOwnerWireFormat.RecognisedValues}.");
+            }
+
+            dischargedBy = parsedDischargedBy;
+        }
+
+        DateTimeOffset? dischargedAt = null;
+        if (fields.TryGetValue("discharged_at", out var dischargedAtText) && dischargedAtText.Length > 0)
+        {
+            if (!TryParseTimestamp(dischargedAtText, out var parsedDischargedAt))
+            {
+                return (null, $"register card has invalid 'discharged_at': '{dischargedAtText}'");
+            }
+
+            dischargedAt = parsedDischargedAt;
+        }
+
+        return (new RegisterCardFields(condition, cadence, dischargedBy, dischargedAt), null);
     }
 
     private static (FindingExtent? Extent, string? Failure) ParseExtent(IReadOnlyDictionary<string, string> fields)
