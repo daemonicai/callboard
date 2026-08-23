@@ -34,9 +34,10 @@ internal static class CommandParser
         "index" => ParseIndex(context),
         "block" => ParseBlock(context),
         "section" => ParseSection(context),
+        "finding" => ParseFinding(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding.")),
     };
 
     /// <summary>
@@ -566,5 +567,205 @@ internal static class CommandParser
         }
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionStatus(filePath));
+    }
+
+    /// <summary>
+    /// <c>finding</c>'s only job is routing to a subcommand — currently just <c>record</c>. Same
+    /// peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseFinding(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'finding' requires a subcommand. Known subcommands: record."));
+            case "record":
+                context.Arguments.TryTake();
+                return ParseFindingRecord(context);
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'finding' subcommand: '{subcommand}'. Known subcommands: record."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>finding record</c>'s <see cref="CommandDispatcher.ParsedCommand.FindingRecord"/>
+    /// (§6 block B). One positional token (card file path); <c>--role</c>, <c>--title</c>,
+    /// <c>--section</c>, <c>--change</c> and <c>--blind-spot</c> are required, the rest optional.
+    /// The body is read from stdin during this parse (a read-only extraction, not the card-writing
+    /// side effect O-3 guards — see <see cref="CommandDispatcher.ParsedCommand.FindingRecord"/>'s
+    /// own doc comment), so a missing or non-redirected stdin refuses here rather than at execute
+    /// time.
+    ///
+    /// <para>
+    /// <b>The blind-spot declaration is checked as input, here (findings: "A clean finding requires
+    /// a blind-spot declaration", §6 block B Architect ruling).</b> Block A already made "not
+    /// declared" unrepresentable on a constructed <see cref="Callboard.Cards.FindingCardFields"/> —
+    /// there is no nullable field left to discover empty later — so the refusal belongs at this
+    /// boundary: the caller either supplied <c>--blind-spot none</c> (an explicit assertion there is
+    /// no blind spot) or <c>--blind-spot obligation</c>/<c>--blind-spot hazard</c> (a declaration
+    /// that is raised as that kind of card). Anything else — the flag missing entirely, or any other
+    /// value — refuses with <c>unrecognised-blind-spot</c>, naming both declarations the system will
+    /// accept, exactly as the spec's "the system refuses and names the declaration it requires"
+    /// scenario asks for.
+    /// </para>
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseFindingRecord(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'finding record' requires a card file path."));
+        }
+
+        string? roleText = null;
+        string? title = null;
+        string? section = null;
+        string? changeName = null;
+        string? blindSpotText = null;
+        string? instrument = null;
+        string? verifiedAt = null;
+        string? extentInstrument = null;
+        string? extentExplicitRaw = null;
+        string? blindSpotFile = null;
+        string? blindSpotTitle = null;
+        string? blindSpotBody = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--role"] = value => roleText = value,
+            ["--title"] = value => title = value,
+            ["--section"] = value => section = value,
+            ["--change"] = value => changeName = value,
+            ["--blind-spot"] = value => blindSpotText = value,
+            ["--instrument"] = value => instrument = value,
+            ["--verified-at"] = value => verifiedAt = value,
+            ["--extent-instrument"] = value => extentInstrument = value,
+            ["--extent-explicit"] = value => extentExplicitRaw = value,
+            ["--blind-spot-file"] = value => blindSpotFile = value,
+            ["--blind-spot-title"] = value => blindSpotTitle = value,
+            ["--blind-spot-body"] = value => blindSpotBody = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'finding record' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (title is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'finding record' requires '--title <text>'."));
+        }
+
+        if (section is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'finding record' requires '--section <name>'."));
+        }
+
+        if (changeName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'finding record' requires '--change <name>'."));
+        }
+
+        FindingBlindSpotRaiseRequest? raiseRequest;
+        switch (blindSpotText)
+        {
+            case "none":
+                raiseRequest = null;
+                break;
+            case "obligation":
+            case "hazard":
+                if (blindSpotFile is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-argument",
+                        $"'finding record' requires '--blind-spot-file <path>' when --blind-spot is '{blindSpotText}'."));
+                }
+
+                if (blindSpotTitle is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-argument",
+                        $"'finding record' requires '--blind-spot-title <text>' when --blind-spot is '{blindSpotText}'."));
+                }
+
+                if (blindSpotBody is null)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "missing-argument",
+                        $"'finding record' requires '--blind-spot-body <text>' when --blind-spot is '{blindSpotText}'."));
+                }
+
+                var raisedKind = blindSpotText == "obligation" ? CardKind.Obligation : CardKind.Hazard;
+                raiseRequest = new FindingBlindSpotRaiseRequest(raisedKind, blindSpotFile, blindSpotTitle, blindSpotBody);
+                break;
+            default:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unrecognised-blind-spot",
+                    "'finding record' requires '--blind-spot <none|obligation|hazard>' — 'none' explicitly asserts " +
+                    "there is no blind spot; 'obligation' or 'hazard' declares one and raises it as that kind of " +
+                    (blindSpotText is null ? "card." : $"card. Unrecognised value: '{blindSpotText}'.")));
+        }
+
+        if (extentInstrument is not null && extentExplicitRaw is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "invalid-extent",
+                "'--extent-instrument' and '--extent-explicit' are mutually exclusive; declare at most one."));
+        }
+
+        var extent = FindingExtent.BlockScope;
+        if (extentInstrument is not null)
+        {
+            try
+            {
+                extent = FindingExtent.Instrument(extentInstrument);
+            }
+            catch (ArgumentException ex)
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal("invalid-extent", ex.Message));
+            }
+        }
+        else if (extentExplicitRaw is not null)
+        {
+            try
+            {
+                extent = FindingExtent.Explicit(extentExplicitRaw.Split(','));
+            }
+            catch (ArgumentException ex)
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal("invalid-extent", ex.Message));
+            }
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.FindingRecord(
+            filePath, title, section, changeName, role, body, instrument, extent, verifiedAt, raiseRequest,
+            context.WorkingDirectory, context.Clock()));
     }
 }

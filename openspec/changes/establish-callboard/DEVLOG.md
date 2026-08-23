@@ -11931,6 +11931,765 @@ No new findings. No architectural notes.
 
 → @architect
 
+**[architect]** Block A closed. Reviewer `Approve` after one nit round; gates re-run by me —
+`BUILD_EXIT:0` `TEST_EXIT:0` (397/397) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`. 6.1 and 6.4
+ticked, committed as `2b078a7`. **O-4 is discharged** — the compatibility corpus fires on §5's real
+`gate_results` defect, verified independently by the reviewer.
+
+**[architect]** Brief — block B, tasks 6.2 and 6.3.
+
+**Tasks**
+
+- 6.2 Refuse a clean finding lacking either a declared blind spot or an explicit assertion of none
+- 6.3 Raise a declared blind spot as an obligation or hazard that does not degrade at section close
+
+**Spec — `specs/findings/spec.md`, "A clean finding requires a blind-spot declaration"**
+
+> The system SHALL refuse to record a clean finding unless the recording role declares a blind spot
+> or explicitly asserts that there is none. The declaration SHALL be made by the role holding the
+> instrument, at the time of writing.
+>
+> A declared blind spot SHALL NOT be recorded as part of the clean result. It SHALL be raised as an
+> `obligation` or a `hazard`, and SHALL NOT degrade at section close, because a blind spot filed
+> under a clean heading has been observed to ship.
+
+Scenarios: a clean finding declaring neither is refused and **the system names the declaration it
+requires**; and a finding recorded with a declared blind spot degrades at section close while **the
+blind spot remains live** as an obligation or hazard.
+
+**Architect rulings binding this block**
+
+- **The tool raises the blind spot; the caller does not pre-raise it.** One command, two cards, one
+  `CardLock`, all-or-nothing: the finding is written and the `obligation`/`hazard` card is created
+  in the same locked operation, each referencing the other. This is what makes "a blind spot filed
+  under a clean heading has been observed to ship" structurally impossible rather than merely
+  discouraged — there is no window in which a finding exists whose declared blind spot has not been
+  raised. **A path that accepts a pre-existing card id is deliberately not built in this block**;
+  if a later section wants one it owns validating that the id exists and is of the right kind.
+- **Failure is all-or-nothing and must be demonstrated, not asserted.** If the second write fails,
+  neither card is left behind. §4's precedent stands: a half-completed operation that leaves both
+  copies present fail-closes, and that should be deliberate. Prove the partial-failure case by
+  execution.
+- **The declaration is input, not a late nullable check.** Block A made "not declared" unrepresentable
+  on a constructed finding, so 6.2's refusal belongs at the parse/CLI boundary — the caller supplied
+  neither flag — and the refusal message names the two declarations it will accept. Do not
+  re-implement the check inside the domain where block A already deleted the value that could
+  disagree.
+- **Whether the blind spot is an `obligation` or a `hazard` is the caller's declaration**, not
+  inferred. Both are valid; the register spec's distinction (a hazard is an environment fact that
+  goes stale, a rule is not) is the caller's to apply.
+- **Do not implement degradation in this block — 6.3's "does not degrade" is block D's to prove.**
+  Land the non-degradation claim in a test that **block D must invert or strengthen**, the standing
+  pattern from §3's close (`ReviewedStateProducerTests` is the precedent, including its caveat: make
+  it fail for the right reason, not by a casing coincidence). Say plainly in the DEVLOG what your
+  test proves today versus what it will prove once degradation exists.
+- **Refusal codes.** §5 froze a 22-code list (see `## NEXT`). If this block mints new codes, list
+  them explicitly in your DEVLOG post so §9 inherits an accurate set rather than a rediscovered one.
+  `card-write-failed` is not a member and must not come back — a tool-failure is not a refusal.
+- **Verbs still take file paths.** Identity addressing is §7/§8's open decision; do not answer it
+  here by inventing an id-addressed verb.
+
+**Done-gates for this block**
+
+- A clean finding declaring neither a blind spot nor its absence is **refused**, and the message
+  names both declarations it would accept. Mutation-verified: break the guard, watch the test fire.
+- A finding recorded with `none` is written and raises no second card.
+- A finding recorded with a blind spot writes both cards, mutually referenced, under one lock.
+- The partial-failure case leaves neither card behind, demonstrated by execution.
+- The compatibility corpus from block A is extended if this block changes any wire form — that is
+  the discipline O-4 bought, and this is its first test.
+- Every new refusal code lands with a test that it *fires*.
+- `make gates` → `GATES_EXIT:0`, quoted verbatim.
+
+→ @worker
+
+**[worker]** Block B (6.2, 6.3) implemented — `finding record`, the first CLI verb that creates a
+card rather than reading or mutating one that already exists.
+
+- **New verb: `finding record <path> --role --title --section --change --blind-spot
+  <none|obligation|hazard> [--instrument] [--verified-at] [--extent-instrument|--extent-explicit]
+  [--blind-spot-file --blind-spot-title --blind-spot-body]`.** Body read from stdin during parse (a
+  read-only extraction, not the card-writing side effect O-3 guards — `RaiseRequest`'s own
+  constructor already refuses a non-`obligation`/`hazard` kind, so nothing here re-implements a
+  check block A's types already make impossible). `--blind-spot` is not inferred and carries no
+  default; the two-declarations-it-accepts message is `unrecognised-blind-spot`'s own text, fired
+  identically whether the flag is absent or holds an unrecognised value.
+- **`CardStore.RecordFinding`** (new): allocates the finding's identity, and — when a blind spot is
+  declared — the raised card's identity too (each via `CardIdentityAllocator`'s own independent
+  per-kind counter lock), then acquires **one** `CardLock` on the finding's own path and, under it,
+  writes the raised card first, then the finding. **All-or-nothing by write order, not by two
+  existence pre-checks**: I first wrote both checks ahead of either write, which passed every test
+  but made the rollback path dead code (`AtomicWrite` itself never returns `AlreadyExists` — that
+  ternary lives at the call site, same as `WriteCard`'s own). Caught it myself by mutating the
+  rollback call and watching the existing test suite stay green; fixed by moving the finding's
+  create-only check to run immediately before its own `AtomicWrite`, after the raised card has
+  already landed — now a pre-occupied finding path reaches the raised card's write for real, and
+  the rollback (`RollbackRaisedCard`, best-effort delete) is what the partial-failure test actually
+  exercises. Re-mutated the (now real) rollback call after the fix — test failed with "raised card
+  was left behind"; reverted, `git diff` clean.
+- **Mutual reference, no new wire key.** The finding references the raised card through its
+  existing `FindingBlindSpotDeclaration.RaisedAs(id)` (block A). The raised card references the
+  finding in its own **body** text (`"Raised from finding <id> — …"`) — §7 owns a raised card's
+  structured `owed_by`/back-reference fields; this is deliberately not that.
+- **Scope is fixed by kind, never caller-chosen**: obligation → `Change`, hazard → `Repository` —
+  exactly `CardScopeRules.Validate`'s existing table for those two kinds (§4), not a new one.
+  `CardFindingRecordScopeAgreementTests` pins the two hardcoded scopes against it directly.
+- **Real bug found and fixed, outside 6.2/6.3's own text but load-bearing for both**: block A built
+  `FindingCardFields` and the wire keys but never threaded a value through `NewCardFile` —
+  `CardStore.WriteCard`'s own internal `CardFile` construction silently defaulted every finding's
+  kind-specific fields to `Empty` regardless of what a caller supplied. Nothing before this block
+  ever called `WriteCard` with finding fields, so it was never observed. Fixed by adding an optional
+  `FindingFields` parameter to `NewCardFile` (mirroring the nullable-default convention every other
+  kind-specific field on `CardFile` already uses) and threading it through `WriteCard`; regression
+  test added (`WriteCard_WithFindingFieldsOnNewCardFile_PersistsThemThroughTheCreatePath`). No wire
+  form changed — same six keys block A shipped — so this is **not** an O-4 trigger, and the
+  compatibility corpus is unchanged.
+- **New refusal codes (§9 must inherit these on top of the frozen 22): `unrecognised-blind-spot`,
+  `card-already-exists`, `invalid-extent`.** `card-already-exists` is minted rather than reusing
+  anything in the 22-code list because no prior verb ever created a card — `already-exists` is a new
+  disposition, not a rename of one that existed. No `tool-failure`-shaped case was given a refusal
+  code (identity-allocation failure, lock timeout, and an I/O error on either write all throw and
+  route through `Run`'s own catch, same disposition every other write verb uses).
+- **6.3's "does not degrade"** is held in `ClosingTheSection_LeavesTheRaisedCardCompletelyUntouched`
+  — today it proves something narrower and structural than the spec's eventual claim: nothing in
+  this codebase degrades *anything* at section close yet (6.7 hasn't landed), so the property this
+  test actually establishes is that the raised card's **fixed, never-`Section`** scope means
+  `CloseSection` — which only ever writes the section card's own file — has no way to reach it,
+  regardless of what mechanism 6.7 eventually builds for findings. The same test also asserts the
+  *finding* is byte-identical after close, with a comment naming that line as the one 6.7 should
+  replace with a real degradation check; the raised-card assertion is the one 6.7 must not weaken.
+
+**Done-gates**: clean-finding-without-declaration refused, message names both declarations —
+mutation-verified (reverted the refusal to a silent `none` default; the load-bearing CLI test went
+red on the exact assertion; reverted, `git diff` clean). `none` writes only the finding — verified
+by asserting the directory contains exactly one file. A declared blind spot writes both cards,
+mutually referenced, under one lock — verified for both `obligation` and `hazard`. Partial failure
+leaves neither card behind — demonstrated by execution (see above), mutation-verified twice (once
+catching my own first-draft bug, once confirming the fix). O-4 not triggered (no wire form
+changed), stated explicitly rather than silently skipped. Every new refusal code has its own
+CLI-level test.
+
+**Declared, not claimed clean**: `unrecognised-blind-spot` and the rollback are the two branches I
+mutation-verified by reverting and re-confirming; the remaining `missing-argument` branches
+(`--role`, `--title`, `--section`, `--change`, `--blind-spot-file/-title/-body` when raising) and
+`invalid-extent`'s two sub-cases (mutually-exclusive flags, a malformed `--extent-explicit` item)
+each have a dedicated CLI test asserting the code fires, but I did not individually revert each
+guard to confirm the test would catch its absence — same declaration shape block A's own DEVLOG
+post used for its seven `Parse_*_Fails` branches.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (418/418) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+Tasks completed: 6.2, 6.3.
+
+→ @reviewer
+
+**[reviewer]** Block B (6.2, 6.3) audited by execution against the real binary in a scratch repo, not
+by reading the diff. Independently re-ran `make gates` → `BUILD_EXIT:0` `TEST_EXIT:0` (418/418)
+`FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`, confirmed.
+
+**Verdict: Request changes.** Three blockers, all reproduced by execution, all in the same load-bearing
+area: the raised card's write is not protected by the per-card lock the doc comment claims makes it
+unnecessary.
+
+**Blocker 1 — the raised card's write is completely unlocked, and the reasoning in the doc comment
+justifying that is wrong (`CardStore.cs:711-720`).** The doc comment argues no lock is needed because
+the raised card's path "comes from `CardIdentityAllocator.Allocate`... so by the time this method
+reaches the raised card's write, no other caller can possibly be targeting that exact, freshly-minted
+path." That's false: the raised card's **path is caller-supplied** (`--blind-spot-file`,
+`FindingBlindSpotRaiseRequest.FilePath`, `FindingBlindSpotRaiseRequest.cs:27-29`), not derived from the
+allocated id at all — the id only ever appears inside the file's *content*. Two independent callers can
+name the identical `--blind-spot-file` path, and `RecordFindingUnderLock`'s write to it
+(`CardStore.cs:815-867`) goes straight through `File.Exists` + `AtomicWrite` with **no `CardLock`
+anywhere on that path**. Proved two ways:
+- **Deterministic bypass.** Manually placed a `.lock` file at the raised card's path (the same shape a
+  legitimate concurrent writer's real `CardLock` would leave) before running `finding record` against
+  that path. It wrote straight through the outstanding lock — no wait, no timeout, no refusal — and the
+  planted `.lock` file was still sitting there afterward, completely ignored.
+- **Live race, reproduced.** Ran two concurrent `finding record` invocations against the same
+  `--blind-spot-file` path (A's own finding path pre-occupied so A's second write always fails and
+  triggers rollback; B fresh). In batches of 20 concurrent trials this reliably reproduced: B reported
+  `"ok":true` with `raisedCardId:"O-0083"`, `raisedCardFilePath:".../rd10.md"` — but `rd10.md` did not
+  exist on disk afterward. A's raised-card write and B's raised-card write both landed on the unlocked
+  path; A's subsequent rollback (triggered by A's *own* forced finding-write failure) deleted whatever
+  was there, which by then was B's card. **B's finding (`F-0084`) now permanently references a raised
+  card (`O-0083`) that does not exist** — exactly "a blind spot filed under a clean heading" in a worse
+  form than the spec's own concern, because here the finding thinks it *did* raise one and is wrong.
+  This is the same class of hole §4 spent two attempts closing (`heldLock.CardPath` exists "precisely
+  so a lock cannot vouch for a file it does not name" — this write has no lock to vouch with at all),
+  and the brief called this out by name as the most-expected defect.
+
+**Blocker 2 — `RollbackRaisedCard` deletes by path, not by content, and can delete a card it did not
+create (`CardStore.cs:942-959`).** `File.Delete(raiseRequest.FilePath)` is unconditional on
+`File.Exists` — no check that the content at that path is still what this call wrote. `CardLock.Dispose`
+in this same codebase explicitly rejects this shape for exactly this reason ("Release-by-content, not
+release-by-path... releasing must mean 'unlink the file this instance itself created', not 'unlink
+whatever currently sits at this path'" — `CardLock.cs:242-258`). `RollbackRaisedCard` is the same
+operation — delete something this call is responsible for — with none of that discipline. The live race
+above is a real instance of it happening: A's rollback deleted content it never wrote (B's). This isn't
+only reachable through the Blocker 1 race — any process that legitimately (if Blocker 1 is fixed and
+properly locked) or illegitimately touches that exact path between the raised card landing and the
+finding's own write being decided is exposed to the same unconditional delete.
+
+Both of the above directly contradict the surface-inventory test's own accounting
+(`CardCommentImmutabilityTests.cs:122`, `"never touches an existing card at all"`) — under the race
+demonstrated, it did.
+
+**Blocker 3 — `finding record` cannot create a card in a not-yet-existing directory
+(`CardStore.cs:786`).** `RecordFinding` calls `CardLock.Acquire(findingFilePath, lockTimeout)` directly;
+`Directory.CreateDirectory(findingDirectory)` only runs later, inside the already-locked
+`RecordFindingUnderLock`. `CardLock.Acquire`'s first step is creating a `.lock` file *beside* the card,
+which requires the directory to already exist. `WriteCard` — the only other create path in this
+codebase — gets this right and says exactly why in its own doc comment (`CardStore.cs:81-84`: "The
+containing directory has to exist before the lock file beside the target can be created — done here,
+ahead of acquiring the lock, or a brand-new card's first write would spend its whole lock-acquire loop
+retrying a create that can never succeed until something else creates the directory first"). `finding
+record` doesn't follow its own codebase's documented pattern. Reproduced directly: `finding record`
+against a path whose containing directory doesn't yet exist spins for the full lock timeout and reports
+`tool-failure`, `"timed out ... currently held by an unreadable holder"` — a misleading message for a
+lock that was never actually held by anyone. Every test in `CardFindingRecordTests.cs` pre-creates
+`_directory` in its constructor (`CardFindingRecordTests.cs:28-29`), which is exactly why this never
+surfaced: the one scenario this verb exists for — the *first* finding raised in a section, or the first
+obligation raised in a change — is the one path no test exercises.
+
+**Priority 3 — the escaped block-A defect, verified fixed.** `WriteCard_WithFindingFieldsOnNewCardFile_
+PersistsThemThroughTheCreatePath` (`CardFindingFieldsTests.cs:214-239`) is a genuine store-level round
+trip — `CardStore.WriteCard` → `CardStore.ReadCard`, not just `CardFileWriter.Serialize` →
+`CardFileParser.Parse` — and `RecordFindingUnderLock`'s own finding write (`CardStore.cs:900`) builds
+its `CardFile` directly with `FindingFields` set, matching. Both construction paths now agree; fix
+confirmed complete for finding fields specifically.
+
+**What would have caught this in block A, plainly:** block A's own round-trip tests
+(`UndeclaredExtent_RoundTripsToBlockScope_AndEmitsNoExtentLines` etc.) went through
+`CardFileWriter.Serialize`/`CardFileParser.Parse` directly — never through `CardStore.WriteCard`, since
+nothing in block A called it with finding fields. A defect purely in the plumbing between `NewCardFile`
+and the `CardFile` a write path actually constructs is invisible to a serializer-level round trip by
+construction, no matter how thorough. **The shape to watch for in blocks C and D: any new kind-specific
+field must be proven through a `CardStore.WriteCard`-or-equivalent-write-path → `CardStore.ReadCard`
+round trip, not only a `CardFileWriter`/`CardFileParser` one** — the two are not the same claim, and
+block A's gap is exactly the difference between them.
+
+**Priority 4 — 6.2's refusal, mutation-verified independently.** Ran `finding record` with `--blind-spot`
+omitted and with `--blind-spot bogus` against the real binary: both refuse `unrecognised-blind-spot`,
+message names all three accepted values (`none`/`obligation`/`hazard`) and, when a value was supplied,
+echoes it back. Matches the worker's mutation claim.
+
+**Priority 5 — 6.3's deferral test, checked for the right kind of accuracy.**
+`ClosingTheSection_LeavesTheRaisedCardCompletelyUntouched` is sound, not lucky: the raised card's scope
+is fixed to `Change`/`Repository` by `ScopeForRaisedCard`, never `Section`, and `CloseSection` only ever
+opens and rewrites the section card's own file (confirmed against `CloseSectionUnderExistingLock`) — so
+there is no code path by which `CloseSection` could reach the raised card at all, structurally, not by a
+coincidence of current behaviour. Unlike §3's `ReviewedStateProducerTests`, this one holds for a
+structural reason a future refactor can't quietly break. The comment correctly flags which assertion
+(the finding's) is the one block D must replace, and which (the raised card's) it must not weaken.
+
+**Priority 6 — the three new refusal codes.** All three fired by real execution, all as returned
+refusals, never a crash: `unrecognised-blind-spot` (above), `card-already-exists` (fired repeatedly in
+the race trials — reachable and actionable, names the exact colliding path), `invalid-extent` (both
+sub-cases fired: `--extent-instrument`+`--extent-explicit` together, and a blank item inside
+`--extent-explicit`). No objection to any of the three as genuine refusals. The declared-unverified
+`missing-argument` branches were not independently re-verified this round — lower priority than the
+three blockers above, noted rather than chased down given the round's real yield.
+
+**Nits**
+- The `card-already-exists` refusal is minted for two structurally different situations (the finding's
+  own path occupied vs. the blind-spot card's path occupied) with an identical message shape that names
+  only the path, not which of the two collided. Not a blocker — the path alone disambiguates for a human
+  reading it — but worth a beat once this is otherwise fixed, since Blocker 1/3's fix will likely touch
+  this exact code.
+
+**Architectural note (not blocking this block):** the fixes for Blockers 1 and 3 both belong in
+`CardStore.RecordFinding`/`RecordFindingUnderLock`, and Blocker 3's fix (create the directory ahead of
+`CardLock.Acquire`, matching `WriteCard`) is probably needed on *both* the finding's own path and the
+raised card's path once Blocker 1 gives the raised card a real lock — flagging so the remediation
+doesn't fix one and leave the other's directory-creation ordering wrong.
+
+No further findings this round; stopped after the three blockers rather than continuing into the
+lower-priority items once the round's real yield was clear, per the brief's own priority ordering.
+
+→ @architect
+
+**[worker]** Remediation for block B's three blockers, all in `CardStore.cs`. All one deliverable, as
+directed.
+
+- **Blocker 1 — two `CardLock`s, not one, acquired in ordinal path order.** The brief's "one
+  `CardLock`" claim was wrong, as the coordinator's correction said — the raised card's path is
+  caller-supplied (`--blind-spot-file`), not derived from the allocated id, so the finding's lock
+  cannot vouch for it (card-model 4.5: `heldLock.CardPath` exists precisely because a lock cannot
+  vouch for a file it does not name). New `AcquireLocksAndRecord`: acquires one lock when there is no
+  raised card (or the two paths are identical — a single lock, since re-acquiring `CardLock` on the
+  same path within one call would just spin against itself), otherwise acquires both, always in
+  ascending `StringComparer.Ordinal` path order, so two invocations naming the same pair of paths —
+  even with the roles swapped — always request them in the same order and cannot deadlock (standard
+  resource-ordering argument; stated in the doc comment, not just here).
+  - **Demonstrated by racing it, not by reading it.** `CardFindingRecordConcurrencyTests` (new): 60
+    round-pairs, every task rendezvousing on a `Barrier` immediately before calling `RecordFinding`
+    so all 120 tasks genuinely start together rather than trickling out via `Task.Run` scheduling
+    (raised `ThreadPool.SetMinThreads` first — the barrier needs that many real threads at once, and
+    the default pool's throttled growth would otherwise stall or risk not completing). Each round: A's
+    own finding path is pre-occupied (its write can never succeed, in either ordering — the only
+    interesting question is whether A's resulting rollback destroys B's card); A and B share one
+    `--blind-spot-file` path. **Mutation-verified against the reviewer's exact repro**: reverted
+    `AcquireLocksAndRecord` to ignore the raised path (reintroducing the unlocked write) — the test
+    failed reliably (`round 27: the shared raised-card path does not exist after both invocations
+    completed`), the same shape as the reviewer's own "B's finding now permanently references a
+    raised card that does not exist." Reverted; re-ran the fixed code three times clean; `git diff`
+    against the pre-mutation copy was empty.
+- **Blocker 2 — `RollbackRaisedCard` now compares content before deleting, matching
+  `CardLock.Dispose`'s own discipline.** Takes the exact serialised string this call wrote
+  (`raisedContent`, captured at the raised card's own `AtomicWrite` call) instead of a `CardFile`,
+  and only deletes when the file's current content still equals it — a mismatch is a lost race, not
+  an error, same as `CardLock.Dispose`'s own compare-then-unlink.
+  - **Two demonstrations, not one.** First, directly against `RollbackRaisedCard` itself via
+    reflection (`RollbackRaisedCard_ContentStillMatches_Deletes` /
+    `_ContentDoesNotMatch_LeavesTheFileAlone`) — necessary because, with Blocker 1 fixed, the
+    mismatch this guards against is no longer reachable through `RecordFinding`'s own call graph at
+    all (both cards' paths are now locked for the operation's whole duration, so nothing else can
+    legitimately touch the path in between): a test that only drives `RecordFinding` could never
+    exercise the "content mismatch, refuse to delete" branch, the same way `CardLock`'s own
+    compare-then-delete has its own dedicated tests rather than relying on higher-level ones.
+    Mutation-verified: reverted to delete-by-path, the mismatch test failed
+    (`content this call never wrote was deleted anyway`); reverted, confirmed clean. Second, ran the
+    delete-by-path mutation through the **full suite** with Blocker 1's fix still in place — nothing
+    caught it, confirming the reviewer's own prediction that the guard is "structurally unreachable
+    once both cards' paths are locked... but the check costs nothing" — stated plainly rather than
+    silently claimed as still load-bearing through the concurrency test.
+- **Blocker 3 — directories created before any lock is acquired, for both cards.** `RecordFinding`
+  now creates the finding's own directory (and, when present, the raised card's) before
+  `AcquireLocksAndRecord` is ever called, matching `WriteCard`'s own documented ordering and reasoning
+  exactly. `RecordFindingUnderLocks` no longer creates either directory itself — both already exist by
+  the time it runs.
+  - **Test setup fixed, not just one new test added, per the coordinator's instruction.** Removed the
+    constructor's `Directory.CreateDirectory` calls for both `_directory` and `_registerDirectory` in
+    `CardFindingRecordTests` and the equivalent in `CommandDispatcherFindingRecordTests`' `TempGitRepo`
+    — every test in both files now starts cold by default; the handful that need a pre-existing file
+    (to force an `AlreadyExists` outcome) create their own directory locally, right before writing the
+    stray file, rather than relying on shared setup. `ClosingTheSection_LeavesTheRaisedCardCompletelyUntouched`
+    was reordered so `RecordFinding` runs first, against the still-nonexistent directory, and
+    `WriteInitialSectionCard`'s own plain `File.WriteAllText` lands in the directory `RecordFinding`
+    just created. Added one explicitly-named test per file
+    (`RecordingTheFirstFindingInASection_AgainstDirectoriesThatDoNotYetExist_Succeeds`,
+    `RecordingAgainstDirectoriesThatDoNotYetExist_Succeeds`) asserting the precondition
+    (`Directory.Exists` is false going in) as well as the outcome.
+  - **Mutation-verified, reproducing the reviewer's exact symptom.** Commented out the finding
+    directory's `Directory.CreateDirectory` call — the cold-directory test failed after the full 5s
+    lock timeout with `timed out ... currently held by an unreadable holder`, the identical misleading
+    message the reviewer's own reproduction reported. Reverted, `git diff` clean.
+- **Nit closed in passing** (reviewer: "Blocker 1/3's fix will likely touch this exact code"): the two
+  `card-already-exists` refusal messages now name which path collided — "the finding's own target
+  path" vs. "the raised blind-spot card's target path" — rather than an identical shape for both.
+- **No new refusal codes.** Same three from block A's own report (`unrecognised-blind-spot`,
+  `card-already-exists`, `invalid-extent`); this remediation only changed how/when they're reached,
+  not what exists.
+- **Method-inventory test updated** (`CardCommentImmutabilityTests.cs`): `RecordFindingUnderLock` →
+  `RecordFindingUnderLocks`, plus the new `AcquireLocksAndRecord`, both accounted for with the same
+  "never touches an existing card's Comments" reasoning as before.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (423/423) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+**[reviewer]** Re-audit of block B's remediation — `git diff` against the previous round plus the
+worker's `[worker]` post. Every claim below re-verified in fresh scratch repos against the real
+binary, in my own repro shapes, not the worker's probes. Independently re-ran `make gates` →
+`BUILD_EXIT:0` `TEST_EXIT:0` (423/423) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+**Blocker 1 (unlocked raised-card write) — fixed, confirmed by re-running my exact prior repro.**
+- **Lock-bypass repro no longer bypasses.** My original repro planted a fake `.lock` file using a
+  dead PID (999999) — re-running it against the fixed code revealed *my own* repro was flawed, not
+  the fix: `CardLock`'s stale-holder detection correctly recognises a dead PID and breaks the lock,
+  which is intended behaviour, not a bypass. Corrected the repro to use a **genuinely live** PID (my
+  own shell's `$$`) as the simulated holder: `finding record` against that path now waits the full
+  timeout and correctly refuses `tool-failure` with `"currently held by pid <live-pid>"` — it no
+  longer writes through an outstanding lock.
+- **The live concurrent race no longer reproduces.** Re-ran my exact prior shape — A's own finding
+  path pre-occupied (forcing rollback), A and B racing on a shared `--blind-spot-file` path — across
+  **60 trials** (30 + 30, two separate batches). Zero `BUG-CONFIRMED` outcomes. Cross-checked
+  directly: A succeeded 0/60 (expected — pre-occupied), B succeeded 60/60, and **every one of B's
+  60 raised cards matched B's own content exactly** — zero dangling `blind_spot_card` references,
+  zero mismatches.
+- **Opposite-order case (the actual deadlock case), reproduced and confirmed non-deadlocking.** Two
+  concurrent invocations naming the same pair of paths with roles swapped — invocation 1: finding=X,
+  raised=Y; invocation 2: finding=Y, raised=X — run 20 times concurrently. No hang in any trial;
+  every trial resolved with exactly one invocation winning and the other refusing cleanly with
+  `card-already-exists` (never `tool-failure`/timeout). This is real confirmation of the ordinal
+  path-order deadlock avoidance, not just a reading of the doc comment's resource-ordering argument.
+- **New finding, not one of the three blockers: the identical-path fast path uses the wrong equality
+  for a filesystem path, and it's reachable on this project's own shipped platform.**
+  `AcquireLocksAndRecord`'s "same path, one lock" branch (`CardStore.cs:854`) compares
+  `findingFilePath`/`raisedFilePath` with `StringComparison.Ordinal`. Asked to check paths that
+  differ only in case or by separator, per the coordinator's brief — both are reachable and both
+  reproduce a **self-inflicted hang**, not a cross-process deadlock: a finding path and a
+  `--blind-spot-file` path that name the *same file* on disk but differ only in case
+  (`samepath.md` vs `SAMEPATH.md`) or by a doubled separator (`changes/demo-change/x.md` vs
+  `changes//demo-change/x.md`) are judged "different" by `Ordinal`, so the method takes the two-lock
+  branch — but on this platform's default filesystem (APFS, case-insensitive; RIDs in this repo are
+  `osx-arm64` only) both "different" paths resolve to the identical `<path>.lock` file. The first
+  `CardLock.Acquire` creates it; the second, within the **same process and call**, sees it already
+  held — by a live PID that happens to be its own — and cannot break it as stale, so it spins for
+  the full timeout and returns `tool-failure`, `"currently held by pid <its own pid>"`, a genuinely
+  misleading message since nothing else was ever contending. Reproduced directly for both the case
+  variant and the separator variant; both hang the full 5s and both report this. This is exactly the
+  shape §4's own working rule names ("when two values must agree, the guarantee is deleting one, not
+  checking they match") — the fast path needs the two paths resolved to a canonical form (or compared
+  via a filesystem-appropriate equality) before deciding whether they're "the same lock or two". Not
+  data loss, not a cross-process deadlock, and narrower than the original three (it requires a
+  caller to genuinely name the same file two different ways) — but it is a real, reproducible hang
+  with a misleading diagnostic on a legitimate-looking input, on the block's own primary code path,
+  found by asking exactly the question the coordinator's brief asked. Worth a fourth, small
+  remediation before this block closes: resolve both paths (e.g. `Path.GetFullPath`) before the
+  `Ordinal` comparison, or otherwise make the "same target" decision agree with what the filesystem
+  will actually do.
+
+**Blocker 2 (rollback deletes by path, not content) — fixed. Judged: a genuine backstop, not dead
+scaffolding.** `RollbackRaisedCard` now compares the file's current bytes against `raisedContent`
+(the exact string this call wrote) before deleting, matching `CardLock.Dispose`'s own precedent
+verbatim. The worker's own honest declaration — that with blocker 1 fixed, the mismatch branch is
+structurally unreachable through `RecordFinding`'s own call graph, proved by reflection rather than
+claimed as still covered by the concurrency test — checks out: re-read `AcquireLocksAndRecord` and
+confirmed both cards' paths are genuinely held for the operation's whole duration once blocker 1
+landed, so nothing *inside this codebase's own write paths* can race that window any more.
+**But "unreachable through `RecordFinding`'s call graph" is narrower than "unreachable, full
+stop"** — `CardLock` is advisory, and ADR-0003 / this project's own §4 close explicitly states the
+honest limit: "`callboard` cannot refuse a text editor." A human (or any process outside this tool)
+hand-editing or replacing the file at the raised card's exact path during the narrow window between
+its write and the finding's own write being decided is not stopped by any lock this method holds —
+that is precisely the scenario the content-compare guards against, and it is real, not
+hypothetical, given this codebase's own stated boundary. What would make the branch reachable again
+through *this tool's own* call graph specifically: a future §7/§8 verb writing to a fixed-scope path
+without acquiring `CardStore`'s lock protocol, or `CardLock`'s own documented accepted risk (a PID-
+reuse race landing exactly in the stale-lock grace window) letting a second call believe it broke a
+truly-stale lock that was, in fact, still legitimately held. **Verdict: keep it — cheap (one string
+compare), matches established codebase discipline, and defends a window this tool's own locks were
+never going to close.**
+
+**Blocker 3 (cold-directory ordering) — fixed, confirmed cold in three independent scratch-repo
+runs.** Re-ran, from a bare `git init` with nothing under `callboard/` at all:
+- `--blind-spot none` into a brand-new section directory — succeeds.
+- `--blind-spot obligation` raising into a brand-new change directory, with **neither** the
+  finding's nor the obligation's directory pre-existing — succeeds, both files land.
+- `--blind-spot hazard` raising into `callboard/register/`, likewise never pre-created — succeeds.
+
+Checked the test-setup claim directly rather than taking it on faith: `CardFindingRecordTests`'
+constructor creates only `_root`, never `_directory`/`_registerDirectory`; every
+`Directory.CreateDirectory` call inside the file's test bodies (four sites) is local, and each is
+for a scenario that deliberately needs a pre-existing stray file to force an `AlreadyExists`
+outcome, not a happy-path setup. Same check on `CommandDispatcherFindingRecordTests`' `TempGitRepo`
+— only the `.git`/repo root directories are created in its constructor; `CardsDirectory`/
+`RegisterDirectory` are not, and the one site that pre-creates `CardsDirectory` (line 198) is
+explicitly for `RecordingAtAnAlreadyOccupiedPath_Refuses_WithCardAlreadyExists`. No hidden
+cold-directory path found anywhere else in either file.
+
+**Verdict: Request changes — one narrow, fourth item.** Blockers 1, 2 and 3 as reported are genuinely
+fixed and independently reproduced fixed, each in my own repro shapes rather than a re-run of the
+worker's. The rollback's now-unreachable branch is a deliberate, worthwhile backstop, not scaffolding
+to strip. The one open item is the identical-path fast path's `Ordinal` comparison in
+`AcquireLocksAndRecord` (`CardStore.cs:854`) — reachable, reproducible, and narrower in consequence
+(a hang with a misleading message, not corruption) than the three already fixed, but real and on the
+verb's primary code path. Worth closing before this block ships rather than carrying into §6 block C,
+since two-lock ordering is exactly the kind of mechanism the coordinator flagged as needing to hold
+under exactly this input shape.
+
+No other findings this round.
+
+→ @architect
+
+→ @reviewer
+
+**[worker]** Fourth remediation — the identical-path fast path's wrong equality
+(`AcquireLocksAndRecord`, `CardStore.cs:854`).
+
+- **Shape chosen: make the self-deadlock unreachable, not detected by a smarter comparison** — the
+  coordinator's second option, per §4's own rule ("when two values must agree, the guarantee is
+  deleting one, not checking they match"). `AcquireLocksAndRecord` no longer special-cases string
+  equality at all; it always attempts the ordinary two-path sequence. Only *after* the first lock is
+  actually held does it ask whether the second path names the same file — by **evidence**, not by
+  any `StringComparison`: new `CardLock.CurrentlyNames(otherPath)` reads `otherPath`'s own `.lock`
+  file and compares its content, byte for byte, against the exact content this instance itself wrote.
+  A match is conclusive — the per-acquisition nonce (`Guid.NewGuid()`) is not reproducible by
+  anything else — so it can only mean `otherPath`'s lock file *is* this instance's own lock file,
+  reached by a different path string. No `Path.GetFullPath`, no case assumption, no platform
+  assumption: works identically whether the volume is case-insensitive (APFS's default, this
+  project's own shipped `osx-arm64` platform) or case-sensitive (APFS's other legitimate format), and
+  for a doubled-separator variant too, because it never asks the filesystem to *predict* identity —
+  only to *report* it, after the fact, from what's actually on disk. The old string-identical case is
+  now simply the case this check is guaranteed to match on immediately, not a special-cased branch.
+- **`CardLock.CurrentlyNames`** (new, `internal`): the one new piece of surface. Doc comment states
+  the evidence argument in full and names why neither `Ordinal` nor `OrdinalIgnoreCase` is right
+  across every volume this project can be cloned onto.
+- **Reproduced the reviewer's exact hang first, on this real environment, then watched it disappear.**
+  Confirmed by direct filesystem probe that this sandbox's own `TMPDIR` (what `Path.GetTempPath()`
+  resolves to, and so what every test here actually runs against) is case-insensitive — a file
+  written as `lower.txt` is visible as `LOWER.txt` — and separately that a doubled path separator
+  collapses to the same file too, both matching the reviewer's own two reproduction shapes. New
+  end-to-end test `SameFileNamedByACaseVariantPath_NeverSelfDeadlocks_RegardlessOfVolumeCaseSensitivity`:
+  a finding and an **obligation** (Change-scoped — the same directory `CardLayout.DirectoryFor`
+  resolves for a finding's own Section scope, unlike a hazard's Repository-scoped
+  `callboard/register/`, which never collides) named with a case-variant of the same filename.
+  **Mutation-verified against the exact prior bug**: reverted the fast path to
+  `string.Equals(..., StringComparison.Ordinal)` (the shape the reviewer flagged) — the test failed
+  after the full 5s timeout with `took 00:00:05.02... — looks like the self-deadlock reproduced`, the
+  identical shape to the reviewer's own "held by pid `<its own pid>`" report. Reverted; re-ran the
+  fixed code — 224ms, `Recorded`/`FindingAlreadyExists` decided immediately depending on which side
+  of case-sensitivity the run volume falls on (this sandbox: `FindingAlreadyExists` — the raised
+  card's write landed on the shared file first, and the finding's own create-only check then
+  correctly found it occupied; nothing corrupted, nothing orphaned, no hang). `git diff` against the
+  pre-mutation copy was empty.
+  - Also confirmed the load-bearing branch is genuinely reachable, not dead: reverted only the
+    `CurrentlyNames` call itself (forced it to never match) rather than the whole fast path — same
+    5s hang reproduced, confirming the check is what's doing the work, not the surrounding
+    restructuring.
+- **`CardLock.CurrentlyNames` proven directly and portably**, independent of which volume the test
+  suite happens to run on (new tests in `CardLockTests.cs`, five total): same-path is true; a
+  genuinely different, untouched path is false; a path with no lock file at all is false; a
+  different path string whose lock file's content is copied to match exactly (simulating what a
+  case- or separator-variant of the same physical file would produce on any volume, without
+  depending on this machine's own case-folding behaviour) is true; a different path string with
+  different lock content is false. This is what makes the fix's correctness argument independent of
+  the CI machine's filesystem, not just this sandbox's — the end-to-end test above additionally
+  confirms the wiring on this environment specifically, but the mechanism itself is proven without
+  that dependency.
+- **Declared, not claimed clean**: did not construct a genuinely case-sensitive volume to run the
+  end-to-end test's "both succeed" branch for real (this sandbox's `TMPDIR` is case-insensitive, so
+  only the `FindingAlreadyExists` branch of that test has actually executed) — the portable
+  `CardLockTests` coverage is what stands in for that half, proven without depending on volume case
+  sensitivity at all, per the coordinator's "prove it on both... if you can construct them."
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (429/429) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+**[reviewer]** Third-round re-audit of `AcquireLocksAndRecord`'s new mechanism
+(`CardLock.CurrentlyNames`) — audited on its own terms, not just by re-running the symptom I
+originally reported. Independently re-ran `make gates` → `BUILD_EXIT:0` `TEST_EXIT:0` (429/429)
+`FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+**The self-deadlock is genuinely closed.** Re-ran both of my original repro shapes against the
+fixed binary: the case-variant pair (`samepath.md`/`SAMEPATH.md`) and the doubled-separator pair
+each complete in ~72ms with a clean refusal, not a 5s hang. `CurrentlyNames`'s own proposition —
+"the file at the second path is the file this lock instance holds" — checked directly against each
+scenario the brief asked for: absent second lock file (false, correct — `TryReadLockContent` fails
+closed on `FileNotFoundException`); a genuinely different, live, third-party lock at the second path
+(false, correct — content differs, and the write then genuinely waits out the real lock rather than
+merging with it, confirmed by planting a live-PID lock on a *genuinely distinct* path and watching
+`finding record` wait the full 5s and refuse rather than write through it); a stale, dead-PID lock at
+the second path (false, correct, and orthogonal — `CurrentlyNames` doesn't reason about liveness at
+all, it only ever says "not this file," and the ordinary `Acquire` staleness-breaking logic downstream
+handles the rest; confirmed directly — a dead-PID lock on a genuinely different second path is broken
+and the write succeeds in 136ms). The reverse case — two genuinely different files judged the same —
+did not reproduce anywhere I tried it, including a live-PID lock on a real second target that stayed
+respected under the fix.
+
+**The five `CardLockTests` cover what they need to.** `CurrentlyNames` never touches an OS case-
+folding or path-canonicalisation API — it only reads file content and does one `Ordinal` string
+compare — so its correctness is inherently platform-independent, and the portable tests (own path
+true; genuinely different unlocked path false; no lock file false; a different path string whose
+lock file's content is copied to match exactly, true; a different path string with different lock
+content, false) fully establish that independent of which volume the suite runs on. The worker's
+framing is accurate, not overclaimed.
+
+**The case-sensitive-volume gap is real but narrow, and the worker's own declaration of it is
+honest.** The only thing this sandbox cannot exercise is the end-to-end "both cards actually land
+independently on a volume that treats a case variant as two distinct files" branch. Given
+`CurrentlyNames`'s correctness is proven platform-independently (above), and the ordinary two-lock
+sequence for genuinely distinct paths is exhaustively covered elsewhere, the residual risk here is
+low. Carry it as a note, not a blocker — matches the worker's own framing exactly.
+
+**New blocker, found by reasoning through the mechanism and then proving each half of it by
+execution.** `CurrentlyNames` answers "is this the same file **I already hold**" correctly, but the
+ordinal ordering `AcquireLocksAndRecord` uses to decide *which* lock to acquire first is computed
+from the **caller-supplied path strings**, not from any canonicalised or evidence-based identity —
+exactly the gap the fix for blocker 4 closed for the single-invocation case but left open across
+invocations. Two concurrent invocations that name the **same physical pair of files** but spell them
+with **different casing** can disagree about which one sorts first ordinally, and nothing detects
+that disagreement before either lock is taken:
+
+- Invocation 1: finding=`aaa1.md`, raised=`ZZZ1.md`. Ordinal("ZZZ1.md") < Ordinal("aaa1.md") (`'Z'`
+  sorts before `'a'`) → **locks physical Z first**, then wants physical A.
+- Invocation 2: finding=`AAA1.md` (a case variant of `aaa1.md` — same physical file as invocation
+  1's *second* target), raised=`zzz1.md` (a case variant of `ZZZ1.md` — same physical file as
+  invocation 1's *first* target). Ordinal("AAA1.md") < Ordinal("zzz1.md") → **locks physical A
+  first**, then wants physical Z — the opposite order from invocation 1, over the identical pair of
+  physical files, purely because of which casing each invocation happened to use.
+
+If both invocations win their own first lock before either attempts its second, this is a genuine
+AB/BA deadlock: invocation 1 holds Z and wants A; invocation 2 holds A and wants Z. `CurrentlyNames`
+never fires in this shape (each invocation's *own* finding and raised paths really are two distinct
+physical files — the false-alarm case it exists to prevent doesn't apply here at all; the collision
+is entirely across invocations, a question `CurrentlyNames` was never asked). I could not force both
+sides of this into one truly-simultaneous process pair — 80 trials of the two invocations racing
+concurrently produced zero timeouts, which is expected given `dotnet` process-startup jitter
+(tens of milliseconds) dwarfs the sub-millisecond window in which both sides must win their first
+lock before either tries its second — the same coarse-granularity problem that made my very first
+race repro (blocker 1) need 20 trials to catch once out of many. Rather than conclude "not
+reachable" from that absence, I proved each half of the circular wait directly and deterministically,
+the way the timing-fragile case can be proven without needing the exact double-simultaneous hit:
+- Planted a live-PID lock on physical Z (simulating invocation 1 already holding it), then ran
+  invocation 2 for real: it acquired physical A cleanly, then genuinely blocked waiting for physical
+  Z for the full 5s, and released A only on its own eventual `tool-failure`.
+- Symmetrically: planted a live-PID lock on physical A, then ran invocation 1 for real: it acquired
+  physical Z cleanly, then genuinely blocked waiting for physical A for the full 5s, releasing Z only
+  on timeout.
+
+Both halves are real and independently reproduced. Put them together and the interleaving where both
+sides win their own first lock before either attempts the second is a genuine deadlock, bounded by
+the lock timeout (so a double `tool-failure` after 5s each, not an infinite hang) but a real defect:
+two callers that should both eventually succeed instead both fail, and the failure mode is silent
+about *why* — nothing in either refusal message hints that the other side is the reason. This is
+exactly §2's own working rule, carried in this file's own `## NEXT`: "rarity of trigger and severity
+of consequence are independent axes... absence of observation is not evidence of absence." §4's rule
+applies too, more precisely this time: the guarantee this method needs is not "two callers agree on
+ordering *most of the time*," it's structural — and right now the ordering is still a function of
+strings the two callers don't have to agree on spelling.
+
+**What would close it:** the ordering decision needs to be made on something both callers are
+guaranteed to compute identically regardless of casing — e.g. deciding the acquisition order from
+`CurrentlyNames`-style evidence rather than from the path strings at all (acquire in an order fixed
+by something intrinsic, or fall back to a canonical form before the ordinal compare, or detect the
+disagreement and retry rather than block). I don't have a specific shape to prescribe beyond that;
+it's the worker's call which of the two remediation shapes the coordinator offered for blocker 4
+(detect vs. make unreachable) fits best here too.
+
+**Verdict: Request changes.** The case- and separator-variant self-deadlock (my original blocker 4)
+is genuinely closed, confirmed by direct re-execution, not by re-reading the worker's account. This
+is a new, narrower, but real defect surfaced by reasoning through the same mechanism the coordinator
+asked me to audit on its own terms — a cross-invocation lock-ordering disagreement that arises from
+the identical case/separator-variance property blocker 4 already established is reachable on this
+project's own shipped platform. I did not find anything else. No architectural notes beyond the
+case-sensitive-volume gap already logged as a note above.
+
+→ @architect
+
+→ @reviewer
+
+**[worker]** Fifth remediation — the cross-invocation lock-ordering deadlock in
+`AcquireLocksAndRecord`.
+
+- **Did not conclude the two-cards-in-one-command ruling is the source, so did not stop on that
+  ground.** Each of the last two rounds' defects lived in the same narrow place — deciding *lock
+  identity/order* from path strings, not in the two-lock write itself — and this round's fix removes
+  that decision entirely rather than sharpening it a third time. If a sixth round turns up in the
+  same mechanism, that would change my answer; this one didn't.
+- **Shape chosen, matching the coordinator's suggestion: drop the total ordering, make the protocol
+  deadlock-free instead of detected.** `AcquireLocksAndRecord` no longer computes any order over
+  the two paths. It always: (1) acquires the finding's lock, blocking, for whatever remains of the
+  overall timeout; (2) if there's no raised path, or `CardLock.CurrentlyNames` says it's the same
+  file as the one just locked (block B's fourth remediation, unchanged, still doing its original
+  job), runs with the one lock; (3) otherwise attempts the raised lock with **no wait at all**
+  (`CardLock.Acquire(..., TimeSpan.Zero)`); (4) on a miss, releases the finding's lock immediately
+  (never held past this point) and retries the whole pair after a short jittered backoff, bounded by
+  the same overall deadline tracked across every retry. No caller ever blocks while holding a
+  resource, so no ordering is needed and none exists for two invocations to disagree about.
+- **Demonstrated the reviewer's own way — deterministically, by proving each half of the circular
+  wait directly — not by re-running trials that pass because the window is narrow.** New
+  `WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting`
+  (`CardFindingRecordConcurrencyTests.cs`): plants a live-PID lock on the raised path (same
+  technique `CardLockTests` already uses), runs a real `RecordFinding` call against it, and — while
+  that call is confirmed still retrying — independently acquires the *finding's* lock from outside
+  the call within 300ms. That only succeeds if `RecordFinding` is not currently holding it, which is
+  the exact property that makes an AB/BA cycle impossible. **Mutation-verified against the specific
+  regression this round fixes**: reverted the probe to a blocking acquire (reintroducing hold-and-
+  wait) — the outside probe then timed out at 0.5s with `currently held by pid <the call's own
+  process>`, the shape a real deadlock is built from. Reverted; re-ran clean.
+  - **Also ran this same test against the prior round's code (blocker 4's fix, before this one) to
+    confirm it's a real regression test, not just new-code-shaped**: failed identically — the prior
+    round's version still blocked on the second lock, exactly as the reviewer's cross-invocation
+    finding says.
+- **Companion test, the other half**: `WhenTheRaisedLockIsReleasedPartway_TheRetryingCallSucceeds` —
+  once the planted lock is released mid-retry, the call actually completes, proving the loop makes
+  real progress and doesn't merely fail cleanly forever.
+- **Best-effort real-race test added, declared as such, not claimed as the proof.**
+  `ReversedCaseVariantPair_AcrossTwoInvocations_NeverDeadlocks` runs the reviewer's exact
+  reversed-case-variant construction (20 rounds, real concurrent `Task.Run` pairs) and asserts the
+  whole batch completes well under one call's own timeout. **Ran this same test against the prior
+  round's code as a check on its own power, not just the fix's**: it *passed* even against the
+  known-buggy version — confirming the reviewer's own observation that natural timing (process/
+  thread-pool jitter dwarfing the sub-millisecond collision window) makes this shape unreliable as a
+  detector on its own. Kept as a real-world sanity check, not the load-bearing evidence — the
+  deterministic test above is.
+- **Honest refusal on retry exhaustion.** If the retry budget runs out, the message now names what
+  actually happened — repeated contention over the raised path against another writer — rather than
+  a lock-timeout message about a resource the call was never blocked holding.
+- **No change to `CardLock.CurrentlyNames` or its own five portable tests** — this round's defect
+  was one level up, in how `AcquireLocksAndRecord` used path strings to decide acquisition *order*,
+  not in the same-file *detection* blocker 4 already fixed.
+- **No new refusal codes, no method-inventory changes** (`AcquireLocksAndRecord` keeps its name).
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (432/432) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+**[reviewer]** Fourth-round audit — the acquire-probe-release-retry protocol, on its own terms,
+against the specific hazard list a release-and-retry design introduces. Independently re-ran
+`make gates` → `BUILD_EXIT:0` `TEST_EXIT:0` (432/432) `FORMAT_EXIT:0` `VALIDATE_EXIT:0`
+`GATES_EXIT:0`.
+
+**Livelock — not observed under sustained contention, real progress confirmed at scale.** Ten and
+then thirty concurrent `finding record` invocations racing to raise into one **shared** obligation
+path resolved in 1–2s each run: exactly one `"ok":true`, the rest a clean `card-already-exists`,
+zero `tool-failure`s, zero anomalies (no double-win, no double-loss) across 30 trials. The jitter
+(5–20ms) plus a genuinely-released resource between attempts is doing its job — no evidence of two
+callers repeatedly colliding in step.
+
+**Rollback and the released window — checked together, by forcing a retry storm and injecting a
+stale-read opportunity into it.** Held the raised path's lock live for ~2s (forcing several retry
+iterations), and — while the call was still retrying, before the raised lock was released — wrote a
+stray file directly at the *finding's own* target path from an independent process, simulating
+another writer taking it during the released window. Once the raised lock was freed, the call
+correctly acquired both, then correctly saw the stray file on its **fresh** read (not anything
+observed on an earlier, since-released acquisition): refused `card-already-exists` naming "the
+finding's own target path" specifically, and the raised card it had just written was cleanly rolled
+back — nothing left behind. This directly answers both open questions: `action()` (the actual
+read-decide-write-and-rollback logic) only ever runs once both locks are genuinely held together,
+never re-entered mid-retry, so blocker 2's compare-then-delete is exercised exactly as it was when
+I approved it — the retry loop adds more *attempts* to reach that point, not more *interleavings*
+inside it.
+
+**Timeout honesty — confirmed accurate and correctly typed.** Held a genuinely different raised
+path's lock with a live PID for the whole timeout: refused `tool-failure` after 5s with "could not
+acquire both locks 'finding record' needs within 5s — repeatedly lost the race for
+'<path>' against another concurrent write; retry" — an accurate description of what actually
+happened, not the previous round's misleading "held by pid <its own pid>." `tool-failure` is the
+right kind of answer here (matches this codebase's own convention for every other lock-timeout
+across `CardStore`) — this isn't a policy refusal and nothing succeeded for it to be a reported
+failure inside.
+
+**`CurrentlyNames` reuse — re-verified functionally correct across many concurrent, repeated
+invocations, not just re-read in isolation.** Re-ran both of my round-3 case-variant deadlock
+constructions against the new binary: the exact original shape (30 trials, 0 timeouts) and a
+genuinely role-swapped case-variant pair (30 trials, exactly one winner and one clean
+`card-already-exists` per trial, zero double-wins, zero double-losses, 2s total). `CurrentlyNames`
+is invoked fresh on every retry iteration with no state carried between them, and every trial across
+both constructions resolved correctly and quickly.
+
+I did not find a new defect this round, despite specifically hunting the hazard shapes a
+release-and-retry protocol is known to introduce.
+
+**On convergence — the coordinator's direct question.** Rounds 1 through 3 were genuinely "the same
+class of defect one level further out": each fix closed the specific instance found (no lock →
+wrong same-file check → wrong cross-invocation ordering), and each one lived in the same place —
+deciding *file identity or lock order from a path string* — that the previous fix hadn't yet
+reached. That pattern was real, and the coordinator was right to be suspicious of it. This round
+breaks the pattern rather than extending it: the fix doesn't patch the ordering decision a third
+time, it deletes the thing that decision was for. There is no longer any code path in
+`AcquireLocksAndRecord` that decides "which lock first" from anything — so there's nothing left for
+two callers to disagree about, regardless of what future path-spelling edge case might exist on
+some volume neither of us has thought of yet. That's a structural argument, not just an absence of
+observation this round, and it's why I read this as real convergence rather than a fourth patch
+that will need a fifth.
+
+**On the two-cards-one-command ruling.** It is the generative source of all five findings across
+this block's rounds — every one of them exists only because the write needs simultaneous,
+symmetric exclusivity over two card paths at once. A relaxed ruling (record the finding and raise
+the blind-spot as two separate, individually-atomic operations, linked by reference rather than by
+one shared lock scope) would remove the need for any dual-lock protocol at all, and with it this
+entire class of risk, permanently — that's a legitimate option if the coordinator wants to close the
+door on it rather than trust the door is now shut. But I want to be precise about what I'm saying:
+I am **not** recommending the ruling change on the strength of what I found this round. The code in
+front of me, on its own execution-tested merits, is sound — I looked hard for the specific ways a
+release-and-retry protocol breaks and didn't find one. The ruling is the reason this mechanism
+exists and had to be gotten right four times; it is not, on today's evidence, a reason to distrust
+the mechanism now that it's structurally simplified rather than patched again.
+
+**Verdict: Approve.** Block B (6.2, 6.3) is clean to gate, tick and commit.
+
+→ @architect
+
+→ @reviewer
+
 ## NEXT
 
 

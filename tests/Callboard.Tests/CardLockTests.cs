@@ -320,6 +320,118 @@ public sealed class CardLockTests : IDisposable
         throw new InvalidOperationException("could not find an unused pid to fabricate a stale lock with.");
     }
 
+    // §6 block B second remediation, reviewer's "identical path" finding: CurrentlyNames decides
+    // "does this other path string name the file I already hold" by content, not by comparing path
+    // strings — because no single StringComparison is right across every filesystem this project
+    // ships on (Ordinal is wrong on case-insensitive APFS, OrdinalIgnoreCase is wrong on
+    // case-sensitive APFS). These tests exercise that decision directly and portably: rather than
+    // depending on the test-running filesystem's actual case-folding behaviour (which would make
+    // this suite's own result filesystem-dependent, exactly the bug being fixed), the "same file,
+    // different path string" case is simulated by writing the identical lock content a real
+    // acquisition would produce to a second path — the only way that content could legitimately
+    // exist there is if it really is the same file reached differently.
+    [Fact]
+    public void CurrentlyNames_ItsOwnPath_IsTrue()
+    {
+        var path = Path.Combine(_directory, "self.md");
+        var held = AssertAcquired(CardLock.Acquire(path, TimeSpan.FromSeconds(5)));
+        try
+        {
+            Assert.True(held.CurrentlyNames(path));
+        }
+        finally
+        {
+            held.Dispose();
+        }
+    }
+
+    [Fact]
+    public void CurrentlyNames_AGenuinelyDifferentPath_IsFalse()
+    {
+        var path = Path.Combine(_directory, "self.md");
+        var otherPath = Path.Combine(_directory, "other.md");
+        var held = AssertAcquired(CardLock.Acquire(path, TimeSpan.FromSeconds(5)));
+        try
+        {
+            Assert.False(held.CurrentlyNames(otherPath));
+        }
+        finally
+        {
+            held.Dispose();
+        }
+    }
+
+    [Fact]
+    public void CurrentlyNames_APathWithNoLockFileAtAll_IsFalse()
+    {
+        var path = Path.Combine(_directory, "self.md");
+        var neverAcquired = Path.Combine(_directory, "never-acquired.md");
+        var held = AssertAcquired(CardLock.Acquire(path, TimeSpan.FromSeconds(5)));
+        try
+        {
+            Assert.False(held.CurrentlyNames(neverAcquired));
+        }
+        finally
+        {
+            held.Dispose();
+        }
+    }
+
+    // The load-bearing case: a path string that differs from the held lock's own path but whose
+    // .lock file carries the exact content this acquisition wrote — exactly what a case- or
+    // separator-variant path resolving to the same physical file on this volume would produce,
+    // simulated here without depending on this test-running machine's actual filesystem semantics.
+    [Fact]
+    public void CurrentlyNames_ADifferentPathStringWhoseLockFileHasTheExactSameContent_IsTrue()
+    {
+        var path = Path.Combine(_directory, "samepath.md");
+        var caseVariantPath = Path.Combine(_directory, "SAMEPATH.md");
+        var held = AssertAcquired(CardLock.Acquire(path, TimeSpan.FromSeconds(5)));
+        try
+        {
+            // On a case-insensitive filesystem this "copy" would be redundant — `path + ".lock"`
+            // and `caseVariantPath + ".lock"` are already the same file — but writing it explicitly
+            // is what keeps this test's own result independent of the machine it runs on, which is
+            // exactly the property the production fix itself now has.
+            var ownLockContent = File.ReadAllText(path + ".lock");
+            File.WriteAllText(caseVariantPath + ".lock", ownLockContent);
+
+            Assert.True(held.CurrentlyNames(caseVariantPath));
+        }
+        finally
+        {
+            held.Dispose();
+            // Clean up the simulated second lock file — on a genuinely case-insensitive filesystem
+            // this is the same file Dispose() above already removed; File.Delete on an already-gone
+            // path is not attempted (Delete throws if it truly doesn't exist on some platforms only
+            // via a missing check — File.Exists guards it here).
+            if (File.Exists(caseVariantPath + ".lock"))
+            {
+                File.Delete(caseVariantPath + ".lock");
+            }
+        }
+    }
+
+    // The mismatch half: a genuinely different file's lock content, even if non-empty, must never
+    // be mistaken for "the same file" — content equality is the entire proof, not mere presence.
+    [Fact]
+    public void CurrentlyNames_ADifferentPathStringWithDifferentLockContent_IsFalse()
+    {
+        var path = Path.Combine(_directory, "self.md");
+        var otherPath = Path.Combine(_directory, "unrelated-but-locked.md");
+        var otherHeld = AssertAcquired(CardLock.Acquire(otherPath, TimeSpan.FromSeconds(5)));
+        var held = AssertAcquired(CardLock.Acquire(path, TimeSpan.FromSeconds(5)));
+        try
+        {
+            Assert.False(held.CurrentlyNames(otherPath));
+        }
+        finally
+        {
+            held.Dispose();
+            otherHeld.Dispose();
+        }
+    }
+
     private static CardLock AssertAcquired(CardLockResult result) =>
         result.Match<CardLock>(
             onAcquired: acquired => acquired.Lock,

@@ -19,5 +19,22 @@ namespace Callboard.Cards;
 /// convert from 'CardFile' to 'NewCardFile'"), then discarded. Not a refusal check: this method's
 /// input has no <c>Handovers</c> parameter for the mistake to occupy.
 /// </para>
+///
+/// <para>
+/// <b><see cref="FindingFields"/> (§6 block B addition):</b> the one kind-specific field this type
+/// carries at creation time, unlike <see cref="CardFile.BlockFields"/> or
+/// <see cref="CardFile.SectionFields"/>, which every existing creation site leaves at their default
+/// and populates later through a dedicated write verb (<c>block transition</c>, <c>block gate</c>,
+/// …). A <c>finding</c> card has no such follow-up verb — work-lifecycle's "Clean findings are
+/// cards" fields (instrument, extent, <c>verified_at</c>, the blind-spot declaration) are known in
+/// full at the moment the finding is recorded, never filled in afterwards — so <see cref="CardStore.
+/// WriteCard"/> has to be able to write them at creation or nothing in this codebase ever could:
+/// block A built <see cref="Cards.FindingCardFields"/> and the wire keys, but never threaded a value
+/// through this type, so every finding a build before this one could construct actually reached disk
+/// with its four fields silently defaulted to <see cref="Cards.FindingCardFields.Empty"/> regardless
+/// of what a caller supplied — this parameter is what closes that gap. <see langword="null"/> (the
+/// default) means "not a finding, or no finding fields to carry", normalised the same way
+/// <see cref="CardFile"/>'s own <see cref="CardFile.FindingFields"/> property does.
+/// </para>
 /// </summary>
-internal sealed record NewCardFile(CardFrontmatter Frontmatter, string Body);
+internal sealed record NewCardFile(CardFrontmatter Frontmatter, string Body, FindingCardFields? FindingFields = null);

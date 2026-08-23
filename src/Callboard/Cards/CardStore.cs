@@ -100,7 +100,7 @@ internal static class CardStore
         return WithLock(filePath, lockTimeout, _ =>
             File.Exists(filePath)
                 ? new CardWriteResult.AlreadyExists(filePath)
-                : AtomicWrite(anchored, CardFileWriter.Serialize(new CardFile(card.Frontmatter, card.Body, [], []))));
+                : AtomicWrite(anchored, CardFileWriter.Serialize(new CardFile(card.Frontmatter, card.Body, [], [], FindingFields: card.FindingFields))));
     }
 
     /// <summary>
@@ -697,6 +697,456 @@ internal static class CardStore
             onFailure: failure =>
                 new CardSectionCloseOutcome.CardCorrupt(filePath, failure.Reason));
     }
+
+    /// <summary>
+    /// Records a clean finding (findings: "Clean findings are cards") and, when
+    /// <paramref name="raiseRequest"/> is supplied, the <c>obligation</c> or <c>hazard</c> its
+    /// declared blind spot is raised as — in the same operation (§6 block B Architect ruling: "one
+    /// command, two cards ... all-or-nothing, each referencing the other"). The finding references
+    /// the raised card through its own <see cref="FindingBlindSpotDeclaration.RaisedAs"/>; the
+    /// raised card references the finding by id in its own body — see this method's body for
+    /// exactly where each is set.
+    ///
+    /// <para>
+    /// <b>Two <see cref="CardLock"/>s, not one (§6 block B remediation, reviewer blocker 1).</b> The
+    /// brief that opened this block claimed one lock sufficed because the raised card's path "comes
+    /// from the allocated identity" — that reasoning was wrong: <see cref="FindingBlindSpotRaiseRequest.
+    /// FilePath"/> is caller-supplied (<c>--blind-spot-file</c>), unrelated to the allocated id,
+    /// which appears only inside the file's content, not its path. Two concurrent invocations can
+    /// name the identical <c>--blind-spot-file</c> path, and the reviewer reproduced exactly that
+    /// against the unlocked version of this method: one invocation's raised-card write landed, then
+    /// a second invocation's own write silently overwrote it, and the first invocation's subsequent
+    /// rollback then deleted the second invocation's card out from under it — the same class of hole
+    /// card-model 4.5 closed by making <see cref="CardLock.CardPath"/> the only source of the path a
+    /// write acts on ("a lock cannot vouch for a file it does not name"). Every card this method
+    /// writes now has its own lock held for the write's whole duration — see
+    /// <see cref="AcquireLocksAndRecord"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>No lock ordering at all (§6 block B fifth remediation, reviewer's "cross-invocation lock
+    /// ordering" finding).</b> An earlier version of this method decided a deterministic
+    /// <see cref="StringComparer.Ordinal"/> order over the two paths so two concurrent invocations
+    /// naming the same pair would request their locks in the same sequence. That broke: two
+    /// invocations naming the identical <em>pair of physical files</em> but spelling them with
+    /// different casing can each compute a <em>different</em> ordinal order for the pair — a
+    /// genuine AB/BA deadlock across invocations, since an ordinal order over path strings is not
+    /// evidence about file identity, the same lesson <see cref="CardLock.CurrentlyNames"/> already
+    /// carries for the single-invocation case. This method no longer orders anything: see
+    /// <see cref="AcquireLocksAndRecord"/>'s own doc comment for the acquire/probe/release-and-retry
+    /// shape that makes an ordering unnecessary — no call ever blocks while holding a resource, so
+    /// no two invocations can disagree about an order that no longer exists.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Directories created before any lock is acquired (§6 block B remediation, reviewer
+    /// blocker 3).</b> <see cref="CardLock.Acquire"/>'s first step creates a <c>.lock</c> file beside
+    /// the target, which requires the target's directory to already exist — the same reasoning
+    /// <see cref="WriteCard"/>'s own doc comment states for doing this ahead of its own lock
+    /// acquisition, and the ordering this method failed to follow until this remediation, which made
+    /// the verb's primary use case — the first finding a section ever raises, the first obligation a
+    /// change ever raises, where neither directory exists yet — spin for the full lock timeout and
+    /// report a misleading <c>tool-failure</c>. Both the finding's and (when present) the raised
+    /// card's directory are created here, before <see cref="AcquireLocksAndRecord"/> is ever called.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>All-or-nothing, by write order (§6 block B Architect ruling: "if the second write fails,
+    /// neither card is left behind").</b> The raised card, if any, is written <em>first</em>, then
+    /// the finding — and the finding's own create-only existence check runs only <em>after</em> the
+    /// raised card has already landed on disk, not before, so a pre-occupied
+    /// <paramref name="findingFilePath"/> reaches the rollback path for real rather than short-
+    /// circuiting before the raised card is ever written. If the finding's write then fails for any
+    /// reason, the raised card that was just written is deleted before this method returns — by
+    /// content, not by path (§6 block B remediation, reviewer blocker 2): <see cref="RollbackRaisedCard"/>
+    /// only unlinks the file when its current content still matches what this call itself wrote, the
+    /// same compare-then-delete discipline <see cref="CardLock.Dispose"/> already applies in this
+    /// codebase for exactly this reason.
+    /// </para>
+    /// </summary>
+    /// <param name="section">The section this finding was raised within, and the same section
+    /// recorded on the raised card for traceability — <c>owed_by</c> itself is §7's field, not
+    /// modelled yet.</param>
+    /// <param name="changeName">Required for the finding (always <see cref="CardScope.Section"/>-
+    /// scoped) and for an obligation (<see cref="CardScope.Change"/>-scoped) when one is raised;
+    /// ignored for a hazard (<see cref="CardScope.Repository"/>-scoped).</param>
+    internal static CardFindingRecordOutcome RecordFinding(
+        string cardsRoot,
+        string findingFilePath,
+        string title,
+        CardOwner actingRole,
+        string section,
+        string body,
+        string? instrument,
+        FindingExtent extent,
+        string? verifiedAt,
+        FindingBlindSpotRaiseRequest? raiseRequest,
+        DateTimeOffset timestamp,
+        TimeSpan lockTimeout,
+        string changeName)
+    {
+        var (findingId, findingAllocationFailure) = AllocateIdentity(cardsRoot, CardKind.Finding, lockTimeout);
+        if (findingAllocationFailure is not null)
+        {
+            return new CardFindingRecordOutcome.ToolFailure(findingAllocationFailure);
+        }
+
+        string? raisedId = null;
+        if (raiseRequest is not null)
+        {
+            var (allocatedRaisedId, raisedAllocationFailure) = AllocateIdentity(cardsRoot, raiseRequest.Kind, lockTimeout);
+            if (raisedAllocationFailure is not null)
+            {
+                return new CardFindingRecordOutcome.ToolFailure(raisedAllocationFailure);
+            }
+
+            raisedId = allocatedRaisedId;
+        }
+
+        var blindSpot = raiseRequest is null
+            ? FindingBlindSpotDeclaration.None
+            : FindingBlindSpotDeclaration.RaisedAs(raisedId!);
+
+        var findingFrontmatter = new CardFrontmatter(
+            findingId!, CardKind.Finding, title, "open", actingRole, CardScope.Section, section, timestamp, timestamp);
+        var findingFields = new FindingCardFields(instrument, extent, verifiedAt, blindSpot);
+
+        // Both directories exist before either lock is requested (reviewer blocker 3) — WriteCard's
+        // own doc comment states why: a lock file is created beside the target, which needs the
+        // target's directory to already exist, or the whole lock-acquire loop retries a create that
+        // can never succeed.
+        var findingDirectory = Path.GetDirectoryName(findingFilePath);
+        if (string.IsNullOrEmpty(findingDirectory))
+        {
+            return new CardFindingRecordOutcome.FindingLayoutMismatch($"'{findingFilePath}' has no containing directory to write into.");
+        }
+
+        if (raiseRequest is not null)
+        {
+            var raisedDirectory = Path.GetDirectoryName(raiseRequest.FilePath);
+            if (string.IsNullOrEmpty(raisedDirectory))
+            {
+                return new CardFindingRecordOutcome.BlindSpotLayoutMismatch($"'{raiseRequest.FilePath}' has no containing directory to write into.");
+            }
+
+            Directory.CreateDirectory(raisedDirectory);
+        }
+
+        Directory.CreateDirectory(findingDirectory);
+
+        return AcquireLocksAndRecord(
+            findingFilePath, raiseRequest?.FilePath, lockTimeout,
+            () => RecordFindingUnderLocks(cardsRoot, findingFilePath, findingFrontmatter, body, findingFields, raiseRequest, raisedId, changeName));
+    }
+
+    /// <summary>
+    /// Acquires the lock(s) <see cref="RecordFinding"/> needs — one for <paramref name="findingFilePath"/>,
+    /// and, when <paramref name="raisedFilePath"/> is not <see langword="null"/> and not the same
+    /// file, a second for it — then runs <paramref name="action"/> with both held.
+    ///
+    /// <para>
+    /// <b>No ordering, by design (§6 block B fifth remediation, reviewer's "cross-invocation lock
+    /// ordering" finding).</b> An earlier version of this method decided which lock to acquire
+    /// first by comparing <paramref name="findingFilePath"/> and <paramref name="raisedFilePath"/>
+    /// with <see cref="StringComparer.Ordinal"/>, on the reasoning that two different calls would
+    /// always agree on the order regardless of the filesystem. That reasoning already broke once,
+    /// for the single-invocation "same file, different spelling" case (block B's fourth
+    /// remediation) — and it breaks again here for the same underlying reason, one call earlier:
+    /// two concurrent invocations that name the identical <em>pair</em> of physical files but spell
+    /// them with different casing can each compute a <em>different</em> ordinal order for that
+    /// pair, purely from how each one happened to spell its own paths — invocation 1 might lock
+    /// physical file Z first (wanting A second) while invocation 2, spelling the same two files
+    /// differently, locks physical file A first (wanting Z second): a genuine AB/BA deadlock,
+    /// bounded only by <paramref name="lockTimeout"/>. A path string is not evidence of file
+    /// identity — <see cref="CardLock.CurrentlyNames"/> already established that for the single-
+    /// invocation case — and an ordering built from those same strings inherits the same defect one
+    /// level up. There is no canonical form of a not-yet-existing file's name to fall back to
+    /// either: what a doubled separator or a case variant resolves to is exactly the fact the
+    /// volume itself decides, not something <c>Path.GetFullPath</c> or any other pure-string
+    /// function can predict in advance.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The shape: acquire, probe, release-and-retry — never hold while waiting.</b> This method
+    /// always attempts <paramref name="findingFilePath"/>'s lock first, <em>blocking</em> for
+    /// whatever remains of <paramref name="lockTimeout"/>. Once held, if <paramref name="
+    /// raisedFilePath"/> is <see langword="null"/> or names the identical file (<see cref="
+    /// CardLock.CurrentlyNames"/> — the same evidence-based check the fourth remediation
+    /// introduced, still doing its original job here), <paramref name="action"/> runs with the one
+    /// lock. Otherwise it attempts <paramref name="raisedFilePath"/>'s lock with <b>no wait at
+    /// all</b> (<see cref="CardLock.Acquire"/> with <see cref="TimeSpan.Zero"/>): if that succeeds,
+    /// <paramref name="action"/> runs with both held; if it does not, the finding's lock is
+    /// released immediately (never held past this point) and, after a short jittered backoff, the
+    /// whole pair is retried from the top — bounded by the same overall <paramref name="
+    /// lockTimeout"/> deadline, tracked across every retry, not reset per attempt. <b>No global
+    /// order is needed because no call ever blocks while holding a resource</b> — the only wait in
+    /// this method is the very first lock, held by nobody yet when the wait begins, so no cycle of
+    /// "holds X, blocked on Y" can form between two invocations regardless of how each one spells
+    /// its own paths or which physical files those paths turn out to name. Demonstrated, not just
+    /// argued: <c>CardFindingRecordConcurrencyTests</c>' new
+    /// <c>WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting</c>
+    /// proves this directly — while a real call is stuck retrying because the raised lock is held
+    /// elsewhere, the finding lock is independently, successfully acquired and released by a third
+    /// party from outside the call, which could not happen if this method held it across the wait.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The final refusal is honest, not "held by pid &lt;its own pid&gt;".</b> If the retry
+    /// budget is exhausted, the message names what actually happened — repeated contention with
+    /// another writer over the raised card's path — rather than reporting a lock timeout on a
+    /// resource this call was never actually blocked holding.
+    /// </para>
+    /// </summary>
+    private static CardFindingRecordOutcome AcquireLocksAndRecord(
+        string findingFilePath, string? raisedFilePath, TimeSpan lockTimeout, Func<CardFindingRecordOutcome> action)
+    {
+        var deadline = DateTimeOffset.UtcNow + lockTimeout;
+
+        while (true)
+        {
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                return new CardFindingRecordOutcome.ToolFailure(
+                    $"could not acquire both locks 'finding record' needs within {lockTimeout.TotalSeconds:0.###}s — " +
+                    $"repeatedly lost the race for '{raisedFilePath}' against another concurrent write; retry.");
+            }
+
+            var firstLockResult = CardLock.Acquire(findingFilePath, remaining);
+            var outcome = firstLockResult.Match<CardFindingRecordOutcome?>(
+                onAcquired: firstAcquired =>
+                {
+                    using (firstAcquired.Lock)
+                    {
+                        if (raisedFilePath is null || firstAcquired.Lock.CurrentlyNames(raisedFilePath))
+                        {
+                            return action();
+                        }
+
+                        // No wait at all: this is the "probe" half of acquire-probe-release-retry.
+                        // A miss releases findingFilePath's lock (the using block above) and falls
+                        // through to the retry below — it never blocks while still holding it.
+                        var secondLockResult = CardLock.Acquire(raisedFilePath, TimeSpan.Zero);
+                        return secondLockResult.Match<CardFindingRecordOutcome?>(
+                            onAcquired: secondAcquired =>
+                            {
+                                using (secondAcquired.Lock)
+                                {
+                                    return action();
+                                }
+                            },
+                            onTimedOut: static _ => null);
+                    }
+                },
+                // A genuine timeout on the finding's own lock is a real, external hold — the
+                // ordinary honest message applies unchanged, naming that lock's actual holder.
+                onTimedOut: timedOut => new CardFindingRecordOutcome.ToolFailure(timedOut.Message));
+
+            if (outcome is not null)
+            {
+                return outcome;
+            }
+
+            // Jittered backoff before the whole pair is retried — same shape CardLock's own retry
+            // loop uses and for the same reason: a fixed delay lets every loser wake in lockstep and
+            // collide again.
+            Thread.Sleep(TimeSpan.FromMilliseconds(5 + Random.Shared.Next(0, 15)));
+        }
+    }
+
+    /// <summary>The locked step of <see cref="RecordFinding"/> — both the finding's and (when
+    /// present) the raised card's locks are already held by the time this runs
+    /// (<see cref="AcquireLocksAndRecord"/>). Directory creation already happened in
+    /// <see cref="RecordFinding"/>, before either lock was acquired.</summary>
+    private static CardFindingRecordOutcome RecordFindingUnderLocks(
+        string cardsRoot,
+        string findingFilePath,
+        CardFrontmatter findingFrontmatter,
+        string findingBody,
+        FindingCardFields findingFields,
+        FindingBlindSpotRaiseRequest? raiseRequest,
+        string? raisedId,
+        string changeName)
+    {
+        // Deliberately not checked here, ahead of the raised card's own write below: the finding's
+        // existence is what this method's doc comment calls the "second write" — checked
+        // immediately before the finding's own AtomicWrite call, after the raised card (if any) has
+        // already landed on disk, which is what makes the rollback path below reachable at all
+        // rather than dead code a pre-check would make unnecessary in every ordinary run.
+        string? raisedContent = null;
+        CardFile? raisedCard = null;
+        if (raiseRequest is not null)
+        {
+            var raisedScope = ScopeForRaisedCard(raiseRequest.Kind);
+            var raisedAnchored = AnchoredCardPath.TryCreate(cardsRoot, raiseRequest.FilePath, raisedScope, changeName, out var raisedLayoutFailure);
+            if (raisedAnchored is null)
+            {
+                return new CardFindingRecordOutcome.BlindSpotLayoutMismatch(raisedLayoutFailure!.Reason);
+            }
+
+            if (File.Exists(raiseRequest.FilePath))
+            {
+                return new CardFindingRecordOutcome.BlindSpotCardAlreadyExists(raiseRequest.FilePath);
+            }
+
+            var raisedFrontmatter = new CardFrontmatter(
+                raisedId!, raiseRequest.Kind, raiseRequest.Title, "open", findingFrontmatter.Owner,
+                raisedScope, findingFrontmatter.Section, findingFrontmatter.Created, findingFrontmatter.Created);
+
+            // The raised card's half of "each referencing the other" (§6 block B brief) — the
+            // finding's own reference is FindingCardFields.BlindSpot.RaisedAs(raisedId), set by the
+            // caller of this method. No new frontmatter key is minted for this: §7 owns a raised
+            // card's structured owed_by/back-reference fields; this is a body-text reference only,
+            // the same "not modelled yet" boundary this method's own doc comment states for owed_by.
+            var raisedBody =
+                $"Raised from finding {findingFrontmatter.Id} — a blind spot declared while recording a clean result.\n\n{raiseRequest.Body}";
+            var raisedCardFile = new CardFile(raisedFrontmatter, raisedBody, [], []);
+            var serializedRaisedCard = CardFileWriter.Serialize(raisedCardFile);
+
+            var raisedWriteResult = AtomicWrite(raisedAnchored, serializedRaisedCard);
+            var raisedFailure = raisedWriteResult.Match<CardFindingRecordOutcome?>(
+                onSuccess: static _ => null,
+                onNotFound: static notFound => new CardFindingRecordOutcome.ToolFailure(
+                    $"unexpected 'not found' writing a brand-new card at '{notFound.FilePath}'."),
+                onAlreadyExists: static alreadyExists => new CardFindingRecordOutcome.BlindSpotCardAlreadyExists(alreadyExists.FilePath),
+                onLayoutMismatch: static layoutMismatch => new CardFindingRecordOutcome.BlindSpotLayoutMismatch(layoutMismatch.Reason),
+                onCorrupt: static corrupt => new CardFindingRecordOutcome.ToolFailure(
+                    $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
+                onToolFailure: static toolFailure => new CardFindingRecordOutcome.ToolFailure(toolFailure.Reason));
+            if (raisedFailure is not null)
+            {
+                return raisedFailure;
+            }
+
+            raisedCard = raisedCardFile;
+            raisedContent = serializedRaisedCard;
+        }
+
+        var findingAnchored = AnchoredCardPath.TryCreate(cardsRoot, findingFilePath, findingFrontmatter.Scope, changeName, out var findingLayoutFailure);
+        if (findingAnchored is null)
+        {
+            RollbackRaisedCard(raiseRequest, raisedContent);
+            return new CardFindingRecordOutcome.FindingLayoutMismatch(findingLayoutFailure!.Reason);
+        }
+
+        // The finding's own create-only check — same shape as WriteCard's own ternary, deliberately
+        // placed here rather than earlier in this method: AtomicWrite itself always overwrites
+        // unconditionally (File.Move(overwrite: true)), so this is the one place anything checks
+        // whether a card already sits at findingFilePath. Running it only now, after the raised
+        // card (if any) has already been written, is what makes a genuine "first write succeeded,
+        // second failed" case reachable — pre-occupy findingFilePath before calling this method and
+        // the raised card write above still runs and lands on disk before this check ever sees the
+        // conflict.
+        if (File.Exists(findingFilePath))
+        {
+            RollbackRaisedCard(raiseRequest, raisedContent);
+            return new CardFindingRecordOutcome.FindingAlreadyExists(findingFilePath);
+        }
+
+        var findingCardFile = new CardFile(findingFrontmatter, findingBody, [], [], FindingFields: findingFields);
+        var findingWriteResult = AtomicWrite(findingAnchored, CardFileWriter.Serialize(findingCardFile));
+
+        return findingWriteResult.Match<CardFindingRecordOutcome>(
+            onSuccess: _ => new CardFindingRecordOutcome.Recorded(findingCardFile, raisedCard),
+            onNotFound: notFound =>
+            {
+                RollbackRaisedCard(raiseRequest, raisedContent);
+                return new CardFindingRecordOutcome.ToolFailure($"unexpected 'not found' writing a brand-new card at '{notFound.FilePath}'.");
+            },
+            onAlreadyExists: alreadyExists =>
+            {
+                RollbackRaisedCard(raiseRequest, raisedContent);
+                return new CardFindingRecordOutcome.FindingAlreadyExists(alreadyExists.FilePath);
+            },
+            onLayoutMismatch: layoutMismatch =>
+            {
+                RollbackRaisedCard(raiseRequest, raisedContent);
+                return new CardFindingRecordOutcome.FindingLayoutMismatch(layoutMismatch.Reason);
+            },
+            onCorrupt: corrupt =>
+            {
+                RollbackRaisedCard(raiseRequest, raisedContent);
+                return new CardFindingRecordOutcome.ToolFailure(
+                    $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}");
+            },
+            onToolFailure: toolFailure =>
+            {
+                RollbackRaisedCard(raiseRequest, raisedContent);
+                return new CardFindingRecordOutcome.ToolFailure(toolFailure.Reason);
+            });
+    }
+
+    /// <summary>
+    /// All-or-nothing's other half: deletes the raised card <see cref="RecordFindingUnderLocks"/>
+    /// has already written, once the finding's own write, tried afterward, fails for any reason.
+    /// <b>Compare-then-delete, not delete-by-path (§6 block B remediation, reviewer blocker 2).</b>
+    /// <see cref="CardLock.Dispose"/> already establishes this discipline in this same codebase —
+    /// "releasing must mean unlink the file this instance itself created, not unlink whatever
+    /// currently sits at this path" — because a blind delete-by-path can remove content this call
+    /// never wrote if something else has since legitimately taken over the path. This is the same
+    /// shape: the file is deleted only when its current content still matches
+    /// <paramref name="raisedContent"/>, the exact bytes this call itself wrote to
+    /// <paramref name="raiseRequest"/>'s own path; a mismatch is treated as a lost race, not an
+    /// error. With both cards' paths now locked for this call's whole duration
+    /// (<see cref="AcquireLocksAndRecord"/>), no other <c>finding record</c> invocation can actually
+    /// produce that mismatch any more — but the guard costs nothing and matches the standing
+    /// discipline regardless. Best-effort otherwise, same disposition as <see cref="CardLock.Dispose"/>'s
+    /// own release — if the delete itself cannot complete, the caller already has a failure to act
+    /// on and this is not the place to escalate a cleanup problem into a second, different one.
+    /// </summary>
+    private static void RollbackRaisedCard(FindingBlindSpotRaiseRequest? raiseRequest, string? raisedContent)
+    {
+        if (raiseRequest is null || raisedContent is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!File.Exists(raiseRequest.FilePath))
+            {
+                return;
+            }
+
+            var currentContent = File.ReadAllText(raiseRequest.FilePath, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            if (string.Equals(currentContent, raisedContent, StringComparison.Ordinal))
+            {
+                File.Delete(raiseRequest.FilePath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+
+    /// <summary>
+    /// The fixed scope a blind spot's raised card takes by kind — <see cref="CardScope.Change"/> for
+    /// an <see cref="CardKind.Obligation"/>, <see cref="CardScope.Repository"/> for a
+    /// <see cref="CardKind.Hazard"/> — exactly what <see cref="CardScopeRules.Validate"/> already
+    /// requires for those two kinds (<see cref="CardFindingRecordScopeAgreementTests"/> in the test
+    /// project asserts the two never drift apart), restated here as a direct function rather than a
+    /// second call through the refusal-shaped <see cref="CardScopeValidationResult"/> because this
+    /// caller never lets a caller choose the scope — there is nothing here for that type's refusal
+    /// case to ever report. <see cref="FindingBlindSpotRaiseRequest"/>'s own constructor is what
+    /// makes every other <see cref="CardKind"/> unreachable at this call site; the remaining five
+    /// arms below exist only so this switch stays exhaustive over the closed union, not because any
+    /// of them can run.
+    /// </summary>
+    private static CardScope ScopeForRaisedCard(CardKind raisedKind) => raisedKind.Match(
+        onBlock: static () => throw new InvalidOperationException("unreachable: FindingBlindSpotRaiseRequest only ever carries Obligation or Hazard."),
+        onQuestion: static () => throw new InvalidOperationException("unreachable: FindingBlindSpotRaiseRequest only ever carries Obligation or Hazard."),
+        onFinding: static () => throw new InvalidOperationException("unreachable: FindingBlindSpotRaiseRequest only ever carries Obligation or Hazard."),
+        onObligation: static () => CardScope.Change,
+        onRule: static () => throw new InvalidOperationException("unreachable: FindingBlindSpotRaiseRequest only ever carries Obligation or Hazard."),
+        onHazard: static () => CardScope.Repository,
+        onDecision: static () => throw new InvalidOperationException("unreachable: FindingBlindSpotRaiseRequest only ever carries Obligation or Hazard."),
+        onSection: static () => throw new InvalidOperationException("unreachable: FindingBlindSpotRaiseRequest only ever carries Obligation or Hazard."));
+
+    private static (string? Id, string? Failure) AllocateIdentity(string cardsRoot, CardKind kind, TimeSpan lockTimeout) =>
+        CardIdentityAllocator.Allocate(cardsRoot, kind, lockTimeout).Match(
+            onAllocated: allocated => ((string?)allocated.Id, (string?)null),
+            onFailed: failed => ((string?)null, (string?)failed.Reason));
 
     /// <summary>Shared by <see cref="ApplyBlockTransitionUnderExistingLock"/>,
     /// <see cref="RecordGateResultUnderExistingLock"/> and <see cref="UpdateBlockedByUnderExistingLock"/>

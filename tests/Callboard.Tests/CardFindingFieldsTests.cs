@@ -203,6 +203,42 @@ public sealed class CardFindingFieldsTests
     // Demonstrated by omission rather than a checked-in failing compile (the harness has no way to
     // assert "this line does not compile" from inside a green test suite) — see the 6.1 DEVLOG post.
 
+    // §6 block B fix, not block A's own scope: block A built FindingCardFields and the wire keys
+    // but never threaded a value through NewCardFile, so CardStore.WriteCard silently defaulted
+    // every finding it wrote to FindingCardFields.Empty regardless of what a caller supplied — this
+    // is the regression test for that gap, exercised through the actual create path (WriteCard),
+    // not the direct-CardFile round trip the two tests above already cover. What would have to
+    // break for this to go red: WriteCard's internal CardFile construction reverting to omit
+    // `FindingFields: card.FindingFields`.
+    [Fact]
+    public void WriteCard_WithFindingFieldsOnNewCardFile_PersistsThemThroughTheCreatePath()
+    {
+        const string changeName = "establish-callboard";
+        var root = Path.Combine(Path.GetTempPath(), "callboard-new-card-file-finding-fields-" + Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(root, CardLayout.ChangesDirectory(changeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "f-0300.md");
+            var fields = new FindingCardFields(
+                Instrument: "make gates",
+                Extent: FindingExtent.BlockScope,
+                VerifiedAt: "sha-abc",
+                BlindSpot: FindingBlindSpotDeclaration.None);
+            var newCard = new NewCardFile(Frontmatter("F-0300"), "Body.", fields);
+
+            var writeResult = CardStore.WriteCard(root, path, newCard, TimeSpan.FromSeconds(5), changeName);
+            Assert.IsType<CardWriteResult.Success>(writeResult);
+
+            var read = AssertSuccess(CardStore.ReadCard(path));
+            Assert.Equal(fields, read.FindingFields);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static string RawFinding(string findingLinesAfterVerifiedAt) =>
         "---\n" +
         "id: F-0200\n" +

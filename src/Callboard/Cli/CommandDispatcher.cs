@@ -174,17 +174,18 @@ internal static class CommandDispatcher
             Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker,
             Func<SectionVerdict, TResult> onSectionVerdict,
             Func<SectionClose, TResult> onSectionClose,
-            Func<SectionStatus, TResult> onSectionStatus);
+            Func<SectionStatus, TResult> onSectionStatus,
+            Func<FindingRecord, TResult> onFindingRecord);
 
         internal sealed record Version : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
                 onVersion(this);
         }
 
         internal sealed record IndexRebuild(string WorkingDirectory) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
                 onIndexRebuild(this);
         }
 
@@ -209,7 +210,7 @@ internal static class CommandDispatcher
         internal sealed record BlockTransition(
             string FilePath, string TransitionName, CardOwner ActingRole, string? BaseCommit, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
                 onBlockTransition(this);
         }
 
@@ -222,7 +223,7 @@ internal static class CommandDispatcher
         internal sealed record BlockGate(
             string FilePath, string Label, int ExitCode, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
                 onBlockGate(this);
         }
 
@@ -234,14 +235,14 @@ internal static class CommandDispatcher
         internal sealed record BlockAddBlocker(
             string FilePath, string BlockingCardId, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
                 onBlockAddBlocker(this);
         }
 
         internal sealed record BlockRemoveBlocker(
             string FilePath, string BlockingCardId, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
                 onBlockRemoveBlocker(this);
         }
 
@@ -251,14 +252,14 @@ internal static class CommandDispatcher
         internal sealed record SectionVerdict(
             string FilePath, Callboard.Cards.SectionVerdict Verdict, string RangeFrom, string RangeTo, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
                 onSectionVerdict(this);
         }
 
         internal sealed record SectionClose(
             string FilePath, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
                 onSectionClose(this);
         }
 
@@ -270,8 +271,43 @@ internal static class CommandDispatcher
         /// </summary>
         internal sealed record SectionStatus(string FilePath) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
                 onSectionStatus(this);
+        }
+
+        /// <summary>
+        /// <c>finding record</c> (§6 block B, findings: "Clean findings are cards"): the first verb
+        /// that creates a card, rather than reading or mutating one that already exists. Everything
+        /// argv-decidable is decided during parse, the same O-3 discipline every other verb here
+        /// follows — including <see cref="Body"/>, read from stdin during the parse phase (a
+        /// read-only extraction, not the card-writing side effect O-3 guards): <see cref="RaiseRequest"/>'s
+        /// own constructor already refuses a <see cref="Callboard.Cards.CardKind"/> other than
+        /// <c>obligation</c>/<c>hazard</c>, and <see cref="Callboard.Cards.FindingExtent"/>'s and
+        /// <see cref="Callboard.Cards.CardOwner"/>'s own wire-format checks need no file access
+        /// either.
+        /// </summary>
+        /// <param name="FilePath">Where the finding card is written — a path, not a symbolic id, the
+        /// same convention every other verb here follows (§6 block B brief: identity addressing is
+        /// §7/§8's open decision).</param>
+        /// <param name="RaiseRequest">What to raise the declared blind spot as, or
+        /// <see langword="null"/> when <c>--blind-spot none</c> was declared. Never a pre-existing
+        /// card id — the tool allocates the raised card's identity itself, at execute time.</param>
+        internal sealed record FindingRecord(
+            string FilePath,
+            string Title,
+            string Section,
+            string ChangeName,
+            Callboard.Cards.CardOwner ActingRole,
+            string Body,
+            string? Instrument,
+            Callboard.Cards.FindingExtent Extent,
+            string? VerifiedAt,
+            Callboard.Cards.FindingBlindSpotRaiseRequest? RaiseRequest,
+            string WorkingDirectory,
+            DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord) =>
+                onFindingRecord(this);
         }
     }
 
@@ -318,7 +354,8 @@ internal static class CommandDispatcher
                     onBlockRemoveBlocker: parsed => RunBlockRemoveBlocker(parsed, resolvedLockTimeout),
                     onSectionVerdict: parsed => RunSectionVerdict(parsed, resolvedLockTimeout),
                     onSectionClose: parsed => RunSectionClose(parsed, resolvedLockTimeout),
-                    onSectionStatus: static parsed => RunSectionStatus(parsed)),
+                    onSectionStatus: static parsed => RunSectionStatus(parsed),
+                    onFindingRecord: parsed => RunFindingRecord(parsed, resolvedLockTimeout)),
                 onRefused: refused => refused.Refusal);
 
             WriteEnvelope(output, RecognisedCommand(command, arguments), outcome);
@@ -759,6 +796,70 @@ internal static class CommandDispatcher
             },
             onFailure: failure => throw new InvalidOperationException(
                 $"card '{parsed.FilePath}' could not be read as a section card: {failure.Reason}"));
+    }
+
+    /// <summary>
+    /// <c>finding record</c> (§6 block B): records a clean finding, and — when
+    /// <paramref name="parsed"/>'s own <see cref="ParsedCommand.FindingRecord.RaiseRequest"/> is not
+    /// <see langword="null"/> — the <c>obligation</c> or <c>hazard</c> its declared blind spot is
+    /// raised as, via <see cref="Cards.CardStore.RecordFinding"/>. findings: "The system SHALL
+    /// refuse to record a clean finding unless the recording role declares a blind spot or
+    /// explicitly asserts that there is none" is enforced one layer up, in
+    /// <see cref="CommandParser.ParseFindingRecord"/> — by the time a
+    /// <see cref="ParsedCommand.FindingRecord"/> reaches this handler, a declaration has already
+    /// been supplied (block A already made "not declared" unrepresentable on a constructed finding;
+    /// this refusal belongs at the input boundary, not re-checked here). <see langword="private"/>:
+    /// <see cref="CommandParser"/> cannot name this method.
+    /// </summary>
+    private static CommandOutcome RunFindingRecord(ParsedCommand.FindingRecord parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var outcome = CardStore.RecordFinding(
+            repoRoot,
+            parsed.FilePath,
+            parsed.Title,
+            parsed.ActingRole,
+            parsed.Section,
+            parsed.Body,
+            parsed.Instrument,
+            parsed.Extent,
+            parsed.VerifiedAt,
+            parsed.RaiseRequest,
+            parsed.Timestamp,
+            lockTimeout,
+            parsed.ChangeName);
+
+        return outcome.Match<CommandOutcome>(
+            onRecorded: recorded => new CommandOutcome.Success(new FindingRecordResult
+            {
+                FilePath = parsed.FilePath,
+                Id = recorded.Finding.Frontmatter.Id,
+                Title = recorded.Finding.Frontmatter.Title,
+                BlindSpot = recorded.Finding.FindingFields.BlindSpot.Match(
+                    onNone: static () => "none",
+                    onRaisedAs: static _ => "raised-as"),
+                RaisedCardId = recorded.RaisedCard?.Frontmatter.Id,
+                RaisedCardFilePath = parsed.RaiseRequest?.FilePath,
+                RaisedCardKind = recorded.RaisedCard?.Frontmatter.Kind.ToWireString(),
+                ActingRole = parsed.ActingRole.ToWireString(),
+                Timestamp = parsed.Timestamp,
+            }),
+            onFindingAlreadyExists: already => new CommandOutcome.Refusal(
+                "card-already-exists", $"a card already exists at '{already.FilePath}' — the finding's own target path."),
+            onBlindSpotCardAlreadyExists: already => new CommandOutcome.Refusal(
+                "card-already-exists", $"a card already exists at '{already.FilePath}' — the raised blind-spot card's target path."),
+            onFindingLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            onBlindSpotLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
     /// <summary>

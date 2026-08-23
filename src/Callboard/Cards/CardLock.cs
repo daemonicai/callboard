@@ -164,6 +164,31 @@ internal sealed class CardLock : IDisposable
     internal string CardPath { get; }
 
     /// <summary>
+    /// Whether the lock file at <paramref name="otherCardPath"/> — a path string that may or may
+    /// not denote the same underlying file as this instance's own <see cref="CardPath"/> — is
+    /// currently the exact file this instance itself created (§6 block B remediation, reviewer's
+    /// "identical path" finding under <c>AcquireLocksAndRecord</c>: on a case-insensitive or
+    /// separator-tolerant filesystem, two distinct path strings, such as a case variant or a
+    /// doubled-separator variant of the same path, can resolve to one physical file, which no
+    /// string comparison — <see cref="StringComparison.Ordinal"/> or <see cref="StringComparison.
+    /// OrdinalIgnoreCase"/> — can decide correctly across every volume this project ships on:
+    /// APFS defaults to case-insensitive but can be formatted case-sensitive, and either is a
+    /// legitimate target). This decides the question by evidence instead: <paramref name="
+    /// otherCardPath"/>'s own <c>.lock</c> file is read and compared, byte for byte, against the
+    /// exact content this instance wrote to its own lock file. A match is conclusive — this
+    /// instance's per-acquisition nonce (<see cref="TryCreate(string, out string, Action{string}?)"/>'s
+    /// <c>Guid.NewGuid()</c>) is not reproducible by anything else, so an exact match can only mean
+    /// <paramref name="otherCardPath"/>'s lock file <em>is</em> this instance's own lock file,
+    /// reached by a different path string — the same "prove it by content, not by path" discipline
+    /// this type's own <see cref="Dispose"/> already applies for release, and
+    /// <see cref="Cards.CardStore"/>'s <c>RollbackRaisedCard</c> applies independently for the same
+    /// reason. A mismatch (including the other path's lock file not existing at all) means the two
+    /// paths are genuinely different files, and is not evidence of anything else.
+    /// </summary>
+    internal bool CurrentlyNames(string otherCardPath) =>
+        TryReadLockContent(otherCardPath + ".lock", out var otherContent) && string.Equals(otherContent, _ownContent, StringComparison.Ordinal);
+
+    /// <summary>
     /// Attempts to acquire the lock for <paramref name="cardPath"/>, retrying until either it
     /// succeeds or <paramref name="timeout"/> elapses. A lock whose recorded holder process is no
     /// longer running is broken immediately rather than counted against the timeout.

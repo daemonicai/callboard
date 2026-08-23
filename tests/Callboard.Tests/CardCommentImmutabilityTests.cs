@@ -99,6 +99,7 @@ public sealed class CardCommentImmutabilityTests
         {
             "AddBlockedBy",                         // §5 block D: read-modify-write on BlockFields.BlockedBy only; never touches Frontmatter.Status or Comments
             "AddBlockedByUnderExistingLock",        // same, lock already held
+            "AllocateIdentity",                     // §6 block B: thin Match wrapper over CardIdentityAllocator.Allocate; never touches a CardFile's Comments
             "AppendComment",                       // read-modify-write: reads, appends one comment, writes — never drops one
             "AppendCommentUnderExistingLock",       // same, lock already held by the caller
             "ApplyBlockTransition",                 // §5 block C: read-modify-write on Frontmatter.Status/BlockFields/Transitions only; Comments passes through the `card with { ... }` unchanged
@@ -110,12 +111,17 @@ public sealed class CardCommentImmutabilityTests
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments
             "ReadAllCards",                         // read-only
             "ReadCard",                             // read-only
+            "AcquireLocksAndRecord",                // §6 block B remediation: acquires one or two CardLocks in ordinal path order and runs the record step under them; never touches a CardFile
+            "RecordFinding",                        // §6 block B: allocates identities, pre-creates directories, then delegates to AcquireLocksAndRecord/RecordFindingUnderLocks — never touches an existing card's Comments, it only ever creates brand-new cards with an empty comment list
+            "RecordFindingUnderLocks",              // same: writes the raised card (if any) then the finding, both create-only via AtomicWrite, rolling the raised card back (by content, not by path) on the finding's own write failing — never an edit or drop of an existing comment
             "RecordGateResult",                     // §5 block D: read-modify-write on BlockFields.GateResults only; never touches Frontmatter.Status or Comments — see the structural argument in GateStatus's doc comment
             "RecordGateResultUnderExistingLock",    // same, lock already held
             "RecordSectionVerdict",                 // §5 block E: append-only write on SectionFields.Verdicts only; never touches Frontmatter.Status or Comments
             "RecordSectionVerdictUnderExistingLock", // same, lock already held
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"
             "RemoveBlockedByUnderExistingLock",     // same, lock already held
+            "RollbackRaisedCard",                   // §6 block B: best-effort delete of a just-written, brand-new raised card when the finding's own write then fails — never touches an existing card at all
+            "ScopeForRaisedCard",                   // §6 block B: pure function from CardKind to its fixed CardScope; never touches a CardFile
             "TransferOwnership",                    // read-modify-write: overwrites Owner/Handovers only; Comments passes through the `success.Card with { ... }` unchanged
             "TransferOwnershipUnderExistingLock",   // same, lock already held
             "UpdateBlockedByUnderExistingLock",     // §5 block D: the read-decide-write shape AddBlockedByUnderExistingLock/RemoveBlockedByUnderExistingLock share; never touches Frontmatter.Status or Comments
