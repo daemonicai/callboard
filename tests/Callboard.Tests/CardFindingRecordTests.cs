@@ -229,6 +229,13 @@ public sealed class CardFindingRecordTests : IDisposable
     [Fact]
     public void ClosingTheSection_LeavesTheRaisedCardUntouchedAndDegradesTheFinding()
     {
+        // §7 block B: a finding's own 'section' field is now the section card's id, not a
+        // free-text label. This domain-level call bypasses the CLI's own `--section` validation
+        // (CommandDispatcher.ValidateSection), so — same as before this rewire — the finding can
+        // still be recorded before the section card it names exists on disk; the id is simply
+        // chosen up front, ahead of either write.
+        const string sectionId = "S-0001";
+
         var findingPath = Path.Combine(_directory, "f-0005.md");
         var raisedPath = RaisedCardPath(CardKind.Hazard, "h-0004");
         var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, raisedPath, "Blind spot title", "Blind spot content.");
@@ -237,17 +244,17 @@ public sealed class CardFindingRecordTests : IDisposable
         // in passing — which is also what makes WriteInitialSectionCard's own plain File.WriteAllText
         // below able to land in the same, now-existing directory.
         var recordOutcome = CardStore.RecordFinding(
-            _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
+            _root, findingPath, "Checked, with a gap", CardOwner.Worker, sectionId, "Body of the finding.",
             instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
         AssertRecorded(recordOutcome);
 
-        var sectionPath = WriteInitialSectionCard("s-0001", "S-0001");
+        var sectionPath = WriteInitialSectionCard("s-0001", sectionId);
 
         var raisedBytesBefore = File.ReadAllText(raisedPath);
         var findingBytesBefore = File.ReadAllText(findingPath);
 
         var findingBeforeClose = AssertParseSuccess(CardStore.ReadCard(findingPath));
-        Assert.Same(FindingDegradationStatus.Live, AssertResolved(FindingDegradationEvaluator.Evaluate(findingBeforeClose, findingPath)));
+        Assert.Same(FindingDegradationStatus.Live, AssertResolved(FindingDegradationEvaluator.Evaluate(findingBeforeClose, _root)));
 
         var closeOutcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Recorded.AddDays(1), TimeSpan.FromSeconds(5), ChangeName);
         Assert.IsType<CardSectionCloseOutcome.Closed>(closeOutcome);
@@ -261,7 +268,7 @@ public sealed class CardFindingRecordTests : IDisposable
         // But it now reads as degraded, through the exact same read-and-evaluate path re-reading
         // the (unchanged) bytes off disk.
         var findingAfterClose = AssertParseSuccess(CardStore.ReadCard(findingPath));
-        Assert.Same(FindingDegradationStatus.Degraded, AssertResolved(FindingDegradationEvaluator.Evaluate(findingAfterClose, findingPath)));
+        Assert.Same(FindingDegradationStatus.Degraded, AssertResolved(FindingDegradationEvaluator.Evaluate(findingAfterClose, _root)));
     }
 
     // §6 block B remediation, reviewer blocker 2, exercised directly against RollbackRaisedCard

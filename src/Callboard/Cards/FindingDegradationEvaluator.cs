@@ -2,8 +2,8 @@ namespace Callboard.Cards;
 
 /// <summary>
 /// Computes findings' "A `finding` SHALL be section-scoped and SHALL degrade at section close" (§6
-/// block D) for one already-read <c>finding</c> card and the path it was read from — read-only, no
-/// lock, the same shape <see cref="FindingStalenessEvaluator"/> already established.
+/// block D) for one already-read <c>finding</c> card — read-only, no lock, the same shape
+/// <see cref="FindingStalenessEvaluator"/> already established.
 ///
 /// <para>
 /// <b>Degradation is derived, not stored (Architect ruling, §6 block D brief).</b> The finding card
@@ -16,132 +16,68 @@ namespace Callboard.Cards;
 /// </para>
 ///
 /// <para>
-/// <b>Finding the section card.</b> A <c>finding</c>'s <see cref="CardFrontmatter.Section"/> is a
-/// free-text label (e.g. <c>"6"</c>), not a path or an id — identity addressing is §7/§8's open
-/// decision, so this stays path-addressed like every other §6 verb. <see
-/// cref="CardLayout.DirectoryFor"/> resolves <see cref="CardScope.Section"/> and <see
-/// cref="CardScope.Change"/> to the <em>same</em> directory (one flat <c>changes/&lt;name&gt;/</c>
-/// per change, not one per section), so this method reads every card in the finding's own
-/// containing directory (<see cref="Cards.CardStore.ReadAllCards"/>) and matches every <c>section</c>
-/// card whose own <see cref="CardFrontmatter.Section"/> equals the finding's.
+/// <b>Finding the section card (§7 block B rewire).</b> A <c>finding</c>'s
+/// <see cref="CardFrontmatter.Section"/> is now the section card's own <c>id</c> (Product Owner
+/// ruling, "identity is the reference, and identity resolves") — not a free-text label matched by
+/// scanning the finding's own directory. This method hands that id straight to
+/// <see cref="CardIdentityResolver.Resolve"/>, which walks the whole record — every live change,
+/// the register, decisions, and every archived change — rather than the one directory the old
+/// label-matching version was confined to. That is also what makes a finding raised in a change
+/// that later archives keep degrading correctly: the section card moves with the rest of the change
+/// (archive is a directory move, not a rewrite), and the resolver simply finds it wherever it now
+/// lives.
 /// </para>
 ///
 /// <para>
-/// <b>More than one match is refused, not picked (reviewer blocker, §6 block D remediation).</b>
-/// Nothing in this codebase's write model guards "at most one <c>section</c> card per label" — there
-/// is no section-creation verb at all yet — so a duplicate or hand-edited label collision is
-/// reachable, and picking whichever file <see cref="Cards.CardStore.ReadAllCards"/>'s ordinal
-/// enumeration happened to return first would make the answer depend on filenames rather than on the
-/// record. This method returns <see cref="FindingDegradationEvaluation.Ambiguous"/> instead — the
-/// caller (<see cref="Callboard.Cli.CommandDispatcher.RunFindingStatus"/>) turns that into a
-/// refusal.
+/// <b>More than one match is refused, not picked.</b> <see cref="CardIdentityResolution.Duplicate"/>
+/// becomes <see cref="FindingDegradationEvaluation.Ambiguous"/> here — the caller (<see
+/// cref="Callboard.Cli.CommandDispatcher.RunFindingStatus"/>) turns that into a refusal, the same
+/// fail-closed shape §6 block D's remediation established for the label-matching mechanism this
+/// rewires, now backed by a genuine record-wide id collision rather than a same-label coincidence.
 /// </para>
 ///
 /// <para>
-/// <b>An unresolvable section reads as <see cref="FindingDegradationStatus.Live"/> only when the
-/// directory holds no candidate at all — no card of any kind that could be this finding's section
-/// card.</b> If the directory contains zero <c>section</c> cards and every card in it parsed
-/// cleanly, there genuinely is no section card yet, and reporting
-/// <see cref="FindingDegradationStatus.Degraded"/> would be a false claim this method cannot
-/// support. That is the only case this method reads as <see cref="FindingDegradationStatus.Live"/>
-/// for a finding with no exact label match.
+/// <b><see cref="CardIdentityResolution.NotFound"/> reads as <see cref="FindingDegradationStatus.Live"/>.</b>
+/// The resolver has, by construction, searched the entire record and confirmed no card anywhere
+/// carries the id — a stronger, record-wide guarantee than the old evaluator's "this one directory
+/// held no candidate" default, and the same honest conclusion follows: nothing proves the section
+/// closed (nothing proves it exists at all), so this does not claim <see
+/// cref="FindingDegradationStatus.Degraded"/>.
 /// </para>
 ///
 /// <para>
-/// <b>§6 remediation (B3) — zero matches among candidates is not the same as zero candidates.</b>
-/// <c>--section</c> is unvalidated free text, and there is no section-creation verb: a typo
-/// (<c>"6 "</c> against a card labelled <c>"6"</c>) is structurally indistinguishable from a
-/// genuinely different section (label <c>"5"</c>). So when the directory holds at least one
-/// <c>section</c> card that parsed cleanly but did not match this finding's label — <em>or</em> at
-/// least one card that failed to parse at all — this method cannot rule out that one of them is this
-/// finding's own section card, mislabelled or corrupt, and reporting
-/// <see cref="FindingDegradationStatus.Live"/> would silently equate "no section card exists" with
-/// "one exists and cannot be confirmed to match", exactly the "absent is a different answer from
-/// failed" convention §3 established and this method's own block D remediation already applied to
-/// the corrupt-card case (reviewer blocker). Both are now the same case, reusing
-/// <see cref="FindingDegradationStatus.Unreadable"/> rather than minting a fourth answer for the
-/// same idea — the reason names whichever kind of non-matching candidate was found, or both.
+/// <b><see cref="CardIdentityResolution.Unreadable"/> — the B3 lesson, now the resolver's own
+/// job.</b> When the resolver could not rule out that the requested id lives in a file it failed to
+/// read, this reads <see cref="FindingDegradationStatus.Unreadable"/>, not <see
+/// cref="FindingDegradationStatus.Live"/> — the same "absent is a different answer from failed"
+/// convention §3 established, now enforced once, in the resolver, instead of being re-derived by
+/// every consumer that walks the record for an id.
 /// </para>
 /// </summary>
 internal static class FindingDegradationEvaluator
 {
-    internal static FindingDegradationEvaluation Evaluate(CardFile finding, string findingFilePath)
+    internal static FindingDegradationEvaluation Evaluate(CardFile finding, string cardsRoot)
     {
-        // §6 remediation (round 2) — an empty directory component means "the current directory",
-        // not "no directory": Path.GetDirectoryName("F-0001.md") returns "" for a bare filename, and
-        // treating that as "nothing to look in" answered Live without reading a single card. Same
-        // idiom as AnchoredCardPath.TryCreate.
-        var rawDirectory = Path.GetDirectoryName(findingFilePath);
-        var directory = string.IsNullOrEmpty(rawDirectory) ? "." : rawDirectory;
+        var resolution = CardIdentityResolver.Resolve(cardsRoot, finding.Frontmatter.Section);
 
-        var matches = new List<(string FilePath, CardFile Card)>();
-        var otherSectionPaths = new List<string>();
-        var unreadablePaths = new List<string>();
-
-        foreach (var (path, result) in CardStore.ReadAllCards(directory))
-        {
-            var card = result.Match<CardFile?>(
-                onSuccess: static success => success.Card,
-                onFailure: static _ => null);
-
-            if (card is null)
+        return resolution.Match<FindingDegradationEvaluation>(
+            onFound: (filePath, card) =>
             {
-                unreadablePaths.Add(path);
-                continue;
-            }
+                if (!CardStore.IsSectionCard(card))
+                {
+                    return FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Unreadable(
+                        $"the card carrying id '{finding.Frontmatter.Section}' — this finding's own 'section' field — " +
+                        $"is a '{card.Frontmatter.Kind.ToWireString()}' card at '{filePath}', not a 'section' card, " +
+                        "so this finding's degradation cannot be confirmed."));
+                }
 
-            if (!CardStore.IsSectionCard(card))
-            {
-                continue;
-            }
-
-            if (string.Equals(card.Frontmatter.Section, finding.Frontmatter.Section, StringComparison.Ordinal))
-            {
-                matches.Add((path, card));
-            }
-            else
-            {
-                // §6 remediation (B3) — a readable section card that does not match is still a
-                // candidate that cannot be ruled out: the label is free text, so this could be the
-                // finding's own section card under a typo, not proof a different section exists.
-                otherSectionPaths.Add(path);
-            }
-        }
-
-        if (matches.Count > 1)
-        {
-            var conflictingPaths = matches.Select(static match => match.FilePath).OrderBy(static path => path, StringComparer.Ordinal).ToList();
-            return FindingDegradationEvaluation.Ambiguous(finding.Frontmatter.Section, conflictingPaths);
-        }
-
-        if (matches.Count == 1)
-        {
-            var status = matches[0].Card.SectionFields.ClosedAt is not null ? FindingDegradationStatus.Degraded : FindingDegradationStatus.Live;
-            return FindingDegradationEvaluation.Resolved(status);
-        }
-
-        if (unreadablePaths.Count > 0 || otherSectionPaths.Count > 0)
-        {
-            unreadablePaths.Sort(StringComparer.Ordinal);
-            otherSectionPaths.Sort(StringComparer.Ordinal);
-
-            var reasonParts = new List<string>();
-            if (otherSectionPaths.Count > 0)
-            {
-                reasonParts.Add(
-                    $"{otherSectionPaths.Count} readable 'section' card(s) in that directory carry a different label and cannot be ruled out as a mislabelled match: {string.Join(", ", otherSectionPaths)}");
-            }
-
-            if (unreadablePaths.Count > 0)
-            {
-                reasonParts.Add(
-                    $"{unreadablePaths.Count} card(s) in that directory could not be parsed and cannot be ruled out as it: {string.Join(", ", unreadablePaths)}");
-            }
-
-            return FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Unreadable(
-                $"no readable 'section' card in '{directory}' carries the label '{finding.Frontmatter.Section}', but {string.Join("; and ", reasonParts)}."));
-        }
-
-        return FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Live);
+                var status = card.SectionFields.ClosedAt is not null ? FindingDegradationStatus.Degraded : FindingDegradationStatus.Live;
+                return FindingDegradationEvaluation.Resolved(status);
+            },
+            onNotFound: static _ => FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Live),
+            onDuplicate: static (id, filePaths) => FindingDegradationEvaluation.Ambiguous(id, filePaths),
+            onUnreadable: (id, filePaths) => FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Unreadable(
+                $"{filePaths.Count} card file(s) in the record could not be read while resolving id '{id}' — this " +
+                $"finding's own 'section' field — so its absence cannot be confirmed: {string.Join(", ", filePaths)}.")));
     }
 }

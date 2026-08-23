@@ -173,57 +173,12 @@ internal static class IndexPopulator
     }
 
     /// <summary>
-    /// Every directory holding <c>*.md</c> card files: <c>register/</c>, <c>decisions/</c>, one
-    /// per live change, and — §4 remediation R1 — one per <em>archived</em> change too. The archive
-    /// is part of the record, not an exception to it: a card that survived archive must be exactly
-    /// as visible to the index and to <see cref="CardIdentityAllocator.VerifyCounters"/> as one
-    /// still in a live change, or a counter reset silently reissues an identity an archived card
-    /// still holds. <c>callboard/changes/archive/</c> is a container of archived changes, not a
-    /// change itself (<see cref="CardLayout.ReservedArchiveChangeName"/>), so its own entry inside
-    /// <see cref="CardLayout.ChangesRootDirectory"/> is skipped when enumerating live changes and
-    /// descended into separately via <see cref="CardLayout.ArchiveDirectory"/>.
+    /// Every directory holding <c>*.md</c> card files — delegated entirely to
+    /// <see cref="CardLayout.ResolveRecordDirectories"/> (§7 block B) so this enumeration and the id
+    /// resolver's own walk cannot silently drift apart; see that method's own doc comment for what
+    /// it covers and why (§4 remediation R1's archive reasoning still applies, unchanged).
     /// </summary>
-    private static IReadOnlyList<string> ResolveCardSources(string cardsRoot)
-    {
-        var directories = new List<string>
-        {
-            CombineWithLayout(cardsRoot, CardLayout.RegisterDirectory),
-            CombineWithLayout(cardsRoot, CardLayout.DecisionsDirectory),
-        };
-
-        // Population does not know change names ahead of time, so it enumerates CardLayout's
-        // changes root directly rather than asking CardLayout to resolve one card's directory.
-        var changesRoot = CombineWithLayout(cardsRoot, CardLayout.ChangesRootDirectory);
-
-        // Trimmed to match Directory.EnumerateDirectories' own results below, which never carry a
-        // trailing separator, while CombineWithLayout's input (a CardLayout constant) always does.
-        var archiveRoot = Path.TrimEndingDirectorySeparator(CombineWithLayout(cardsRoot, CardLayout.ArchiveDirectory));
-
-        if (Directory.Exists(changesRoot))
-        {
-            foreach (var directory in Directory.EnumerateDirectories(changesRoot).OrderBy(static path => path, StringComparer.Ordinal))
-            {
-                if (string.Equals(directory, archiveRoot, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                directories.Add(directory);
-            }
-        }
-
-        if (Directory.Exists(archiveRoot))
-        {
-            directories.AddRange(
-                Directory.EnumerateDirectories(archiveRoot)
-                    .OrderBy(static path => path, StringComparer.Ordinal));
-        }
-
-        return directories;
-    }
-
-    private static string CombineWithLayout(string cardsRoot, string layoutDirectory) =>
-        Path.Combine(cardsRoot, layoutDirectory.Replace('/', Path.DirectorySeparatorChar));
+    private static IReadOnlyList<string> ResolveCardSources(string cardsRoot) => CardLayout.ResolveRecordDirectories(cardsRoot);
 
     private static void WriteDatabase(string databasePath, IReadOnlyList<(string FilePath, CardFile Card)> cards)
     {

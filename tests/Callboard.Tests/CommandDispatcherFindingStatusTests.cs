@@ -11,14 +11,25 @@ namespace Callboard.Tests;
 /// assertion here reads the envelope's JSON, never a domain type — this file is the CLI-JSON
 /// contract's own proof, the same discipline <c>CommandDispatcherFindingRecordTests</c> already
 /// applies to <c>finding record</c>.
+///
+/// <para>
+/// <b>§7 block B — the <c>workingDirectory</c> seam retires this file's own CWD mutation.</b> A
+/// finding path is now resolved against <c>CommandDispatcher.Run</c>'s own <c>workingDirectory</c>
+/// argument (<see cref="CommandDispatcher"/>'s <c>ResolveFilePath</c>), not the real process CWD, so
+/// <see cref="BareFilenameWithNoDirectoryComponent_StillReadsBackDegraded_SameAsAnAbsolutePath"/> no
+/// longer needs <see cref="Directory.SetCurrentDirectory"/> to exercise a relative file argument —
+/// it passes a relative path and a distinct <c>workingDirectory</c> instead. With no test left in
+/// this file (or in <c>FindingDegradationEvaluatorTests</c>) mutating the real process CWD, the
+/// <c>CurrentDirectoryMutatingTests</c> shared collection §6 needed to serialise the two classes
+/// against that global state is gone — see the DEVLOG.
+/// </para>
+///
+/// <para>
+/// <b>§7 block B — <c>--section</c> now names a section card's id.</b> Every <c>Record</c> call
+/// below creates a real section first, through the CLI's own <c>section create</c> verb, and
+/// passes its allocated id — a free-text label like <c>"6"</c> no longer resolves to anything.
+/// </para>
 /// </summary>
-/// <remarks>
-/// §6 remediation, round 3 (reviewer blocker) — this class and
-/// <see cref="FindingDegradationEvaluatorTests"/> both mutate the process-global current
-/// directory to exercise the empty-directory-component fix; see
-/// <see cref="CurrentDirectoryMutatingTests"/> for why the explicit collection exists.
-/// </remarks>
-[Collection(CurrentDirectoryMutatingTests.Name)]
 public sealed class CommandDispatcherFindingStatusTests
 {
     private const string ChangeName = "establish-callboard";
@@ -186,7 +197,6 @@ public sealed class CommandDispatcherFindingStatusTests
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0010.md");
 
         Record(repo, findingPath, extentExplicit: "src/Foo.cs");
-        WriteInitialSectionCard(repo, "s-0001", "S-0001");
         var status = Status(repo, findingPath);
 
         Assert.Equal("live", status.GetProperty("degradation").GetString());
@@ -206,15 +216,14 @@ public sealed class CommandDispatcherFindingStatusTests
         File.WriteAllText(sourcePath, "original content");
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0011.md");
 
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
-        var sectionPath = WriteInitialSectionCard(repo, "s-0002", "S-0002");
+        var sectionId = Record(repo, findingPath, extentExplicit: "src/Foo.cs");
 
         var beforeClose = Status(repo, findingPath);
         Assert.Equal("live", beforeClose.GetProperty("degradation").GetString());
         Assert.Equal("current", beforeClose.GetProperty("staleness").GetString());
 
         var closeOutput = new StringWriter();
-        var closeExit = RunInRepo(["section", "close", sectionPath, "--role", "architect", "--change", ChangeName], closeOutput, repo.Path, "unused");
+        var closeExit = RunInRepo(["section", "close", _sectionPathsById[sectionId], "--role", "architect", "--change", ChangeName], closeOutput, repo.Path, "unused");
         Assert.Equal(CommandDispatcher.SuccessExitCode, closeExit);
 
         var afterClose = Status(repo, findingPath);
@@ -222,62 +231,53 @@ public sealed class CommandDispatcherFindingStatusTests
         Assert.Equal("current", afterClose.GetProperty("staleness").GetString());
     }
 
-    // §6 section remediation, round 2 (supervisor blocker) — `Path.GetDirectoryName` returns the
-    // empty string for a bare filename, not null, and the evaluator used to treat "" as "no
-    // directory to look in" and answer Live without reading a single card. Reproduced exactly as
-    // the supervisor did: same finding, same closed section, invoked two ways that only differ in
-    // whether the path carries a directory component. Both must answer "degraded".
+    // §7 block B — the `workingDirectory` seam's own test: a relative file argument resolves
+    // against `Run`'s own `workingDirectory` parameter, not the real process CWD. Both invocations
+    // below run from the *same* real process CWD (whatever the test host happens to be in); only
+    // the relative one supplies a `workingDirectory` that differs from it, which is exactly what
+    // the seam is for.
     [Fact]
     public void BareFilenameWithNoDirectoryComponent_StillReadsBackDegraded_SameAsAnAbsolutePath()
     {
         using var repo = new TempGitRepo();
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0017.md");
 
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
-        WriteClosedSectionCard(repo, "s-0018", "S-0018");
+        var sectionId = Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var closeExit = RunInRepo(["section", "close", _sectionPathsById[sectionId], "--role", "architect", "--change", ChangeName], new StringWriter(), repo.Path, "unused");
+        Assert.Equal(CommandDispatcher.SuccessExitCode, closeExit);
 
         var absoluteStatus = Status(repo, findingPath);
         Assert.Equal("degraded", absoluteStatus.GetProperty("degradation").GetString());
 
-        // Path.Exists/File.Exists resolve a relative argument against the real process working
-        // directory, not the workingDirectory parameter CommandDispatcher.Run threads through for
-        // repo-root resolution — the same as the real binary invoked from a shell after `cd`, which
-        // is exactly the supervisor's repro. Only this test needs the process CWD moved; every
-        // other test in this file passes an absolute findingPath and is unaffected.
-        var previousDirectory = Directory.GetCurrentDirectory();
-        string output;
-        int exitCode;
-        try
-        {
-            Directory.SetCurrentDirectory(repo.CardsDirectory);
-            var writer = new StringWriter();
-            exitCode = CommandDispatcher.Run(
-                ["finding", "status", "f-0017.md"],
-                writer, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.CardsDirectory, clock: static () => FixedNow);
-            output = writer.ToString();
-        }
-        finally
-        {
-            Directory.SetCurrentDirectory(previousDirectory);
-        }
+        var writer = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["finding", "status", "f-0017.md"],
+            writer, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.CardsDirectory, clock: static () => FixedNow);
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
-        using var doc = JsonDocument.Parse(output);
+        using var doc = JsonDocument.Parse(writer.ToString());
         Assert.Equal("degraded", doc.RootElement.GetProperty("result").GetProperty("degradation").GetString());
     }
 
-    // §6 block D remediation (reviewer blocker 1), at the CLI boundary: two `section` cards in
-    // the finding's directory sharing its `--section` label refuse rather than silently picking
-    // whichever sorts first ordinally.
+    // §7 block B — more than one file claims the id this finding's own 'section' field names: a
+    // hand-edited collision (nothing through the allocator can produce one), refused rather than
+    // picked, the same fail-closed shape §6 block D's remediation established for the label-
+    // matching mechanism this rewires.
     [Fact]
-    public void TwoSectionCardsShareTheLabel_Refuses_AndNamesBothFiles()
+    public void TwoCardFilesClaimTheSectionId_Refuses_AndNamesBothFiles()
     {
         using var repo = new TempGitRepo();
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0012.md");
 
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
-        var openPath = WriteInitialSectionCard(repo, "s-a-open", "S-0100");
-        var closedPath = WriteClosedSectionCard(repo, "s-b-closed", "S-0101");
+        var sectionId = Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var openPath = _sectionPathsById[sectionId];
+
+        var closedPath = Path.Combine(repo.CardsDirectory, "s-colliding.md");
+        var frontmatter = new CardFrontmatter(
+            sectionId, CardKind.Section, "Colliding section", "closed", CardOwner.Architect, CardScope.Change, string.Empty, FixedNow, FixedNow);
+        var sectionFields = new SectionCardFields(null, CardOwner.Architect, FixedNow, []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], sectionFields);
+        File.WriteAllText(closedPath, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var output = new StringWriter();
         var exitCode = CommandDispatcher.Run(
@@ -286,21 +286,30 @@ public sealed class CommandDispatcherFindingStatusTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("ambiguous-section-label", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal("duplicate-card-id", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
         var message = doc.RootElement.GetProperty("refusal").GetProperty("message").GetString()!;
         Assert.Contains(openPath, message, StringComparison.Ordinal);
         Assert.Contains(closedPath, message, StringComparison.Ordinal);
     }
 
-    // §6 block D remediation (reviewer blocker 2), at the CLI boundary: a card in the finding's
-    // directory that fails to parse, with no valid `section` card matching its label, reads
-    // "unreadable" rather than silently "live".
+    // §6 block D remediation (reviewer blocker 2), reshaped for §7 block B's exact-id resolution: a
+    // card elsewhere in the record fails to parse, and the id this finding names does not resolve
+    // to anything else either — reads "unreadable" rather than silently "live". Hand-written rather
+    // than via `finding record`, because `--section` is now validated at record time — a finding
+    // naming an id that resolves to nothing is no longer constructible through the CLI's own write
+    // verb at all, only through direct file authorship (a hand-edited card, or one written by an
+    // older build).
     [Fact]
-    public void UnparseableSectionCandidate_ReadsBackUnreadable()
+    public void UnparseableCardElsewhereInTheRecord_WithNoMatchingSectionId_ReadsBackUnreadable()
     {
         using var repo = new TempGitRepo();
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0013.md");
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var findingFrontmatter = new CardFrontmatter(
+            "F-0013", CardKind.Finding, "A finding", "open", CardOwner.Worker, CardScope.Section, "S-9999", FixedNow, FixedNow);
+        var findingFields = new FindingCardFields(
+            null, FindingExtent.BlockScope, null, FindingBlindSpotDeclaration.None, null, FindingDisposition.Measured);
+        var findingCard = new CardFile(findingFrontmatter, "Body.", [], [], FindingFields: findingFields);
+        File.WriteAllText(findingPath, CardFileWriter.Serialize(findingCard), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var garbagePath = Path.Combine(repo.CardsDirectory, "s-broken.md");
         File.WriteAllText(garbagePath, "not a card at all");
@@ -311,41 +320,18 @@ public sealed class CommandDispatcherFindingStatusTests
         Assert.Contains(garbagePath, status.GetProperty("degradationReason").GetString(), StringComparison.Ordinal);
     }
 
-    // §6 section remediation (B3), at the CLI boundary: a section card carrying a different label
-    // sits in the finding's directory. Before the fix this read "live" permanently, even after the
-    // real section closed under a differently-spelled label — the fail-open direction the
-    // supervisor named. Now it reads "unreadable": the record cannot rule out a mislabelled match.
-    [Fact]
-    public void DifferentlyLabelledSectionCard_ReadsBackUnreadable_NotLive()
-    {
-        using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0016.md");
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
-
-        var otherPath = Path.Combine(repo.CardsDirectory, "s-other.md");
-        var frontmatter = new CardFrontmatter(
-            "S-0200", CardKind.Section, "Title", "closed", CardOwner.Architect, CardScope.Change, "5", FixedNow, FixedNow);
-        var sectionFields = new SectionCardFields(null, CardOwner.Architect, FixedNow, []);
-        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], sectionFields);
-        File.WriteAllText(otherPath, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-
-        var status = Status(repo, findingPath);
-
-        Assert.Equal("unreadable", status.GetProperty("degradation").GetString());
-        Assert.Contains(otherPath, status.GetProperty("degradationReason").GetString(), StringComparison.Ordinal);
-    }
-
     [Fact]
     public void RecordResult_ReportsTheDispositionActuallyRecorded()
     {
         using var repo = new TempGitRepo();
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0008.md");
+        var sectionId = CreateSection(repo);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
                 "finding", "record", findingPath,
-                "--role", "worker", "--title", "Measured by default", "--section", "6", "--change", ChangeName,
+                "--role", "worker", "--title", "Measured by default", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "none",
             ],
             output, repo.Path, "Body.");
@@ -360,12 +346,13 @@ public sealed class CommandDispatcherFindingStatusTests
     {
         using var repo = new TempGitRepo();
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0009.md");
+        var sectionId = CreateSection(repo);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
                 "finding", "record", findingPath,
-                "--role", "worker", "--title", "t", "--section", "6", "--change", ChangeName,
+                "--role", "worker", "--title", "t", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "none", "--disposition", "not-a-real-value",
             ],
             output, repo.Path, "Body.");
@@ -427,14 +414,24 @@ public sealed class CommandDispatcherFindingStatusTests
         Assert.Contains("finding", message, StringComparison.Ordinal);
     }
 
-    private static void Record(
+    // Tracks each test-created section card's own path by id, so a test that records a finding via
+    // Record(...) can later close (or otherwise reference) the same section without re-deriving its
+    // path from a file stem it never chose.
+    private readonly Dictionary<string, string> _sectionPathsById = [];
+
+    // Creates a real section (§7 block A's own verb) and returns its allocated id, unless
+    // sectionId is supplied — in which case no section is created, and the caller is responsible
+    // for what --section then resolves to (used by the "id does not resolve" fixture).
+    private string Record(
         TempGitRepo repo, string findingPath, string? extentExplicit = null, string? extentInstrument = null,
-        string? disposition = null, string? verifiedAt = null)
+        string? disposition = null, string? verifiedAt = null, string? sectionId = null)
     {
+        var resolvedSectionId = sectionId ?? CreateSection(repo);
+
         var args = new List<string>
         {
             "finding", "record", findingPath,
-            "--role", "worker", "--title", "A finding", "--section", "6", "--change", ChangeName,
+            "--role", "worker", "--title", "A finding", "--section", resolvedSectionId, "--change", ChangeName,
             "--blind-spot", "none",
         };
         if (extentExplicit is not null)
@@ -464,27 +461,23 @@ public sealed class CommandDispatcherFindingStatusTests
         var output = new StringWriter();
         var exitCode = RunInRepo(args.ToArray(), output, repo.Path, "Body of the finding.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        return resolvedSectionId;
     }
 
-    private static string WriteInitialSectionCard(TempGitRepo repo, string fileStem, string id)
+    private string CreateSection(TempGitRepo repo)
     {
-        var path = Path.Combine(repo.CardsDirectory, fileStem + ".md");
-        var frontmatter = new CardFrontmatter(
-            id, CardKind.Section, "Title", "open", CardOwner.Architect, CardScope.Change, "6", FixedNow, FixedNow);
-        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
-        File.WriteAllText(path, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        return path;
-    }
+        var sectionPath = Path.Combine(repo.CardsDirectory, "s-" + Guid.NewGuid().ToString("N") + ".md");
+        var output = new StringWriter();
 
-    private static string WriteClosedSectionCard(TempGitRepo repo, string fileStem, string id)
-    {
-        var path = Path.Combine(repo.CardsDirectory, fileStem + ".md");
-        var frontmatter = new CardFrontmatter(
-            id, CardKind.Section, "Title", "closed", CardOwner.Architect, CardScope.Change, "6", FixedNow, FixedNow);
-        var sectionFields = new SectionCardFields(null, CardOwner.Architect, FixedNow, []);
-        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], sectionFields);
-        File.WriteAllText(path, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        return path;
+        var exitCode = RunInRepo(
+            ["section", "create", sectionPath, "--title", "Section", "--role", "architect", "--change", ChangeName],
+            output, repo.Path, "Section body.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var id = doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
+        _sectionPathsById[id] = sectionPath;
+        return id;
     }
 
     private static JsonElement Status(TempGitRepo repo, string findingPath)

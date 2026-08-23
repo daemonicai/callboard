@@ -12,24 +12,24 @@ namespace Callboard.Cards;
 /// expiry apart, so they stay two separate types with two separate producers.
 ///
 /// <list type="bullet">
-/// <item><see cref="Live"/> — a matching, readable <c>section</c> card was found and is still open,
-/// or the finding's directory holds no <c>section</c> card at all — no card of any label, readable
-/// or not (an unresolvable section reads as <see cref="Live"/> rather than <see cref="Degraded"/> —
-/// the record cannot prove closure, so it does not claim it).</item>
-/// <item><see cref="Degraded"/> — a matching, readable <c>section</c> card was found and has closed
+/// <item><see cref="Live"/> — the id this finding's own <c>section</c> field names resolves to a
+/// <c>section</c> card that is still open, or no card anywhere in the record carries that id at all
+/// (§7 block B: <see cref="CardIdentityResolution.NotFound"/> reads as <see cref="Live"/> — the
+/// resolver has exhaustively searched the whole record, every file it touched parsed cleanly, and
+/// none of them claims the id, so the record cannot prove closure and does not claim it).</item>
+/// <item><see cref="Degraded"/> — the id resolves to a <c>section</c> card that has closed
 /// (findings: "the finding is no longer offered as live and remains retrievable by identity"). The
 /// finding card itself is never rewritten to reach this state — see
 /// <see cref="FindingDegradationEvaluator"/>.</item>
-/// <item><see cref="Unreadable"/> — no <c>section</c> card matching this finding's label could be
-/// confirmed, but the directory holds at least one candidate that cannot be ruled out: a card that
-/// failed to parse (could be the finding's own section card gone corrupt), or a readable
-/// <c>section</c> card carrying a different label (§6 remediation, B3 — <c>--section</c> is
-/// unvalidated free text with no section-creation verb, so a differently-spelled label cannot be
-/// told apart from a typo of this one). This is deliberately a different answer from
-/// <see cref="Live"/>'s "no section card exists at all" — the same "absent is a different answer
-/// from failed" convention §3 established for the derived index and <c>GateStatus</c> (reviewer
-/// blocker, §6 block D remediation; widened to the zero-match case in the §6 section remediation).
-/// Carries a <see cref="UnreadableCase.Reason"/> naming what could not be confirmed.</item>
+/// <item><see cref="Unreadable"/> — closure could not be confirmed or ruled out: either the id
+/// resolves to a card that is readable but not a <c>section</c> card, or
+/// <see cref="CardIdentityResolver"/> reports <see cref="CardIdentityResolution.Unreadable"/> —
+/// some file elsewhere in the record could not be read, so it might be the section card this
+/// finding actually names (§6 remediation B3, re-applied by the resolver itself). This is
+/// deliberately a different answer from <see cref="Live"/>'s "confirmed absent" — the same "absent
+/// is a different answer from failed" convention §3 established for the derived index and
+/// <c>GateStatus</c>. Carries a <see cref="UnreadableCase.Reason"/> naming what could not be
+/// confirmed.</item>
 /// </list>
 /// </summary>
 internal abstract record FindingDegradationStatus

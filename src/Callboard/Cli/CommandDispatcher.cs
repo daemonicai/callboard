@@ -272,11 +272,13 @@ internal static class CommandDispatcher
 
         /// <summary>
         /// <c>section status</c>: read-only, work-lifecycle's "the system answers from the section
-        /// entity without requiring its cards to be read" scenario (§5 block E) — carries only the
-        /// card file path, the same "a path, not a symbolic id" convention every other verb here
-        /// follows.
+        /// entity without requiring its cards to be read" scenario (§5 block E) — carries the card
+        /// file path, the same "a path, not a symbolic id" convention every other verb here follows,
+        /// plus <see cref="WorkingDirectory"/> (§7 block B: this verb was one of the path-taking
+        /// handlers that never carried it at all, so its own <c>FilePath</c> could only ever resolve
+        /// against the real process CWD).
         /// </summary>
-        internal sealed record SectionStatus(string FilePath) : ParsedCommand
+        internal sealed record SectionStatus(string FilePath, string WorkingDirectory) : ParsedCommand
         {
             internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge) =>
                 onSectionStatus(this);
@@ -602,13 +604,14 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.ApplyBlockTransition(
-            repoRoot, parsed.FilePath, parsed.TransitionName, parsed.ActingRole, parsed.Timestamp, parsed.BaseCommit, lockTimeout, parsed.ChangeName);
+            repoRoot, filePath, parsed.TransitionName, parsed.ActingRole, parsed.Timestamp, parsed.BaseCommit, lockTimeout, parsed.ChangeName);
 
         return outcome.Match<CommandOutcome>(
             onApplied: applied => new CommandOutcome.Success(new BlockTransitionResult
             {
-                FilePath = parsed.FilePath,
+                FilePath = filePath,
                 Transition = applied.Transition.Name,
                 From = applied.Transition.From.ToWireString(),
                 To = applied.Transition.To.ToWireString(),
@@ -627,7 +630,7 @@ internal static class CommandDispatcher
             onBaseImmutable: immutable => new CommandOutcome.Refusal(
                 "base-immutable",
                 $"'base' is already recorded as '{immutable.Recorded}' and cannot change across rounds; supplied '{immutable.Attempted}'."),
-            onNotABlockCard: notABlock => WrongCardKind(parsed.FilePath, CardKind.Block, notABlock.Kind, "flow transitions only apply to a block card"),
+            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "flow transitions only apply to a block card"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to transition."),
@@ -663,13 +666,14 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.RecordGateResult(
-            repoRoot, parsed.FilePath, parsed.Label, parsed.ExitCode, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+            repoRoot, filePath, parsed.Label, parsed.ExitCode, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return outcome.Match<CommandOutcome>(
             onRecorded: recorded => new CommandOutcome.Success(new BlockGateResult
             {
-                FilePath = parsed.FilePath,
+                FilePath = filePath,
                 Label = recorded.Result.Label,
                 ExitCode = recorded.Result.ExitCode,
                 // Routed through GateStatus (§5 remediation, DEVLOG §5 finding N2) rather than
@@ -679,7 +683,7 @@ internal static class CommandDispatcher
                 ActingRole = recorded.ActingRole.ToWireString(),
                 Timestamp = parsed.Timestamp,
             }),
-            onNotABlockCard: notABlock => WrongCardKind(parsed.FilePath, CardKind.Block, notABlock.Kind, "gate results only apply to a block card"),
+            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "gate results only apply to a block card"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to record a gate result on."),
@@ -707,9 +711,10 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var outcome = CardStore.AddBlockedBy(repoRoot, parsed.FilePath, parsed.BlockingCardId, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        var outcome = CardStore.AddBlockedBy(repoRoot, filePath, parsed.BlockingCardId, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapBlockedByOutcome(outcome, parsed.FilePath, parsed.Timestamp);
+        return MapBlockedByOutcome(outcome, filePath, parsed.Timestamp);
     }
 
     /// <summary>
@@ -728,9 +733,10 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var outcome = CardStore.RemoveBlockedBy(repoRoot, parsed.FilePath, parsed.BlockingCardId, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        var outcome = CardStore.RemoveBlockedBy(repoRoot, filePath, parsed.BlockingCardId, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapBlockedByOutcome(outcome, parsed.FilePath, parsed.Timestamp);
+        return MapBlockedByOutcome(outcome, filePath, parsed.Timestamp);
     }
 
     /// <summary>
@@ -786,20 +792,21 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.RecordSectionVerdict(
-            repoRoot, parsed.FilePath, parsed.Verdict, parsed.RangeFrom, parsed.RangeTo, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+            repoRoot, filePath, parsed.Verdict, parsed.RangeFrom, parsed.RangeTo, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return outcome.Match<CommandOutcome>(
             onRecorded: recorded => new CommandOutcome.Success(new SectionVerdictResult
             {
-                FilePath = parsed.FilePath,
+                FilePath = filePath,
                 Verdict = recorded.Entry.Verdict.ToWireString(),
                 RangeFrom = recorded.Entry.RangeFrom,
                 RangeTo = recorded.Entry.RangeTo,
                 ActingRole = recorded.Entry.By.ToWireString(),
                 Timestamp = recorded.Entry.Timestamp,
             }),
-            onNotASectionCard: notASection => WrongCardKind(parsed.FilePath, CardKind.Section, notASection.Kind, "verdicts only apply to a section card"),
+            onNotASectionCard: notASection => WrongCardKind(filePath, CardKind.Section, notASection.Kind, "verdicts only apply to a section card"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to record a verdict on."),
@@ -828,19 +835,20 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var outcome = CardStore.CloseSection(repoRoot, parsed.FilePath, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        var outcome = CardStore.CloseSection(repoRoot, filePath, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return outcome.Match<CommandOutcome>(
             onClosed: closed => new CommandOutcome.Success(new SectionCloseResult
             {
-                FilePath = parsed.FilePath,
+                FilePath = filePath,
                 ClosedBy = (closed.Card.SectionFields.ClosedBy ?? parsed.ActingRole).ToWireString(),
                 ClosedAt = closed.Card.SectionFields.ClosedAt ?? parsed.Timestamp,
             }),
             onAlreadyClosed: already => new CommandOutcome.Refusal(
                 "already-closed",
                 $"'{already.FilePath}' is already closed."),
-            onNotASectionCard: notASection => WrongCardKind(parsed.FilePath, CardKind.Section, notASection.Kind, "only a section card can be closed by this verb"),
+            onNotASectionCard: notASection => WrongCardKind(filePath, CardKind.Section, notASection.Kind, "only a section card can be closed by this verb"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to close."),
@@ -864,14 +872,15 @@ internal static class CommandDispatcher
     /// </summary>
     private static CommandOutcome RunSectionStatus(ParsedCommand.SectionStatus parsed)
     {
-        if (!File.Exists(parsed.FilePath))
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        if (!File.Exists(filePath))
         {
             return new CommandOutcome.Refusal(
                 "card-not-found",
-                $"no card file exists at '{parsed.FilePath}' to read a status from.");
+                $"no card file exists at '{filePath}' to read a status from.");
         }
 
-        var read = CardStore.ReadCard(parsed.FilePath);
+        var read = CardStore.ReadCard(filePath);
         return read.Match<CommandOutcome>(
             onSuccess: success =>
             {
@@ -883,18 +892,18 @@ internal static class CommandDispatcher
                 // elsewhere on this type.
                 if (!CardStore.IsSectionCard(card))
                 {
-                    return WrongCardKind(parsed.FilePath, CardKind.Section, card.Frontmatter.Kind, "'section status' only reads a section card");
+                    return WrongCardKind(filePath, CardKind.Section, card.Frontmatter.Kind, "'section status' only reads a section card");
                 }
 
                 if (!SectionFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var status))
                 {
                     throw new InvalidOperationException(
-                        $"card '{parsed.FilePath}' has an unrecognised section status: '{card.Frontmatter.Status}'.");
+                        $"card '{filePath}' has an unrecognised section status: '{card.Frontmatter.Status}'.");
                 }
 
                 return new CommandOutcome.Success(new SectionStatusResult
                 {
-                    FilePath = parsed.FilePath,
+                    FilePath = filePath,
                     Status = status.ToWireString(),
                     Base = card.SectionFields.Base,
                     ClosedBy = card.SectionFields.ClosedBy?.ToWireString(),
@@ -903,7 +912,7 @@ internal static class CommandDispatcher
                 });
             },
             onFailure: failure => throw new InvalidOperationException(
-                $"card '{parsed.FilePath}' could not be read as a section card: {failure.Reason}"));
+                $"card '{filePath}' could not be read as a section card: {failure.Reason}"));
     }
 
     /// <summary>
@@ -929,9 +938,24 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var sectionRefusal = ValidateSection(repoRoot, parsed.Section);
+        if (sectionRefusal is not null)
+        {
+            return sectionRefusal;
+        }
+
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        var raiseRequest = parsed.RaiseRequest is null
+            ? null
+            : new FindingBlindSpotRaiseRequest(
+                parsed.RaiseRequest.Kind,
+                ResolveFilePath(parsed.WorkingDirectory, parsed.RaiseRequest.FilePath),
+                parsed.RaiseRequest.Title,
+                parsed.RaiseRequest.Body);
+
         var outcome = CardStore.RecordFinding(
             repoRoot,
-            parsed.FilePath,
+            filePath,
             parsed.Title,
             parsed.ActingRole,
             parsed.Section,
@@ -939,7 +963,7 @@ internal static class CommandDispatcher
             parsed.Instrument,
             parsed.Extent,
             parsed.VerifiedAt,
-            parsed.RaiseRequest,
+            raiseRequest,
             parsed.Disposition,
             parsed.Timestamp,
             lockTimeout,
@@ -948,14 +972,14 @@ internal static class CommandDispatcher
         return outcome.Match<CommandOutcome>(
             onRecorded: recorded => new CommandOutcome.Success(new FindingRecordResult
             {
-                FilePath = parsed.FilePath,
+                FilePath = filePath,
                 Id = recorded.Finding.Frontmatter.Id,
                 Title = recorded.Finding.Frontmatter.Title,
                 BlindSpot = recorded.Finding.FindingFields.BlindSpot.Match(
                     onNone: static () => "none",
                     onRaisedAs: static _ => "raised-as"),
                 RaisedCardId = recorded.RaisedCard?.Frontmatter.Id,
-                RaisedCardFilePath = parsed.RaiseRequest?.FilePath,
+                RaisedCardFilePath = raiseRequest?.FilePath,
                 RaisedCardKind = recorded.RaisedCard?.Frontmatter.Kind.ToWireString(),
                 Disposition = recorded.Finding.FindingFields.Disposition.Match(
                     onMeasured: static () => "measured",
@@ -986,30 +1010,32 @@ internal static class CommandDispatcher
     /// <c>GateStatus.Absent</c> back). Staleness and degradation are answered independently and
     /// emitted as two separate fields (§6 block D ruling) — neither evaluator's outcome influences
     /// the other's. When <see cref="FindingDegradationEvaluator.Evaluate"/> answers <see
-    /// cref="FindingDegradationEvaluation.Ambiguous"/>, this mints <c>ambiguous-section-label</c>
-    /// rather than emitting any result at all (§6 block D remediation — the reviewer proved by
-    /// execution that two <c>section</c> cards sharing one <c>Section</c> label make the evaluator's
-    /// answer depend on filesystem enumeration order; picking one silently would be a guess this
-    /// method has no basis for). <see langword="private"/>: <see cref="CommandParser"/> cannot name
-    /// this method.
+    /// cref="FindingDegradationEvaluation.Ambiguous"/>, this mints <c>duplicate-card-id</c> rather
+    /// than emitting any result at all — §7 block B rewired the evaluator onto
+    /// <see cref="CardIdentityResolver"/>, so this case is now "more than one file claims the id
+    /// this finding's own <c>section</c> field names" (the same fact <see cref="ValidateSection"/>
+    /// refuses under the identical code when it is caught at record time instead), not "two
+    /// <c>section</c> cards happen to share a free-text label". <see langword="private"/>:
+    /// <see cref="CommandParser"/> cannot name this method.
     /// </summary>
     private static CommandOutcome RunFindingStatus(ParsedCommand.FindingStatus parsed)
     {
-        if (!File.Exists(parsed.FilePath))
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        if (!File.Exists(filePath))
         {
             return new CommandOutcome.Refusal(
                 "card-not-found",
-                $"no card file exists at '{parsed.FilePath}' to read a status from.");
+                $"no card file exists at '{filePath}' to read a status from.");
         }
 
-        var read = CardStore.ReadCard(parsed.FilePath);
+        var read = CardStore.ReadCard(filePath);
         return read.Match<CommandOutcome>(
             onSuccess: success =>
             {
                 var card = success.Card;
                 if (!CardStore.IsFindingCard(card))
                 {
-                    return WrongCardKind(parsed.FilePath, CardKind.Finding, card.Frontmatter.Kind, "'finding status' only reads a finding card");
+                    return WrongCardKind(filePath, CardKind.Finding, card.Frontmatter.Kind, "'finding status' only reads a finding card");
                 }
 
                 var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
@@ -1027,7 +1053,7 @@ internal static class CommandDispatcher
                     onNotMeasurable: static reason => ("not-measurable", (string?)reason),
                     onNotApplicable: static reason => ("not-applicable", (string?)reason));
 
-                var degradation = FindingDegradationEvaluator.Evaluate(card, parsed.FilePath);
+                var degradation = FindingDegradationEvaluator.Evaluate(card, repoRoot);
                 return degradation.Match<CommandOutcome>(
                     onResolved: status =>
                     {
@@ -1038,7 +1064,7 @@ internal static class CommandDispatcher
 
                         return new CommandOutcome.Success(new FindingStatusResult
                         {
-                            FilePath = parsed.FilePath,
+                            FilePath = filePath,
                             Id = card.Frontmatter.Id,
                             Title = card.Frontmatter.Title,
                             Disposition = card.FindingFields.Disposition.Match(
@@ -1051,14 +1077,14 @@ internal static class CommandDispatcher
                             DegradationReason = degradationReason,
                         });
                     },
-                    onAmbiguous: (label, filePaths) => new CommandOutcome.Refusal(
-                        "ambiguous-section-label",
-                        $"{filePaths.Count} 'section' cards carry the label '{label}' in this finding's directory " +
-                        $"({string.Join(", ", filePaths)}) — refusing to guess which one raised this finding rather " +
-                        $"than reading it from whichever file happened to sort first."));
+                    onAmbiguous: (id, filePaths) => new CommandOutcome.Refusal(
+                        "duplicate-card-id",
+                        $"{filePaths.Count} card files claim id '{id}' — named by this finding's own 'section' " +
+                        $"field — ({string.Join(", ", filePaths)}); refusing to guess which one is the section " +
+                        "rather than reading it from whichever file happened to sort first."));
             },
             onFailure: failure => throw new InvalidOperationException(
-                $"card '{parsed.FilePath}' could not be read as a finding card: {failure.Reason}"));
+                $"card '{filePath}' could not be read as a finding card: {failure.Reason}"));
     }
 
     /// <summary>
@@ -1076,12 +1102,13 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, parsed.FilePath, CardKind.Rule, parsed.Scope, parsed.Title,
+            repoRoot, filePath, CardKind.Rule, parsed.Scope, parsed.Title,
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapCardCreateOutcome(outcome, parsed.FilePath);
+        return MapCardCreateOutcome(outcome, filePath);
     }
 
     /// <summary>
@@ -1101,13 +1128,14 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, parsed.FilePath, CardKind.Hazard, CardScope.Repository, parsed.Title,
+            repoRoot, filePath, CardKind.Hazard, CardScope.Repository, parsed.Title,
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: new RegisterCardFields(parsed.Condition, parsed.Cadence, null, null),
             parsed.Timestamp, lockTimeout, changeName: null);
 
-        return MapCardCreateOutcome(outcome, parsed.FilePath);
+        return MapCardCreateOutcome(outcome, filePath);
     }
 
     /// <summary><c>obligation create</c> (§7 block A). Scope is always <see cref="CardScope.Change"/>.</summary>
@@ -1121,12 +1149,13 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, parsed.FilePath, CardKind.Obligation, CardScope.Change, parsed.Title,
+            repoRoot, filePath, CardKind.Obligation, CardScope.Change, parsed.Title,
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapCardCreateOutcome(outcome, parsed.FilePath);
+        return MapCardCreateOutcome(outcome, filePath);
     }
 
     /// <summary><c>decision create</c> (§7 block A). Scope is always <see cref="CardScope.Capability"/>.</summary>
@@ -1140,12 +1169,13 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, parsed.FilePath, CardKind.Decision, CardScope.Capability, parsed.Title,
+            repoRoot, filePath, CardKind.Decision, CardScope.Capability, parsed.Title,
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, changeName: null);
 
-        return MapCardCreateOutcome(outcome, parsed.FilePath);
+        return MapCardCreateOutcome(outcome, filePath);
     }
 
     /// <summary>
@@ -1166,12 +1196,13 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, parsed.FilePath, CardKind.Section, CardScope.Change, parsed.Title,
+            repoRoot, filePath, CardKind.Section, CardScope.Change, parsed.Title,
             SectionFlowState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapCardCreateOutcome(outcome, parsed.FilePath);
+        return MapCardCreateOutcome(outcome, filePath);
     }
 
     /// <summary>
@@ -1216,12 +1247,13 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var outcome = CardStore.DischargeRegisterCard(repoRoot, parsed.FilePath, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        var outcome = CardStore.DischargeRegisterCard(repoRoot, filePath, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return outcome.Match<CommandOutcome>(
             onDischarged: discharged => new CommandOutcome.Success(new CardRegisterDischargeResult
             {
-                FilePath = parsed.FilePath,
+                FilePath = filePath,
                 Id = discharged.Card.Frontmatter.Id,
                 Kind = discharged.Card.Frontmatter.Kind.ToWireString(),
                 DischargedBy = (discharged.Card.RegisterFields.DischargedBy ?? parsed.ActingRole).ToWireString(),
@@ -1235,7 +1267,7 @@ internal static class CommandDispatcher
                 $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states."),
             onNotARegisterCard: notARegister => new CommandOutcome.Refusal(
                 "not-a-register-card",
-                $"'{parsed.FilePath}' is a '{notARegister.Kind.ToWireString()}' card, not one of the register kinds " +
+                $"'{filePath}' is a '{notARegister.Kind.ToWireString()}' card, not one of the register kinds " +
                 "(rule, hazard, obligation, decision); discharge only applies to a register card."),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to discharge."),
@@ -1263,6 +1295,67 @@ internal static class CommandDispatcher
         new CommandOutcome.Refusal(
             "wrong-card-kind",
             $"'{filePath}' is a '{actual.ToWireString()}' card, not a '{expected.ToWireString()}' card; {verbDescription}.");
+
+    /// <summary>
+    /// The <c>workingDirectory</c> seam (§7 block B, <c>## NEXT</c> item 2). Every path-taking
+    /// handler used to pass a command's own file-path argument straight to <see cref="File.Exists"/>
+    /// / <see cref="Cards.CardStore.ReadCard"/> / the write path, which resolves a relative argument
+    /// against the real process working directory (<see cref="Directory.GetCurrentDirectory"/>) —
+    /// never against <paramref name="workingDirectory"/>, the value <c>Run</c>'s own caller supplied
+    /// and every handler otherwise treats as "where this invocation runs". In the shipped binary the
+    /// two can never diverge (<c>Program.cs</c> seeds <c>workingDirectory</c> from
+    /// <see cref="Directory.GetCurrentDirectory"/> itself), so this is a testability fix, not a
+    /// behaviour change: a test can now set <paramref name="workingDirectory"/> to a temp directory
+    /// and pass a relative <paramref name="filePath"/> without mutating the real process CWD (the
+    /// <c>CurrentDirectoryMutatingTests</c> collection §6 needed for exactly that is gone — see the
+    /// DEVLOG). An already-rooted <paramref name="filePath"/> passes through unchanged — the common
+    /// case in this codebase's own tests, which almost always build an absolute temp-rooted path —
+    /// so this has no effect on any caller that already supplies one.
+    /// </summary>
+    private static string ResolveFilePath(string workingDirectory, string filePath) =>
+        Path.IsPathRooted(filePath) ? filePath : Path.GetFullPath(Path.Combine(workingDirectory, filePath));
+
+    /// <summary>
+    /// Validated <c>--section</c> (§7 block B, Product Owner ruling item 2): "a card raised within
+    /// a section names it by the section card's id, and that id must resolve to a real section
+    /// card." Resolves <paramref name="sectionId"/> via <see cref="CardIdentityResolver.Resolve"/>
+    /// — never by re-implementing directory enumeration or label matching here — and returns the
+    /// refusal to surface, or <see langword="null"/> when <paramref name="sectionId"/> genuinely
+    /// names an existing <c>section</c> card. The only caller today is <see cref="RunFindingRecord"/>;
+    /// this is a free function, not folded into that method, so a later block adding another
+    /// <c>--section</c>-accepting verb reuses it rather than re-deriving the same four-way mapping.
+    ///
+    /// <para>
+    /// <b>Refusal codes, one per resolver case (Architect ruling: spec-named refusals get their own
+    /// code).</b> The Product Owner's own ruling names this requirement, so all three failure
+    /// shapes the resolver can report get distinct codes: <c>card-id-not-found</c> ("no card carries
+    /// this id" — a different fact from the existing <c>card-not-found</c>, which means "no file at
+    /// this path"), <c>duplicate-card-id</c> (shared with <see cref="Cards.FindingDegradationEvaluator"/>'s
+    /// own duplicate-resolution refusal in <see cref="RunFindingStatus"/> — the same underlying fact,
+    /// "more than one file claims this id", earns the same code rather than two spellings of it), and
+    /// <c>card-id-unresolvable</c> (§6 remediation B3, re-applied: some file elsewhere in the record
+    /// could not be read, so the id's absence cannot be confirmed). A resolved id naming a card that
+    /// is not a <c>section</c> at all reuses the existing <c>wrong-card-kind</c> code via
+    /// <see cref="WrongCardKind"/> — that is exactly what it already means.
+    /// </para>
+    /// </summary>
+    private static CommandOutcome? ValidateSection(string repoRoot, string sectionId) =>
+        CardIdentityResolver.Resolve(repoRoot, sectionId).Match<CommandOutcome?>(
+            onFound: (sectionFilePath, sectionCard) =>
+                CardStore.IsSectionCard(sectionCard)
+                    ? null
+                    : WrongCardKind(sectionFilePath, CardKind.Section, sectionCard.Frontmatter.Kind, "'--section' must name a 'section' card"),
+            onNotFound: id => new CommandOutcome.Refusal(
+                "card-id-not-found",
+                $"'--section' names id '{id}', but no card in the record carries it — create the section first with 'section create'."),
+            onDuplicate: (id, filePaths) => new CommandOutcome.Refusal(
+                "duplicate-card-id",
+                $"'--section' names id '{id}', but {filePaths.Count} card files claim it ({string.Join(", ", filePaths)}); " +
+                "refusing to guess which one is the section."),
+            onUnreadable: (id, filePaths) => new CommandOutcome.Refusal(
+                "card-id-unresolvable",
+                $"'--section' names id '{id}', but {filePaths.Count} card file(s) elsewhere in the record could not " +
+                $"be read, so its presence cannot be confirmed or ruled out: {string.Join(", ", filePaths)}."));
 
     private static int ExitCodeFor(CommandOutcome outcome) => outcome.Match(
         onSuccess: static _ => SuccessExitCode,

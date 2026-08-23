@@ -15095,6 +15095,322 @@ the reviewer rather than counted forward from a remembered baseline. That baseli
 arithmetic twice in this change; it is derived here for the third time and should be derived again,
 never incremented.
 
+**[architect]** → @worker — **block B brief (addressing). Ticks nothing.**
+
+This is the block §7 was opened for. §5 asked for identity addressing, §6 hit it twice and
+fail-closed both times, and the Product Owner has now ruled: **Option A — identity is the reference,
+and identity resolves.** Read that ruling and my consequences post above before you start.
+
+**Deliver four things, in one block:**
+
+1. **The id resolver.** Given a card id (`S-0003`, `F-0031`, `R-0007`), answer which card it is,
+   reading the record from the repo root: `callboard/register/`, `callboard/decisions/`,
+   `callboard/changes/<name>/`, **and `callboard/changes/archive/<name>/`**.
+2. **Validated `--section`.** A card raised within a section names it by the section card's **id**,
+   and that id must resolve to a real `section` card. An unvalidated free-text label stops being an
+   addressing mechanism.
+3. **Rewire §6's finding→section link** onto the resolver — `FindingDegradationEvaluator` currently
+   enumerates a directory and matches `section` labels by ordinal equality.
+4. **The `workingDirectory` seam.** Every path-taking handler in `CommandDispatcher` passes
+   `parsed.FilePath` straight to `File.Exists` / `CardStore.ReadCard` / the write path without ever
+   resolving it against `parsed.WorkingDirectory`, which today feeds only `RepoRootResolver.Resolve`
+   and `RunIndexRebuild`. Resolve the path against it.
+
+**What binds you:**
+
+1. **The record resolves, not the index.** ADR-0004: the index is derived and never authoritative.
+   The resolver reads card files. It may later be cached; it may not *be* the index. A resolver that
+   queries SQLite is a failed block.
+2. **A duplicate id is a refusal, never a pick.** No "whichever sorted first", no "first match wins".
+   This is the precise defect §6 fail-closed on twice and the reason this block exists.
+3. **Zero matches among candidates is not the same as zero candidates** — §6 remediation B3, and the
+   lesson is now yours to re-apply. A card file that could not be read during the walk must not
+   silently vanish from the answer: an id that *might* live in an unreadable file cannot be reported
+   as "not found". Fail closed and say what could not be read.
+4. **Archive is a directory move and stays one.** The resolver searching `changes/archive/` is what
+   makes card-model's "a card's identity SHALL remain valid and resolvable after the change that
+   raised it is archived" true without archive touching a single card file. Block D depends on that
+   property; do not make archive a data migration to make resolution easier.
+5. **Refusal codes follow the rule I stated above** — spec-named refusals get their own code,
+   incidental missing flags get the generic one. Note that `card-not-found` currently means "no file
+   at this path", which is a *different* fact from "no card carries this id"; decide deliberately
+   whether that is one code or two and argue it in your post. The set is **37**; if you change it,
+   re-derive it mechanically over every `CommandOutcome.Refusal` site — do not increment a
+   remembered number, which has been wrong twice in this change.
+6. **`ambiguous-section-label` should become unreachable** once the link is an id. Either remove it
+   and show why nothing can reach it, or keep it and prove what still can. Do not leave it standing
+   unexamined.
+7. **The seam fix is not a behaviour change in the shipped binary** — `Program.cs:10` seeds
+   `WorkingDirectory` from `Directory.GetCurrentDirectory()`, so the two cannot diverge in
+   production. It is a testability fix. Once it is real, check whether §6's
+   `CurrentDirectoryMutatingTests` collection can drop its members; if it can, drop it and say so.
+   Note block A added further path-taking handlers, so this is more than the eight §6 counted.
+8. **No new read verb.** Retrieval by identity as a *command* is 11.1's. This block builds the
+   resolver and consumes it internally; it does not ship `card show`.
+
+**Stop and post `❓ @architect` rather than deciding alone if:** making `section` hold an id
+conflicts with the §6 (O-4) compatibility corpus's purpose. My intent is that `section` holds a card
+id and a value that is not id-shaped is refused rather than silently treated as a legacy label — but
+that corpus exists to prove older files still parse, so if those two aims collide, that is my call
+and not yours.
+
+**Explicitly NOT in this block:** `owed_by` (C), supersession links (C), `earned_from` (E), `absorbs`
+(F), citation counting (G), promotion across scope (E), archive as a verb (D).
+
+**Done-gates — all four, quote the exit line, never the output:** `make build` → `BUILD_EXIT:0`,
+`make test` → `TEST_EXIT:0` (your new tests **and** all 518 existing), `make format` →
+`FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`.
+
+**Boundaries:** no commit, no ticks (**this block ticks nothing — that is by design, not an
+oversight**), no `Makefile` edit. Post progress here and hand off with `→ @reviewer`.
+
+**[worker]** Implemented block B (addressing). No `N.M` tasks ticked, as briefed.
+
+- **`CardIdentityResolver.Resolve(cardsRoot, id)`** (`src/Callboard/Cards/CardIdentityResolver.cs`) —
+  a closed union `CardIdentityResolution` (`Found`/`NotFound`/`Duplicate`/`Unreadable`). Walks
+  `CardLayout.ResolveRecordDirectories(cardsRoot)` — register, decisions, every live change, every
+  archived change — via `CardStore.ReadAllCards`, never the SQLite index. `ResolveRecordDirectories`
+  is the old `IndexPopulator.ResolveCardSources` logic, moved onto `CardLayout` (the single statement
+  of "where does the record live") so `IndexPopulator` and the resolver share one enumeration instead
+  of two that could drift.
+  - **Duplicate id refuses, never picks**: `matches.Count > 1` → `Duplicate`, names every claimant.
+  - **B3 re-applied**: `matches.Count == 0` with at least one unreadable file anywhere in the walk →
+    `Unreadable`, never `NotFound` — the id might live in the file that couldn't be read. Only checked
+    once no match was confirmed; a found match is never retracted by an unrelated read failure
+    elsewhere (ids are unique by construction; that would be paranoia the resolver has no evidence
+    for, not fail-closed discipline).
+  - Archive stays a directory move — the resolver simply searches `changes/archive/<name>/`
+    alongside every live change; nothing about archiving a card changed.
+- **Validated `--section`** — `CommandDispatcher.ValidateSection` resolves `--section`'s value via the
+  resolver at `finding record` execute time (after `repoRoot`, before the write) and refuses unless it
+  names a real `section` card. New codes: `card-id-not-found` ("no card carries this id" — a
+  different fact from `card-not-found`'s "no file at this path", so a distinct code, per the
+  spec-named-refusals-get-their-own-code rule: the Product Owner's own ruling names this
+  requirement), `duplicate-card-id`, `card-id-unresolvable` (B3, surfaced as a refusal here since a
+  write cannot proceed on an unconfirmed section). A resolved id naming a non-`section` card reuses
+  the existing `wrong-card-kind` — that's exactly what it already means, no new code needed.
+- **Finding→section link rewired** — `FindingDegradationEvaluator.Evaluate` now takes `cardsRoot`
+  instead of a file path and calls the resolver on `finding.Frontmatter.Section` (now an id) instead
+  of enumerating the finding's own directory and matching `section` labels by ordinal equality.
+  `NotFound` reads `Live` (record-wide search confirms absence, same honest "cannot claim closure"
+  logic the old directory-local default used, now on stronger evidence). `Duplicate` still becomes
+  `FindingDegradationEvaluation.Ambiguous`, surfaced by `RunFindingStatus` as `duplicate-card-id` —
+  **the same code** `ValidateSection` mints for the identical underlying fact ("more than one file
+  claims this id"), not a second spelling of it. `ambiguous-section-label` is gone: nothing mints it
+  any more (grepped the diff to confirm), replaced by `duplicate-card-id` at both sites that can
+  reach a duplicate resolution.
+- **`workingDirectory` seam** — `CommandDispatcher.ResolveFilePath(workingDirectory, filePath)`:
+  passes an already-rooted path through unchanged (the common case — this codebase's own tests always
+  build absolute temp-rooted paths, so this is a no-op for nearly every existing test and for
+  production, where `Program.cs` seeds `workingDirectory` from the real process CWD anyway), else
+  resolves relative to `workingDirectory` via `Path.GetFullPath(Path.Combine(...))`. Applied at the
+  top of every path-taking handler — the eight §6 counted plus block A's five creation verbs, its
+  discharge verb, and `section status` (which had no `WorkingDirectory` field at all until this
+  block — added one to `ParsedCommand.SectionStatus` and threaded it through
+  `CommandParser.ParseSectionStatus`). The finding-record blind-spot raise path also resolves
+  (`FindingBlindSpotRaiseRequest.FilePath` is itself a path-taking argument, reconstructed with the
+  resolved path before reaching `CardStore.RecordFinding`). `CurrentDirectoryMutatingTests` is gone —
+  no test in `FindingDegradationEvaluatorTests` or `CommandDispatcherFindingStatusTests` mutates the
+  real process CWD any more; the one test that needed to (`BareFilenameWithNoDirectoryComponent_...`)
+  now passes a relative `finding status` argument with a distinct `workingDirectory` instead.
+- **Not built** (all named out of scope in the brief): `owed_by`, supersession links, `earned_from`,
+  `absorbs`, citation counting, promotion across scope, archive as a verb, any new read verb (`card
+  show` stays 11.1's — the resolver is consumed internally only).
+- Did **not** hit the "does `section` holding an id conflict with the O-4 corpus" tripwire: O-4's
+  compatibility corpus proves the wire *format* (frontmatter keys/escaping) still parses; it never
+  calls the resolver or asserts on semantic resolution of a `section` value, so a legacy free-text
+  label still parses cleanly (unaffected) and simply fails to resolve to anything if evaluated (reads
+  `Unreadable`/`Live` per the evaluator's own fail-closed cases, never a parse failure). No conflict
+  to flag.
+
+New tests: `CardIdentityResolverTests` (9 — Found in each of the four source kinds including an
+archived change written directly under `changes/archive/<name>/`, Duplicate, Unreadable, a found
+match taking precedence over an unrelated unreadable file, and "resolves without any index database
+on disk" as a direct ADR-0004 proof by execution). `CommandDispatcherFindingRecordTests` gained three
+CLI-level refusal tests for `card-id-not-found`/`wrong-card-kind`/`duplicate-card-id` on `--section`,
+plus every existing test updated to create a real section via the CLI's own `section create` and pass
+its id. `FindingDegradationEvaluatorTests` and `CommandDispatcherFindingStatusTests` rewritten around
+id-based fixtures; one CLI-level fixture (unresolvable section id) is now hand-written directly to
+disk rather than via `finding record`, since that id shape is no longer constructible through the CLI
+at all once `--section` is validated at write time.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`;
+528/528 tests, up from 518 — 10 net new: 9 in `CardIdentityResolverTests`, 3 new refusal tests in
+`CommandDispatcherFindingRecordTests`, 1 net removal in `FindingDegradationEvaluatorTests` where the
+bare-filename CWD-dependence fixture no longer applies — the evaluator no longer derives a directory
+from a file path at all).
+
+**Refusal set: 39.** Re-derived mechanically over every `CommandOutcome.Refusal(` construction site in
+`src/Callboard` (135 sites, 39 distinct codes) — not counted forward from 37. Net: −1
+(`ambiguous-section-label`, now unreachable and removed) +3 (`card-id-not-found`,
+`duplicate-card-id`, `card-id-unresolvable`).
+
+→ @reviewer
+
+**[reviewer]** Audit of block B (addressing). Gates re-run independently: `BUILD_EXIT:0`,
+`TEST_EXIT:0` (528/528), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the report. Refusal set
+re-derived mechanically myself (not trusted from the report): 135 `CommandOutcome.Refusal(`
+construction sites, **39 distinct codes**, `ambiguous-section-label` confirmed absent by grep
+across the whole tree. Matches the worker's numbers exactly.
+
+**Verdict: Request changes.** One blocker — narrow, and everything else in this block is right.
+
+**Blocker**
+
+1. **`card-id-unresolvable` has no test proving it fires.** `ValidateSection`'s `onUnreadable` arm
+   (`src/Callboard/Cli/CommandDispatcher.cs:1358-1361`) mints this refusal when `--section` names an
+   id that cannot be confirmed absent because some other file in the record failed to parse — a
+   real, distinct, spec-adjacent code (item 5 of this audit). I grepped every test file for
+   `card-id-unresolvable` and for `Unresolvable`: nothing constructs the CLI-level scenario that
+   reaches it (`finding record ... --section <id>` where the id is genuinely unconfirmable due to an
+   unrelated unreadable file elsewhere in the record). The equivalent case *is* proven at the
+   `FindingDegradationEvaluator` layer
+   (`FindingDegradationEvaluatorTests.SectionIdDoesNotResolve_ButAnUnrelatedFileCouldNotBeRead_ReadsUnreadable_NotLive`)
+   and at the resolver's own layer
+   (`CardIdentityResolverTests.NoMatch_ButAFileElsewhereCouldNotBeRead_Unreadable_NeverNotFound`),
+   but `ValidateSection`'s own mapping from `CardIdentityResolution.Unreadable` to the
+   `card-id-unresolvable` refusal — the code, the message text, the exit code — is asserted nowhere.
+   This is exactly what "a refusal rule has no test proving it fires" means: the code path is real
+   and I read it and it looks correct, but nothing would go red if `onUnreadable` were swapped for
+   `onNotFound` tomorrow. One CLI-level test alongside the three that already exist for
+   `card-id-not-found`/`wrong-card-kind`/`duplicate-card-id` in
+   `CommandDispatcherFindingRecordTests.cs` closes it — the fixture shape is already established by
+   `CommandDispatcherFindingStatusTests.TwoCardFilesClaimTheSectionId_Refuses_AndNamesBothFiles`
+   (hand-write a colliding/corrupt file directly, since nothing through the CLI's own allocator can
+   produce this condition).
+
+**Everything else checked clean — going through the audit list in order:**
+
+1. **The resolver reads the record, never the index.** `CardIdentityResolver.Resolve`
+   (`src/Callboard/Cards/CardIdentityResolver.cs`) walks `CardLayout.ResolveRecordDirectories` via
+   `CardStore.ReadAllCards` — no reference to `Index/` or SQLite anywhere in the resolver or its
+   caller chain. `CardIdentityResolverTests.ResolvesWithoutAnyIndexDatabaseOnDisk` proves it by
+   execution: asserts zero `.db` files exist anywhere under the test root and resolves correctly
+   anyway.
+2. **A duplicate id is genuinely refused, never picked.** `matches.Count > 1` returns `Duplicate`
+   before any ordering decision is made; both consumers (`ValidateSection`, `FindingDegradationEvaluator`)
+   match it exhaustively into a refusal (`duplicate-card-id`, reused — the same underlying fact,
+   correctly not respelled). Grepped `src/Callboard/Cards/*.cs` and `src/Callboard/Cli/*.cs` for
+   `FirstOrDefault`/`.First(` — the one hit (`CardStore.cs:289`, a block-transition name lookup) is
+   unrelated to identity resolution. No surviving pick-first path.
+3. **`Unreadable` is reachable and consulted at both consumers**, not merely modelled — see the one
+   blocker above for the one place it's reachable but unproven by a test.
+4. **`ambiguous-section-label` is genuinely unreachable, not merely undetected.** Confirmed by grep:
+   the string does not appear anywhere in `src/Callboard` or `tests/Callboard.Tests` any more — not
+   commented out, not dead-code behind an unreachable branch. The mechanism that used to produce it
+   (label-matching within one directory) no longer exists; `FindingDegradationEvaluator.Evaluate`
+   now takes `cardsRoot` and calls the resolver, full stop. The claim holds at the strongest level:
+   it isn't unreachable, it's absent.
+5. **The three new resolution codes hold up against the granularity rule.** `card-id-not-found` vs.
+   the pre-existing `card-not-found` is a genuine two-fact split, not a restatement:
+   `card-not-found` means "no file at this path" (a filesystem fact about a path argument, checked in
+   handlers like `RunFindingStatus`), `card-id-not-found` means "no card anywhere in the record
+   carries this id" (a resolution fact about content, reached only through the resolver) — different
+   evidence, different caller remediation ("check the path" vs. "create the section first"), and the
+   Product Owner's own ruling names identity resolution as the requirement, clearing the "spec-named
+   refusal" bar the Architect's ruling sets. `duplicate-card-id` and `card-id-unresolvable` are new
+   facts with no existing code to collide with. None of the three restate `wrong-card-kind`, which is
+   correctly reused as-is for "the id resolved, but to the wrong kind."
+6. **Archive is still a directory move.** `CardLayout.ResolveRecordDirectories` walks
+   `changes/archive/<name>/` as plain directory enumeration, identical in kind to how it walks a live
+   change; nothing about writing or moving a card changed. `CardIdentityResolverTests.
+   CardInAnArchivedChange_StillResolves` writes directly under `changes/archive/<name>/` (no archive
+   verb exists yet — correctly out of scope, block D's) and proves the resolver finds it exactly like
+   a live card. `IndexPopulator.ResolveCardSources` now delegates to the same method, closing the
+   drift risk between the two enumerations the brief called out by name.
+7. **The seam is a no-op for the shipped binary and lost no coverage.** `ResolveFilePath` passes an
+   already-rooted path through unchanged; `Program.cs` still seeds `workingDirectory` from the real
+   process CWD, so production behaviour is unchanged (confirmed by reading `Program.cs` — untouched
+   by this diff). Applied at all 14 path-taking handlers (cross-checked against all 14
+   `ParsedCommand` cases carrying a `FilePath`/`WorkingDirectory` pair — none missed).
+   `CurrentDirectoryMutatingTests`/`Directory.SetCurrentDirectory` no longer appear anywhere in
+   `tests/Callboard.Tests` (grepped), and the collection's retirement is not a coverage loss: the one
+   test that needed real CWD divergence
+   (`CommandDispatcherFindingStatusTests.BareFilenameWithNoDirectoryComponent_StillReadsBackDegraded_SameAsAnAbsolutePath`)
+   now proves the same thing by passing a relative `finding status` argument with a `workingDirectory`
+   that differs from the real process CWD — a stronger proof than the mutation-based version, not a
+   weaker one that happened to become unnecessary.
+
+**Scope confirmed.** Grepped for `owed_by`, `supersedes`, `superseded_by`, `earned_from`, `absorbs`,
+citation counting, promotion, an archive verb, and any new read verb (`card show`) — none present.
+`git diff HEAD -- src/Callboard/Cli/CommandParser.cs` shows exactly one line changed (threading
+`WorkingDirectory` into `SectionStatus`) — no new command or subcommand added. `tasks.md` is
+untouched, confirming the block ticks nothing, as briefed. No `Makefile`/`CLAUDE.md`/`.claude/`
+changes.
+
+**Nits:** none beyond the blocker.
+
+Fix the one blocker (a single new CLI-level test) and this is ready to re-audit.
+
+**[worker]** Fixed the blocker. Added
+`SectionIdDoesNotResolve_ButAFileElsewhereCouldNotBeRead_Refuses_WithCardIdUnresolvable`
+(`tests/Callboard.Tests/CommandDispatcherFindingRecordTests.cs`) — drives `finding record --section
+S-9999` through the same CLI entry point (`RunInRepo`) every other `--section` refusal test in that
+file uses, against a repo where `S-9999` matches nothing and a genuinely unreadable file
+(`callboard/register/r-broken.md`, real bytes with no frontmatter fence, on disk) sits elsewhere in
+the record — not a mocked `CardIdentityResolution.Unreadable`. Asserts `card-id-unresolvable` on the
+refusal `code`, and both `S-9999` and the unreadable file's own path in the `message` text, plus that
+the finding was never written. Nothing else touched — everything the reviewer confirmed clean stays
+untouched.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`GATES_EXIT:0`). Count moved
+528 → **529** — the one new test, nothing else.
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the block B blocker fix. Gates re-run independently: `BUILD_EXIT:0`,
+`TEST_EXIT:0` (529/529), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**1. The test genuinely exercises the CLI-level `onUnreadable` arm, and discriminates.**
+`SectionIdDoesNotResolve_ButAFileElsewhereCouldNotBeRead_Refuses_WithCardIdUnresolvable`
+(`tests/Callboard.Tests/CommandDispatcherFindingRecordTests.cs:410-434`) writes a real unparseable
+file (`callboard/register/r-broken.md`, no frontmatter fence) to disk in a real `TempGitRepo`, then
+drives `finding record --section S-9999` through the actual `CommandDispatcher.Run` entry point
+(`RunInRepo`, the same helper every sibling `--section` test in that file uses) — no mocked
+resolution outcome anywhere in the path. I didn't take this on the report's word: I mutated
+`ValidateSection`'s `onUnreadable` arm (`CommandDispatcher.cs:1355-1358`) to fall through to the
+`card-id-not-found` refusal — exactly the regression this test exists to catch — rebuilt, and ran
+the test in isolation. It failed immediately (`Assert.Equal() Failure: Strings differ … Expected:
+"card-id-unresolvable" … Actual: "card-id-not-found"`) at the code assertion, before the message-text
+assertions even ran. Reverted the mutation and confirmed `git diff` against
+`src/Callboard/Cli/CommandDispatcher.cs` matches the pre-mutation state exactly (217 lines changed,
+same as before I touched it) and `make build` is clean again. The test discriminates; it is not
+merely passing.
+
+**2. "Finding was never written" holds for the right reason.** `RunFindingRecord`
+(`CommandDispatcher.cs:931-945`) calls `ValidateSection` immediately after resolving `repoRoot` and
+returns its refusal **before** `filePath` is even resolved via `ResolveFilePath`, and well before
+`CardStore.RecordFinding` — the only thing in this codebase that writes a finding card — is ever
+called. There is no write attempt to roll back; the refusal precedes the write structurally, the
+same shape every other pre-write validation in this handler already has. `findingPath` in the test
+is the exact path the CLI argument named and the exact path `CardStore.RecordFinding` would have
+written to had `ValidateSection` let the call through, so `Assert.False(File.Exists(findingPath))`
+is checking the right location, not a path the file would never have landed at regardless.
+
+**3. Scoped to exactly the blocker.** Checked the diff and the working tree myself rather than
+trusting the report. File modification times show only
+`tests/Callboard.Tests/CommandDispatcherFindingRecordTests.cs` and `DEVLOG.md` touched since the
+prior round — every other file in the block B diff (`CardIdentityResolver.cs`,
+`CardIdentityResolution.cs`, `CardLayout.cs`, `FindingDegradationEvaluator.cs`,
+`FindingDegradationEvaluation.cs`, `FindingDegradationStatus.cs`, `CommandDispatcher.cs`,
+`CommandParser.cs`, `IndexPopulator.cs`, `CardFindingRecordTests.cs`,
+`CommandDispatcherFindingStatusTests.cs`, `FindingDegradationEvaluatorTests.cs`,
+`CardIdentityResolverTests.cs`) carries an older timestamp than this round. Within
+`CommandDispatcherFindingRecordTests.cs` itself: 17 test methods present, the same 16 I audited
+last round plus exactly one new one inserted between the `card-id-not-found` and `wrong-card-kind`
+tests; every sibling test's name, code and message assertions are unchanged. `git diff HEAD --stat`
+shows no other tracked file moved, and no untracked file was added or removed. `tasks.md`,
+`Makefile`, `CLAUDE.md` and `.claude/` remain untouched.
+
+**Verdict: Approve.**
+
+Block B closes the addressing gap §5 asked for and §6 hit twice: the record resolves by identity
+(never the index), a duplicate id refuses rather than picks, an unreadable file fails closed rather
+than reading as absent, `ambiguous-section-label` is gone because its mechanism no longer exists,
+archive stays a directory move, the three new refusal codes hold up against the granularity rule,
+and the `workingDirectory` seam is a proven no-op in production with no coverage lost. Refusal set:
+**39**, re-derived mechanically and confirmed twice now.
+
 ## NEXT
 
 

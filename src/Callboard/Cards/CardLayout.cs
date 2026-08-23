@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace Callboard.Cards;
 
 /// <summary>
@@ -90,6 +92,57 @@ internal static class CardLayout
     /// <summary>The relative path of <paramref name="kind"/>'s identity counter file under
     /// <see cref="IdentitiesDirectory"/> — the one place that path is built.</summary>
     internal static string IdentityCounterPath(CardKind kind) => $"{IdentitiesDirectory}{kind.ToWireString()}.count";
+
+    /// <summary>
+    /// Every directory that can hold <c>*.md</c> card files under <paramref name="cardsRoot"/>:
+    /// <see cref="RegisterDirectory"/>, <see cref="DecisionsDirectory"/>, one per live change, and
+    /// one per <em>archived</em> change (§7 block B). This is the single statement of "where does
+    /// the record live" — both <see cref="Index.IndexPopulator"/> (rebuilding the derived index)
+    /// and <see cref="CardIdentityResolver"/> (answering "which card carries this id?") walk this
+    /// exact list, rather than each carrying its own copy that could silently drift from the
+    /// other's. <see cref="ReservedArchiveChangeName"/>'s own container is skipped as a live change
+    /// and descended into separately via <see cref="ArchiveDirectory"/> — an id resolution that
+    /// only checked live changes would make card-model's "identity SHALL remain valid and
+    /// resolvable after the change that raised it is archived" false the moment a change archived.
+    /// </summary>
+    internal static IReadOnlyList<string> ResolveRecordDirectories(string cardsRoot)
+    {
+        var directories = new List<string>
+        {
+            CombineWithLayout(cardsRoot, RegisterDirectory),
+            CombineWithLayout(cardsRoot, DecisionsDirectory),
+        };
+
+        var changesRoot = CombineWithLayout(cardsRoot, ChangesRootDirectory);
+
+        // Trimmed to match Directory.EnumerateDirectories' own results below, which never carry a
+        // trailing separator, while CombineWithLayout's input (a CardLayout constant) always does.
+        var archiveRoot = Path.TrimEndingDirectorySeparator(CombineWithLayout(cardsRoot, ArchiveDirectory));
+
+        if (Directory.Exists(changesRoot))
+        {
+            foreach (var directory in Directory.EnumerateDirectories(changesRoot).OrderBy(static path => path, StringComparer.Ordinal))
+            {
+                if (string.Equals(directory, archiveRoot, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                directories.Add(directory);
+            }
+        }
+
+        if (Directory.Exists(archiveRoot))
+        {
+            directories.AddRange(
+                Directory.EnumerateDirectories(archiveRoot).OrderBy(static path => path, StringComparer.Ordinal));
+        }
+
+        return directories;
+    }
+
+    private static string CombineWithLayout(string cardsRoot, string layoutDirectory) =>
+        Path.Combine(cardsRoot, layoutDirectory.Replace('/', Path.DirectorySeparatorChar));
 
     private static string RequireChangeName(string? changeName) =>
         string.IsNullOrEmpty(changeName)

@@ -699,7 +699,7 @@ internal static class CommandParser
                 "'section status' requires a card file path."));
         }
 
-        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionStatus(filePath));
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionStatus(filePath, context.WorkingDirectory));
     }
 
     /// <summary>
