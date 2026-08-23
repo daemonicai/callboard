@@ -60,10 +60,26 @@ internal static class FindingStalenessEvaluator
         var currentByPath = current.Files.ToDictionary(static file => file.RelativePath, StringComparer.Ordinal);
 
         var changedPaths = new List<string>();
+        var neverMeasurablePaths = new List<string>();
         foreach (var path in recordedByPath.Keys.Union(currentByPath.Keys, StringComparer.Ordinal))
         {
             var recordedHash = recordedByPath.TryGetValue(path, out var recordedFile) ? recordedFile.ContentHash : null;
             var currentHash = currentByPath.TryGetValue(path, out var currentFile) ? currentFile.ContentHash : null;
+
+            // §6 remediation (B1) — a path absent both at record time and now (recordedHash and
+            // currentHash both null) is not "unchanged": nothing about it was ever fingerprinted,
+            // so string.Equals(null, null) reporting "no difference" would report Current for a
+            // path that was never actually measured — block C's own governing ruling ("a finding
+            // whose staleness cannot be measured must never be reported as current") reintroduced
+            // under the name "absent". A typo'd path, a wrong-root path or a directory (whose
+            // content can never be hashed by FindingExtentFingerprint.HashFileOrNull) all fall
+            // here, on both sides, forever, unless this case is pulled out before the equality
+            // check below.
+            if (recordedHash is null && currentHash is null)
+            {
+                neverMeasurablePaths.Add(path);
+                continue;
+            }
 
             if (!string.Equals(recordedHash, currentHash, StringComparison.Ordinal))
             {
@@ -71,14 +87,26 @@ internal static class FindingStalenessEvaluator
             }
         }
 
-        if (changedPaths.Count == 0)
+        // A genuine, measured change takes priority over "never measurable" — findings' "never
+        // under-report" direction: if any declared path is confirmed to have moved, that is
+        // reported, even when another declared path could never be fingerprinted at all.
+        if (changedPaths.Count > 0)
         {
-            return FindingStalenessStatus.Current;
+            changedPaths.Sort(StringComparer.Ordinal);
+            return FindingStalenessStatus.Stale(
+                $"the extent's declared content has changed since verified_at and calls for re-verification " +
+                $"(this does not mean the finding was wrong) — affected path(s): {string.Join(", ", changedPaths)}.");
         }
 
-        changedPaths.Sort(StringComparer.Ordinal);
-        return FindingStalenessStatus.Stale(
-            $"the extent's declared content has changed since verified_at and calls for re-verification " +
-            $"(this does not mean the finding was wrong) — affected path(s): {string.Join(", ", changedPaths)}.");
+        if (neverMeasurablePaths.Count > 0)
+        {
+            neverMeasurablePaths.Sort(StringComparer.Ordinal);
+            return FindingStalenessStatus.NotMeasurable(
+                $"the following declared path(s) could not be read at record time and still cannot be read now, " +
+                $"so their content was never fingerprinted and this extent cannot be confirmed current — " +
+                $"affected path(s): {string.Join(", ", neverMeasurablePaths)}.");
+        }
+
+        return FindingStalenessStatus.Current;
     }
 }

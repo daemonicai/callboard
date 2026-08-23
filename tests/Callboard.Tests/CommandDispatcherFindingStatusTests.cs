@@ -87,6 +87,42 @@ public sealed class CommandDispatcherFindingStatusTests
         Assert.Equal("current", status.GetProperty("staleness").GetString());
     }
 
+    // §6 remediation (B1) — the case the original block C tests never wrote: a declared path that
+    // never resolves to a readable file, neither at record time nor at re-check. Before the fix,
+    // `null == null` read back "current" forever; the CLI must now say the extent was never
+    // actually measured.
+    [Fact]
+    public void ExplicitExtent_PathNeverResolvesToAReadableFile_ReadsBackNotMeasurable_NeverCurrent()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0014.md");
+
+        // src/Typo.cs is never created — a typo'd or wrong-root path.
+        Record(repo, findingPath, extentExplicit: "src/Typo.cs");
+        var status = Status(repo, findingPath);
+
+        Assert.Equal("not-measurable", status.GetProperty("staleness").GetString());
+        Assert.Contains("src/Typo.cs", status.GetProperty("stalenessReason").GetString(), StringComparison.Ordinal);
+    }
+
+    // The directory case the supervisor named explicitly: a declared path that names a directory
+    // rather than a file resolves to "absent" on both sides too (File.ReadAllBytes throws
+    // UnauthorizedAccessException/IOException on a directory, caught as null), and must read the
+    // same "never measured" answer as a plain typo, not "current".
+    [Fact]
+    public void ExplicitExtent_PathNamesADirectory_ReadsBackNotMeasurable_NeverCurrent()
+    {
+        using var repo = new TempGitRepo();
+        var directoryPath = Path.Combine(repo.Path, "src", "SomeDirectory");
+        Directory.CreateDirectory(directoryPath);
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0015.md");
+
+        Record(repo, findingPath, extentExplicit: "src/SomeDirectory");
+        var status = Status(repo, findingPath);
+
+        Assert.Equal("not-measurable", status.GetProperty("staleness").GetString());
+    }
+
     [Fact]
     public void InstrumentExtent_ReadsBackNotMeasurable_NamingTheInstrumentToReRun()
     {
@@ -222,6 +258,30 @@ public sealed class CommandDispatcherFindingStatusTests
 
         Assert.Equal("unreadable", status.GetProperty("degradation").GetString());
         Assert.Contains(garbagePath, status.GetProperty("degradationReason").GetString(), StringComparison.Ordinal);
+    }
+
+    // §6 section remediation (B3), at the CLI boundary: a section card carrying a different label
+    // sits in the finding's directory. Before the fix this read "live" permanently, even after the
+    // real section closed under a differently-spelled label — the fail-open direction the
+    // supervisor named. Now it reads "unreadable": the record cannot rule out a mislabelled match.
+    [Fact]
+    public void DifferentlyLabelledSectionCard_ReadsBackUnreadable_NotLive()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0016.md");
+        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+
+        var otherPath = Path.Combine(repo.CardsDirectory, "s-other.md");
+        var frontmatter = new CardFrontmatter(
+            "S-0200", CardKind.Section, "Title", "closed", CardOwner.Architect, CardScope.Change, "5", FixedNow, FixedNow);
+        var sectionFields = new SectionCardFields(null, CardOwner.Architect, FixedNow, []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], sectionFields);
+        File.WriteAllText(otherPath, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var status = Status(repo, findingPath);
+
+        Assert.Equal("unreadable", status.GetProperty("degradation").GetString());
+        Assert.Contains(otherPath, status.GetProperty("degradationReason").GetString(), StringComparison.Ordinal);
     }
 
     [Fact]

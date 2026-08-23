@@ -13,20 +13,23 @@ namespace Callboard.Cards;
 ///
 /// <list type="bullet">
 /// <item><see cref="Live"/> — a matching, readable <c>section</c> card was found and is still open,
-/// or no <c>section</c> card matching this finding's label exists in its directory at all (an
-/// unresolvable section reads as <see cref="Live"/> rather than <see cref="Degraded"/> — the record
-/// cannot prove closure, so it does not claim it).</item>
+/// or the finding's directory holds no <c>section</c> card at all — no card of any label, readable
+/// or not (an unresolvable section reads as <see cref="Live"/> rather than <see cref="Degraded"/> —
+/// the record cannot prove closure, so it does not claim it).</item>
 /// <item><see cref="Degraded"/> — a matching, readable <c>section</c> card was found and has closed
 /// (findings: "the finding is no longer offered as live and remains retrievable by identity"). The
 /// finding card itself is never rewritten to reach this state — see
 /// <see cref="FindingDegradationEvaluator"/>.</item>
 /// <item><see cref="Unreadable"/> — no <c>section</c> card matching this finding's label could be
-/// read successfully, <em>and</em> at least one card in the same directory failed to parse, so it
-/// cannot be ruled out as the finding's own section card gone corrupt. This is deliberately a
-/// different answer from <see cref="Live"/>'s "no matching section card exists" — the same "absent
-/// is a different answer from failed" convention §3 established for the derived index and
-/// <c>GateStatus</c> (reviewer blocker, §6 block D remediation). Carries a
-/// <see cref="UnreadableCase.Reason"/> naming what could not be read.</item>
+/// confirmed, but the directory holds at least one candidate that cannot be ruled out: a card that
+/// failed to parse (could be the finding's own section card gone corrupt), or a readable
+/// <c>section</c> card carrying a different label (§6 remediation, B3 — <c>--section</c> is
+/// unvalidated free text with no section-creation verb, so a differently-spelled label cannot be
+/// told apart from a typo of this one). This is deliberately a different answer from
+/// <see cref="Live"/>'s "no section card exists at all" — the same "absent is a different answer
+/// from failed" convention §3 established for the derived index and <c>GateStatus</c> (reviewer
+/// blocker, §6 block D remediation; widened to the zero-match case in the §6 section remediation).
+/// Carries a <see cref="UnreadableCase.Reason"/> naming what could not be confirmed.</item>
 /// </list>
 /// </summary>
 internal abstract record FindingDegradationStatus

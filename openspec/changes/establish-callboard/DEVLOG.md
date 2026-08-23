@@ -13438,6 +13438,542 @@ confirms the full 480-test suite, not just the new cases.
 
 → @architect
 
+**[supervisor]** Section review, §6 "Findings", over `8b44a51..HEAD` (four blocks: `2b078a7`,
+`7ea24e4`, `2a95ed2`, `c623a88`). Read the whole thread, both reviewers' eight rounds, the spec,
+and the section's diff as one artifact. Every finding below is one no block-level review could have
+made from its own diff.
+
+**Verdict: Request changes.** Three blockers. All three are the *same defect this section produced
+five times* — a claim about identity, state or coverage made from a **string** rather than from
+evidence — surviving into the shipped code in two new places, plus one binding-ADR erosion that the
+four locking rounds crowded out. The section's mechanisms are individually sound and the review loop
+was genuinely good; what the blocks did not see is what their sum makes reachable.
+
+---
+
+### Blocker 1 — an `Explicit` extent that resolves to nothing readable reports `current`, forever
+
+Blocks **A + B + C** together. Each half is defensible alone:
+
+- Block A made `FindingExtent.Explicit` items **opaque strings**, validated only as non-blank
+  (`CommandParser.cs:775-783` — no existence check, no resolution check, at record time or ever).
+- Block C made "the file could not be read" a **fingerprinted value**, not an error
+  (`FindingExtentFingerprint.HashFileOrNull` returns `null`; the wire form is `path=absent`, and
+  `CardFileParser.cs:777` round-trips `absent` back to `null`).
+- Block C compares recorded against current with
+  `string.Equals(recordedHash, currentHash, StringComparison.Ordinal)`
+  (`FindingStalenessEvaluator.cs:~70`).
+
+Put together: `null == null` → **not changed** → `changedPaths.Count == 0` → **`Current`**.
+
+So a finding recorded with an extent item that names a file that does not exist — a **typo**, a path
+relative to the wrong root, or a **directory** (`File.ReadAllBytes` on a directory throws
+`UnauthorizedAccessException`, caught, `null`) — persists `extent_fingerprint: src/Fooo.cs=absent`,
+and every later `finding status` recomputes `absent`, sees no difference, and reports the finding
+**settled**. Nothing inside that extent can ever make it stale, because nothing inside it was ever
+measured. No hand-editing required; this is reachable through the verb's own CLI on ordinary input.
+
+This is a direct violation of the block C ruling that governs the whole block — *"A finding whose
+staleness cannot be measured must never be reported as current — that is §5's gate lesson exactly:
+absent is a different answer from passing, and this section must not reintroduce it under a new
+name"* — and of the spec's own "SHALL NOT be offered as a settled result". The section reintroduced
+it under a new name: `absent`.
+
+The directory case matters more than the typo case, because the spec explicitly contemplates it: *"A
+re-runnable instrument SHALL be the preferred form for a finding asserting the absence of something
+across a subtree, because an enumerated path set either over-states or under-states such an extent."*
+The section prefers the instrument form but does not stop a caller declaring a subtree in the
+`Explicit` form — and when they do, the answer is silently `current` rather than either of the two
+outcomes the spec anticipated.
+
+Why no block review caught it: the tests bracket this case on both sides and never land on it.
+`FindingExtentFingerprintTests.Compute_MissingFile_HasANullContentHash_NotAThrow` proves the *record*
+half. `FindingStalenessEvaluatorTests.ExplicitExtent_FileAbsentAtRecordTime_ThenCreated_IsStale`
+proves absent→present. `ExplicitExtent_FileDeletedAfterRecording_IsStale` proves present→absent.
+**Absent → still absent** is the one transition nobody wrote, and it is the one that answers
+`Current`. Block C's reviewer probed `chmod 000`, delete-and-recreate, CRLF and symlinks — all
+*after* recording, all with a real file at record time.
+
+### Blocker 2 — `--blind-spot-body <text>` puts a card body in a shell argument (ADR-0001)
+
+Block **B**. `CommandParser.cs:737-742` refuses `missing-argument` unless `--blind-spot-body <text>`
+is supplied whenever `--blind-spot` is `obligation` or `hazard`. That is a workflow that requires a
+Markdown card body to be quoted inline as an argument.
+
+ADR-0001, Consequences: *"Multi-line Markdown card bodies must be passed on stdin rather than as
+arguments … the CLI must be designed so **no workflow requires quoting a body inline**."*
+`design.md` Risks: *"all body input arrives on stdin; **no workflow may require quoting a body as an
+argument**."*
+
+The section-level shape of this is what makes it a blocker rather than a nit: `finding record` is the
+**first and only production consumer of `StdinBodyReader` in the entire tool**
+(`grep` for `StdinBodyReader` outside its own file returns exactly `CommandParser.cs:805,811` and one
+doc-comment reference). The machinery shipped in §1/§3 with no caller; §6 is where the convention is
+first exercised — and in the same verb, in the same invocation, the second card's body is given the
+one channel the ADR forbids. A block reviewer sees `--blind-spot-body` as one flag among thirteen; the
+section view shows it as the tool's stdin convention being established and violated in the same
+breath.
+
+It is also the card the spec cares most about. *"A blind spot filed under a clean heading has been
+observed to ship"* is the reason the raised `obligation`/`hazard` exists at all — and it is the card
+whose body a caller will most often want to write as several paragraphs of prose.
+
+This is a consequence of the two-cards-one-command ruling (only one stdin per invocation), not of any
+mistake in block B's code. See my assessment of that ruling below — I am not asking for the ruling to
+change.
+
+### Blocker 3 — degradation fails **open** on a section-label near-miss
+
+Block **D**. `FindingDegradationEvaluator.cs:81` matches the finding's section card by
+`string.Equals(card.Frontmatter.Section, finding.Frontmatter.Section, StringComparison.Ordinal)`, and
+the terminal fall-through returns **`Live`** when nothing matched and nothing was corrupt.
+
+`--section` is unvalidated free text on `finding record`, there is no section-creation verb, and
+nothing anywhere ties a finding to its own section card except two independently-typed strings.
+So `finding record --section "6 "` (or `"06"`, or `"Findings"`, against a section card labelled `"6"`)
+produces a finding that reads **`live` after its section closes, permanently** — the spec's
+degradation scenario ("the finding is no longer offered as live") silently unsatisfied, no refusal, no
+diagnostic, confident wrong answer. `FindingDegradationEvaluatorTests.
+ClosedSectionCardForADifferentSection_FindingReadsLive` pins this fail-open direction as intended
+behaviour, on the assumption that a differing label means a different section — which the record has
+no way to guarantee.
+
+The reason this is a section-level finding and not a re-litigation of block D: **§6 applied its own
+"absent is a different answer from passing" rule twice and then didn't apply it a third time, in the
+same result object.** Staleness got `NotMeasurable` rather than a false `Current`. Corruption got
+`Unreadable` rather than a false `Live`. But "there are readable `section` cards in this directory and
+**none** carries my label" — which the evaluator already has the evidence to distinguish, since it
+enumerated them — is collapsed into the same `Live` as "this change has no section cards at all". The
+one place the rule was skipped is the one place the answer is fail-open.
+
+Block D's reviewer found the *ambiguous* half of this (two matches) and got it fixed properly. The
+*zero-match-among-candidates* half is the same mechanism pointed the other way, and nobody looked at
+it.
+
+---
+
+### Suggested remediation shape — one block, three items
+
+1. **An `Explicit` extent must never yield `Current` when it was never measured.** Either refuse at
+   record time (`invalid-extent`, naming the item that resolves to nothing readable — argv-adjacent,
+   fits the existing code) or carry "never measured" into `FindingStalenessEvaluator` so it answers
+   `NotMeasurable` with a reason naming the paths. Decide the directory case explicitly rather than
+   letting it fall out of `File.ReadAllBytes` throwing: refuse it, or resolve it to its file set.
+   Whichever shape, the proposition to test is **absent-at-record → still-absent → never `current`**,
+   mutation-verified, and it belongs at the CLI-JSON boundary as well as the domain, since block C's
+   own brief made that the standard for this requirement.
+2. **Give the raised card's body a non-argument channel.** Simplest shape that keeps the ruling and
+   the atomic pair intact: `--blind-spot-body-file <path>` (non-interactive, no quoting, no second
+   stdin). A delimited stdin document carrying both bodies also works but is a larger surface
+   decision. `--blind-spot-title` can stay a flag — titles are single-line, matching `--title`.
+3. **A fourth degradation answer for "no section card carries this label, but section cards exist".**
+   Reuse the exact shape block D already built for `Unreadable`: a case on
+   `FindingDegradationStatus` with a reason naming the labels that *were* found, surfaced as a fourth
+   `degradation` value. It must not read `live`. Keep the true-zero-candidates case as `live` — that
+   one is honest.
+
+Items 1 and 3 are the same rule applied twice more; carve them together and the block reads as one
+deliverable rather than three patches.
+
+---
+
+### Closure precondition — the section-close gate has not been run
+
+**No `AOT_EXIT:` line appears anywhere under `## 6.`** `make aot` is deliberately not in `make gates`
+(Product Owner decision, §3 close) precisely so the Architect runs it **once per section close** — and
+§5's supervisor withheld closure over exactly this missing line (11553), which you then ran and
+recorded (11568). §6 added no package, so this should be a formality; it is still the gate that exists
+to catch an AOT regression within one section of its introduction, and §6 put `SHA256`,
+`Convert.ToHexString`, `ImmutableArray` and `Random.Shared` on new code paths. Run it and quote the
+code before declaring §6 closed. This is not part of the remediation block.
+
+### The refusal set §9 inherits — 28 codes, not 27
+
+Enumerated **mechanically** over every `CommandOutcome.Refusal` construction site in `src/Callboard`
+(91 sites, every code literal resolved; the only unresolved match is the union's own `Match` arm).
+§5's frozen 22, plus §6's five, plus one the frozen list never contained:
+
+`unknown-command`, `missing-subcommand`, `unknown-subcommand`, `unrecognised-argument`,
+`repo-root-not-found`, `missing-argument`, `missing-flag-value`, `unrecognised-role`,
+`unrecognised-verdict`, `invalid-gate-label`, `invalid-exit-code`, `invalid-blocking-card-id`,
+`invalid-range`, `card-not-found`, `card-layout-mismatch`, `wrong-card-kind`, `undefined-transition`,
+`base-not-recorded`, `base-immutable`, `already-blocked-by`, `not-blocked-by`, `already-closed`,
+**`stdin-not-redirected`**, **`unrecognised-blind-spot`**, **`card-already-exists`**,
+**`invalid-extent`**, **`unrecognised-disposition`**, **`ambiguous-section-label`**.
+
+`stdin-not-redirected` (`StdinBodyReader.cs:50`) has existed since §1 and was **omitted from the
+frozen 22** — it had no production caller until `finding record`, so §6 is the section that made it
+reachable. §9 should inherit 28, and should inherit *why* the list was wrong: it was frozen by
+enumerating the verbs that existed, not by enumerating the construction sites. §5's own working rule.
+
+**Typing, checked as a set — correct, all three categories kept distinct.** All five new codes are
+genuine `CommandOutcome.Refusal`s routed through `ExitCodeFor` → `RefusalExitCode`, never thrown, and
+each is argv- or record-decidable. Lock timeout, retry exhaustion, identity-allocation failure and I/O
+error all route to `CardFindingRecordOutcome.ToolFailure` → `InvalidOperationException` → `Run`'s
+envelope — **tool-failure**, not refusal, matching every §5 write verb. A corrupt card under
+`IndexPopulator` remains a **reported failure inside a success**. `card-write-failed` did not come
+back. `card-already-exists` is correctly one code with two messages naming which path collided.
+
+### Architectural notes — for `## NEXT`, not for the fix block
+
+- **Two cards in one command: keep it.** I agree with block B's reviewer, and with your keeping it.
+  The structural guarantee is real, and round 4 converged by *deleting* the ordering rather than
+  patching it a third time — there is no decision left for two callers to disagree about. But the
+  ruling's cost is not only the four rounds: it also produced Blocker 2 (one stdin, two bodies) and
+  pushed the raised card's back-reference into **body prose** (`CardStore.cs:~1018`) instead of a
+  field. Both are consequences of the ruling, not of the code. When §7 gives a raised card a
+  structured `owed_by`, that is the moment to re-ask whether the atomic pair still wants one
+  command — not now.
+- **Degradation derived rather than stored: right call, and it held.**
+  `ClosingTheSection_NeverWritesOrRewritesTheFindingCard` checks bytes *and* mtime, `WriteCard` stayed
+  create-only, and no second field exists to disagree with the section card. The cost the ruling
+  actually incurred is Blocker 3: derivation needs a way to **name** the section card, and the record
+  has no reference — only a label two free-text fields happen to share. Block D's reviewer named this
+  and asked whether it belonged in §7/§8. **My answer: it does, and it should be decided, not
+  carried.** This is the second section to hit identity addressing (§5's supervisor asked for it to be
+  decided too). Blocker 3 is the surface patch; the decision is §7's.
+- **O-4 — discharged as specified, half of it structurally.** The corpus mechanically catches a
+  fixture that stops parsing (both reviewers reproduced it independently, and block C's widening was
+  its first real test — three fixtures fired naming the offender). The other half — a *new* wire form
+  nobody adds a fixture for — is documentation only, and both worker and reviewer said so plainly
+  rather than overclaiming, which is the right disposition. But the standing failure mode is an
+  obligation conditioned on an event nobody schedules, and today the scheduler is **you**: block C
+  extended the corpus because the brief told it to. That is worth making structural, and it is cheap
+  here: `CardFileWriter` emits a **fixed, enumerable set of 26 key literals**, so a test asserting
+  every key the writer can emit appears in at least one `Corpus` fixture would close the forward half
+  mechanically. This is the same shape as the §9 note "no structural check ties a minted refusal code
+  to a test proving it fires" — recommend they be carved together as 9.12.
+- **Index: deliberate deferral, not a gap; ADR-0004 intact.** `IndexSchema` holds common frontmatter
+  only; a `finding` is indexed as an ordinary row (`kind=finding`) and every §6 field is kind-specific,
+  exactly like §5's block and section fields. **Nothing in §6 reads the index at all** (`grep` for
+  `Index.` across `Cards/` and `Cli/` returns one doc-comment reference), so nothing treats it as
+  authoritative and no §6 read path could. The rebuild path covers every directory §6 writes into
+  (`changes/<name>/` for findings and obligations, `register/` for hazards), and a finding missing
+  `blind_spot` becomes a reported parse failure rather than a silent drop. One stale claim to correct
+  when index widening is next touched: `IndexSchema`'s doc comment says the blocked-on/citation fields
+  "do not exist in the primary record yet (§5 and §6 own them)" — §5 shipped `blocked_by` and §6
+  shipped `blind_spot_card`, so a reader of that comment is now told a field does not exist that does.
+- **`WrongCardKind`'s doc comment still says "Six construction sites route through this" and
+  enumerates them** (`CommandDispatcher.cs:~980`); §6 added a seventh, `RunFindingStatus`
+  (`CommandDispatcher.cs:923`). Enumeration by recall, the §5 rule, in a comment whose whole purpose is
+  the enumeration.
+- **`ambiguous-section-label` takes the staleness answer down with it.** `RunFindingStatus` refuses the
+  whole read, so an unrelated duplicate `section` card makes a determinate staleness answer
+  unreportable — mild tension with block D's own ruling that degradation and staleness must be
+  independently answerable. I read it as a defensible fail-closed call, not a defect; noting it for
+  whoever builds the next finding read path.
+- **`RollbackRaisedCard`'s compare-then-delete: re-judged with the whole section in view — keep it.**
+  Block B's reviewer called it a genuine backstop and that holds up. It is unreachable through this
+  tool's own call graph now that both paths are locked for the operation's duration, but `CardLock` is
+  advisory and ADR-0003's own limit ("`callboard` cannot refuse a text editor") is exactly the window
+  it defends. One string compare, matching `CardLock.Dispose`'s established discipline. Not dead
+  scaffolding. I found no other dead scaffolding in the section — no superseded stub, no leftover flag,
+  no duplicated abstraction (`IsFindingCard` correctly joined `IsBlockCard`/`IsSectionCard` rather than
+  growing a fourth inline match, and `FindingDegradationEvaluator` correctly mirrors
+  `FindingStalenessEvaluator`'s shape rather than inventing one).
+- **Identities burned on a refusal are fine.** `finding record` allocates before it can refuse
+  (`card-already-exists`, layout mismatch), so a refused record leaves a counter above the highest
+  card on disk. `CardIdentityAllocator.VerifyCounters` only flags `counterValue < observedMax`, so a
+  gap is not a violation and "never recycled" holds. Checked because §6 is the first section with a
+  card-creating verb; no action needed.
+- **The two spec sentences no task owned.** *"A `rule` SHALL carry none of these fields"* — satisfied
+  structurally: the six finding keys are routed by the card's own `kind`, and on any other kind they
+  stay preserved-unknown (`NonFindingKind_KeepsTheFindingKeysAsPreservedUnknown_NeverPromoted`).
+  *"A `rule` SHALL survive section close"* — satisfied, but proven only for an `obligation`
+  (`HandWrittenObligation_InTheSameSection_IsUntouchedBySectionClose_SameAsARaisedOne`); no test uses a
+  `rule`. *"The system SHALL NOT treat a finding as a rule or convert one into the other"* — satisfied
+  by **absence**: no verb writes `kind`, and `WriteCard` is create-only. I am not blocking on either —
+  both hold today — but they hold by nobody having built the path, which is a different guarantee from
+  a test, and §7 should pick up the `rule` case when it next touches degrade-versus-survive.
+
+### What §6 did well, for the record
+
+The section's own diagnosis was correct and it was applied. Block B's four rounds ended by deleting
+the decision rather than sharpening it a fourth time, which is §4's rule arriving early enough to
+matter. Block C then applied both of block B's lessons **from its first submission** — one producer for
+the stale reason, and `staleness` recomputed from evidence rather than read off a stored field — and
+took one nit round instead of four. Both auditors found every defect **by execution**, including a
+reviewer who falsified his own repro before trusting it. Worker honesty paid again: four "declared, not
+claimed clean" paragraphs, and block C's worker retracting a false locking claim in-thread and putting
+the correction **in a doc comment at the call site** rather than only in a post nobody reading the code
+will see. Three of my blockers exist in the gaps between blocks; none exists because a block cut a
+corner.
+
+→ @architect
+
+**[architect]** Supervisor requested changes on §6. Carving one remediation block from B1, B2 and B3.
+**No new `N.M` numbers, and it ticks nothing** — every box in §6 is already ticked; the findings and
+the fix are the record.
+
+**B1 and B3 are one rule applied twice, and they are the section's own rule.** §6 established "absent
+is a different answer from passing" three times — `NotMeasurable` for an unmeasurable extent,
+`Unreadable` for a corrupt section card, `GateStatus.Absent` inherited from §5 — and then failed open
+in the two places nobody looked:
+
+- **B1** — an `Explicit` extent item that resolves to nothing readable is fingerprinted as `absent`,
+  round-trips to `null`, and compares equal to itself, so a typo'd path, a wrong-root path or a
+  directory answers **`Current` forever**. This is block C's own governing ruling — "a finding whose
+  staleness cannot be measured must never be reported as current" — reintroduced under the name
+  `absent`. The tests bracket it on both sides (absent→present is stale, present→absent is stale) and
+  never write absent→still-absent, which is exactly §5's lesson about a test proving the proposition
+  a mutation would falsify.
+- **B3** — `FindingDegradationEvaluator` matches the section label by ordinal string equality, and
+  **zero** matches falls through to `Live`. `--section "6 "` against a card labelled `"6"` reads live
+  permanently after close. Block D fixed the *ambiguous* case and left the *absent* case fail-open.
+
+**Fix them together, and fix them as one rule**: neither evaluator may return a
+"nothing-to-worry-about" answer for a question it could not actually answer. An extent item that
+resolves to nothing readable is not measurable — it is not `Current`, and it is not silently `Stale`
+either; say which it is and say why. Zero matching section cards is not `Live`. Where a third answer
+already exists (`NotMeasurable`, `Unreadable`), reuse it rather than minting a fourth spelling of the
+same idea — §5's "current round is defined in three agreeing places" is the failure mode to avoid.
+
+**B2 — `--blind-spot-body <text>` puts a card body in a shell argument**, which ADR-0001's
+Consequences and `design.md`'s Risks both rule out. §6 is the first production consumer of
+`StdinBodyReader` and violates the convention it establishes, in the same invocation, on the card the
+spec cares most about. **Architect ruling: replace it with a file-based flag** (`--blind-spot-body-file
+<path>`), so no body ever needs shell quoting. Rejected alternatives, stated so they are not
+re-proposed: two bodies on one stdin separated by a delimiter (fragile, and a delimiter in a card body
+is a real input); and keeping both an inline flag and a file flag (two ways to do one thing is the
+surface drift the supervisor is checking for). The finding's own body keeps arriving on stdin.
+
+**Not part of this remediation, recorded so they are not lost:**
+
+- **The refusal list §9 inherits is 28, not 27** — `stdin-not-redirected` was never in the frozen 22
+  because it had no production caller until `finding record`. The supervisor enumerated all 91
+  `CommandOutcome.Refusal` sites mechanically. §9 inherits the enumerated list, not a recalled one.
+- **O-4's forward half is documentation, not structure.** `CardFileWriter` emits a fixed set of 26 key
+  literals; a test asserting every emittable key appears in some corpus fixture would close it
+  structurally. **Carve with 9.12**, alongside the "no structural check ties a minted refusal code to
+  a test proving it fires" note — they are the same shape of check.
+- **§7 must *decide* identity addressing, not carry it a third time.** B3 is the identity-addressing
+  question arriving early: a section's identity is a free-text label, there is no section-creation
+  verb, and section and change scope share a directory. §5 asked for this to be decided; §6's fix is
+  fail-closed, which buys time and does not answer it.
+- **Index: deliberate deferral, not a gap** — nothing in §6 reads the index and ADR-0004 is intact.
+  One stale `IndexSchema` doc claim to correct when index widening is next touched.
+- **`make aot` is owed before §6 closes** — §5's supervisor withheld closure over exactly this.
+
+**Done-gates for the remediation block**
+
+- absent→still-absent reads as an unmeasurable answer, never `Current`; the test writes that case
+  explicitly, and mutating the fix turns it red.
+- Zero matching section cards reads as something other than `Live`, with the same rule and vocabulary
+  as B1's answer.
+- No card body can reach the tool as a shell argument; the old flag is gone, not deprecated.
+- The three answers stay distinguishable in emitted JSON, and no fourth spelling of "cannot answer"
+  is minted.
+- `make gates` → `GATES_EXIT:0`, quoted verbatim.
+
+→ @worker
+
+**[worker]** Remediation implemented — B1, B3 as one rule, B2 as its own flag replacement. No new
+`N.M` numbers, nothing ticked.
+
+**B1 + B3 (one rule, in `EvaluateExplicit` and `FindingDegradationEvaluator.Evaluate`).** Neither
+evaluator special-cases "both sides answer null/no-exact-match" as a pass-through equal-to-itself
+comparison any more; each pulls that case out *before* the equality check and routes it to the
+existing third answer instead of minting a new one:
+
+- `FindingStalenessEvaluator.EvaluateExplicit` — a path with `recordedHash is null && currentHash is
+  null` is collected as `neverMeasurablePaths`, not compared for equality. If any path in the extent
+  is confirmed changed, `Stale` still wins (never under-report a real change); otherwise, if any path
+  was never measurable, the answer is `NotMeasurable` naming those paths — never `Current`. Covers
+  the typo, wrong-root and directory cases identically, since `FindingExtentFingerprint.HashFileOrNull`
+  already collapses all three to `null`.
+- `FindingDegradationEvaluator.Evaluate` — now also collects `otherSectionPaths`: readable `section`
+  cards in the directory that don't match this finding's label. Zero exact matches now reads `Live`
+  **only** when the directory has no `section` card at all (true zero candidates — that answer stays
+  honest). If there's a non-matching readable section card, an unparseable card, or both, the answer
+  is `Unreadable`, reusing the case block D already built for the corrupt-card half; the reason names
+  whichever kind of candidate was found (or both). `ClosedSectionCardForADifferentSection_FindingReadsLive`
+  — the test the supervisor named as pinning the fail-open direction — is now
+  `ClosedSectionCardForADifferentSection_ReadsUnreadable_NotLive`, asserting the new answer.
+
+Doc comments on `FindingDegradationStatus.Unreadable` and the evaluators widened to describe both
+halves of the case. No fourth union case anywhere — `FindingStalenessStatus` and
+`FindingDegradationStatus` both still have exactly the cases they had before.
+
+**Missing test coverage, and the mutation check.** Wrote the absent→still-absent case at both the
+domain layer (`FindingStalenessEvaluatorTests`) and the CLI-JSON boundary
+(`CommandDispatcherFindingStatusTests`), plus the directory case named explicitly in the finding, plus
+a mixed case (one path genuinely stale, another never-measurable) proving `Stale` still wins. Verified
+by mutation: with the `recordedHash is null && currentHash is null` branch neutered (`&& false`), all
+four new tests fail with `expected NotMeasurable, got Current` — the right reason, not just red. Fix
+restored before the gates below. B3 got the equivalent CLI-JSON test
+(`DifferentlyLabelledSectionCard_ReadsBackUnreadable_NotLive`).
+
+**B2 — `--blind-spot-body` removed, replaced by `--blind-spot-body-file <path>`.** The old flag is
+gone from `CommandParser`'s flag table entirely, not deprecated or aliased. The new flag names a file
+`ParseFindingRecord` reads with `File.ReadAllText` at parse time (argv-adjacent, same discipline as
+every other parse-time check in this method); a missing or unreadable file refuses with the new code
+`blind-spot-body-file-unreadable`, naming the path and the underlying `IOException`/
+`UnauthorizedAccessException` message. Missing flag still refuses `missing-argument`, same as before.
+Updated both existing CLI tests that raised a card to write the body to a temp file first
+(`WriteBodyFile` helper) and pass `--blind-spot-body-file`; added
+`RaisingWithoutBlindSpotBodyFile_Refuses_WithMissingArgument` and
+`BlindSpotBodyFileDoesNotExist_Refuses_WithBlindSpotBodyFileUnreadable`. The finding's own body is
+unaffected — still stdin, still the only stdin read per invocation.
+
+**Not touched, per the brief:** the 28-code refusal list for §9, O-4's structural forward half, §7
+identity addressing, the `IndexSchema` doc staleness, and `make aot` — all recorded as
+architect/supervisor notes, none of them this block's job.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`
+
+→ @reviewer
+
+**[reviewer]** Re-audit, §6 remediation block (B1, B2, B3). **Verdict: Approve.**
+
+`make gates` on the remediated tree: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 488/488. Everything below verified by execution against the real, unmodified code —
+throwaway xUnit fixtures written, run, and reverted; tree confirmed clean via `git status
+--porcelain` before and after, matching the worker's diff exactly.
+
+**B1 — absent-at-record, still-absent-now: tried every way I could think of to make it answer
+`Current`, and could not.** Wrote nine fixtures at the domain layer, none in the worker's own
+coverage but exercising the same branch: a path that never existed (typo), a path resolving outside
+the repo root, a directory, a file present-then-deleted (must stay `Stale`, not `NotMeasurable` —
+confirmed, the "never under-report" priority still wins), a file readable at record time that
+becomes permission-denied later, a file unreadable at both record and re-check, and a broken
+symlink. All eight absence variants answer `NotMeasurable`, none answers `Current`. The inverse
+holds too: a genuinely unchanged, readable single-file extent still answers `Current`, and a mixed
+extent (one file genuinely stale, one never-measurable) still answers `Stale` — the fix doesn't make
+a real, detectable change get swallowed by the new branch. Mutation-checked the fix itself, not just
+my fixtures: neutered the `recordedHash is null && currentHash is null` branch in
+`FindingStalenessEvaluator.EvaluateExplicit`, reran the full suite — 10 tests went red (my 6
+absence-shaped fixtures plus 4 of the worker's own, `FindingStalenessEvaluatorTests.
+ExplicitExtent_FileAbsentAtRecordTime_StillAbsentNow_...`,
+`...PathNamesADirectory_...`, and both CLI-boundary equivalents), every one with `expected
+NotMeasurable, got Current` — the right reason, not merely red. Restored the real code before
+continuing.
+
+**B2 — the replaced test, and the sweep for siblings.** `ClosedSectionCardForADifferentSection_
+ReadsUnreadable_NotLive`'s replacement asserts through an exhaustive `Match` (throws on `Live` or
+`Degraded`, not merely `!= Live`), so it can't silently pass under a different wrong answer either —
+a stronger replacement than the fixture it displaced, not just a corrected one. Swept the rest of §6
+for the same "pins the lenient direction" shape: grepped every `IsCurrent`/`ReadsLive`/`NotDegraded`
+assertion across the section's test files. The only other two are
+`ExplicitExtent_ContentUnchanged_IsCurrent` (a genuinely unchanged extent — the positive case B1's
+own inverse depends on) and `NoMatchingSectionCardInDirectory_ReadsLive_NotDegraded` (the true
+zero-candidates case, which the brief itself says must stay `Live` — "that one is honest," and it's
+still exercised and still green). Found no other fail-open pin.
+
+**B3 — mirrors B1's structure, checked the same way.** Zero exact label matches, with at least one
+non-matching readable `section` card or one unparseable card present, now answers `Unreadable`
+rather than falling through to `Live` — confirmed via the worker's own domain and CLI tests, both
+rerun. The "true zero candidates" case (no `section` card of any kind in the directory) correctly
+stays `Live`.
+
+One thing worth naming plainly rather than leaving for the supervisor to notice on its own:
+**`CardLayout.DirectoryFor` puts every section's cards for a change in one shared directory, so
+`otherSectionPaths` — "a readable section card exists with a different label" — will be non-empty
+for essentially any finding in a change that has more than one section with a card, the moment
+section cards can be created at all.** Today that's not reachable through this tool's own verbs (no
+`section`-creation verb exists yet — confirmed by reading `CommandParser.ParseSection`'s subcommand
+list: `verdict`, `close`, `status`, nothing that writes a fresh section card), so it can't fire
+through ordinary CLI use yet, only through a hand-authored fixture. But once section-card creation
+ships, this reads as: a finding raised against a section that genuinely hasn't opened yet, in a
+change where *any other* section already has a card, will answer `Unreadable` rather than `Live` —
+correctly fail-closed under the stated rule ("cannot rule out a mislabelled match"), but noisy in
+the overwhelmingly common case, since it can't distinguish a near-miss typo from a completely
+unrelated section number. I don't think this is a defect in what was asked for — the brief said
+"zero matches answers something other than Live," and it does, honestly, given the record has no
+way to tell those two situations apart — but it's the sharpest edge of "identity addressing is owed
+to §7," worth restating for whoever picks that up: the fix as built will make `Live` a rare answer
+in practice for an in-progress multi-section change, not a rare-edge-case answer.
+
+**Priority 3 — parse-time file read, checked against what O-3 actually discharged, not the looser
+paraphrase.** O-3's guarantee, as landed (`99a61b6`): parsing returns an inert `ParsedCommand` and
+can never reach a handler — calling one from the parse phase is `CS0122`, enforced by the compiler,
+not merely by convention. It was never "the parse phase touches no I/O" — this same method already
+reads the finding's own body from stdin during parse, with a doc comment giving the exact
+justification: "a read-only extraction, not the card-writing side effect O-3 guards." Reading
+`--blind-spot-body-file` at parse time is the identical shape: a read-only extraction into the data
+union, structurally unable to reach `RunFindingRecord` (only `ParseResult.Ready` ever reaches
+`Run`'s dispatch match; `Refused` returns directly — confirmed by reading `Run` and
+`EnforceNoUnconsumedArguments`). And the refusal firing during parse does prevent the write it
+refuses: `BlindSpotBodyFileDoesNotExist_Refuses_WithBlindSpotBodyFileUnreadable` already asserts
+`Assert.False(File.Exists(findingPath))` after the refusal, and I reran it. This sits inside O-3's
+actual guarantee, consistently with the precedent already in the same method, not a new erosion of
+it.
+
+**Priority 4 — the refusal's typing, checked against three concrete inputs.** Missing file and
+permission-denied are folded into the *same* refusal code
+(`catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)` catches
+`FileNotFoundException` — an `IOException` subclass — identically to a real permission failure).
+That is a real conflation against this project's own precedent: `RunFindingStatus`/`RunSectionClose`
+etc. all check `File.Exists` first (`card-not-found`, a refusal) and only classify what happens
+*after* that as a tool-failure-shaped outcome. This code doesn't make that split — both land as
+`blind-spot-body-file-unreadable`. I don't think it's wrong to call a missing file a refusal (that's
+argv-decidable, consistent with the rest of the codebase), but bundling a genuine environmental
+read failure (disk error, permission changed mid-run) under the same code as a caller's typo is a
+real, if narrow, inconsistency — a nit, not a blocker, since nothing in the brief asked for the
+three-way split and the existing precedent it partially diverges from wasn't itself a hard rule
+written down anywhere. Checked the three inputs asked for directly: a **directory**
+(`File.ReadAllText` throws `UnauthorizedAccessException`, caught, refuses cleanly — no crash); an
+**empty file** (reads as `""`, accepted — consistent with there being no emptiness check anywhere
+else a card body is read, stdin included, so not a new gap); and a file with **invalid UTF-8 bytes**
+(`File.ReadAllText`'s default decoder does not throw — it silently substitutes U+FFFD for the
+invalid sequences and returns a corrupted-but-successful read, confirmed by encoding the round-trip
+back to bytes and finding replacement-character bytes in the output). That last one *is* silent
+content corruption with no refusal — but it is exactly the same behaviour the finding's own stdin
+body already has (`StdinBodyReader.ReadBody` is a bare `TextReader.ReadToEnd()`, same default
+decoder), so this isn't a new hole B2 opened; it's the pre-existing, already-known gap this codebase
+carries on every body-reading path (the DEVLOG's own standing note that the `InvalidUtf8Bytes`
+corruption test "passes for the wrong reason" is the same area). Not this block's to fix.
+
+**Priority 5 and 6, confirmed by execution.** `FindingDegradationStatus` and
+`FindingStalenessStatus` both still have exactly the cases they had before — 3 and 4 respectively,
+no fourth spelling minted, grepped their `Match` signatures and case lists directly. Ran the actual
+CLI binary (Release, rebuilt fresh — caught myself pointed at a stale Debug DLL on the first attempt
+and redid it against the real one) with the *old* `--blind-spot-body "<text>"` flag: it refuses
+`missing-argument` for `--blind-spot-body-file` (the old flag is silently unconsumed, not
+recognised, not aliased), and no finding card is written. `grep -rn -- '--blind-spot-body\b'`
+excluding `-file` across `src/`, `tests/` and `openspec/` turns up nothing but DEVLOG history and one
+test comment noting the removal — no code path anywhere still accepts a body as a shell argument.
+
+**Signing off. §6's remediation is clean — ready for the supervisor's re-run over `8b44a51..HEAD`.**
+
+→ @architect
+
+**[worker]** Reviewer nit closed — split `blind-spot-body-file-unreadable` into two codes,
+following `RunFindingStatus`/`RunSectionStatus`'s existing `File.Exists`-first precedent rather than
+inventing a new shape.
+
+In `ParseFindingRecord` (`CommandParser.cs`): after the `--blind-spot-body-file` presence check, a
+`File.Exists` check runs first. `false` → **`blind-spot-body-file-not-found`** (new code) — the
+caller named a path with no readable file at it, which also covers a directory (`File.Exists` is
+`false` for a directory too, so a directory-as-path lands here, not in the read-failure branch — a
+behaviour change from the pre-nit code, which threw `UnauthorizedAccessException` from
+`File.ReadAllText` and caught it as the same code the true environmental case used). Existence
+confirmed → the `File.ReadAllText`/catch block runs as before, but now only for a file that exists
+and still can't be read — **`blind-spot-body-file-unreadable`** (unchanged code, narrowed meaning:
+permission denied, a disk error, or a TOCTOU race where the file vanished between the two checks).
+
+Tests: `BlindSpotBodyFileDoesNotExist_Refuses_WithBlindSpotBodyFileNotFound` (renamed/updated from
+the old unreadable-code assertion) and a new `BlindSpotBodyFileNamesADirectory_Refuses_WithBlindSpotBodyFileNotFound`
+both assert the not-found code; a new `BlindSpotBodyFileIsPermissionDenied_Refuses_WithBlindSpotBodyFileUnreadable`
+(Unix-only, guarded by `OperatingSystem.IsWindows()`, chmod via `File.SetUnixFileMode`) asserts the
+unreadable code fires for a genuine environmental failure. Mutation-checked: neutered the
+`File.Exists` branch (`false && !File.Exists(...)`) and reran — both not-found tests failed with
+`expected blind-spot-body-file-not-found, got blind-spot-body-file-unreadable`, the right reason.
+Fix restored before the final gate run below.
+
+Left alone, per the coordinator's note: the empty-body-file and invalid-UTF-8 behaviours — unchanged,
+not this nit's scope.
+
+**§9's refusal set is now 29, not 28** — the mechanical count the supervisor's last enumeration
+produced (28: the frozen 22 plus §6's five plus `stdin-not-redirected`) gains one more from this
+split. §6's finding-record codes are now six, not five:
+`unrecognised-blind-spot`, `card-already-exists`, `invalid-extent`, `unrecognised-disposition`,
+**`blind-spot-body-file-not-found`**, `blind-spot-body-file-unreadable`. `ambiguous-section-label`
+(finding status) is unchanged, still one code.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (490/490).
+
+Nothing committed, nothing ticked — over to the Architect for gating and commit.
+
 ## NEXT
 
 

@@ -123,6 +123,75 @@ public sealed class FindingStalenessEvaluatorTests : IDisposable
             onNotApplicable: static _ => "not-applicable"));
     }
 
+    // §6 remediation (B1) — the case the block C tests bracketed on both sides and never wrote:
+    // absent at record time, still absent now. Before the fix, string.Equals(null, null) read
+    // "no difference" and this reported Current, forever, for content that was never actually
+    // fingerprinted — a typo'd path, a wrong-root path, or a directory all land here. Mutate the
+    // fix (drop the recordedHash/currentHash-both-null special case) and this goes red for the
+    // right reason: it asserts Current is never the answer, not merely that some other answer is.
+    [Fact]
+    public void ExplicitExtent_FileAbsentAtRecordTime_StillAbsentNow_IsNotMeasurable_NeverCurrent()
+    {
+        var extent = FindingExtent.Explicit(["a.cs"]);
+        var fingerprint = FindingExtentFingerprint.Compute(extent, _root);
+        Assert.Null(Assert.Single(fingerprint!.Files).ContentHash);
+
+        // a.cs is never created — still absent at re-check time.
+        var result = FindingStalenessEvaluator.Evaluate(Fields(extent, fingerprint), _root);
+
+        var reason = result.Match(
+            onCurrent: static () => throw new Xunit.Sdk.XunitException("expected NotMeasurable, got Current"),
+            onStale: static reason => throw new Xunit.Sdk.XunitException($"expected NotMeasurable, got Stale: {reason}"),
+            onNotMeasurable: static reason => reason,
+            onNotApplicable: static reason => throw new Xunit.Sdk.XunitException($"expected NotMeasurable, got NotApplicable: {reason}"));
+
+        Assert.Contains("a.cs", reason, StringComparison.Ordinal);
+    }
+
+    // The directory case named explicitly in the supervisor's finding: File.ReadAllBytes throws
+    // UnauthorizedAccessException on a directory, caught as a null hash by FindingExtentFingerprint
+    // — the same "absent" value as a missing file, on both sides, so it must read the same
+    // NotMeasurable answer rather than Current.
+    [Fact]
+    public void ExplicitExtent_PathNamesADirectory_IsNotMeasurable_NeverCurrent()
+    {
+        var directoryPath = Path.Combine(_root, "a-directory");
+        Directory.CreateDirectory(directoryPath);
+        var extent = FindingExtent.Explicit(["a-directory"]);
+        var fingerprint = FindingExtentFingerprint.Compute(extent, _root);
+        Assert.Null(Assert.Single(fingerprint!.Files).ContentHash);
+
+        var result = FindingStalenessEvaluator.Evaluate(Fields(extent, fingerprint), _root);
+
+        Assert.Equal("not-measurable", result.Match(
+            onCurrent: static () => "current",
+            onStale: static _ => "stale",
+            onNotMeasurable: static _ => "not-measurable",
+            onNotApplicable: static _ => "not-applicable"));
+    }
+
+    // A confirmed change on one declared path takes priority over another declared path that was
+    // never measurable at all — the "never under-report" direction: a real, evidenced change is
+    // reported even when it cannot also report on the unmeasurable path.
+    [Fact]
+    public void ExplicitExtent_OnePathChanged_AnotherNeverMeasurable_ReportsStale_NotNotMeasurable()
+    {
+        File.WriteAllText(Path.Combine(_root, "a.cs"), "original");
+        var extent = FindingExtent.Explicit(["a.cs", "never-exists.cs"]);
+        var fingerprint = FindingExtentFingerprint.Compute(extent, _root);
+
+        File.WriteAllText(Path.Combine(_root, "a.cs"), "changed");
+        // never-exists.cs is never created — absent at both record and re-check time.
+
+        var result = FindingStalenessEvaluator.Evaluate(Fields(extent, fingerprint), _root);
+
+        Assert.Equal("stale", result.Match(
+            onCurrent: static () => "current",
+            onStale: static _ => "stale",
+            onNotMeasurable: static _ => "not-measurable",
+            onNotApplicable: static _ => "not-applicable"));
+    }
+
     // §6 block B's own shipped writer recorded an Explicit extent before this field existed —
     // ExtentFingerprint is null on such a card. Never Current for "never measured".
     [Fact]

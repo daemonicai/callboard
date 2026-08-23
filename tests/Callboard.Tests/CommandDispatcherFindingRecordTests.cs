@@ -52,6 +52,7 @@ public sealed class CommandDispatcherFindingRecordTests
         var raisedPath = kind == "obligation"
             ? Path.Combine(repo.CardsDirectory, "h-0001.md")
             : Path.Combine(repo.RegisterDirectory, "h-0001.md");
+        var bodyFilePath = WriteBodyFile(repo.Path, "The instrument does not cover generated code.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -59,7 +60,7 @@ public sealed class CommandDispatcherFindingRecordTests
                 "finding", "record", findingPath,
                 "--role", "worker", "--title", "Checked, with a gap", "--section", "6", "--change", ChangeName,
                 "--blind-spot", kind, "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
-                "--blind-spot-body", "The instrument does not cover generated code.",
+                "--blind-spot-body-file", bodyFilePath,
             ],
             output, repo.Path, "Recorded body.");
 
@@ -89,6 +90,7 @@ public sealed class CommandDispatcherFindingRecordTests
 
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0000.md");
         var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0000.md");
+        var bodyFilePath = WriteBodyFile(repo.Path, "The instrument does not cover generated code.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -96,7 +98,7 @@ public sealed class CommandDispatcherFindingRecordTests
                 "finding", "record", findingPath,
                 "--role", "worker", "--title", "Checked, with a gap", "--section", "6", "--change", ChangeName,
                 "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
-                "--blind-spot-body", "The instrument does not cover generated code.",
+                "--blind-spot-body-file", bodyFilePath,
             ],
             output, repo.Path, "Recorded body.");
 
@@ -168,6 +170,131 @@ public sealed class CommandDispatcherFindingRecordTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("missing-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // ADR-0001 / design.md: no workflow may require quoting a card body as a shell argument.
+    // `--blind-spot-body` no longer exists at all — the raised card's body arrives only via
+    // `--blind-spot-body-file`, a path, never inline text.
+    [Fact]
+    public void RaisingWithoutBlindSpotBodyFile_Refuses_WithMissingArgument()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0010.md");
+        var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0010.md");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "finding", "record", findingPath,
+                "--role", "worker", "--title", "Checked, with a gap", "--section", "6", "--change", ChangeName,
+                "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+            ],
+            output, repo.Path, "Recorded body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
+        Assert.Contains("--blind-spot-body-file", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+    }
+
+    // §6 remediation (reviewer nit) — split along the same "File.Exists first" line
+    // RunFindingStatus/RunSectionStatus already draw: a path naming no readable file at all
+    // (missing, or a directory — File.Exists is false for both) is the caller's own mistake.
+    [Fact]
+    public void BlindSpotBodyFileDoesNotExist_Refuses_WithBlindSpotBodyFileNotFound()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0011.md");
+        var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0011.md");
+        var missingBodyPath = Path.Combine(repo.Path, "no-such-body.md");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "finding", "record", findingPath,
+                "--role", "worker", "--title", "Checked, with a gap", "--section", "6", "--change", ChangeName,
+                "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+                "--blind-spot-body-file", missingBodyPath,
+            ],
+            output, repo.Path, "Recorded body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("blind-spot-body-file-not-found", refusal.GetProperty("code").GetString());
+        Assert.Contains(missingBodyPath, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.False(File.Exists(findingPath));
+    }
+
+    // The same code fires for a path naming a directory — File.Exists is false for a directory
+    // too, so this is still "the caller's to fix", not the environmental-failure code.
+    [Fact]
+    public void BlindSpotBodyFileNamesADirectory_Refuses_WithBlindSpotBodyFileNotFound()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0012.md");
+        var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0012.md");
+        var directoryBodyPath = Path.Combine(repo.Path, "a-directory");
+        Directory.CreateDirectory(directoryBodyPath);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "finding", "record", findingPath,
+                "--role", "worker", "--title", "Checked, with a gap", "--section", "6", "--change", ChangeName,
+                "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+                "--blind-spot-body-file", directoryBodyPath,
+            ],
+            output, repo.Path, "Recorded body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("blind-spot-body-file-not-found", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // The environmental-failure half: a file that exists but cannot be read for a reason that is
+    // not the caller's typo — permission denied. Different code from the not-found case above.
+    [Fact]
+    public void BlindSpotBodyFileIsPermissionDenied_Refuses_WithBlindSpotBodyFileUnreadable()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0013.md");
+        var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0013.md");
+        var bodyFilePath = WriteBodyFile(repo.Path, "Unreadable content.");
+        var output = new StringWriter();
+
+        // UnixFileMode has no Windows equivalent; the environmental-unreadable path is exercised
+        // here on Unix only — the not-found half above is exercised on every platform.
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        File.SetUnixFileMode(bodyFilePath, UnixFileMode.None);
+        try
+        {
+            var exitCode = RunInRepo(
+                [
+                    "finding", "record", findingPath,
+                    "--role", "worker", "--title", "Checked, with a gap", "--section", "6", "--change", ChangeName,
+                    "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+                    "--blind-spot-body-file", bodyFilePath,
+                ],
+                output, repo.Path, "Recorded body.");
+
+            Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+            using var doc = JsonDocument.Parse(output.ToString());
+            var refusal = doc.RootElement.GetProperty("refusal");
+            Assert.Equal("blind-spot-body-file-unreadable", refusal.GetProperty("code").GetString());
+            Assert.Contains(bodyFilePath, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+            Assert.False(File.Exists(findingPath));
+        }
+        finally
+        {
+            // Restore permissions so TempGitRepo's directory cleanup in Dispose can delete it.
+            File.SetUnixFileMode(bodyFilePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 
     [Fact]
@@ -246,6 +373,13 @@ public sealed class CommandDispatcherFindingRecordTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("stdin-not-redirected", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    private static string WriteBodyFile(string repoPath, string content)
+    {
+        var path = Path.Combine(repoPath, "blind-spot-body-" + Guid.NewGuid().ToString("N") + ".md");
+        File.WriteAllText(path, content);
+        return path;
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

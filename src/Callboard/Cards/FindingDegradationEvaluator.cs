@@ -38,16 +38,29 @@ namespace Callboard.Cards;
 /// </para>
 ///
 /// <para>
-/// <b>An unresolvable section reads as <see cref="FindingDegradationStatus.Live"/> only when nothing
-/// in the directory is even in question.</b> If no <c>section</c> card matches the label and every
-/// card in the directory parsed cleanly, there genuinely is no section card yet, and reporting
+/// <b>An unresolvable section reads as <see cref="FindingDegradationStatus.Live"/> only when the
+/// directory holds no candidate at all — no card of any kind that could be this finding's section
+/// card.</b> If the directory contains zero <c>section</c> cards and every card in it parsed
+/// cleanly, there genuinely is no section card yet, and reporting
 /// <see cref="FindingDegradationStatus.Degraded"/> would be a false claim this method cannot
-/// support. But if no matching card was found <em>and</em> at least one card in the directory
-/// failed to parse, that card cannot be ruled out as the finding's own section card gone corrupt —
-/// reporting <see cref="FindingDegradationStatus.Live"/> in that case would silently equate "no
-/// section card exists" with "there is one and it's unreadable", exactly the "absent is a different
-/// answer from failed" convention §3 already established (reviewer blocker, §6 block D
-/// remediation). That case reads <see cref="FindingDegradationStatus.Unreadable"/> instead.
+/// support. That is the only case this method reads as <see cref="FindingDegradationStatus.Live"/>
+/// for a finding with no exact label match.
+/// </para>
+///
+/// <para>
+/// <b>§6 remediation (B3) — zero matches among candidates is not the same as zero candidates.</b>
+/// <c>--section</c> is unvalidated free text, and there is no section-creation verb: a typo
+/// (<c>"6 "</c> against a card labelled <c>"6"</c>) is structurally indistinguishable from a
+/// genuinely different section (label <c>"5"</c>). So when the directory holds at least one
+/// <c>section</c> card that parsed cleanly but did not match this finding's label — <em>or</em> at
+/// least one card that failed to parse at all — this method cannot rule out that one of them is this
+/// finding's own section card, mislabelled or corrupt, and reporting
+/// <see cref="FindingDegradationStatus.Live"/> would silently equate "no section card exists" with
+/// "one exists and cannot be confirmed to match", exactly the "absent is a different answer from
+/// failed" convention §3 established and this method's own block D remediation already applied to
+/// the corrupt-card case (reviewer blocker). Both are now the same case, reusing
+/// <see cref="FindingDegradationStatus.Unreadable"/> rather than minting a fourth answer for the
+/// same idea — the reason names whichever kind of non-matching candidate was found, or both.
 /// </para>
 /// </summary>
 internal static class FindingDegradationEvaluator
@@ -61,6 +74,7 @@ internal static class FindingDegradationEvaluator
         }
 
         var matches = new List<(string FilePath, CardFile Card)>();
+        var otherSectionPaths = new List<string>();
         var unreadablePaths = new List<string>();
 
         foreach (var (path, result) in CardStore.ReadAllCards(directory))
@@ -75,9 +89,21 @@ internal static class FindingDegradationEvaluator
                 continue;
             }
 
-            if (CardStore.IsSectionCard(card) && string.Equals(card.Frontmatter.Section, finding.Frontmatter.Section, StringComparison.Ordinal))
+            if (!CardStore.IsSectionCard(card))
+            {
+                continue;
+            }
+
+            if (string.Equals(card.Frontmatter.Section, finding.Frontmatter.Section, StringComparison.Ordinal))
             {
                 matches.Add((path, card));
+            }
+            else
+            {
+                // §6 remediation (B3) — a readable section card that does not match is still a
+                // candidate that cannot be ruled out: the label is free text, so this could be the
+                // finding's own section card under a typo, not proof a different section exists.
+                otherSectionPaths.Add(path);
             }
         }
 
@@ -93,12 +119,26 @@ internal static class FindingDegradationEvaluator
             return FindingDegradationEvaluation.Resolved(status);
         }
 
-        if (unreadablePaths.Count > 0)
+        if (unreadablePaths.Count > 0 || otherSectionPaths.Count > 0)
         {
             unreadablePaths.Sort(StringComparer.Ordinal);
+            otherSectionPaths.Sort(StringComparer.Ordinal);
+
+            var reasonParts = new List<string>();
+            if (otherSectionPaths.Count > 0)
+            {
+                reasonParts.Add(
+                    $"{otherSectionPaths.Count} readable 'section' card(s) in that directory carry a different label and cannot be ruled out as a mislabelled match: {string.Join(", ", otherSectionPaths)}");
+            }
+
+            if (unreadablePaths.Count > 0)
+            {
+                reasonParts.Add(
+                    $"{unreadablePaths.Count} card(s) in that directory could not be parsed and cannot be ruled out as it: {string.Join(", ", unreadablePaths)}");
+            }
+
             return FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Unreadable(
-                $"no readable 'section' card in '{directory}' carries the label '{finding.Frontmatter.Section}', but {unreadablePaths.Count} " +
-                $"card(s) in that directory could not be parsed and cannot be ruled out as it: {string.Join(", ", unreadablePaths)}."));
+                $"no readable 'section' card in '{directory}' carries the label '{finding.Frontmatter.Section}', but {string.Join("; and ", reasonParts)}."));
         }
 
         return FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Live);

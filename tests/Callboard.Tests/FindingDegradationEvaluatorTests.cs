@@ -20,6 +20,15 @@ namespace Callboard.Tests;
 /// silently reading identically to "no section card exists" — is
 /// <see cref="UnparseableSectionCandidate_ReadsUnreadable_NotLive"/>.
 /// </para>
+///
+/// <para>
+/// <b>§6 section remediation (supervisor blocker B3).</b> Zero matches among readable candidates is
+/// not the same as zero candidates: <see cref="ClosedSectionCardForADifferentSection_ReadsUnreadable_NotLive"/>
+/// replaces the fixture that previously pinned the fail-open direction (a differently-labelled
+/// section card made the finding read <c>Live</c> forever). <see
+/// cref="NoMatchingSectionCardInDirectory_ReadsLive_NotDegraded"/> keeps proving the genuine
+/// zero-candidates case still reads <c>Live</c> — that one is honest.
+/// </para>
 /// </summary>
 public sealed class FindingDegradationEvaluatorTests : IDisposable
 {
@@ -79,17 +88,30 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
         Assert.Same(FindingDegradationStatus.Live, AssertResolved(FindingDegradationEvaluator.Evaluate(card, findingPath)));
     }
 
-    // A closed section card for a *different* section number must not degrade this finding —
-    // matching is by the Section label the two cards share, not "any closed section card sitting
-    // in the same directory".
+    // §6 remediation (B3). A closed section card for a *different* section number must not degrade
+    // this finding as if it were a match — but neither can it be reported Live, because
+    // `--section` is unvalidated free text with no section-creation verb: this evaluator has no way
+    // to tell "genuinely a different section" apart from "the finding's own section, mislabelled".
+    // Before the fix this read Live — the exact fail-open direction the supervisor named, pinned by
+    // this test's own previous assertion.
     [Fact]
-    public void ClosedSectionCardForADifferentSection_FindingReadsLive()
+    public void ClosedSectionCardForADifferentSection_ReadsUnreadable_NotLive()
     {
         var findingPath = WriteFinding("f-0004");
-        WriteSectionCard("s-0003", "S-0003", closed: true, section: "5");
+        var otherSectionPath = WriteSectionCard("s-0003", "S-0003", closed: true, section: "5");
 
         var card = AssertParseSuccess(CardStore.ReadCard(findingPath));
-        Assert.Same(FindingDegradationStatus.Live, AssertResolved(FindingDegradationEvaluator.Evaluate(card, findingPath)));
+        var evaluation = FindingDegradationEvaluator.Evaluate(card, findingPath);
+
+        var status = evaluation.Match(
+            onResolved: static status => status,
+            onAmbiguous: static (label, filePaths) => throw new Xunit.Sdk.XunitException($"expected Resolved(Unreadable), got Ambiguous('{label}')."));
+
+        var reason = status.Match(
+            onLive: static () => throw new Xunit.Sdk.XunitException("expected Unreadable, got Live."),
+            onDegraded: static () => throw new Xunit.Sdk.XunitException("expected Unreadable, got Degraded."),
+            onUnreadable: static reason => reason);
+        Assert.Contains(otherSectionPath, reason, StringComparison.Ordinal);
     }
 
     // The structural done-gate: closing the section must not write or rewrite the finding card.

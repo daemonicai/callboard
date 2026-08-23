@@ -658,7 +658,7 @@ internal static class CommandParser
         string? extentExplicitRaw = null;
         string? blindSpotFile = null;
         string? blindSpotTitle = null;
-        string? blindSpotBody = null;
+        string? blindSpotBodyFile = null;
         string? dispositionText = null;
 
         var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
@@ -674,7 +674,7 @@ internal static class CommandParser
             ["--extent-explicit"] = value => extentExplicitRaw = value,
             ["--blind-spot-file"] = value => blindSpotFile = value,
             ["--blind-spot-title"] = value => blindSpotTitle = value,
-            ["--blind-spot-body"] = value => blindSpotBody = value,
+            ["--blind-spot-body-file"] = value => blindSpotBodyFile = value,
             ["--disposition"] = value => dispositionText = value,
         });
         if (flagRefusal is not null)
@@ -734,11 +734,38 @@ internal static class CommandParser
                         $"'finding record' requires '--blind-spot-title <text>' when --blind-spot is '{blindSpotText}'."));
                 }
 
-                if (blindSpotBody is null)
+                if (blindSpotBodyFile is null)
                 {
                     return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                         "missing-argument",
-                        $"'finding record' requires '--blind-spot-body <text>' when --blind-spot is '{blindSpotText}'."));
+                        $"'finding record' requires '--blind-spot-body-file <path>' when --blind-spot is '{blindSpotText}'."));
+                }
+
+                // §6 remediation (reviewer nit) — split along the same "File.Exists first" line
+                // RunFindingStatus/RunSectionStatus already draw for card-not-found: a path the
+                // caller named that resolves to no readable file (missing, or naming a directory —
+                // File.Exists is false for both) is the caller's own mistake to fix, argv-decidable
+                // here at parse time; a path that does exist as a file but cannot be read for
+                // environmental reasons (permission denied, a disk error) is not something the
+                // caller typo'd, and gets a different code even though both still refuse at parse
+                // time — there is no tool-failure outcome available before ParseResult.Ready.
+                if (!File.Exists(blindSpotBodyFile))
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "blind-spot-body-file-not-found",
+                        $"'--blind-spot-body-file' names a path with no readable file: '{blindSpotBodyFile}'."));
+                }
+
+                string blindSpotBody;
+                try
+                {
+                    blindSpotBody = File.ReadAllText(blindSpotBodyFile);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "blind-spot-body-file-unreadable",
+                        $"'--blind-spot-body-file' names a file that exists but could not be read: '{blindSpotBodyFile}' ({ex.Message})"));
                 }
 
                 var raisedKind = blindSpotText == "obligation" ? CardKind.Obligation : CardKind.Hazard;
