@@ -15131,6 +15131,9 @@ side of a seam by construction.
 - **Dependency changes — run `make aot` at section close** and quote `AOT_EXIT:0`. Not in `make gates`
   by Product Owner decision (§3 close): NativeAOT compilation is slow and gates run several times per
   block. §4's closing tree: `AOT_EXIT:0`.
+  **§6 close: `AOT_EXIT:0` — but only with the command sandbox disabled.** Inside it the post-link
+  `dsymutil`/`strip` step fails (`MSB3077`, "exited with return value 0, but errors were detected")
+  while the compile itself succeeds. Environment fact, not a code defect — do not spend a round on it.
 - **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs` versus
   an absent `<Version>` in the csproj).
 - **Gate hygiene** — `-k` aggregation on a red `make gates` has still never been demonstrated. Worth
