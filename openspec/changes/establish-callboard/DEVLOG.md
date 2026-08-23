@@ -14463,52 +14463,399 @@ ready for the supervisor's third and final look.
 
 → @architect
 
+**[supervisor]** Section review, §6 "Findings", round 3 — the final look, over `8b44a51..HEAD`
+(six commits: four blocks plus `8eb86b9` and `9377e9a`).
+
+**Verdict: Approve.** §6 is closed.
+
+**The blocker is fixed, verified by execution, not by reading the account.** Rebuilt the Release
+binary at HEAD and re-ran my own round-2 repro in a fresh `git init` scratch repo — one finding, one
+`section` card labelled `6` with `closed_at` set:
+
+| invocation (same file, same closed section) | round 2 | now |
+|---|---|---|
+| absolute path | `degraded` | `degraded` |
+| bare filename after `cd` | **`live`** | **`degraded`** |
+| `./`-prefixed | `degraded` | `degraded` |
+
+The fix uses `AnchoredCardPath.cs:66-67`'s exact substitution rather than a variant, and the reviewer
+was right to check that every *other* `GetDirectoryName` site correctly refuses instead of
+substituting — a write path must never silently retarget `"."`, and none of them does.
+
+---
+
+### Question 1: is §6 clean, or is there a fourth instance?
+
+**On the product code: yes, clean — and I can say that mechanically rather than by having looked
+hard.** The worker and reviewer both enumerated *three named methods*. I ran a different and wider
+check: a sweep of **every `.cs` file under `src/Callboard`** for any return of a lenient answer
+(`FindingDegradationStatus.Live`, `FindingStalenessStatus.Current`, in any form — `return` or
+expression-bodied). The whole product contains exactly **two** such sites:
+
+- `FindingDegradationEvaluator.cs:145` — reached only with zero section-card candidates and zero
+  parse failures in the directory. Genuinely no section card exists; `Live` is the true answer.
+- `FindingStalenessEvaluator.cs:110` — reached only when every declared path had a real hash on both
+  sides and every one matched. Directly measured.
+
+There is no third place in the codebase where a benign answer can be produced, so there is no fourth
+instance of that shape left to find. That is a stronger claim than "we walked three methods and found
+nothing," and it is the claim §7 should inherit.
+
+**On the residual form of the class: two remain, both now fail-closed or documented, both §7's.**
+Sweeping every string-comparison in §6's surface, only one is still an *identity* claim:
+`FindingDegradationEvaluator.cs:98`, matching a section card by ordinal equality on a free-text label.
+Its two lenient outcomes are now closed (zero matches → `Unreadable`, multiple → refusal), so the only
+way it can still be confidently wrong is a **single** section card that coincidentally carries this
+finding's label without being its section — contrived inside one change directory, and genuinely
+unanswerable until a finding references its section card by identity rather than by label. The other
+is `FindingExtentFingerprint.FilePathFor`'s `:`/`#` split, already documented as a stated limitation.
+Everything else the sweep returned is dictionary keying or ordinal sorting over path strings, where
+both sides are derived by the same function — legitimate, not an identity claim.
+
+**Do I expect a fourth instance? Not in §6, and here is the part worth carrying forward.** Three
+rounds each found one more instance, and the pattern in *how* they were found is the actual lesson:
+
+- **None of the three was found by reading a diff.** B1 came from composing block A's "items are
+  opaque strings" with block C's "absence is a value" — a claim no single diff contains. B3 came from
+  asking what the zero-match branch answers. The empty-directory-component one came from **running the
+  binary three ways**.
+- **Each of the three was invisible at the layer its own tests lived at.** B1's tests bracketed the
+  defect on both sides. B3's fail-open was *pinned by a passing test*. The third was invisible at the
+  domain layer because every fixture built its path with `Path.Combine`.
+
+So: more review rounds would not have found a fourth — three rounds of competent review demonstrably
+did not. **What finds this class is a mechanical check, and what would have found all three is the
+same one:** for every function returning a closed union with a benign case, enumerate the return
+sites and require each benign one to be reachable only from evidence. That is a two-minute grep, it
+is what I just ran, and it should be a standing check rather than a lesson. It belongs with 9.12.
+
+**One fourth instance I did find — in the audit method, not the product.** The reviewer's sweep for
+process-global mutation concluded "there is nothing left uncovered for it to miss," on the strength of
+`grep -rn "SetCurrentDirectory\|SetEnvironmentVariable\|AppContext.SetSwitch"`. That pattern list was
+assembled by recall, and it misses one: **`CardFindingRecordConcurrencyTests.cs:63,70` mutates and
+restores `ThreadPool.SetMinThreads`** — process-global state, in a class outside
+`CurrentDirectoryMutatingTests`. It is **benign in effect** (raising a min-thread count cannot corrupt
+another test the way a moving CWD can) and I am not asking for anything to change. But the claim
+"today the collection is complete" is not accurate as written, and the reason it isn't is the
+section's own signature failure — a mechanical sweep is only as good as the pattern list, and this
+pattern list was recalled. That is the fourth instance of "enumeration by recall is not an
+instrument" in §6, after the two refusal-code miscounts. §7 inherits the corrected statement below.
+
+### Question 2: the accurate closing state for `## NEXT`
+
+Everything below is re-derived at HEAD, not carried from my earlier posts.
+
+**§6 "Findings" — CLOSED.** 6.1–6.7 ticked. Six commits, sixteen review rounds:
+
+| commit | what | rounds |
+|---|---|---|
+| `2b078a7` | block A — `FindingCardFields`, `FindingExtent`, the blind-spot declaration, **O-4's compatibility corpus** (6.1, 6.4) | 2 |
+| `7ea24e4` | block B — `finding record`, the blind-spot refusal, the raised card under lock (6.2, 6.3) | 4, all in the locking |
+| `2a95ed2` | block C — staleness as a content fingerprint, clean-as-argued, `finding status` (6.5, 6.6) | 2 |
+| `c623a88` | block D — degradation derived from the section card's closed state (6.7) | 2 |
+| `8eb86b9` | remediation — supervisor B1/B2/B3. Ticked nothing | 2 |
+| `9377e9a` | remediation — supervisor round-2 blocker + test isolation. Ticked nothing | 3 |
+
+Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (492/492) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0` /
+`GATES_EXIT:0`, and `AOT_EXIT:0` outside the sandbox.
+
+**The refusal set is 30 codes.** Re-derived mechanically at HEAD over all **92**
+`CommandOutcome.Refusal` construction sites in `src/Callboard` (one unresolved match, the union's own
+`Match` arm). §6 contributed seven:
+
+`already-blocked-by`, `already-closed`, **`ambiguous-section-label`**, `base-immutable`,
+`base-not-recorded`, **`blind-spot-body-file-not-found`**, **`blind-spot-body-file-unreadable`**,
+**`card-already-exists`**, `card-layout-mismatch`, `card-not-found`, `invalid-blocking-card-id`,
+`invalid-exit-code`, **`invalid-extent`**, `invalid-gate-label`, `invalid-range`, `missing-argument`,
+`missing-flag-value`, `missing-subcommand`, `not-blocked-by`, `repo-root-not-found`,
+`stdin-not-redirected`, `undefined-transition`, `unknown-command`, `unknown-subcommand`,
+`unrecognised-argument`, **`unrecognised-blind-spot`**, **`unrecognised-disposition`**,
+`unrecognised-role`, `unrecognised-verdict`, `wrong-card-kind`.
+
+**This count has now been wrong twice by arithmetic over a remembered baseline (27, then 29), and
+right twice by mechanical derivation. §9 must re-derive it, not trust this list.** The command is the
+instrument, not the number.
+
+**What §6 established that later sections must not re-derive**
+
+- **Neither evaluator may return a benign answer to a question it could not answer.** `Current` and
+  `Live` are reachable only from direct evidence; everything else is `NotMeasurable`, `Unreadable`, or
+  a refusal. This is §5's "absent is a different answer from passing" made structural in two more
+  places, and the whole product now contains exactly two lenient return sites, both guarded.
+- **A finding is section-scoped by construction** (`CardStore.RecordFinding` hardcodes
+  `CardScope.Section`), and a blind spot's raised card takes its scope **from its kind** — obligation →
+  `Change`, hazard → `Repository` — pinned against `CardScopeRules.Validate` by
+  `CardFindingRecordScopeAgreementTests`. A caller never chooses either.
+- **Degradation is derived, never stored.** No field, no wire key, no write to a finding card at
+  section close; `WriteCard` is still create-only. Same answer §5 gave for `blocked`. Proven by
+  asserting bytes *and* mtime, not by asserting no write path exists.
+- **Staleness is a content fingerprint and `callboard` never invokes git.** File granularity,
+  deliberately over-reporting; `absent` is a fingerprinted state; a real measured change outranks an
+  unmeasurable sibling path (`Stale` > `NotMeasurable` > `Current`).
+- **Clean-as-argued is a recorded disposition, excluded from staleness structurally** — the
+  `ArguedClean` arm of a closed-union match returns `NotApplicable` and never reaches the measured
+  half. Deleting the exclusion means deleting an arm, which does not compile.
+- **Lock identity is decided from evidence, never from a path string.** `CardLock.CurrentlyNames`
+  compares a lock file's own per-acquisition nonce; `AcquireLocksAndRecord` acquires no lock while
+  holding another (acquire-probe-release-retry), so **no ordering exists for two callers to disagree
+  about**. This is §4's "when two values must agree, delete one" arriving a third time.
+- **`finding record` is the tool's first card-creating verb and its first stdin consumer.** Identity is
+  allocated before the create-only check, so a refused record burns an id — correct and harmless:
+  `VerifyCounters` only flags a counter *below* the observed max, so "never recycled" holds.
+
+**Working rules earned in §6 — the section's real output**
+
+- **A claim about identity, state or coverage made from a *string* rather than from *evidence* is this
+  project's signature defect.** Six instances in §6: the unlocked raised-card write, the `Ordinal`
+  same-file fast path, the cross-invocation lock ordering, `absent`-equals-`absent`, the zero-match
+  section label, and an empty directory component read as "no directory". Every fix was correct; what
+  kept the class alive was that each fix closed the instance in front of it. **Fix this class as a
+  rule across every call site at once, and verify the rule by enumerating the sites mechanically.**
+- **A test can pin the wrong direction.** `ClosedSectionCardForADifferentSection_ReadsLive` was a
+  passing, green, deliberate test asserting the fail-open answer, through four blocks and two audits.
+  When a test's name says a lenient answer is expected, that is a claim to check, not evidence.
+- **A defect can be invisible at the layer its tests live at.** Every degradation fixture built its
+  path with `Path.Combine`, so the bare-filename defect could not appear at the domain layer at all.
+  Where a value's *shape* is the input, a test that always constructs it one way proves nothing about
+  the others.
+- **Enumerate mechanically or say you didn't — including the pattern list.** A grep-based sweep is
+  only as complete as the patterns recalled into it (see `ThreadPool.SetMinThreads`, above).
+- **The reader may be widened; the writer emits exactly one form.** Held through two widenings.
+- **A block that applies the previous block's lessons from its first submission costs half the
+  rounds.** Block C applied block B's two rules immediately and took 2 rounds where B took 4.
+
+**Obligations**
+
+- **O-1, O-2, O-3 — DISCHARGED** (§4 block B ×2, §5 block B). Unchanged.
+- **O-4 — DISCHARGED (§6 block A), one half structurally.** The compatibility corpus mechanically
+  catches a fixture that stops parsing — proven three times by mutation, including block C's real
+  widening. The forward half — a *new* wire form nobody adds a fixture for — is **documentation only**,
+  stated plainly in the corpus's own doc comment rather than overclaimed. `CardFileWriter` emits a
+  fixed, enumerable set of 26 key literals, so a test asserting every emittable key appears in some
+  fixture would close it structurally. **Carve with 9.12.**
+
+**Notes owed to §7 in particular**
+
+1. **Identity addressing must be *decided*, not carried a third time.** §5 asked for it; §6 hit it
+   twice. A finding has no reference to its own section card — only a free-text label two
+   independently-writable fields happen to share, matched by ordinal equality, in a directory
+   `CardLayout.DirectoryFor` shares between `Section` and `Change` scope. `--section` is unvalidated
+   and there is no section-creation verb. §6's fix is fail-closed, which buys time and answers nothing.
+   **Correction to the block reviewer's warning, which would otherwise mislead you:** the `Unreadable`
+   answer does **not** become common once section cards exist — `matches.Count == 1` returns before
+   `otherSectionPaths` is consulted, so a finding whose own section card exists answers correctly
+   however many other section cards share the directory (verified by execution). The cliff applies only
+   to a finding raised *before its own section card exists*, where fail-closed is right.
+2. **`workingDirectory` is not the path-resolution seam it looks like.** Every path-taking handler —
+   all eight — passes `parsed.FilePath` straight into `File.Exists` / `CardStore.ReadCard` / the write
+   path without ever resolving it against `parsed.WorkingDirectory`; that parameter feeds only
+   `RepoRootResolver.Resolve` and `RunIndexRebuild`. **Not a shipped-binary bug** — `Program.cs:10`
+   seeds it from `Directory.GetCurrentDirectory()`, so the two cannot diverge in production. It is a
+   *testability* defect: a test wanting "invoked with a relative path from directory X" has no
+   parameter to say that with and must reach for the process-global CWD, which is precisely what
+   forced §6's last two tests into a shared xUnit collection. Fix the seam and the collection becomes
+   unnecessary.
+3. **The xUnit collection is a convention, not a guarantee.** `CurrentDirectoryMutatingTests` makes its
+   two member classes serialize *against each other*; it cannot stop a class outside it from touching
+   the same global — the reviewer demonstrated exactly that with a deliberately unprotected fourth
+   class. A future test that mutates any process-global must **remember** to join it. Same shape of
+   caveat this codebase already states for `CardLock` being advisory. And the completeness sweep behind
+   it missed `ThreadPool.SetMinThreads` (`CardFindingRecordConcurrencyTests.cs:63,70`) — benign, but the
+   collection is complete for *current-directory* mutation specifically, not for process-global
+   mutation generally.
+4. **O-4's forward half, and the lenient-return check, are the same shape and belong with 9.12** —
+   alongside the standing note that no structural check ties a minted refusal code to a test proving it
+   fires.
+5. **`ambiguous-section-label` refuses the whole `finding status` read**, taking a determinate staleness
+   answer down with it. Defensible fail-closed; worth revisiting when a finding read path is next built.
+6. **No CLI read verb exists for `obligation`/`hazard`.** The blind spot "remains live" half of the spec
+   is proven at the domain layer only; `finding status` refuses those kinds at `wrong-card-kind`, and
+   `finding status`'s JSON surfaces neither the instrument nor the blind-spot reference the card
+   carries. §7 owns a raised card's structured `owed_by` — today the back-reference lives in body prose.
+7. **Small corrections §6 leaves behind:** `WrongCardKind`'s doc comment still says "Six construction
+   sites" and enumerates them — there are seven now (`RunFindingStatus`); and `IndexSchema`'s doc
+   comment says the blocked-on/citation fields "do not exist in the primary record yet (§5 and §6 own
+   them)" — §5 shipped `blocked_by` and §6 shipped `blind_spot_card`. Neither is a defect; both are
+   claims that have decayed, in comments whose whole purpose is the claim.
+8. **The index is a deliberate deferral, not a gap.** Nothing in §6 reads it; a finding is indexed as an
+   ordinary row and every §6 field is kind-specific, exactly like §5's. ADR-0004 intact.
+9. **Environment fact — `make aot` fails inside the command sandbox** at the post-link
+   `dsymutil`/`strip` step (`MSB3077`, "exited with return value 0, but errors were detected"), and
+   passes with the sandbox disabled. Not a code defect. Do not spend a round rediscovering it.
+
+**And what §6 got right, since the record should carry that too.** Every defect in this section — mine
+included — was found by **execution**: compiling a bypass, racing two processes, mutating a guard,
+running the real binary three ways. Not one was found by reading a diff. Workers declared what they
+could not demonstrate on every single block, and each declaration turned into a real gap being closed
+properly; one worker retracted a false claim in-thread and put the correction in a doc comment at the
+call site rather than only in a post nobody reading the code will see. Both auditors falsified their
+own repros before trusting them. Sixteen review rounds is a lot, and the section produced a defect
+class it had to be shown six times — but nothing shipped that anyone had merely *asserted* was correct.
+
+§6 is approved. Rewrite `## NEXT` for the closed state.
+
+→ @architect
+
 ## NEXT
 
 
-**Resume point: 6.1.** §5 is closed; §6 has not been opened. Nothing is in flight — working tree clean,
-no uncommitted WIP, no part-built block.
+**Resume point: 7.1.** §6 is closed; §7 has not been opened. Nothing is in flight — working tree
+clean, no uncommitted WIP, no part-built block.
 
-**§5 "Work lifecycle and sections" — CLOSED.** Supervisor `Approve` over `e055e5b..9671619` (second and
-final round; the first requested changes and the remediation landed as `9671619`). 5.1–5.8 ticked. Six
-commits:
+**§6 "Findings" — CLOSED.** Supervisor `Approve` over `8b44a51..9377e9a` on the third round. 6.1–6.7
+ticked. Six commits, sixteen review rounds:
 
-| commit | what | review rounds |
+| commit | what | rounds |
 |---|---|---|
-| `d165508` | block A — flow states as a closed union, transition table, block card fields (5.1, 5.4) | 3 |
-| `99a61b6` | block B — **O-3 discharged**; parse-then-execute funnel. Ticked nothing | 4 |
-| `c1a3b38` | block C — transition application, the first card-writing verbs, remediation rounds, the `base` refusal (5.2, 5.3, 5.5) | 4 |
-| `a52cd7a` | block D — gate results, derived blocked (5.6, 5.7) | 2 |
-| `107fe7e` | block E — sections as entities (5.8) | 3 |
-| `9671619` | remediation — supervisor findings B1/B2/B3 | 2 |
+| `2b078a7` | block A — `FindingCardFields`, `FindingExtent`, the blind-spot declaration, **O-4's compatibility corpus** (6.1, 6.4) | 2 |
+| `7ea24e4` | block B — `finding record`, the blind-spot refusal, the raised card under lock (6.2, 6.3) | 4, all in the locking |
+| `2a95ed2` | block C — staleness as a content fingerprint, clean-as-argued, `finding status` (6.5, 6.6) | 2 |
+| `c623a88` | block D — degradation derived from the section card's closed state (6.7) | 2 |
+| `8eb86b9` | remediation — supervisor B1/B2/B3. Ticked nothing | 2 |
+| `9377e9a` | remediation — supervisor round-2 blocker + test isolation. Ticked nothing | 3 |
 
-Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (375/375) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0`, and
-`AOT_EXIT:0`.
+Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (492/492) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0` /
+`GATES_EXIT:0`, and `AOT_EXIT:0` outside the sandbox.
 
-**§1, §2, §3 and §4 are also closed**, each with a `[supervisor]` `Approve` under its own `## N.`
-heading. **No section is awaiting a review.**
+**Two remediation blocks, which the workflow caps at one.** The supervisor requested changes twice;
+the second time I did **not** carve a third block on my own authority — I put it to the Product
+Owner, who ruled to carve it. The rule held: the third block was authorised, not improvised.
 
-### Starting §6 — read this before carving blocks
+**§1–§5 are also closed**, each with a `[supervisor]` `Approve` under its own `## N.` heading. **No
+section is awaiting a review.**
 
-§6 is findings: read `specs/findings/spec.md` against `tasks.md`'s `## 6.` before carving. Three things
-bind it before its first block:
+### Starting §7 — read this before carving blocks
 
-- **O-4 is owed by §6, and it binds immediately.** *Every wire form any shipped writer has emitted must
-  still parse.* §5's remediation changed `gate_results` from `label=exitcode` to `label=exitcode=round`
-  and **made every card the previous binary had written unreadable** — recording an unrelated gate on
-  such a card exited as a `tool-failure`. Fixed by widening the reader, and the supervisor's key
-  observation is that **the section's own "one function is the rule" lesson does not cover this case**:
-  there was only one function, and it was still wrong for data already on disk. **§6 widens frontmatter
-  next**, so the trigger arrives in its first block. Fix shape: a **compatibility corpus test** — cards
-  in every historical wire form, which every future parser change must keep parsing.
-- **The reader may be widened; the writer emits exactly one form.** That asymmetry is deliberate and
-  verified: items are unescaped *before* the `=` split, so validation judges the decoded label, and
-  duplicate detection normalises both spellings to `(label, round)` — `build=0,build=1=1` refuses. Keep
-  the asymmetry when adding forms.
-- **`current round` is now defined in three agreeing places** (`GateStatusOf`,
-  `RecordGateResultUnderExistingLock`, the parser's legacy default) — the section's own lesson reproduced
-  *inside the fix for it*. One `CurrentRound` property closes it; whoever touches round semantics next
-  owns it.
+**1. Identity addressing must be *decided* in §7, not carried a third time.** §5 asked for it; §6 hit
+it twice and fail-closed both times. A finding has **no reference to its own section card** — only a
+free-text label that two independently-writable fields happen to share, matched by ordinal equality,
+in a directory `CardLayout.DirectoryFor` shares between `Section` and `Change` scope. `--section` is
+unvalidated and **there is no section-creation verb**. §6's fixes buy time and answer nothing.
+*Correction to a block reviewer's warning that would otherwise mislead you:* `Unreadable` does **not**
+become the common answer once section cards exist — `matches.Count == 1` returns before
+`otherSectionPaths` is consulted, so a finding whose own section card exists answers correctly however
+many others share the directory (verified by execution). The cliff applies only to a finding raised
+*before its own section card exists*, where fail-closed is right.
+
+**2. `workingDirectory` is not the path-resolution seam it looks like.** All eight path-taking
+handlers pass `parsed.FilePath` straight into `File.Exists` / `CardStore.ReadCard` / the write path
+without ever resolving it against `parsed.WorkingDirectory`; that parameter feeds only
+`RepoRootResolver.Resolve` and `RunIndexRebuild`. **Not a shipped-binary bug** — `Program.cs:10` seeds
+it from `Directory.GetCurrentDirectory()`, so the two cannot diverge in production. It is a
+**testability** defect: a test wanting "invoked with a relative path from directory X" has no
+parameter to say that with, and must reach for the process-global CWD — which is exactly what forced
+§6's last two tests into a shared xUnit collection. **Fix the seam and the collection becomes
+unnecessary.**
+
+**3. The xUnit collection is a convention, not a guarantee.** `CurrentDirectoryMutatingTests`
+serialises its two member classes *against each other*; it cannot stop a class outside it touching the
+same global, demonstrated by the reviewer with a deliberately unprotected fourth class. A future test
+mutating any process-global must **remember** to join it. The completeness sweep behind it also missed
+`ThreadPool.SetMinThreads` (`CardFindingRecordConcurrencyTests.cs:63,70`) — benign, but the collection
+is complete for *current-directory* mutation specifically, not process-global mutation generally.
+
+**4. `ambiguous-section-label` refuses the whole `finding status` read**, taking a determinate
+staleness answer down with it. Defensible fail-closed; worth revisiting when a finding read path is
+next built.
+
+**5. No CLI read verb exists for `obligation`/`hazard`.** The blind spot's "remains live" half of the
+spec is proven at the domain layer only; `finding status` refuses those kinds at `wrong-card-kind`,
+and its JSON surfaces neither the instrument nor the blind-spot reference the card carries. §7 owns a
+raised card's structured `owed_by` — today the back-reference lives in body prose.
+
+**6. Small corrections §6 leaves behind, both claims that decayed in comments whose whole purpose is
+the claim:** `WrongCardKind`'s doc comment says "Six construction sites" and enumerates them — there
+are seven (`RunFindingStatus`); and `IndexSchema`'s says the blocked-on/citation fields "do not exist
+in the primary record yet (§5 and §6 own them)" — §5 shipped `blocked_by`, §6 shipped
+`blind_spot_card`.
+
+### The refusal set is 30 codes — and derive it, don't trust it
+
+Re-derived mechanically at HEAD over all **92** `CommandOutcome.Refusal` construction sites in
+`src/Callboard`. §6 contributed seven (**bold**):
+
+`already-blocked-by`, `already-closed`, **`ambiguous-section-label`**, `base-immutable`,
+`base-not-recorded`, **`blind-spot-body-file-not-found`**, **`blind-spot-body-file-unreadable`**,
+**`card-already-exists`**, `card-layout-mismatch`, `card-not-found`, `invalid-blocking-card-id`,
+`invalid-exit-code`, **`invalid-extent`**, `invalid-gate-label`, `invalid-range`, `missing-argument`,
+`missing-flag-value`, `missing-subcommand`, `not-blocked-by`, `repo-root-not-found`,
+`stdin-not-redirected`, `undefined-transition`, `unknown-command`, `unknown-subcommand`,
+`unrecognised-argument`, **`unrecognised-blind-spot`**, **`unrecognised-disposition`**,
+`unrecognised-role`, `unrecognised-verdict`, `wrong-card-kind`.
+
+**This count has been wrong twice by arithmetic over a remembered baseline (27, then 29) and right
+twice by mechanical derivation.** §9 must re-derive it rather than trust this list. The command is the
+instrument, not the number.
+
+### What §6 established that later sections must not re-derive
+
+- **Neither evaluator may return a benign answer to a question it could not answer.** `Current` and
+  `Live` are reachable only from direct evidence; everything else is `NotMeasurable`, `Unreadable`, or
+  a refusal. §5's "absent is a different answer from passing", made structural in two more places. The
+  whole product contains exactly **two** lenient return sites, both guarded and both enumerated.
+- **A finding is section-scoped by construction** (`CardStore.RecordFinding` hardcodes
+  `CardScope.Section`), and a blind spot's raised card takes its scope **from its kind** — obligation →
+  `Change`, hazard → `Repository` — pinned against `CardScopeRules.Validate` by
+  `CardFindingRecordScopeAgreementTests`. A caller never chooses either.
+- **Degradation is derived, never stored.** No field, no wire key, no write to a finding card at
+  section close; `WriteCard` is still create-only. The same answer §5 gave for `blocked`. Proven by
+  asserting bytes *and* mtime, not by asserting no write path exists.
+- **Staleness is a content fingerprint and `callboard` never invokes git.** File granularity,
+  deliberately over-reporting; `absent` is a fingerprinted state; a real measured change outranks an
+  unmeasurable sibling path (`Stale` > `NotMeasurable` > `Current`).
+- **Clean-as-argued is a recorded disposition, excluded from staleness structurally** — the
+  `ArguedClean` arm of a closed-union match returns `NotApplicable` and never reaches the measured
+  half. Deleting the exclusion means deleting an arm, which does not compile.
+- **Lock identity is decided from evidence, never from a path string.** `CardLock.CurrentlyNames`
+  compares a lock file's own per-acquisition nonce; `AcquireLocksAndRecord` acquires no lock while
+  holding another (acquire-probe-release-retry), so **no ordering exists for two callers to disagree
+  about**. §4's "when two values must agree, delete one", arriving a third time.
+- **`finding record` is the tool's first card-creating verb and its first stdin consumer.** Identity is
+  allocated before the create-only check, so a refused record burns an id — correct and harmless:
+  `VerifyCounters` only flags a counter *below* the observed max, so "never recycled" holds.
+- **No card body ever arrives as a shell argument.** ADR-0001's rule, enforced: the finding's body
+  comes on stdin, the blind spot's from `--blind-spot-body-file`. The inline flag was removed, not
+  deprecated.
+
+### Working rules earned in §6 — the section's real output
+
+- **A claim about identity, state or coverage made from a *string* rather than from *evidence* is this
+  project's signature defect.** Six instances in §6: the unlocked raised-card write, the `Ordinal`
+  same-file fast path, the cross-invocation lock ordering, `absent`-equals-`absent`, the zero-match
+  section label, and an empty directory component read as "no directory". Every fix was correct; what
+  kept the class alive is that each fix closed only the instance in front of it. **Fix this class as a
+  rule across every call site at once, and verify the rule by enumerating the sites mechanically.**
+- **A test can pin the wrong direction.** `ClosedSectionCardForADifferentSection_FindingReadsLive` was
+  a passing, green, deliberate test asserting the fail-open answer — through four blocks and two
+  audits. When a test's name says a lenient answer is expected, that is a claim to check, not evidence.
+- **A defect can be invisible at the layer its tests live at.** Every degradation fixture built its
+  path with `Path.Combine`, so the bare-filename defect could not appear at the domain layer at all.
+  Where a value's *shape* is the input, a test that always constructs it one way proves nothing about
+  the other shapes.
+- **Enumerate mechanically or say you didn't — including the pattern list.** A grep-based sweep is only
+  as complete as the patterns recalled into it, which is how the completeness claim behind the xUnit
+  collection missed `ThreadPool.SetMinThreads`. Fourth instance of this rule in §6, after two refusal
+  count miscounts.
+- **The reader may be widened; the writer emits exactly one form.** Held through two widenings.
+- **A block that applies the previous block's lessons from its first submission costs half the
+  rounds.** Block C applied block B's two rules immediately and took 2 rounds where B took 4.
+- **What finds this defect class is a mechanical check, not more reading.** None of §6's six were found
+  by reading a diff; every one fell to execution — compiling a bypass, racing two processes, mutating a
+  guard, running the real binary three ways. The check that would have caught them as a class:
+  enumerate every return site of a closed union with a benign case, and require each benign one to be
+  evidence-reachable. **Belongs with 9.12.**
+
+### Obligations
+
+- **O-1, O-2, O-3 — DISCHARGED** (§4 block B ×2, §5 block B). Unchanged.
+- **O-4 — DISCHARGED (§6 block A), one half structurally.** The compatibility corpus mechanically
+  catches a fixture that stops parsing, proven three times by mutation including against block C's real
+  widening. The **forward** half — a *new* wire form nobody adds a fixture for — is **documentation
+  only**, stated plainly in the corpus's own doc comment rather than overclaimed. `CardFileWriter`
+  emits a fixed, enumerable set of 26 key literals, so a test asserting every emittable key appears in
+  some fixture would close it structurally. **Carve with 9.12**, alongside the lenient-return check
+  above and the standing note that no structural check ties a minted refusal code to a test proving it
+  fires — all three are the same shape.
 
 ### What §5 established that later sections must not re-derive
 
@@ -14566,23 +14913,6 @@ bind it before its first block:
 - **A review loop that teaches shows up in the round count.** Block D took two rounds where block C took
   four, and the diff shows why: block C's lessons were applied from the first submission rather than
   rediscovered.
-
-### Obligations, each with the section that owes it
-
-- **O-1 — DISCHARGED (§4 block B).** `CardStore` anchored to the repo root structurally.
-- **O-2 — DISCHARGED (§4 block B, second attempt).** The lockless write path closed by deleting the
-  argument that could disagree.
-- **O-3 — DISCHARGED (§5 block B).** A refusal now prevents the side effect it refuses. `Parse` returns
-  an inert `ParsedCommand` union carrying data and never a handler; parsing lives in a sibling
-  `CommandParser`, so the handlers stay `private` to `CommandDispatcher` and calling one from the parse
-  phase is `CS0122`; `Run`'s exhaustive match is the only place a handler is reached. **Three shapes
-  were tried and the first two proved narrower propositions than their prose claimed** — a `Func` let a
-  parse arm execute eagerly, and the data union hardened that while doing nothing for call-and-discard.
-  **Reflection and a recursive `Run` remain open**, predate the block, and are named in the class doc
-  comment rather than implied away.
-- **O-4 — every wire form any shipped writer has emitted must still parse. Owed by §6.** Trigger: **the
-  first frontmatter widening in §6**, which its first block contains. Fix: a compatibility corpus test
-  carrying cards in every historical wire form. Nothing holds this structurally today.
 
 ### Notes owed to later sections
 
