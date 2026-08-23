@@ -254,6 +254,11 @@ internal static class CardFileWriter
             {
                 builder.Append(RegisterCardFieldKeys.DischargedAt).Append(": ").Append(FormatTimestamp(dischargedAt)).Append('\n');
             }
+
+            if (registerFields.EarnedFrom.Length > 0)
+            {
+                builder.Append(RegisterCardFieldKeys.EarnedFrom).Append(": ").Append(CardFileFormat.JoinFrontmatterList(registerFields.EarnedFrom)).Append('\n');
+            }
         }
 
         // Unknown fields (a §5/§6 field this build does not model, or a hand-added line) are

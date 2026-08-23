@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace Callboard.Cards;
 
 /// <summary>
@@ -48,6 +50,22 @@ namespace Callboard.Cards;
 /// ever being superseded itself, and a decision discharged by supersession carries
 /// <see cref="SupersededBy"/> whether or not it ever superseded anything of its own.
 /// </para>
+///
+/// <para>
+/// <b><see cref="EarnedFrom"/> is rule-only (§7 block E, register: "Authoring a rule from findings
+/// SHALL create a new card and SHALL record which findings it was earned from").</b> Holds
+/// <b>finding card ids</b>, resolved through <see cref="CardIdentityResolver"/> before a rule is
+/// authored — never a free-text label — and the findings it names may live in another section,
+/// another change, or an archived change, since that cross-change reach is the whole rationale
+/// register gives for this field existing at all. Required and non-empty at authoring
+/// (<c>CommandParser.ParseRuleAuthor</c>), so a rule authored by that verb always carries at least
+/// one; empty on every rule created by <c>rule create</c> and on every non-rule register card,
+/// the same "empty is absence" convention <see cref="BlockCardFields.Tasks"/>/<see cref="BlockCardFields.
+/// BlockedBy"/> already use — reused here rather than a second list-valued wire convention (§7 block
+/// E brief). Immutable and validated the same "three-door" way those two fields are — see this
+/// property's own accessor and <see cref="BlockCardFields"/>'s doc comment for why a constructor-only
+/// check would not be enough.
+/// </para>
 /// </summary>
 internal sealed record RegisterCardFields
 {
@@ -86,7 +104,21 @@ internal sealed record RegisterCardFields
     /// reason, being superseded, so all three are set in the same write.</summary>
     internal string? SupersededBy { get; init; }
 
-    /// <summary>The seven fields, all unset — every card that is not one of the four register
+    private readonly ImmutableArray<string> _earnedFrom;
+
+    /// <summary>The ids of the findings this rule was earned from, in the order recorded. Never
+    /// contains an empty or whitespace-only item — the same <see cref="BlockCardFields.
+    /// IsValidListItem"/> discipline <see cref="BlockCardFields.Tasks"/>/<see cref="BlockCardFields.
+    /// BlockedBy"/> already enforce, reused rather than restated, since a card identity is never
+    /// empty or whitespace-only for either type. An empty array means "not authored from findings" —
+    /// every rule created by <c>rule create</c> and every non-rule register card.</summary>
+    internal ImmutableArray<string> EarnedFrom
+    {
+        get => _earnedFrom;
+        init => _earnedFrom = RequireNoEmptyOrWhitespaceItems(value, nameof(EarnedFrom));
+    }
+
+    /// <summary>The eight fields, all unset — every card that is not one of the four register
     /// kinds, and a brand-new register card with none of them declared and not yet discharged.
     /// </summary>
     internal static readonly RegisterCardFields Empty = new(null, null, null, null);
@@ -98,7 +130,8 @@ internal sealed record RegisterCardFields
         DateTimeOffset? DischargedAt,
         string? OwedBy = null,
         string? Supersedes = null,
-        string? SupersededBy = null)
+        string? SupersededBy = null,
+        IReadOnlyList<string>? EarnedFrom = null)
     {
         this.Condition = Condition;
         this.Cadence = Cadence;
@@ -107,6 +140,34 @@ internal sealed record RegisterCardFields
         this.OwedBy = OwedBy;
         this.Supersedes = Supersedes;
         this.SupersededBy = SupersededBy;
+
+        // .ToImmutableArray() copies EarnedFrom's current contents now, at construction time — the
+        // same "a caller's later mutation of a retained List<T> cannot reach the built value"
+        // guarantee BlockCardFields.Tasks/BlockedBy document for exactly this reason. The assignment
+        // then runs through this type's own init accessor above, the one both the constructor and a
+        // `with` expression are forced to pass.
+        this.EarnedFrom = (EarnedFrom ?? []).ToImmutableArray();
+    }
+
+    /// <summary>The one predicate <see cref="EarnedFrom"/> reacts to, on every door in — the
+    /// constructor (via the init accessor above) and a <c>with</c> expression (the same accessor,
+    /// lowered). Delegates to <see cref="BlockCardFields.IsValidListItem"/> rather than restating it:
+    /// the rule is identical ("never empty or whitespace-only"), and a card identity means the same
+    /// thing regardless of which list-valued field is holding it.</summary>
+    private static ImmutableArray<string> RequireNoEmptyOrWhitespaceItems(ImmutableArray<string> items, string paramName)
+    {
+        foreach (var item in items)
+        {
+            if (!BlockCardFields.IsValidListItem(item))
+            {
+                throw new ArgumentException(
+                    $"'{paramName}' cannot contain an empty or whitespace-only item — a card identity is " +
+                    "never empty, and an empty item is indistinguishable on the wire from an empty list.",
+                    paramName);
+            }
+        }
+
+        return items;
     }
 }
 
@@ -144,10 +205,11 @@ internal static class RegisterCardFieldKeys
     internal const string SupersededBy = "superseded_by";
     internal const string DischargedBy = "discharged_by";
     internal const string DischargedAt = "discharged_at";
+    internal const string EarnedFrom = "earned_from";
 
     /// <summary>Every register-only frontmatter key this build recognises, in the order
     /// <see cref="CardFileWriter"/> emits them. The one list <see cref="CardFileParser"/>'s known-
     /// key set is built from — see this type's own doc comment.</summary>
     internal static readonly IReadOnlyList<string> All =
-        [Condition, Cadence, OwedBy, Supersedes, SupersededBy, DischargedBy, DischargedAt];
+        [Condition, Cadence, OwedBy, Supersedes, SupersededBy, DischargedBy, DischargedAt, EarnedFrom];
 }

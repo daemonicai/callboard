@@ -702,7 +702,11 @@ internal static class CardFileParser
     /// (<see cref="CardStore.DischargeRegisterCardUnderExistingLock"/> is the only writer of
     /// either), but this parser accepts either alone rather than refusing a hand-edited file,
     /// degraded-mode legibility (ADR-0003) over strict round-trip enforcement, the same latitude
-    /// <see cref="BuildSectionFields"/> already gives.
+    /// <see cref="BuildSectionFields"/> already gives. <c>earned_from</c> (§7 block E) is list-
+    /// valued and follows <c>tasks</c>/<c>blocked_by</c>'s own convention instead — split via
+    /// <see cref="CardFileFormat.SplitFrontmatterList"/>, absent-or-empty reads back as an empty
+    /// list, and every item is checked by the same <see cref="RequireNoEmptyListItem"/> guard those
+    /// two fields already use.
     /// </summary>
     private static (RegisterCardFields? RegisterFields, string? Failure) BuildRegisterFields(
         IReadOnlyDictionary<string, string> fields)
@@ -712,6 +716,14 @@ internal static class CardFileParser
         var owedBy = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.OwedBy);
         var supersedes = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.Supersedes);
         var supersededBy = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.SupersededBy);
+
+        var earnedFrom = fields.TryGetValue(RegisterCardFieldKeys.EarnedFrom, out var earnedFromText)
+            ? CardFileFormat.SplitFrontmatterList(earnedFromText)
+            : (IReadOnlyList<string>)[];
+        if (RequireNoEmptyListItem(earnedFrom, RegisterCardFieldKeys.EarnedFrom) is { } earnedFromFailure)
+        {
+            return (null, earnedFromFailure);
+        }
 
         CardOwner? dischargedBy = null;
         if (fields.TryGetValue(RegisterCardFieldKeys.DischargedBy, out var dischargedByText) && dischargedByText.Length > 0)
@@ -735,7 +747,7 @@ internal static class CardFileParser
             dischargedAt = parsedDischargedAt;
         }
 
-        return (new RegisterCardFields(condition, cadence, dischargedBy, dischargedAt, owedBy, supersedes, supersededBy), null);
+        return (new RegisterCardFields(condition, cadence, dischargedBy, dischargedAt, owedBy, supersedes, supersededBy, earnedFrom), null);
     }
 
     private static (FindingExtent? Extent, string? Failure) ParseExtent(IReadOnlyDictionary<string, string> fields)

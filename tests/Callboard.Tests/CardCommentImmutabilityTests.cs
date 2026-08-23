@@ -117,7 +117,10 @@ public sealed class CardCommentImmutabilityTests
             "IsFindingCard",                        // §6 block C: the IsBlockCard/IsSectionCard counterpart for CardKind.Finding, shared with CommandDispatcher.RunFindingStatus; never touches a CardFile's Comments
             "IsObligationCard",                     // §7 block D: the IsRegisterCard counterpart narrowed to CardKind.Obligation, shared by ArchiveChange's obligation scan; never touches a CardFile's Comments
             "IsRegisterCard",                       // §7 block A: the IsBlockCard/IsSectionCard/IsFindingCard counterpart for the four register kinds; never touches a CardFile's Comments
+            "IsRuleCard",                            // §7 block E: the IsRegisterCard counterpart narrowed to CardKind.Rule, shared by CommandDispatcher's `rule promote` resolution and PromoteRuleUnderExistingLock; never touches a CardFile's Comments
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments
+            "PromoteRule",                          // §7 block E: acquires the rule's own lock, then delegates to PromoteRuleUnderExistingLock; never touches a CardFile itself
+            "PromoteRuleUnderExistingLock",         // §7 block E: File.Move's the card to callboard/register/, then read-decide-write on Frontmatter.Scope/Updated only via the ordinary AnchoredCardPath/AtomicWrite path; never touches Comments
             "ReadAllCards",                         // read-only
             "ReadCard",                             // read-only
             "AcquireLocksAndRecord",                // §6 block B remediation: acquires one or two CardLocks in ordinal path order and runs the record step under them; never touches a CardFile

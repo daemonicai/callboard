@@ -16053,6 +16053,270 @@ Refusal set unchanged at **45** — no new refusal site, re-derived mechanically
 
 → @reviewer
 
+**[architect]** → @worker — **block E brief (7.5, 7.6).** Base for this block is `df76f66`.
+
+**Deliver:** rule promotion across scope, and rule authoring from findings.
+
+**Spec — register, "Promotion is retrospective and preserves the link":**
+> The system SHALL support promotion at the checkpoint where the outcome is known, rather than
+> requiring a classification when material is first raised. Durability is a property of an answer and
+> not of the question that prompted it, so the system SHALL NOT ask a role to predict it.
+>
+> Promoting a change-scoped rule to repository scope SHALL move the same card, retaining its
+> identity, text and thread.
+>
+> Authoring a rule from findings SHALL create a new card and SHALL record which findings it was
+> earned from, because a rule backed by several independent findings across several sections is a
+> different proposition from one backed by a single incident.
+>
+> Scenario: **WHEN** a change-scoped rule is promoted to repository scope **THEN** the same card
+> persists with its identity, text and citation history intact.
+>
+> Scenario: **WHEN** a rule is authored generalising several findings **THEN** the rule is a new card
+> recording the findings it was earned from, and those findings are unchanged.
+
+**What binds you:**
+
+1. **Promotion moves the card; it does not copy it.** Same id, same body, same thread, same comments.
+   The card's `scope` changes and it lands in `callboard/register/` — that is a directory move plus
+   the narrowest possible frontmatter edit, not a re-creation. If a new identity is allocated
+   anywhere in your promotion path, the block is wrong. Note the layout already makes this a move
+   rather than a migration (ADR-0003), the same property block D cashed in for archive.
+2. **Promotion must preserve every field it does not explicitly change.** The spec says "citation
+   history intact"; citation counting is block G's and does not exist yet, so today that clause is
+   trivially satisfiable and will silently stop being satisfied the moment G lands unless promotion
+   is *structurally* preserving. Build it so a rule carrying every register field survives promotion
+   with **only** `scope` (and `updated`) different, and test it that way — not by listing today's
+   fields.
+3. **Promotion applies to rules.** `rule` is the only kind with two legal scopes in
+   `CardScopeRules`; everything else has exactly one, so promoting them is meaningless, not merely
+   unsupported. Refuse accordingly. Promoting an already-repository-scoped rule is a refusal too.
+4. **Do not add a durability flag at creation.** "The system SHALL NOT ask a role to predict it" is a
+   prohibition — no `--durable`, no scope guess at raise time. Promotion is retrospective by design.
+5. **`earned_from` holds finding card ids, plural, resolved through `CardIdentityResolver`** — and
+   those findings may live in **other sections, other changes, and archived changes**. That
+   cross-change reach is the whole point of the requirement's stated rationale. Resolve them the way
+   every other reference in this section resolves; do not add a second way to name a card.
+6. **"Those findings are unchanged" — prove it on the bytes.** Block D's standard: assert the
+   finding files are untouched, not merely that they still parse. The strong form is that authoring
+   *cannot* write to a finding card.
+7. **`earned_from` is a list.** This codebase already has list-valued frontmatter
+   (`BlockCardFields.Tasks`, `BlockedBy`) — reuse that wire convention rather than inventing a
+   second one.
+8. **It is a register field, so it goes through `RegisterCardFieldKeys`** — block C's single shared
+   declaration guarding writer/parser drift. Add it there, not as a literal in two lists. **Carried
+   debt:** `CardFrontmatter`, `BlockCardFields`, `SectionCardFields` and `FindingCardFields` still
+   have no such guard and the same silent, compounding duplication defect is live in them today. If
+   this block touches a field in any of those families, close the drift the same way.
+9. **Two-step mutations, again.** Promotion is a move plus an edit. Say what your failure guarantee
+   is and pin it with a test, the way block D's phase-two failure is pinned. Do not claim atomicity
+   you do not have.
+10. **Refusal codes follow the stated rule**; the set stands at **45**, re-derived mechanically if
+    you change it, never incremented.
+
+**Explicitly NOT in this block:** `absorbs`, compaction into families, and the architect/Product
+Owner compaction split (all F); citation counting, the soft ceiling and the uncited-rule queue (G);
+the agent-instruction-file refusal (G); any new read verb (11.1).
+
+**Done-gates — all four, quote the exit line, never the output:** `make build` → `BUILD_EXIT:0`,
+`make test` → `TEST_EXIT:0` (your new tests **and** all 567 existing), `make format` →
+`FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`.
+
+**Boundaries:** no commit, no ticks, no `Makefile` edit. Post progress here, hand off `→ @reviewer`.
+
+**[worker]** Implemented block E (7.5, 7.6):
+
+- **`rule promote --id <id> --role <role>`** — `CardStore.PromoteRule`. `--id` resolves through
+  `CardIdentityResolver` (never a caller-typed path), refuses `not-a-rule-card`-shaped mismatches via
+  the shared `WrongCardKind`, `already-repository-scoped` for a rule already there, and
+  `rule-not-change-scoped` for the two scopes `CardScopeRules` never lets a rule hold (`section`,
+  `capability`) — a hand-edited file only, unreachable through this codebase's own writers. No
+  identity is allocated anywhere in the path; `RegisterFields` is copied through unchanged by a
+  single `with` expression that touches only `Frontmatter.Scope`/`Updated`.
+- **Two-step, stated honestly (item 9).** Phase one is `File.Move` from the rule's current path to
+  its basename under `callboard/register/` — same filesystem, one `rename()`, all-or-nothing like
+  `AtomicWrite`/`ArchiveChange`'s own move. Phase two is the ordinary `AnchoredCardPath`/`AtomicWrite`
+  edit at the *new* location — the only legitimate way to write `scope: repository`, since
+  `AnchoredCardPath` requires the file's directory to already match the scope being written, which is
+  exactly why the move has to happen first. If phase two fails, the rule is left "half-promoted":
+  physically under `register/`, frontmatter still reading `scope: change`. Rather than leave that as
+  a dead end, the method computes its target path fresh on every call, so a retry against the same
+  path finds the card already sitting at the target (phase one has nothing to do) and lands phase
+  two — a real, tested self-heal, not just a documented gap. Pinned in
+  `CardRulePromoteTests.PromoteRule_AlreadyAtTargetButPhaseTwoBlocked_Refuses_LeavingTheCardExactlyAsItWas_ThenARetrySelfHeals`
+  (Unix-only, `File.SetUnixFileMode` denying the register directory), asserting the pre-failure bytes
+  are exactly what remains, then a successful retry.
+- **Structural preservation, not enumeration (item 2).** The load-bearing test builds a rule carrying
+  every `RegisterCardFields` entry at once (`EarnedFrom` *and* the discharge pair together — a
+  combination a plain scenario wouldn't naturally produce) and asserts the whole card survives with
+  only `Scope`/`Updated` differing, so this stays true once G adds citation counts rather than
+  silently stopping being true the day that field starts getting written.
+- **`rule author <path> --title --role --scope [--change] --earned-from f1,f2,...`** — reuses
+  `CardStore.CreateCard` unchanged (no new domain method needed): every `--earned-from` id is
+  resolved through the same `ResolveCardReference`/`CardIdentityResolver` path every other §7
+  reference uses and confirmed to be a `finding` card *before* `CreateCard` is ever called — a
+  resolution failure on id 2 of 3 refuses the whole attempt and writes nothing, proven by a test that
+  names a real finding first and an unresolvable id second. **Findings unchanged is proven on the
+  bytes and the mtime** (block D's standard) in the happy-path test, across two different changes —
+  the cross-change reach the requirement's own rationale is about. The strong form the brief asks for
+  holds structurally: nothing in `RunRuleAuthor` past the resolution loop ever touches a resolved
+  finding path again — there is no write call left that could reach one.
+- **No durability flag anywhere (item 4).** No `--durable`, no scope prediction at `finding record`
+  or `rule create` time — durability is decided only in retrospect, by `rule promote` or `rule
+  author`, never at raise time.
+- **`earned_from` reuses the existing list convention (item 7).** Added to `RegisterCardFieldKeys.All`
+  (item 8) as an `ImmutableArray<string>` on `RegisterCardFields`, validated the same
+  no-empty-or-whitespace-item way `BlockCardFields.Tasks`/`BlockedBy` already are — delegating to
+  `BlockCardFields.IsValidListItem` rather than restating the rule a second time. Wire format goes
+  through `CardFileFormat.SplitFrontmatterList`/`JoinFrontmatterList`, the same as `tasks`/
+  `blocked_by`. Did not touch `CardFrontmatter`/`BlockCardFields`/`SectionCardFields`/
+  `FindingCardFields`'s own carried-debt (no field of theirs touched this block).
+- **`IsRuleCard`** added to `CardStore` alongside `IsDecisionCard`/`IsObligationCard`, same
+  eight-arm-match shape, used by both the promote-resolution and `PromoteRuleUnderExistingLock`
+  itself.
+- Fixed two pre-existing tests that assumed the seven-field register fixture was exhaustive:
+  `RegisterCardFieldsRoundTripTests`'s "fully populated" fixture now carries `EarnedFrom` too (the
+  round-trip/no-duplicate-line assertions iterate `RegisterCardFieldKeys.All` mechanically, so a
+  fixture missing the new key failed on "0 lines found" rather than "1"), and
+  `CardCommentImmutabilityTests`'s complete method inventory gained `IsRuleCard`/`PromoteRule`/
+  `PromoteRuleUnderExistingLock`.
+- Not built (explicitly out of scope): `absorbs`, compaction, citation counting, the uncited-rule
+  queue, the agent-instruction-file refusal, any new read verb.
+
+**Refusal set: 48** — re-derived mechanically over every `CommandOutcome.Refusal(` site in
+`src/Callboard`, per the Architect's stated rule (spec-named refusal → own code). Block E's three:
+`already-repository-scoped`, `rule-not-change-scoped` (both register's own scope-pair scenarios),
+`invalid-earned-from` (the `--earned-from` list-item validation, same shape as the existing
+`invalid-extent`).
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (583/583 — 567 existing +
+16 new: 6 in `CardRulePromoteTests`, 5 in `CommandDispatcherRulePromoteTests`, 5 in
+`CommandDispatcherRuleAuthorTests`, unchanged elsewhere).
+
+→ @reviewer
+
+**[reviewer]** Audit of block E (7.5, 7.6). Gates re-run independently: `BUILD_EXIT:0`,
+`TEST_EXIT:0` (583/583), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived mechanically:
+185 sites, **48 distinct codes**, exactly `+already-repository-scoped`, `+rule-not-change-scoped`,
+`+invalid-earned-from` over block D's 45. Matches.
+
+**Verdict: Approve.**
+
+**1. THE ONE I MOST WANTED CHECKED — the guard was extended, not loosened. Proven by mutation, not
+by reading.** I dropped `EarnedFrom` from `RegisterCardFieldKeys.All` (recreating exactly the
+"property exists, key list doesn't know it" shape) and reran the two test files this block touched.
+All four affected tests failed immediately: `RegisterCardFieldsKeyCoverageTests.
+EveryRegisterCardFieldsProperty_HasAMatchingRegisterCardFieldKeysConstant` (a reflection-based test
+this block did **not** modify at all — it fired on the mutation automatically, exactly because it
+enumerates `RegisterCardFields`'s actual properties rather than a hand-list) and all three
+`RegisterCardFieldsRoundTripTests` (which iterate `RegisterCardFieldKeys.All` mechanically in
+`AssertExactlyOneLineForEachKey` — with `earned_from` removed from that list, the fixture's
+`EarnedFrom` value fell straight back into `UnknownFrontmatterFields`, the exact corruption shape
+this suite exists to catch). Reverted and confirmed the file returned to its pre-mutation diff
+exactly. What the worker changed was narrower than "fixed a test": the *fixture* in
+`RegisterCardFieldsRoundTripTests.BuildFullyPopulatedDecisionCard` gained `EarnedFrom: ["F-0010",
+"F-0011"]` (required, since `AssertExactlyOneLineForEachKey` now expects exactly one `earned_from:`
+line and a fixture that never sets it would produce zero), and `AssertRegisterFieldsEqual` gained
+one more field comparison — the assertion *logic* is untouched, only the fixture's data grew to
+include the new field, and `RegisterCardFieldsKeyCoverageTests` needed no edit at all because it
+was already written to auto-discover new properties. `CardCommentImmutabilityTests`'s three new
+entries (`IsRuleCard`, `PromoteRule`, `PromoteRuleUnderExistingLock`) are pure additions — nothing
+removed, nothing loosened, same mechanical-inventory shape every earlier block used.
+
+**2. Promotion moves, never copies — confirmed by independent reproduction against the real
+`CardStore.PromoteRule`, not by reading.** I wrote a rule card into a real change directory with a
+body, a comment, and no pre-existing identity counter file, then called `PromoteRule` directly.
+Result: the identity counter file (`callboard/identities/rule.count`) never came into existence —
+proving no allocation happened anywhere in the path, not merely that the code doesn't call
+`AllocateIdentity` (which I also grepped for and found zero hits inside `PromoteRule`/
+`PromoteRuleUnderExistingLock`). The id, body, and comment count survived unchanged; the old path
+was gone; the new path existed with `scope: repository`; and `CardIdentityResolver.Resolve` found
+it at the new location. A move, proven on both ends, not asserted.
+
+**3. Structural preservation confirmed by reading the actual `with` expression, not the doc
+comment's claim about it.** `PromoteRuleUnderExistingLock`'s phase-two write is `card with {
+Frontmatter = card.Frontmatter with { Scope = CardScope.Repository, Updated = timestamp } }` —
+naming only `Frontmatter.Scope`/`Frontmatter.Updated`. `RegisterFields` (and therefore
+`EarnedFrom`, `Condition`, `Cadence`, every field block G will add) is never mentioned, so C#
+record semantics copy it through unconditionally. This is the actual requirement the brief named:
+a future register field survives promotion because the code has no list of fields to remember to
+carry forward, not because today's test happens to list today's fields. The load-bearing test
+(building a rule with every `RegisterCardFields` entry set at once, `EarnedFrom` and the discharge
+pair together) is a good enumeration-resistant fixture, but the real guarantee is the `with`
+expression's shape, which I verified directly.
+
+**4. The two-phase claim holds under adversarial construction.** I confirmed by reading that phase
+one (`File.Move`) and phase two (`AtomicWrite`) both require write access to the *same*
+`register/` directory, which means the clean way to isolate "phase two fails" in a test — the way
+the worker did it — is to start from "already at target" (physically under `register/`, `scope`
+still `change`) rather than trying to sabotage a single call mid-sequence: blocking writes to
+`register/` would fail phase one too, not just phase two, so there is no filesystem-permission
+lever that isolates the two phases within one call. `PromoteRuleUnderExistingLock` treats "already
+at target" identically regardless of whether a prior call put it there or a test fixture did — same
+code path, so the test is a faithful proxy, not a shortcut around the real question. I ran
+`PromoteRule_AlreadyAtTargetButPhaseTwoBlocked_Refuses_LeavingTheCardExactlyAsItWas_ThenARetrySelfHeals`
+directly and confirmed it executes (not skipped) and passes on this host. The retry-converges claim
+is structural, not incidental: `RunRulePromote` re-resolves the id via `CardIdentityResolver` on
+every invocation, so a retry against an id already living under `register/` naturally computes
+`normalizedOriginalFilePath == targetFilePath` and skips straight to phase two — no special-casing,
+confirmed by reading `PromoteRuleUnderExistingLock`'s own branch condition.
+
+**5. "Findings unchanged" proven on the bytes, and the strong form holds.**
+`RuleAuthor_TwoFindingsAcrossTwoChanges_Succeeds_AndRecordsEarnedFrom` asserts byte-for-byte and
+mtime equality on two findings in two different change directories before and after authoring — not
+merely that they still parse. The strong form (authoring *cannot* write to a finding) holds by
+inspection: `RunRuleAuthor`'s only write call is `CardStore.CreateCard(repoRoot, filePath, ...)`
+where `filePath` is the new rule's own target path — none of the `finding.FilePath` values produced
+by the resolution loop are ever passed to any write API. There is no code path from a resolved
+finding id back to a write call.
+
+**6. `earned_from` resolves through `CardIdentityResolver` with no second path — confirmed — but
+the archive-reach specifically is proven at the resolver layer, not exercised end-to-end through
+`rule author`.** `RunRuleAuthor`'s resolution loop calls the same `ResolveCardReference` every
+other §7 reference uses (byte-identical to the function I've audited every round since block B), so
+there is structurally no second way to name a card here. `CardIdentityResolver`'s own reach into
+`changes/archive/` is already proven by block D's and block B's own tests. But I looked for a test
+naming an `--earned-from` id that lives specifically in an *archived* change and didn't find one —
+`RuleAuthor_TwoFindingsAcrossTwoChanges_...` covers two *live* changes, not an archived one. Given
+the mechanism is identical, unmodified, shared code, I don't think this needs a blocker, but it's
+worth naming precisely rather than rounding "the resolver already proves this" up to "this block
+proved it" — recorded as a nit.
+
+**7. No durability flag anywhere.** Grepped the full `CommandParser.cs` diff for `durable`/
+`Durable` — zero hits. `ParseRuleCreate` and `ParseFindingRecord` are untouched by this block.
+
+**8. Three new refusal codes hold up against the granularity rule.**
+`already-repository-scoped` and `rule-not-change-scoped` are both named directly by the Architect's
+own brief item 3 ("promoting an already-repository-scoped rule is a refusal too") and name genuinely
+different facts — "there's nothing to promote" versus "this scope can never be promoted from" — with
+different caller remediation. `rule-not-change-scoped` only fires for a hand-edited `section`/
+`capability`-scoped rule (`CardScopeRules` never lets a writer produce one), which is a legitimate
+fail-closed case distinct from `wrong-card-kind` (the resolved card isn't the wrong *kind*, it's the
+right kind at a scope this operation can't act on) and distinct from `scope-refused` (which fires at
+*creation* time against the kind/scope table, not at promotion time against one specific source
+scope). `invalid-earned-from` reuses `BlockCardFields.IsValidListItem` rather than restating the
+validation rule, matching the existing `invalid-extent` shape exactly.
+
+**Scope confirmed.** Grepped for `absorbs`, `compaction`, citation counting, the soft ceiling, the
+uncited-rule queue, the agent-instruction-file refusal, and any new read verb — none present.
+
+**Regression watch — clean.** No diff on `CardFrontmatter.cs`, `BlockCardFields.cs`,
+`SectionCardFields.cs`, or `FindingCardFields.cs` — the writer/parser drift class carried from
+block C's remediation is neither touched nor worsened. `BlockCardFields.IsValidListItem` is called,
+not modified.
+
+**Scope-of-diff check.** `ArchiveChange`, `SupersedeDecision`, and `ResolveCardReference` all sit at
+shifted line numbers (consistent with new code inserted once, before them) but byte-identical
+content to every prior approved round — confirmed by re-reading each in full, not just diffing
+stats.
+
+**Nits**
+
+- `earned_from` resolving into an *archived* change is proven at the resolver layer (blocks B/D)
+  and structurally guaranteed by shared code, but not exercised end-to-end through `rule author`
+  itself. Low risk given the code path is identical to what's already tested, but worth a direct
+  test alongside whichever block next touches this area.
+
 ## NEXT
 
 

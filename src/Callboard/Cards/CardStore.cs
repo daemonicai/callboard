@@ -836,6 +836,163 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// Promotes a change-scoped rule to repository scope (§7 block E, register: "Promoting a
+    /// change-scoped rule to repository scope SHALL move the same card, retaining its identity,
+    /// text and thread"). <paramref name="filePath"/> is resolved by the caller through
+    /// <see cref="CardIdentityResolver"/> (<c>rule promote --id</c>), never a caller-typed path —
+    /// see <see cref="Callboard.Cli.CommandDispatcher.ParsedCommand.RulePromote"/>'s own doc
+    /// comment.
+    ///
+    /// <para>
+    /// <b>Moves the card; does not copy it.</b> No identity is allocated anywhere in this method —
+    /// the card's own <c>id</c>, <c>body</c>, and every frontmatter field this method does not
+    /// explicitly name survive verbatim, because the only "creation" of new content here is a
+    /// single <c>with</c> expression that changes exactly <c>Scope</c> and <c>Updated</c> before
+    /// the same <see cref="CardFile"/> is re-serialised. Comments are never touched — nothing this
+    /// method calls can write to <see cref="CardFile.Comments"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Two steps, and the failure shape of each (§7 block E brief item 9: "do not claim
+    /// atomicity you do not have").</b> Phase one is a plain <see cref="File.Move(string, string)"/>
+    /// from the rule's current path to its new path under <see cref="CardLayout.RegisterDirectory"/>
+    /// — same filesystem, so on this platform that is one <c>rename()</c> syscall, the same
+    /// all-or-nothing guarantee <see cref="AtomicWrite"/> and <see cref="ArchiveChange"/>'s own
+    /// directory move already document: it either lands whole (the file now fully exists at the new
+    /// path, content untouched) or throws having moved nothing, never a half-moved file. A failure
+    /// here is reported as <see cref="CardRulePromoteOutcome.ToolFailure"/> with the rule still live
+    /// at its old path, unmodified. Phase two, once the move has landed, rewrites the frontmatter at
+    /// the <em>new</em> location through the ordinary <see cref="AtomicWrite"/>/
+    /// <see cref="AnchoredCardPath"/> path — the only way this content can legitimately be written,
+    /// since <see cref="AnchoredCardPath.TryCreate"/> requires a file's directory to already match
+    /// the scope being written, which is exactly why the move has to happen first: there is no way
+    /// to write <c>scope: repository</c> while the file still lives in a change directory. If phase
+    /// two fails, the rule is left half-promoted: it already lives under
+    /// <see cref="CardLayout.RegisterDirectory"/>, but its own <c>scope</c> field still reads
+    /// <c>change</c> until this method runs again — an accepted gap, stated rather than solved, the
+    /// same class <see cref="ArchiveChange"/>'s own doc comment and <see cref="CardLock"/>'s already
+    /// carry for other races in this codebase.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>A retry self-heals that exact gap.</b> This method resolves its own target path from the
+    /// card's current basename every time, so a second call against the same id after a phase-two
+    /// failure finds the card <em>already</em> sitting at the target path (phase one has nothing
+    /// left to do) and goes straight to phase two — the frontmatter rewrite that phase-two failure
+    /// left undone. No special-casing is needed for this: it falls out of computing the target path
+    /// fresh on every call rather than trusting wherever the caller's resolved
+    /// <paramref name="filePath"/> happened to point.
+    /// </para>
+    /// </summary>
+    internal static CardRulePromoteOutcome PromoteRule(
+        string cardsRoot, string filePath, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => PromoteRuleUnderExistingLock(heldLock, cardsRoot, timestamp),
+            onTimedOut: timedOut => new CardRulePromoteOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>The read-decide-move-write step of <see cref="PromoteRule"/>. Same structural lock
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type.</summary>
+    private static CardRulePromoteOutcome PromoteRuleUnderExistingLock(
+        CardLock heldLock, string cardsRoot, DateTimeOffset timestamp)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var originalFilePath = heldLock.CardPath;
+
+        if (!File.Exists(originalFilePath))
+        {
+            return new CardRulePromoteOutcome.CardNotFound(originalFilePath);
+        }
+
+        var current = ReadCard(originalFilePath);
+        return current.Match<CardRulePromoteOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsRuleCard(card))
+                {
+                    return new CardRulePromoteOutcome.NotARuleCard(card.Frontmatter.Kind);
+                }
+
+                // register: "SHALL NOT occupy flow states" — the same exercised refusal every
+                // other register mutation in this codebase already enforces.
+                if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out _))
+                {
+                    return new CardRulePromoteOutcome.InvalidStatus(originalFilePath, card.Frontmatter.Status);
+                }
+
+                // Promotion knows how to move exactly one scope pair: change -> repository.
+                // AlreadyRepositoryScoped and NotChangeScoped are distinct cases (brief item 3:
+                // "promoting an already-repository-scoped rule is a refusal too") rather than one
+                // generic "wrong scope" answer, because a caller correcting the first fact learns
+                // nothing about the second.
+                var scopeRefusal = card.Frontmatter.Scope.Match<CardRulePromoteOutcome?>(
+                    onSection: () => new CardRulePromoteOutcome.NotChangeScoped(CardScope.Section, originalFilePath),
+                    onChange: static () => null,
+                    onCapability: () => new CardRulePromoteOutcome.NotChangeScoped(CardScope.Capability, originalFilePath),
+                    onRepository: () => new CardRulePromoteOutcome.AlreadyRepositoryScoped(originalFilePath));
+                if (scopeRefusal is not null)
+                {
+                    return scopeRefusal;
+                }
+
+                var registerDirectory = Path.GetFullPath(
+                    Path.Combine(cardsRoot, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar)));
+                var targetFilePath = Path.Combine(registerDirectory, Path.GetFileName(originalFilePath));
+                var normalizedOriginalFilePath = Path.GetFullPath(originalFilePath);
+
+                // Phase one: the move. Skipped when the card is already sitting at its target path
+                // (this method's own retry-self-heals-a-stalled-phase-two case above) — File.Move
+                // with identical source and destination is not the operation this branch means.
+                if (!string.Equals(normalizedOriginalFilePath, targetFilePath, StringComparison.Ordinal))
+                {
+                    if (File.Exists(targetFilePath))
+                    {
+                        return new CardRulePromoteOutcome.TargetAlreadyExists(targetFilePath);
+                    }
+
+                    Directory.CreateDirectory(registerDirectory);
+
+                    try
+                    {
+                        File.Move(normalizedOriginalFilePath, targetFilePath);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        return new CardRulePromoteOutcome.ToolFailure(
+                            $"could not move '{normalizedOriginalFilePath}' to '{targetFilePath}': {ex.Message}");
+                    }
+                }
+
+                // Phase two: the frontmatter edit, now legitimately anchored — the file's directory
+                // already matches CardScope.Repository, whether this call just moved it there or a
+                // previous, phase-two-failed call already did.
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, targetFilePath, CardScope.Repository, changeName: null, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardRulePromoteOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Scope = CardScope.Repository, Updated = timestamp },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardRulePromoteOutcome>(
+                    onSuccess: _ => new CardRulePromoteOutcome.Promoted(updated, originalFilePath, targetFilePath),
+                    onNotFound: notFound => new CardRulePromoteOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardRulePromoteOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardRulePromoteOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardRulePromoteOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardRulePromoteOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure => new CardRulePromoteOutcome.CardCorrupt(originalFilePath, failure.Reason));
+    }
+
+    /// <summary>
     /// Archives a change (§7 block D, register: "The register lives above the change" —
     /// "archiving a change SHALL act as a filter that closes its change-scoped cards and leaves
     /// cards of wider scope untouched"). <b>Nothing in transit</b>: every repository-scoped card
@@ -1877,6 +2034,20 @@ internal static class CardStore
         onFinding: static () => false,
         onObligation: static () => true,
         onRule: static () => false,
+        onHazard: static () => false,
+        onDecision: static () => false,
+        onSection: static () => false);
+
+    /// <summary>The <see cref="IsRegisterCard"/> counterpart narrowed to exactly
+    /// <see cref="CardKind.Rule"/> (§7 block E) — shared by <see cref="Callboard.Cli.
+    /// CommandDispatcher"/>'s <c>rule promote</c> resolution and <see cref="PromoteRule"/> itself, so
+    /// neither re-implements the same eight-arm match a sixth time.</summary>
+    internal static bool IsRuleCard(CardFile card) => card.Frontmatter.Kind.Match(
+        onBlock: static () => false,
+        onQuestion: static () => false,
+        onFinding: static () => false,
+        onObligation: static () => false,
+        onRule: static () => true,
         onHazard: static () => false,
         onDecision: static () => false,
         onSection: static () => false);

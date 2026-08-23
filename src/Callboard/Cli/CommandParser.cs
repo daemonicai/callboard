@@ -1052,18 +1052,168 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'rule' requires a subcommand. Known subcommands: create, discharge."));
+                    "'rule' requires a subcommand. Known subcommands: create, discharge, promote, author."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseRuleCreate(context);
             case "discharge":
                 context.Arguments.TryTake();
                 return ParseRegisterDischarge(context, CardKind.Rule, "'rule discharge'");
+            case "promote":
+                context.Arguments.TryTake();
+                return ParseRulePromote(context);
+            case "author":
+                context.Arguments.TryTake();
+                return ParseRuleAuthor(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'rule' subcommand: '{subcommand}'. Known subcommands: create, discharge."));
+                    $"no such 'rule' subcommand: '{subcommand}'. Known subcommands: create, discharge, promote, author."));
         }
+    }
+
+    /// <summary>
+    /// Builds <c>rule promote</c>'s <see cref="CommandDispatcher.ParsedCommand.RulePromote"/> (§7
+    /// block E). <c>--id</c> is a card id resolved at execute time through
+    /// <see cref="CardIdentityResolver"/>, the same identity-addressing convention
+    /// <c>decision supersede</c> already established — there is no positional file-path argument
+    /// here, unlike every §7 block A creation verb.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseRulePromote(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? roleText = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => id = value,
+            ["--role"] = value => roleText = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule promote' requires '--id <card-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule promote' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RulePromote(
+            id, role, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>rule author</c>'s <see cref="CommandDispatcher.ParsedCommand.RuleAuthor"/> (§7
+    /// block E, register: "Authoring a rule from findings SHALL create a new card and SHALL record
+    /// which findings it was earned from"). Same shape as <see cref="ParseRuleCreate"/> (a card file
+    /// path, a caller-chosen <c>--scope</c>) plus <c>--earned-from</c>: a comma-separated list of
+    /// finding card ids, reusing the same <see cref="CardFileFormat.SplitFrontmatterList"/>-style
+    /// comma convention <c>finding record</c>'s own <c>--extent-value</c> already uses for a list
+    /// flag, required and non-empty (checked here, argv-decidable — whether each id actually
+    /// resolves to a <c>finding</c> card is <c>CommandDispatcher.RunRuleAuthor</c>'s job, since that
+    /// needs the record, not just argv).
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseRuleAuthor(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule author' requires a card file path."));
+        }
+
+        string? title = null;
+        string? roleText = null;
+        string? scopeText = null;
+        string? changeName = null;
+        string? earnedFromRaw = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--title"] = value => title = value,
+            ["--role"] = value => roleText = value,
+            ["--scope"] = value => scopeText = value,
+            ["--change"] = value => changeName = value,
+            ["--earned-from"] = value => earnedFromRaw = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (title is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule author' requires '--title <text>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule author' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (scopeText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule author' requires '--scope <change|repository>'."));
+        }
+
+        if (!CardScopeWireFormat.TryParse(scopeText, out var scope))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-scope", $"unrecognised scope: '{scopeText}'. Recognised scopes: {CardScopeWireFormat.RecognisedValues}."));
+        }
+
+        if (string.IsNullOrEmpty(earnedFromRaw))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'rule author' requires '--earned-from <finding-id>[,<finding-id>...]' — a rule authored from " +
+                "findings SHALL record which findings it was earned from."));
+        }
+
+        var earnedFrom = CardFileFormat.SplitFrontmatterList(earnedFromRaw);
+        foreach (var id in earnedFrom)
+        {
+            if (!BlockCardFields.IsValidListItem(id))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "invalid-earned-from",
+                    $"'--earned-from' cannot contain an empty item: '{earnedFromRaw}'."));
+            }
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleAuthor(
+            filePath, title, role, scope, body, changeName, earnedFrom, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

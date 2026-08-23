@@ -65,8 +65,8 @@
 - [x] 7.2 Implement `owed_by` on obligations and supersession links on decisions
 - [x] 7.3 Implement repository-scoped storage so archive is a directory-level filter with nothing in transit
 - [x] 7.4 Test that archiving a change leaves rules, hazards and open questions live and unmoved
-- [ ] 7.5 Implement rule promotion across scope, preserving identity, text and thread
-- [ ] 7.6 Implement rule authoring from findings, recording `earned_from` and leaving the findings unchanged
+- [x] 7.5 Implement rule promotion across scope, preserving identity, text and thread
+- [x] 7.6 Implement rule authoring from findings, recording `earned_from` and leaving the findings unchanged
 - [ ] 7.7 Implement compaction into families by supersession, recording `absorbs` and keeping members retrievable
 - [ ] 7.8 Implement architect-performed change-scoped compaction at archive
 - [ ] 7.9 Implement agent-proposed, Product-Owner-decided repository-scoped compaction that applies nothing on its own
