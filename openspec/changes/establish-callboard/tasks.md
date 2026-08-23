@@ -63,8 +63,8 @@
 
 - [x] 7.1 Implement the two-state lifecycle for `rule`, `hazard`, `obligation` and `decision`
 - [x] 7.2 Implement `owed_by` on obligations and supersession links on decisions
-- [ ] 7.3 Implement repository-scoped storage so archive is a directory-level filter with nothing in transit
-- [ ] 7.4 Test that archiving a change leaves rules, hazards and open questions live and unmoved
+- [x] 7.3 Implement repository-scoped storage so archive is a directory-level filter with nothing in transit
+- [x] 7.4 Test that archiving a change leaves rules, hazards and open questions live and unmoved
 - [ ] 7.5 Implement rule promotion across scope, preserving identity, text and thread
 - [ ] 7.6 Implement rule authoring from findings, recording `earned_from` and leaving the findings unchanged
 - [ ] 7.7 Implement compaction into families by supersession, recording `absorbs` and keeping members retrievable

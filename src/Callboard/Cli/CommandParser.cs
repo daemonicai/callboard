@@ -39,9 +39,10 @@ internal static class CommandParser
         "hazard" => ParseHazard(context),
         "obligation" => ParseObligation(context),
         "decision" => ParseDecision(context),
+        "change" => ParseChange(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, change.")),
     };
 
     /// <summary>
@@ -467,6 +468,70 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RegisterDischarge(
             kind, filePath, flags.Role!, flags.ChangeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// <c>change</c>'s only job is routing to a subcommand — currently just <c>archive</c>. Same
+    /// peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseChange(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'change' requires a subcommand. Known subcommands: archive."));
+            case "archive":
+                context.Arguments.TryTake();
+                return ParseChangeArchive(context);
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'change' subcommand: '{subcommand}'. Known subcommands: archive."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>change archive</c>'s <see cref="CommandDispatcher.ParsedCommand.ChangeArchive"/>
+    /// (§7 block D). One positional token — the change's own name, not a file path: archive acts
+    /// on the whole change directory <see cref="CardLayout.ChangesDirectory"/> names, never on one
+    /// card, so there is no single file path to take the way every other verb's positional token
+    /// is one. <c>--role</c> is required, the same as every other card-model write.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseChangeArchive(CommandDispatcher.CommandContext context)
+    {
+        var changeName = context.Arguments.TryTake();
+        if (changeName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'change archive' requires a change name."));
+        }
+
+        string? roleText = null;
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--role"] = value => roleText = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'change archive' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.ChangeArchive(
+            changeName, role, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

@@ -836,6 +836,188 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// Archives a change (§7 block D, register: "The register lives above the change" —
+    /// "archiving a change SHALL act as a filter that closes its change-scoped cards and leaves
+    /// cards of wider scope untouched"). <b>Nothing in transit</b>: every repository-scoped card
+    /// (<c>rule</c>/<c>hazard</c>/<c>question</c> at <see cref="CardScope.Repository"/>) already
+    /// lives in <see cref="CardLayout.RegisterDirectory"/>, and every capability-scoped
+    /// <c>decision</c> already lives in <see cref="CardLayout.DecisionsDirectory"/> — neither is
+    /// anywhere near <paramref name="changeName"/>'s own directory, so this method never opens,
+    /// reads, or so much as enumerates either. Only the change-scoped directory itself
+    /// (<see cref="CardLayout.ChangesDirectory"/>) is ever touched.
+    ///
+    /// <para>
+    /// <b>"Closes its change-scoped cards" is settled here as: every <c>open</c> obligation in the
+    /// directory becomes <c>discharged</c>, and nothing else.</b> Register's own scenario text
+    /// names only obligations ("its change-scoped obligations are settled"); a block or section
+    /// still short of its own flow-state close is left exactly as it is — whether a section <em>
+    /// may</em> close given open obligations or undeferred questions is §9's refusal, not this
+    /// verb's, and archiving is not required to force one first (register: "SHALL NOT require a
+    /// carry-forward step"). Settling reuses <see cref="DischargeRegisterCard"/> unchanged, one
+    /// call per open obligation, under that card's own per-card lock — no new write mechanism.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Two-phase, and the failure shape of each phase.</b> Phase one settles every open
+    /// obligation while the directory is still live, each write independently atomic (temp file
+    /// then rename, under its own lock) the same as any other card write. If phase one fails
+    /// partway — a lock timeout on the third of five obligations, say — this method stops and
+    /// reports <see cref="ChangeArchiveOutcome.ToolFailure"/> without ever attempting the move: the
+    /// change is left live, with whichever obligations already settled staying settled (discharge
+    /// is idempotent — a re-run skips them, <see cref="CardRegisterDischargeOutcome.
+    /// AlreadyDischarged"/>), which is a valid, re-archivable state, not a corrupt one. Phase two,
+    /// once every obligation is known settled, is a single <see cref="Directory.Move(string,
+    /// string)"/> of the whole directory — same filesystem, so on this platform that is one
+    /// <c>rename()</c> syscall: it either lands whole or throws having moved nothing, never a
+    /// half-moved directory (the same same-filesystem-rename assumption <see cref="AtomicWrite"/>
+    /// already documents for a single file). A failure here is reported as
+    /// <see cref="ChangeArchiveOutcome.ToolFailure"/> with the change still live and unmoved.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>An unreadable file in the directory refuses rather than guesses (fail-closed, the same
+    /// discipline <see cref="CardIdentityResolver"/> applies to a search that turns up no match).
+    /// </b> A file this scan cannot parse might be an open obligation this verb is supposed to
+    /// settle before the move — proceeding regardless would risk moving an unsettled obligation
+    /// into the archive unnoticed, so this reports <see cref="ChangeArchiveOutcome.CardsUnreadable"/>
+    /// before touching anything.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Accepted race, stated rather than solved (the same class of accepted gap <see
+    /// cref="CardLock"/>'s own doc comment records for stale-lock PID reuse):</b> nothing holds a
+    /// directory-wide lock across the scan-then-settle-then-move sequence, so a card written into
+    /// the directory after the scan but before the move (a new <c>obligation create</c> racing
+    /// this call) is not seen by phase one and is moved into the archive exactly as written,
+    /// still <c>open</c>. That is a race between two independent writers acting on the same change
+    /// at the same moment — not a corruption of either card — and closing it fully would need
+    /// whole-directory locking machinery this block was not asked to build.
+    /// </para>
+    /// </summary>
+    internal static ChangeArchiveOutcome ArchiveChange(
+        string cardsRoot, string changeName, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout)
+    {
+        string liveRelativeDirectory;
+        try
+        {
+            liveRelativeDirectory = CardLayout.ChangesDirectory(changeName);
+        }
+        catch (ArgumentException ex)
+        {
+            return new ChangeArchiveOutcome.InvalidChangeName(ex.Message);
+        }
+
+        var liveDirectory = Path.GetFullPath(
+            Path.Combine(cardsRoot, liveRelativeDirectory.Replace('/', Path.DirectorySeparatorChar)));
+
+        if (!Directory.Exists(liveDirectory))
+        {
+            return new ChangeArchiveOutcome.ChangeNotFound(changeName);
+        }
+
+        var archivedRelativeDirectory = CardLayout.ArchivedChangeDirectory(changeName);
+        var archivedDirectory = Path.GetFullPath(
+            Path.Combine(cardsRoot, archivedRelativeDirectory.Replace('/', Path.DirectorySeparatorChar)));
+
+        if (Directory.Exists(archivedDirectory))
+        {
+            return new ChangeArchiveOutcome.AlreadyArchived(changeName);
+        }
+
+        var unreadable = new List<string>();
+        var openObligationPaths = new List<string>();
+        foreach (var (filePath, result) in ReadAllCards(liveDirectory))
+        {
+            result.Match<object?>(
+                onSuccess: success =>
+                {
+                    if (IsObligationCard(success.Card)
+                        && RegisterLifecycleStateWireFormat.TryParse(success.Card.Frontmatter.Status, out var state)
+                        && state == RegisterLifecycleState.Open)
+                    {
+                        openObligationPaths.Add(filePath);
+                    }
+
+                    return null;
+                },
+                onFailure: _ =>
+                {
+                    unreadable.Add(filePath);
+                    return null;
+                });
+        }
+
+        if (unreadable.Count > 0)
+        {
+            unreadable.Sort(StringComparer.Ordinal);
+            return new ChangeArchiveOutcome.CardsUnreadable(unreadable);
+        }
+
+        var settledIds = new List<string>();
+        foreach (var filePath in openObligationPaths)
+        {
+            var dischargeOutcome = DischargeRegisterCard(cardsRoot, filePath, actingRole, timestamp, lockTimeout, changeName);
+            var settled = dischargeOutcome.Match<string?>(
+                onDischarged: discharged => discharged.Card.Frontmatter.Id,
+                onAlreadyDischarged: static _ => null,
+                onInvalidStatus: static _ => null,
+                onNotARegisterCard: static _ => null,
+                onCardNotFound: static _ => null,
+                onLayoutMismatch: static _ => null,
+                onCardCorrupt: static _ => null,
+                onToolFailure: static _ => null);
+
+            if (settled is not null)
+            {
+                settledIds.Add(settled);
+                continue;
+            }
+
+            // Every candidate in openObligationPaths was just proven, in this same scan, to be an
+            // obligation card with status "open" — anything other than Discharged coming back now
+            // is the accepted race this method's own doc comment names (a concurrent write to the
+            // same card between the scan and this call), reported as tool-failure rather than
+            // guessed at.
+            return new ChangeArchiveOutcome.ToolFailure(
+                $"could not settle obligation '{filePath}' before archiving '{changeName}': " +
+                DescribeUnexpectedDischargeOutcome(dischargeOutcome));
+        }
+
+        try
+        {
+            // Directory.Move requires the destination's parent to already exist — creating
+            // callboard/changes/archive/ itself is not part of what moves, so this is not the
+            // same-filesystem-rename step the doc comment's atomicity guarantee is about.
+            // CardLayout.ArchiveDirectory, not Path.GetDirectoryName(archivedDirectory): the latter
+            // treats a trailing-separator path as already-a-directory-name and returns the same
+            // directory rather than its parent, which would create archivedDirectory itself here.
+            Directory.CreateDirectory(Path.Combine(cardsRoot, CardLayout.ArchiveDirectory.Replace('/', Path.DirectorySeparatorChar)));
+            Directory.Move(liveDirectory, archivedDirectory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new ChangeArchiveOutcome.ToolFailure(
+                $"could not move '{liveDirectory}' to '{archivedDirectory}': {ex.Message}");
+        }
+
+        return new ChangeArchiveOutcome.Archived(changeName, archivedDirectory, settledIds);
+    }
+
+    /// <summary>The human-readable half of <see cref="ArchiveChange"/>'s tool-failure message for
+    /// the accepted-race branch — named once here rather than inlined, so the reason text stays in
+    /// one place regardless of which of the five non-<c>Discharged</c> outcomes actually
+    /// occurred.</summary>
+    private static string DescribeUnexpectedDischargeOutcome(CardRegisterDischargeOutcome outcome) => outcome.Match(
+        onDischarged: static _ => throw new InvalidOperationException("Discharged is handled by the caller before this is reached."),
+        onAlreadyDischarged: static already => $"'{already.FilePath}' was already discharged by a concurrent write.",
+        onInvalidStatus: static invalidStatus => $"'{invalidStatus.FilePath}' now carries an unrecognised status '{invalidStatus.Status}'.",
+        onNotARegisterCard: static notARegisterCard => $"resolved to a '{notARegisterCard.Kind.ToWireString()}' card, not a register card.",
+        onCardNotFound: static notFound => $"'{notFound.FilePath}' no longer exists.",
+        onLayoutMismatch: static layoutMismatch => layoutMismatch.Reason,
+        onCardCorrupt: static corrupt => $"'{corrupt.FilePath}' could not be read: {corrupt.Reason}",
+        onToolFailure: static toolFailure => toolFailure.Reason);
+
+    /// <summary>
     /// Supersedes one <c>decision</c> card with another (§7 block C, register: "A decision MAY
     /// name the decision it supersedes and the decision that supersedes it"). A two-card write —
     /// both sides or neither — following the shape <see cref="RecordFinding"/> already established
@@ -1683,6 +1865,20 @@ internal static class CardStore
         onRule: static () => false,
         onHazard: static () => false,
         onDecision: static () => true,
+        onSection: static () => false);
+
+    /// <summary>The <see cref="IsRegisterCard"/> counterpart narrowed to exactly
+    /// <see cref="CardKind.Obligation"/> (§7 block D) — shared by <see cref="ArchiveChange"/>, which
+    /// needs to find exactly the change-scoped cards register's "closes its change-scoped cards"
+    /// names, not every register kind a change directory might otherwise hold.</summary>
+    internal static bool IsObligationCard(CardFile card) => card.Frontmatter.Kind.Match(
+        onBlock: static () => false,
+        onQuestion: static () => false,
+        onFinding: static () => false,
+        onObligation: static () => true,
+        onRule: static () => false,
+        onHazard: static () => false,
+        onDecision: static () => false,
         onSection: static () => false);
 
     /// <summary>

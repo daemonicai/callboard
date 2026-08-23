@@ -15801,6 +15801,258 @@ strings) rather than merely patched. The one open item — the identical writer/
 still live in `BlockCardFields`/`SectionCardFields`/`FindingCardFields` — is not this block's to
 fix; recorded above for whoever picks up 9.12 or the next block that touches those families.
 
+**[architect]** → @worker — **block D brief (7.3, 7.4).** Base for this block is `3863d16`.
+
+**Deliver:** repository-scoped storage such that archive is a **directory-level filter with nothing
+in transit**, and the tests that prove a change can archive without disturbing the register.
+
+**Spec — register, "The register lives above the change":**
+> Repository-scoped cards SHALL belong to the repository and SHALL NOT be owned by any change.
+> Archiving a change SHALL act as a filter that closes its change-scoped cards and leaves cards of
+> wider scope untouched.
+>
+> The system SHALL NOT require a carry-forward step at archive, because a handoff is a transit in
+> which material can be dropped, and the only cross-change carry on record survived on human memory
+> rather than on a handoff.
+>
+> Scenario: **WHEN** a change is archived **THEN** its change-scoped obligations are settled and
+> every repository-scoped rule, hazard and open question remains **live and unmoved**.
+>
+> Scenario: **WHEN** a question raised in one change is still open when that change archives
+> **THEN** the question remains open and continues to surface to the role that owes its answer.
+
+**What binds you:**
+
+1. **"Nothing in transit" is the requirement, not a description of it.** Archive must not read,
+   rewrite, copy or re-home a single repository-scoped card. The strongest form of this block is
+   that archiving *cannot* touch the register, not that it happens not to — the layout already puts
+   repository-scoped cards in `callboard/register/` and change-scoped ones under
+   `callboard/changes/<name>/`, which is exactly what ADR-0003 made scope-shaped so this would be
+   structural. Lean on that; do not implement a carry-forward and then assert it moved nothing.
+2. **Prove "unmoved" on the bytes.** A test asserting a rule is still readable after archive is
+   weak — it would pass over a rewrite that happened to preserve content. Assert the register's
+   files are untouched, and prefer a check that would fail if archive so much as opened them for
+   writing.
+3. **Archive is the directory move `CardLayout` already names.** `changes/<name>/` →
+   `changes/archive/<name>/`, with `ReservedArchiveChangeName` already refusing a live change called
+   `archive`. Use those; do not build a second spelling of the archive path.
+4. **Block B's resolver is what makes this legal.** Identity survives archive because resolution
+   searches `changes/archive/`, so archive never has to rewrite a card to keep it findable. Prove
+   it end to end: a card resolves by id, its change archives, the same id still resolves — and check
+   `index rebuild` still populates from archived changes.
+5. **Questions are already repository-scoped** (`CardScopeRules`: `question` → `repository`), so
+   "the question outlives its change" should fall out of the layout rather than needing new
+   machinery. **Prove it; do not rebuild it.** If you find yourself writing code to keep a question
+   alive across archive, stop — the layout is supposed to have done that, and if it hasn't, that is
+   a finding worth posting rather than patching around.
+6. **"Closes its change-scoped cards" needs a decision from you, argued.** Which cards, and what
+   "closed" means for each kind — a change-scoped obligation is not the same as a block. Say what
+   you settle and what you deliberately leave, and be careful not to reach into §9's territory
+   (whether a section *may* close, given open questions and obligations, is §9's, not yours).
+7. **Atomicity.** A half-moved change directory is a corrupt record. Say what guarantees you rely on
+   and what happens on failure partway.
+8. **Refusal codes follow the stated rule**; the set stands at **41**, re-derived mechanically if you
+   change it, never incremented.
+
+**Carried debt you should know about, from block C's remediation:** `RegisterCardFields` now has a
+single shared wire-key declaration guarding writer/parser drift, but `CardFrontmatter`,
+`BlockCardFields`, `SectionCardFields` and `FindingCardFields` **do not** — the same silent,
+compounding frontmatter-duplication defect is live in those families today. If this block adds or
+touches a field in any of them, close it the same way rather than adding a literal to two lists.
+
+**Explicitly NOT in this block:** promotion across scope and `earned_from` (E), `absorbs` and
+compaction (F) — note 7.8 puts *change-scoped compaction* at archive, and it is block F's, so build
+archive so F can hook it rather than building F's half now. Citation counting (G). No new read verb
+(11.1).
+
+**Done-gates — all four, quote the exit line, never the output:** `make build` → `BUILD_EXIT:0`,
+`make test` → `TEST_EXIT:0` (your new tests **and** all 549 existing), `make format` →
+`FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`.
+
+**Boundaries:** no commit, no ticks, no `Makefile` edit. Post progress here, hand off `→ @reviewer`.
+
+**[worker]** Implemented block D (7.3, 7.4):
+
+- **Nothing new for repository/capability scope.** `CardStore.ArchiveChange` never opens, reads,
+  or enumerates `callboard/register/` or `callboard/decisions/` at all — only
+  `CardLayout.ChangesDirectory(changeName)` is ever touched, which is what "nothing in transit" is
+  structural rather than asserted: there is no code path in this method that can reach a
+  repository- or capability-scoped card's bytes. Proven on the bytes and the mtime, not on
+  readability — `ArchiveChange_RepositoryScopedRule/Hazard_NeverOpened_...` compares
+  `File.ReadAllBytes` and `File.GetLastWriteTimeUtc` before/after and asserts no `.lock` file was
+  ever created beside either card.
+- **"Closes its change-scoped cards" = settles every open `obligation`, and nothing else.**
+  Register's own scenario text names only obligations ("its change-scoped obligations are
+  settled") — a block or section short of its own flow-state close is left exactly as it is;
+  whether a section *may* close given open obligations/questions is §9's refusal, not this verb's,
+  and register explicitly says archive SHALL NOT require a carry-forward step first. Settling
+  reuses `DischargeRegisterCard` unchanged, one call per open obligation, under that card's own
+  per-card lock — no new write mechanism, no new field.
+- **Question outlives its change for free.** `question` is already repository-scoped
+  (`CardScopeRules`), so it was never in the change directory to begin with —
+  `ArchiveChange_OpenQuestion_OutlivesItsChange_UnmovedAndUnmodified` proves the byte/mtime
+  invariant on a question the same way as a rule/hazard. No question-specific code exists anywhere
+  in this diff — the brief's own warning sign never fired.
+- **Block B's resolver, end to end.** `ArchiveChange_CardIdentityStillResolves_ByIdAfterArchive`
+  resolves a change-scoped rule's id live, archives the change, and resolves the same id again —
+  found at the archived path, live copy gone. `ArchiveChange_IndexRebuild_...` confirms
+  `index rebuild` still populates a card from inside an archived change (it already walked
+  `CardLayout.ResolveRecordDirectories`, which already covers the archive tree — no change needed
+  there, just proof).
+- **Two-phase, atomicity documented and tested for the failure case.** Phase one settles every open
+  obligation while the directory is still live (each write independently atomic, per-card lock).
+  Phase two is one `Directory.Move` of the whole directory — same filesystem, so one `rename()`
+  syscall: lands whole or throws having moved nothing. A lock timeout mid-phase-one is proven to
+  leave the change **fully live, not half-moved**
+  (`ArchiveChange_LockTimeoutSettlingAnObligation_LeavesTheChangeFullyLive_NotHalfMoved`, using the
+  same `CardLock.Acquire` + short-timeout technique §5 already established for this shape).
+- **An unreadable card in the directory refuses before anything moves** (fail-closed — it might be
+  an open obligation) — `CardsUnreadable`, tested.
+- **Accepted, stated race:** nothing locks the whole directory across scan→settle→move, so a card
+  written into the change between the scan and the move is carried into the archive unseen by this
+  call, still in whatever state it was written. Documented on `ArchiveChange`, not solved — building
+  whole-directory locking was not asked for.
+- **CLI:** new top-level `change` command, `change archive <name> --role <role>` — positional
+  change name (not a file path: there's no single card here), `ChangeArchiveResult` registered on
+  `CliJsonContext`.
+- **Carried debt (block C's remediation note):** did not touch `CardFrontmatter`/
+  `BlockCardFields`/`SectionCardFields`/`FindingCardFields` — no field added or touched on any of
+  them, so nothing to close there.
+- **Mechanical inventory:** `CardStore_EntireStaticMethodSurface_IsExplicitlyAccountedFor` updated
+  for `ArchiveChange`, `DescribeUnexpectedDischargeOutcome`, `IsObligationCard`.
+- **Refusal codes: 45**, re-derived mechanically (was 41 + this block's four:
+  `change-not-found`, `already-archived`, `invalid-change-name`, `cards-unreadable`).
+  `ToolFailure` is not a refusal code, same convention as every other §7 verb.
+- **Explicitly not built:** promotion across scope, `earned_from`, `absorbs`, compaction,
+  citation counting, any new read verb — grepped the diff, none present. 7.8's "compaction at
+  archive" is F's; `ArchiveChange` has nothing in it F would need to unwind to add that hook later.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (566 tests: 549
+existing + 17 new, all green).
+
+→ @reviewer
+
+**[reviewer]** Audit of block D (7.3, 7.4). Gates re-run independently: `BUILD_EXIT:0`,
+`TEST_EXIT:0` (566/566), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived mechanically:
+163 sites, **45 distinct codes**, exactly `+already-archived`, `+cards-unreadable`,
+`+change-not-found`, `+invalid-change-name` over block C's 41. Matches.
+
+**Verdict: Approve.**
+
+**1. "Nothing in transit" is structural, not observed — confirmed by reading the call graph, not
+just the tests.** `CardStore.ArchiveChange` (`CardStore.cs:897-983`) contains no reference anywhere
+— not in a branch, not in a helper it calls — to `CardLayout.RegisterDirectory`,
+`CardLayout.DecisionsDirectory`, or `CardLayout.ResolveRecordDirectories`. Its only filesystem
+touches are `CardLayout.ChangesDirectory(changeName)`, `CardLayout.ArchivedChangeDirectory(changeName)`,
+and `CardLayout.ArchiveDirectory` (the shared archive container, created idempotently). There is no
+code path in this method that *can* reach a repository- or capability-scoped card, which is the
+stronger claim the brief asked for over "happens not to." The tests back this with real evidence,
+not just an assertion of intent: `ArchiveChange_RepositoryScopedRule/Hazard_NeverOpened_...`
+compares `File.ReadAllBytes` and `File.GetLastWriteTimeUtc` before/after and asserts no `.lock`
+file was ever created beside either card — a check that would fail on a read-modify-write that
+happened to preserve content (mtime would move, or a `.lock` would appear transiently), which is
+exactly the weak form the brief warned against.
+
+**2. Settle-then-move atomicity — I pushed past the one tested failure mode into the other, and
+both are safe.** The lock-timeout-mid-phase-one test is real
+(`ArchiveChange_LockTimeoutSettlingAnObligation_LeavesTheChangeFullyLive_NotHalfMoved`, holding a
+real `CardLock` and using a real short timeout) and proves the change stays fully live with the
+obligation still open. But that test alone leaves the *second* failure mode — the phase-two
+`Directory.Move` itself failing — unverified by the suite, so I constructed it directly against the
+real `CardStore.ArchiveChange`: wrote a live change with one card, then placed a **file** (not a
+directory) at the exact path `Directory.Move` would target. `Directory.Exists(archivedDirectory)`
+correctly returns `false` for a file at that path, so the `AlreadyArchived` pre-check doesn't catch
+it — the call proceeds into `Directory.Move`, which throws, caught by the existing
+`IOException`/`UnauthorizedAccessException` handler, and returns `ToolFailure`. After the call: the
+live directory still exists, the live card is still there untouched, and the sabotage file is
+undisturbed. This confirms the method's own documented claim — a phase-two failure leaves the
+change "still live and unmoved" — under a real, reproducible failure, not merely lock timeout. I'd
+still ask for a test covering this specific shape (a colliding non-directory entry, or an
+equivalent forced `Directory.Move` failure) before this ships, since right now that guarantee is
+proven by me, once, outside the suite, rather than by anything that runs on every `make test` — but
+I confirmed the underlying behaviour is correct, so this is a nit, not a blocker.
+
+**3. The register is unopened, not merely unmodified.** Same evidence as point 1: the absence of
+any reference to the register's own directories in the call graph, plus the `.lock`-file-never-created
+assertion, which is what would catch a read-then-write-back that happened to reproduce identical
+bytes (a lock file appears and disappears even if content is preserved).
+
+**4. Resolution across archive and index rebuild are both proven end to end, on real evidence, not
+a weaker proxy.** `ArchiveChange_CardIdentityStillResolves_ByIdAfterArchive` resolves a
+change-scoped rule's id live, archives, resolves the same id again, asserts the found path starts
+under `CardLayout.ArchiveDirectory`, and asserts the live-directory copy is gone — a move, not a
+copy, checked directly. `ArchiveChange_IndexRebuild_StillPopulatesTheArchivedChangesCards` doesn't
+stop at the populate call's own reported count: it opens the resulting SQLite database directly
+(`Mode=ReadOnly`) and runs a real `SELECT` for the archived card's id, which is the only way to be
+sure the row actually landed rather than trusting `IndexPopulator.Populate`'s own self-report.
+
+**5. "Closes its change-scoped cards" is argued defensibly and doesn't reach into §9's territory.**
+Register's scenario text names only obligations ("its change-scoped obligations are settled");
+blocks/sections short of their own flow-state close are left exactly as they are, and nothing in
+`ArchiveChange` gates on or inspects a section's or block's state — it never asks whether a section
+*may* close, only whether an obligation is `open`. `IsObligationCard`'s exhaustive match
+(`CardStore.cs:1874-1882`) returns `true` for exactly one kind, so a change-scoped `rule` (the one
+other kind that can share this directory) is structurally guaranteed to fall into the
+"moved-untouched" path the same way a block does — proven for a block directly
+(`ArchiveChange_SettlesEveryOpenObligation_AndLeavesOtherChangeScopedCardsUntouched` asserts
+identical bytes on the block card after archive) and guaranteed for a rule by the same exhaustive
+predicate rather than a second, untested code path.
+
+**6. Four new refusal codes hold up against the granularity rule**, and none collide with an
+existing one on close reading: `change-not-found` operates over a change *name* — a directory-level
+scope concept — which is a different fact from `card-not-found` ("no file at this path") or
+`card-id-not-found` ("no card carries this id"), neither of which is about a change as a container.
+`already-archived`, `invalid-change-name` and `cards-unreadable` are each new facts with no existing
+code to collide with.
+
+**7. Questions across archive: proven, not built.** Grepped the diff for anything question-specific
+in `ArchiveChange` or its call sites — none exists.
+`ArchiveChange_OpenQuestion_OutlivesItsChange_UnmovedAndUnmodified` asserts the same byte/mtime
+invariant as the rule/hazard tests, over a card that was never mentioned by any conditional in the
+method. The brief's own tripwire (stop and post if you find yourself writing question-specific
+code) never fired, and I can confirm that's true by reading `ArchiveChange` itself, not just taking
+the claim.
+
+**Regression watch — clean.** `git diff HEAD` touches no line of `CardFrontmatter.cs`,
+`BlockCardFields.cs`, `SectionCardFields.cs`, or `FindingCardFields.cs`; the writer/parser drift
+class block C's remediation left open in those four families is untouched, neither closed nor
+reopened by this block, exactly as reported.
+
+**Scope confirmed.** Grepped for `earned_from`, `absorbs`, citation counting, promotion, compaction,
+and any new read verb — none present. `ParseChangeArchive` takes a change name (not a file path,
+correctly — there is no single card here) and `--role`, nothing else; no stdin body is read, correct
+for a verb that writes no new card body.
+
+**Nits**
+
+- The phase-two move-failure path (point 2) is correct but untested by the suite — worth a test
+  before this ships, not a blocker given I verified the behaviour directly.
+
+**[worker]** Nit closed (reviewer's phase-two move-failure reproduction, now a permanent test):
+`ArchiveChange_PhaseTwoMoveFails_LeavesTheChangeLive_WithPhaseOnesSettlementAlreadyDurable` in
+`CardChangeArchiveTests.cs`, driven through the real `CardStore.ArchiveChange` — same technique the
+reviewer used by hand: a plain file placed at the exact archive target path, so
+`Directory.Exists(archivedDirectory)` (a directory check) misses it, `ArchiveChange` proceeds into
+`Directory.Move`, and the real syscall throws.
+
+Asserts the actual settle-then-move contract, not an idealised one: the live directory and both its
+cards (block, obligation) are still in place, the sabotage file is undisturbed, **and** the
+obligation settled in phase one is already `discharged` with `discharged_by`/`discharged_at`
+recorded — phase one is durable independent of phase two's failure, which is what "settle-then-move"
+actually promises, not "nothing happened". Also resolves the block's id post-failure and asserts it
+resolves at the *live* path, discriminating against a regression that moved the directory anyway
+after a caught-and-swallowed exception.
+
+Verified the test discriminates: patched `ArchiveChange`'s catch arm to swallow the move failure and
+report `Archived` anyway (env-var-gated, reverted before building) — the test failed on
+`Assert.IsType<ToolFailure>`, as expected. Restored the file byte-for-byte (`diff` against the
+pre-mutation copy) before rebuilding for real.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (567/567: 566 prior + this one).
+Refusal set unchanged at **45** — no new refusal site, re-derived mechanically to confirm.
+
+→ @reviewer
+
 ## NEXT
 
 

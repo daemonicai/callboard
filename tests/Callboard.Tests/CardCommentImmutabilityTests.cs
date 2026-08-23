@@ -104,15 +104,18 @@ public sealed class CardCommentImmutabilityTests
             "AppendCommentUnderExistingLock",       // same, lock already held by the caller
             "ApplyBlockTransition",                 // §5 block C: read-modify-write on Frontmatter.Status/BlockFields/Transitions only; Comments passes through the `card with { ... }` unchanged
             "ApplyBlockTransitionUnderExistingLock", // same, lock already held
+            "ArchiveChange",                        // §7 block D: settles open obligations via DischargeRegisterCard (unchanged), then Directory.Move's the whole change directory — never opens, reads, or rewrites a repository- or capability-scoped card, and never touches Comments on any card it does settle
             "AtomicWrite",                          // the shared byte-writer every path above funnels through; it writes whatever CardFileWriter.Serialize(card) produces for the CardFile each of those paths built — none of them builds one with a truncated Comments list
             "CloseSection",                         // §5 block E: read-decide-write on Frontmatter.Status/SectionFields.ClosedBy/ClosedAt only; never touches Comments
             "CloseSectionUnderExistingLock",        // same, lock already held
             "CreateCard",                           // §7 block A: allocates an identity, validates scope, writes one brand-new card via WriteCard — never touches an existing card's Comments, it only ever creates
+            "DescribeUnexpectedDischargeOutcome",   // §7 block D: pure string formatter over a CardRegisterDischargeOutcome for ArchiveChange's tool-failure message; never touches a CardFile
             "DischargeRegisterCard",                // §7 block A: read-decide-write on Frontmatter.Status/RegisterFields.DischargedBy/DischargedAt only; never touches Comments
             "DischargeRegisterCardUnderExistingLock", // same, lock already held
             "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy; never touches a CardFile's Comments
             "IsDecisionCard",                       // §7 block C: the IsRegisterCard counterpart narrowed to CardKind.Decision, shared by CommandDispatcher's --owed-by/--supersedes resolution and SupersedeDecisionUnderLocks; never touches a CardFile's Comments
             "IsFindingCard",                        // §6 block C: the IsBlockCard/IsSectionCard counterpart for CardKind.Finding, shared with CommandDispatcher.RunFindingStatus; never touches a CardFile's Comments
+            "IsObligationCard",                     // §7 block D: the IsRegisterCard counterpart narrowed to CardKind.Obligation, shared by ArchiveChange's obligation scan; never touches a CardFile's Comments
             "IsRegisterCard",                       // §7 block A: the IsBlockCard/IsSectionCard/IsFindingCard counterpart for the four register kinds; never touches a CardFile's Comments
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments
             "ReadAllCards",                         // read-only
