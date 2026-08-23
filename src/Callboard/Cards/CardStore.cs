@@ -781,6 +781,7 @@ internal static class CardStore
         FindingExtent extent,
         string? verifiedAt,
         FindingBlindSpotRaiseRequest? raiseRequest,
+        FindingDisposition disposition,
         DateTimeOffset timestamp,
         TimeSpan lockTimeout,
         string changeName)
@@ -809,7 +810,26 @@ internal static class CardStore
 
         var findingFrontmatter = new CardFrontmatter(
             findingId!, CardKind.Finding, title, "open", actingRole, CardScope.Section, section, timestamp, timestamp);
-        var findingFields = new FindingCardFields(instrument, extent, verifiedAt, blindSpot);
+
+        // §6 block C ruling: "At record time the tool fingerprints the files/ranges the declared
+        // extent covers and stores that alongside verified_at." FindingExtentFingerprint.Compute
+        // itself decides whether there is anything to fingerprint (only an Explicit extent has a
+        // file set) — this call site does not need to branch on the extent's own form.
+        //
+        // Deliberately outside AcquireLocksAndRecord's lock, below (reviewer finding, §6 block C
+        // review round 1 — corrected here after an earlier DEVLOG post inaccurately claimed this
+        // read happened "inside the same locked write"). The CardLock a finding record acquires
+        // protects the finding's (and any raised card's) own file — it says nothing about, and
+        // cannot say anything about, the arbitrary source files an Explicit extent names, so there
+        // is no lock to hold this read under in the first place. This is sound, not merely
+        // unguarded: if the extent's declared content changes in the window between this read and
+        // the write below, the fingerprint stored is of the *older* content, so a later `finding
+        // status` comparison reports the extent stale — the safe direction this section's own
+        // "never under-report" rule requires. A second `finding record` racing the same extent's
+        // source files would carry the identical TOCTOU exposure regardless of which side of the
+        // lock this read sat on, since the lock never covers those files either way.
+        var extentFingerprint = FindingExtentFingerprint.Compute(extent, cardsRoot);
+        var findingFields = new FindingCardFields(instrument, extent, verifiedAt, blindSpot, extentFingerprint, disposition);
 
         // Both directories exist before either lock is requested (reviewer blocker 3) — WriteCard's
         // own doc comment states why: a lock file is created beside the target, which needs the
@@ -1178,6 +1198,21 @@ internal static class CardStore
         onHazard: static () => false,
         onDecision: static () => false,
         onSection: static () => true);
+
+    /// <summary>The <see cref="IsBlockCard"/>/<see cref="IsSectionCard"/> counterpart for
+    /// <see cref="CardKind.Finding"/> (§6 block C), <see langword="internal"/> for the same reason
+    /// <see cref="IsSectionCard"/> is — so <see cref="Callboard.Cli.CommandDispatcher.
+    /// RunFindingStatus"/> shares this predicate rather than re-implementing the same eight-arm
+    /// match a third time.</summary>
+    internal static bool IsFindingCard(CardFile card) => card.Frontmatter.Kind.Match(
+        onBlock: static () => false,
+        onQuestion: static () => false,
+        onFinding: static () => true,
+        onObligation: static () => false,
+        onRule: static () => false,
+        onHazard: static () => false,
+        onDecision: static () => false,
+        onSection: static () => false);
 
     /// <summary>
     /// Reads and parses one card file. I/O failures (the file vanished, permissions) are caught

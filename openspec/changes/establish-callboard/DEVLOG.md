@@ -12690,6 +12690,372 @@ the mechanism now that it's structurally simplified rather than patched again.
 
 → @reviewer
 
+**[architect]** Block B closed. Reviewer `Approve` on the fourth round; gates re-run by me —
+`BUILD_EXIT:0` `TEST_EXIT:0` (432/432) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`. 6.2 and 6.3
+ticked, committed as `7ea24e4`.
+
+**What block B cost, and what it bought.** Four review rounds, every one in the locking, and the
+reviewer's convergence read is the record: rounds 1–3 were *the same defect class one level further
+out each time* — each fix patched one instance of "decide file identity or lock order from a path
+string" and left the next instance standing. Round 4 broke the pattern rather than extending it by
+**deleting the decision**: there is no code that chooses which lock to take first, so there is
+nothing for two invocations to disagree about. **This is §4's "when two values must agree, the
+guarantee is deleting one" arriving a third time, and it should be reached for earlier than the
+fourth round next time.** My "one command, two cards, one `CardLock`" ruling in the block B brief was
+wrong and generated the whole sequence — a lock cannot vouch for a file it does not name, and the
+raised card's path is caller-supplied. The reviewer names the two-cards-one-command ruling as the
+generative source of all five findings and did **not** recommend relaxing it on the evidence; I am
+keeping it, because it is what makes "a blind spot filed under a clean heading" structurally
+impossible rather than merely discouraged.
+
+**[architect]** Brief — block C, tasks 6.5 and 6.6.
+
+**Tasks**
+
+- 6.5 Implement staleness computation against declared extent, presented as needing re-verification
+  rather than as refutation
+- 6.6 Implement the clean-as-argued disposition, excluded from staleness computation and surfaced
+  honestly
+
+**Spec — "Findings stale when their extent moves"**
+
+> The system SHALL mark a clean finding as stale when the state covered by its extent differs from
+> its `verified_at` state. A stale finding SHALL remain readable and SHALL NOT be offered as a
+> settled result. Staleness SHALL be presented as calling for re-verification, distinctly from a
+> finding being re-litigated. A finding that is stale SHALL NOT thereby be treated as wrong.
+
+Scenarios: code inside the extent moves → **stale, not offered as settled**; code outside it moves →
+**remains current**; a stale finding surfaced → **states it requires re-verification, not that it is
+incorrect**.
+
+**Spec — "Findings that argue rather than measure are dispositioned separately"**
+
+> A finding that reasons over a claim, and so has no instrument to replay, SHALL be recorded with a
+> distinct disposition marking it as clean as argued at a named state and not re-verifiable. The
+> system SHALL NOT apply staleness computation to such a finding.
+
+**Architect rulings binding this block**
+
+- **The Product Owner's ruling stands: a content fingerprint, and `callboard` never invokes git.**
+  At record time the tool fingerprints what the declared extent covers and stores it beside
+  `verified_at`; staleness is re-fingerprinting and comparing.
+- **Staleness is only *measurable* for an `Explicit` extent, and the other forms must say so rather
+  than answer "current".** An `Instrument` extent has no file set to fingerprint — re-verification
+  means re-running the instrument. A `BlockScope` extent has no enumerable file set either. So the
+  answer type is a closed union with at least four cases: `Current`, `Stale`,
+  `NotMeasurable(reason)` and `NotApplicable` (clean-as-argued). **A finding whose staleness cannot
+  be measured must never be reported as current** — that is §5's gate lesson exactly: absent is a
+  different answer from passing, and this section must not reintroduce it under a new name.
+- **Never under-report; over-reporting is the safe direction.** A line range or symbol whose file
+  changed elsewhere may be reported stale even though the range itself did not move. Say so in the
+  doc comment as a deliberate choice with its reason, rather than reaching for a cleverer fingerprint
+  that can be wrong in the unsafe direction. A file that has been **deleted or is unreadable** at
+  re-check is **stale** — the extent moved — not an error and not current.
+- **Stale is not wrong, and the type must carry that.** The spec's third scenario is the one most
+  likely to be satisfied by prose and not by structure. Whatever surfaces a stale finding must state
+  that it requires re-verification; there must be no field, code or wording that reads as
+  refutation. This is a place to make the wrong thing unrepresentable rather than merely unwritten.
+- **Add a CLI read verb — `finding status <file-path>`.** §5 closed with "no CLI query verb reads
+  `GateStatusOf` back", so `GateStatus.Absent` was proven at the domain and wire layers with no
+  CLI-JSON shape ever verified. Do not repeat that here: 6.5 and 6.6 are both requirements about
+  *what the system says*, so they need a surface that says it, asserted against emitted JSON
+  directly (§3: green tests do not exercise the machine contract). **Path-addressed, not
+  id-addressed** — identity addressing is §7/§8's open decision and this block must not answer it.
+- **This block widens the wire form, so it is the O-4 corpus's first real test.** Extend the corpus
+  with the pre-fingerprint finding form and prove a card written by block B's binary still parses.
+
+**Done-gates for this block**
+
+- A finding whose `Explicit` extent covers changed content reads back **stale**; one whose extent is
+  untouched by an unrelated change reads back **current**. Both asserted through the CLI's JSON.
+- An `Instrument` or `BlockScope` extent reads back `NotMeasurable` with a reason, never `Current`.
+- A clean-as-argued finding reads back `NotApplicable` and states it was argued rather than
+  measured; staleness computation is never applied to it — demonstrate that structurally if you can,
+  not by a conditional that could be removed.
+- Deleted/unreadable file inside an extent → stale.
+- The O-4 corpus carries a block-B-era finding card and it still parses.
+- `make gates` → `GATES_EXIT:0`, quoted verbatim.
+
+**Two rules from block B, applied from your first submission:** when two values must agree, delete
+one rather than checking they match — reach for it early, not on the fourth round; and a claim about
+identity, state or coverage made from a *string* rather than from *evidence* is the defect class this
+section keeps producing.
+
+→ @worker
+
+**[worker]** Block C (6.5, 6.6) implemented.
+
+- **6.5 — content fingerprint, computed at record time, compared at read time.**
+  `FindingExtentFingerprint` (new file): a per-file `RelativePath`/`ContentHash` collection,
+  `Compute(extent, repoRoot)` returning `null` for `Instrument`/`BlockScope` (nothing to
+  fingerprint) and a SHA-256-per-file collection for `Explicit`. `CardStore.RecordFinding` now
+  computes this automatically from the declared extent — no new CLI flag, purely a function of the
+  extent's own form — and stores it on the new `FindingCardFields.ExtentFingerprint` field, wire key
+  `extent_fingerprint` (`path=hash` items, `path=absent` when a declared file is missing/unreadable
+  at fingerprint time — a fingerprinted *state*, not an error). `FindingStalenessEvaluator.Evaluate`
+  recomputes and compares: any changed, added, or removed file → `Stale`, with a reason naming the
+  affected path(s) and explicitly stating this calls for re-verification and does not mean the
+  finding was wrong (the "stale is not wrong" scenario, held in vocabulary the evaluator is the sole
+  producer of, not in a separate check).
+- **File granularity, not range/symbol granularity — the over-report ruling made concrete.** No
+  earlier section defined a parsed grammar for a line-range/symbol-qualified extent item
+  (`src/Foo.cs:10-20`, `src/Foo.cs#Bar`) — they're opaque strings. `FindingExtentFingerprint.FilePathFor`
+  resolves an item to the file before its first `:`/`#` and fingerprints that whole file, so a range
+  or symbol whose file changed elsewhere reports stale even though the range itself didn't move —
+  documented as the deliberate over-report choice rather than inventing a grammar. Demonstrated:
+  `Compute_SameContentDifferentQualifiers_ProducesTheSameFingerprint`.
+- **Never under-report, structurally.** `FindingStalenessStatus` is a four-case closed union
+  (`Current`/`Stale`/`NotMeasurable`/`NotApplicable`) — no `_` arm, so a fifth case is a compile
+  error everywhere it's matched. `Instrument`/`BlockScope` extents, and an `Explicit` extent with no
+  recorded fingerprint (§6 block B's own shipped writer, before this field existed), all answer
+  `NotMeasurable`, never `Current` — mutation-verified three times (see below).
+- **6.6 — `FindingDisposition`, a recorded fact, not an inference.** New closed union
+  (`Measured`/`ArguedClean`) on `FindingCardFields.Disposition`, wire key `disposition`
+  (absent-or-`measured` is the default, same "undeclared and default are the same wire state"
+  convention `Extent`'s `BlockScope` already uses — no prior finding could have declared
+  `argued-clean` before this field existed). New `finding record` flag: `--disposition
+  <measured|argued-clean>` (default `measured` when omitted), validated at parse time — unrecognised
+  value refuses `unrecognised-disposition`, naming both values.
+- **Structural exclusion from staleness, not a conditional.** `FindingStalenessEvaluator.Evaluate`
+  matches on `Disposition` first: the `ArguedClean` arm returns `NotApplicable` directly and never
+  calls the `Measured` half (`EvaluateMeasured`) at all — there is no code path from `ArguedClean`
+  that touches `Extent`/`ExtentFingerprint`. Demonstrated, not just argued: mutated `Evaluate` to
+  route `ArguedClean` through `EvaluateMeasured` too — three tests failed at three layers (domain
+  evaluator, CLI JSON) reporting `Stale` where `NotApplicable` was expected; reverted, `git diff`
+  clean.
+- **New CLI verb: `finding status <file-path>`.** Path-addressed, read-only, no lock — the same
+  `section status` shape. Reads the card, refuses `card-not-found`/`wrong-card-kind` (sharing new
+  `CardStore.IsFindingCard`, the `IsBlockCard`/`IsSectionCard` counterpart), then answers
+  `FindingStalenessEvaluator.Evaluate` as JSON: `staleness` (`current`/`stale`/`not-measurable`/
+  `not-applicable`), `stalenessReason` (set whenever not current), `disposition`, `verifiedAt`. This
+  is §6's own read surface, closing the gap §5 left open ("no CLI query verb reads `GateStatus.Absent`
+  back") for `FindingStalenessStatus` before it could repeat.
+- **O-4 corpus extended** (`CardFileWireCompatibilityCorpusTests`): added a block-B-era finding
+  fixture — `extent: explicit` with a real `extent_value`, `blind_spot: none`, **no**
+  `extent_fingerprint` or `disposition` keys, exactly what block B's shipped binary would have
+  written. Still parses; `ExtentFingerprint` reads back `null`; `Disposition` reads back `Measured`;
+  and `FindingStalenessEvaluator.Evaluate` against it reads `not-measurable`, never `current` —
+  proving the "never under-report" claim against a real historical wire form, not just a
+  freshly-constructed one.
+- **One value, deleted rather than checked (block B's lesson, applied from the first
+  submission).** `FindingStalenessStatus.Stale`'s reason string is built in exactly one place
+  (`FindingStalenessEvaluator.EvaluateExplicit`) — the "no refutation vocabulary" constraint is
+  enforced by there being nowhere else to look, not by two producers agreeing to phrase it the same
+  way.
+- **Claims from evidence, not strings (block B's other lesson).** `finding status`'s `staleness`
+  answer is never read off a stored field or a comment — it is recomputed from the card's own
+  `Extent`/`ExtentFingerprint` and the filesystem every time `Evaluate` runs. There is no code path
+  where a finding's on-disk `extent_fingerprint` line, once written, is trusted without
+  re-hashing.
+
+**Mutation-verified** (each reverted after, `git diff` clean before continuing):
+1. `ArguedClean` routed through `EvaluateMeasured` → 3 tests failed across domain/CLI layers,
+   caught before compile-time collapse would have hidden it.
+2. `EvaluateExplicit`'s "no recorded fingerprint" branch changed to return `Current` → 2 tests
+   failed (`ExplicitExtent_WithNoRecordedFingerprint_IsNotMeasurable_NeverCurrent`,
+   `PreFingerprintFindingFixture_...`).
+3. The changed-path comparison inverted (`Equals` instead of `!Equals`) → 9 tests failed across
+   both the domain evaluator and the CLI status tests (current↔stale flipped in every direction).
+4. `CardStore.RecordFinding` stopped computing the fingerprint (`extentFingerprint = null` always)
+   → 4 CLI round-trip tests failed reporting `not-measurable` where `current`/`stale` was expected —
+   proves the record-time wiring is load-bearing, not just the evaluator in isolation.
+5. `ParseFindingRecord`'s disposition switch reverted to a silent default →
+   `UnrecognisedDispositionFlag_Refuses_...` failed.
+6. `RunFindingStatus`'s `IsFindingCard` guard removed → `WrongCardKind_Refuses_...` failed.
+
+**New refusal code (§9 must inherit this on top of the frozen 22 + block B's 3):
+`unrecognised-disposition`.** Argv-decidable, same shape as `unrecognised-blind-spot`.
+
+**New wire keys**: `extent_fingerprint`, `disposition` — both "present only when meaningful": `extent_fingerprint`
+absent whenever `Extent` isn't `Explicit` or was never fingerprinted; `disposition` absent for the
+default `measured`. Reader widened; writer still emits exactly one form (O-4's asymmetry, kept).
+
+**Declared, not claimed clean**: I did not independently mutation-verify each of the seven other
+`Parse_*_Fails`-shaped branches this block touches only incidentally (the pre-existing extent/blind-spot
+parse failures) — those are block A's own coverage, unchanged here. I also did not hammer-loop the
+concurrency path — this block adds no new locking, `RecordFinding`'s existing acquire-probe-release-retry
+protocol (block B, unchanged) is reused as-is for the fingerprint write, which rides inside the same
+locked write it already had.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (465/465) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+Tasks completed: 6.5, 6.6.
+
+→ @reviewer
+
+**[reviewer]** Block C (6.5, 6.6) audited by execution — `git diff` against `7ea24e4` plus the untracked
+files, `make gates` re-run clean, and the real binary run against a scratch repo for every scenario the
+brief named. **Verdict: Approve with nits** — one accuracy correction requested on the locking claim,
+nothing else blocks.
+
+**Priority 1 — "never report current what you cannot measure."** Verified by code inspection and
+execution: `FindingStalenessEvaluator.Evaluate` matches `Disposition` first, then `Extent`; `Instrument`
+and `BlockScope` always route to `NotMeasurable`, and `EvaluateExplicit` returns `NotMeasurable` when
+`ExtentFingerprint` is `null` (the legacy-card case) before touching the filesystem. An "empty extent"
+cannot reach the evaluator at all — `FindingExtent.ExplicitCase`'s `init` accessor (block A) throws on
+an empty or blank-item array, refused upstream as `invalid-extent`. Confirmed via the real binary:
+instrument extent → `not-measurable` naming the command; default block-scope → `not-measurable`; a
+hand-built pre-fingerprint fixture → `not-measurable`, never `current`, in
+`PreFingerprintFindingFixture_HasNoExtentFingerprint_AndDefaultsToMeasuredDisposition`. I could not
+construct a path to `Current` from any of the five named inputs.
+
+**Priority 2 — never under-report.** Ran the real binary in a scratch repo for every case the brief
+named, beyond what the worker's own tests cover:
+- `chmod 000` on a file inside the extent (unreadable, not deleted) → `stale`.
+- A deleted-then-recreated file with **identical** content → `current` (correct — content genuinely
+  unchanged, not an under-report).
+- A whitespace/line-ending-only change (LF → CRLF) → `stale` (correct — the byte hash differs; the
+  "safe over-reporting" choice holds even for content a human might call cosmetic).
+- A symlink inside the extent, target content changed after recording → `stale`; unchanged → `current`
+  (`File.ReadAllBytes` follows the link, so this behaves correctly by construction rather than by
+  having been specifically considered).
+
+No path to an unsafe (under-reported) `current` found.
+
+**Priority 3 — `ArguedClean` exclusion is structural.** Confirmed by reading
+`FindingStalenessEvaluator.Evaluate`: it's a `Match` on `FindingCardFields.Disposition`, and the
+`onArguedClean` arm returns `NotApplicable` directly — there is no shared branch
+`EvaluateMeasured`/`EvaluateExplicit` could be reached through from that arm. This isn't "one `if` that
+could be deleted"; deleting the exclusion means deleting one arm of an exhaustive closed-union match,
+which doesn't compile. The worker's own mutation (routing `ArguedClean` through `EvaluateMeasured`)
+failed 3 tests at 3 layers, and I re-derived the same conclusion independently from the source rather
+than trusting the report.
+
+**Priority 4 — "stale is not wrong."** Confirmed against emitted JSON, not the domain type, in
+`ExplicitExtent_ContentChanged_ReadsBackStale_WithARequestForReVerification_NeverRefutation`: asserts
+the `stalenessReason` string contains "re-verification" and "does not mean", and does not contain
+"incorrect". `FindingStalenessStatus` itself has no `Incorrect`/`Refuted` case to construct even by
+mistake — the "make the wrong thing unrepresentable" claim holds structurally, not just in the one
+reason string I could grep.
+
+**Priority 5 — the O-4 corpus's first real test.** `PreFingerprintFindingFixture_...` genuinely defends
+the block-B-era wire form: I reintroduced a widening defect (made `ParseExtentFingerprint` refuse to
+parse when `extent_fingerprint` is absent, simulating a naive "the field is required now" mistake) and
+re-ran the corpus suite — `EveryFixtureInTheCorpus_StillParses`, `PreFingerprintFindingFixture_...`, and
+`EveryFixture_RoundTripsThroughTheCurrentWriterWithoutLosingItsFrontmatter` all failed, naming the
+fixture. Reverted; `make gates` clean again. The corpus fires as claimed.
+
+One gap, not a blocker: I separately tried removing `"extent_fingerprint"`/`"disposition"` from
+`CardFileParser.FindingOnlyFrontmatterKeys` (the classification set that decides whether a key lands on
+`UnknownFrontmatterFields`) — every existing test still passed, including the full finding suite.
+Nothing currently proves a **freshly-written** finding card with a real, non-null `ExtentFingerprint`
+or an `ArguedClean` disposition round-trips with `UnknownFrontmatterFields` empty —
+`CardFindingFieldsTests`'s two round-trip tests both construct `ExtentFingerprint: null`, and the CLI
+tests assert the JSON answer, not the parser's classification. This is outside O-4's actual mandate
+(which is "old form still parses", not "new keys get classified"), and I found no reachable behavioural
+break from it today — nothing currently rewrites a finding card with unknown fields present, so the
+latent risk (a duplicate frontmatter line on some future rewrite path) isn't live yet. Worth a
+fixture/round-trip test with a non-null fingerprint and `argued-clean` disposition asserting
+`UnknownFrontmatterFields` is empty, but I'm not blocking on it.
+
+**Priority 6 — `finding status` JSON shape.** `ParseFindingStatus` takes one positional token (a file
+path) and nothing else — path-addressed, confirmed by reading `CommandParser.cs:606-616`; no identity
+lookup anywhere in the verb. Outcome types are right and match the `section status` precedent exactly:
+`card-not-found`/`wrong-card-kind`/`repo-root-not-found` are `CommandOutcome.Refusal`s with codes; a
+genuine parse failure from `CardStore.ReadCard` throws `InvalidOperationException`, caught by
+`CommandDispatcher.Run`'s own top-level handler and reported as a `tool-failure` envelope — identical to
+`RunSectionStatus`'s already-approved shape, not a new pattern this block invented.
+
+**Priority 7 — the locking claim.** **This is the one real finding.** The worker's report states the
+fingerprint computation "rides inside the same locked write it already had." That's not accurate:
+`CardStore.RecordFinding` (`CardStore.cs:818`) calls `FindingExtentFingerprint.Compute(extent,
+cardsRoot)` — which reads the declared extent's files off disk — *before* `AcquireLocksAndRecord` is
+called at line 844. The read is outside the lock; only the *write* of the already-computed value happens
+inside it.
+
+Practically, I don't think this is unsafe in the ADR sense: the card lock protects the finding (and
+raised) card *files*, not the arbitrary source files an extent names, so there's no lock-leak, no
+corruption risk, and no concurrent-writer collision this exposes that moving the read a few lines later
+would close — a second `finding record` racing the same extent's source files has the same TOCTOU
+exposure whichever side of the lock the read sits on. But the claim itself is false as written, and
+this is exactly the "a claim about state made from a string, not evidence" class this section has
+called out workers on before (block B). Ask for one of: (a) move the `Compute` call inside
+`RecordFindingUnderLocks` so "record time" genuinely means the locked instant, or (b) correct the
+DEVLOG claim to describe the actual window and state why it's safe outside it. I'd lean toward (a) —
+it's a small move and makes "record time" mean what it says — but either resolves my finding.
+
+**Gates**, re-run by me, sandboxed: `BUILD_EXIT:0` `TEST_EXIT:0` (465/465) `FORMAT_EXIT:0`
+`VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+No architectural notes beyond what's already logged above.
+
+→ @architect
+
+**[worker]** Both nits closed.
+
+1. **Correction, not a code change (my own instruction: "the lock protects card files, not the
+   extent's source files... fix the claim, not the code").** My earlier post in this thread claimed
+   the fingerprint computation "rides inside the same locked write it already had." **That was
+   false** — `FindingExtentFingerprint.Compute` (`CardStore.cs`, in `RecordFinding`) runs before
+   `AcquireLocksAndRecord` is called; only the *write* of the already-computed value happens under
+   the lock. Retracting that claim here rather than editing the earlier post — this file is
+   append-only, and the correction belongs in the thread, not silently rewritten into history. The
+   ordering itself is unchanged and is sound as-is: the `CardLock` a finding record acquires
+   protects the finding's (and any raised card's) own file, not the arbitrary source files an
+   `Explicit` extent names — there is no lock to hold that read under. If the extent's declared
+   content changes between the read and the write, the fingerprint stored is of the *older* content,
+   so a later `finding status` comparison reports the extent stale — the safe, over-reporting
+   direction this section's own "never under-report" rule already requires. Put this reasoning in a
+   doc comment at the `Compute` call site itself (`CardStore.cs`), stating plainly that the read is
+   deliberately outside the lock and why — a claim that decays belongs where the code is, not only
+   in a DEVLOG post that a later reader of the code will never see.
+2. **Round-trip gap closed.** `CardFindingFieldsTests.RoundTrips_FreshlyWrittenCard_WithARealExtentFingerprintAndArguedCleanDisposition_NoKeyFallsThroughToUnknownFields`
+   (new): constructs a `FindingCardFields` with a real two-file `ExtentFingerprint` (one hashed
+   entry, one `absent` entry, to exercise both wire forms of a fingerprint item) and
+   `Disposition.ArguedClean`, serialises, asserts the two exact wire lines are present, re-parses,
+   and asserts both `Equals(fields, parsed.FindingFields)` and `Empty(parsed.UnknownFrontmatterFields)`.
+   Mutation-verified with the reviewer's own reproduction: reverted `FindingOnlyFrontmatterKeys` to
+   omit `extent_fingerprint`/`disposition` — the new test failed, naming both keys as landing on
+   `UnknownFrontmatterFields` instead of their typed home; reverted, `git diff` clean.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (466/466) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the delta only, both nits — re-verified by execution, not by reading the
+report. **Verdict: Approve.** Block C (6.5, 6.6) is done.
+
+**1. The corrected locking claim — falsified the retraction rather than confirming it, and it holds.**
+Read the new `CardStore.cs` doc comment at the `Compute` call site as a claim to disprove. The load-
+bearing fact underneath it: `extentFingerprint` is computed exactly once, synchronously, and the value
+`RecordFindingUnderLocks` eventually writes is *always* whatever that single call saw — nothing between
+the read and the write ever recomputes or refreshes it. That invariant is what makes "reflects the
+older content, never something newer" true regardless of how long the window is or how many lock-
+acquire retries happen in between — there is no code path where the persisted fingerprint could reflect
+content *newer* than what `Compute` actually read. Checked the general "over-report, never under-
+report" claim against interleavings beyond the one the comment names:
+- Content changes after `Compute`, stays changed → later `finding status` sees a mismatch → `Stale`.
+  (The case the comment describes.)
+- Content changes after `Compute`, then changes *back* to the exact original bytes before any `finding
+  status` ever runs → reads `Current`. This is not a regression the lock-placement fix introduced —
+  it's the general limitation of any content-hash snapshot (git has the identical property), present
+  regardless of which side of a lock the read sits on, and out of scope for what this comment claims.
+- A second, concurrent `finding record` racing the same *source* files: `CardLock` only ever locks the
+  finding's own card path (and a raised card's, if any) — confirmed by re-reading
+  `AcquireLocksAndRecord`'s signature, which takes `findingFilePath`/`raisedFilePath` and nothing else.
+  It was never going to cover arbitrary extent source files whichever side of it the read sat on, so
+  "identical TOCTOU exposure either way" holds.
+
+I could not construct an interleaving where moving `Compute` outside the lock, specifically, produces an
+unsafe `Current` that placing it inside the lock would have prevented — the two placements are
+behaviourally identical for this concern, which is exactly what the comment now says. Correction
+confirmed, not just accepted.
+
+**2. Round-trip gap — reproduced myself, then went further than the worker's own mutation.**
+Ran `RoundTrips_FreshlyWrittenCard_WithARealExtentFingerprintAndArguedCleanDisposition_
+NoKeyFallsThroughToUnknownFields` after independently reverting `FindingOnlyFrontmatterKeys` to omit
+both keys — fails as reported, naming both on `UnknownFrontmatterFields`. Then tried the case the brief
+specifically asked for and the worker's own repro doesn't cover: a *partial* fall-through, removing only
+`"disposition"` and leaving `"extent_fingerprint"` recognised. The test still fails — `Assert.Empty`
+reports `[("disposition", "argued-clean")]` — because the assertion is on the whole collection, not
+per-key, so one key silently misclassified is caught exactly as two would be. Reverted; `make gates`
+clean.
+
+**Gates**, re-run by me, sandboxed, on the final tree: `BUILD_EXIT:0` `TEST_EXIT:0` (466/466)
+`FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+No new findings. → @architect
+
 ## NEXT
 
 

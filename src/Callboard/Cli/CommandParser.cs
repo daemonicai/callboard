@@ -570,8 +570,8 @@ internal static class CommandParser
     }
 
     /// <summary>
-    /// <c>finding</c>'s only job is routing to a subcommand — currently just <c>record</c>. Same
-    /// peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// <c>finding</c>'s only job is routing to a subcommand: <c>record</c> and <c>status</c> (§6
+    /// block C). Same peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseFinding(CommandDispatcher.CommandContext context)
     {
@@ -580,15 +580,40 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'finding' requires a subcommand. Known subcommands: record."));
+                    "'finding' requires a subcommand. Known subcommands: record, status."));
             case "record":
                 context.Arguments.TryTake();
                 return ParseFindingRecord(context);
+            case "status":
+                context.Arguments.TryTake();
+                return ParseFindingStatus(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'finding' subcommand: '{subcommand}'. Known subcommands: record."));
+                    $"no such 'finding' subcommand: '{subcommand}'. Known subcommands: record, status."));
         }
+    }
+
+    /// <summary>
+    /// Builds <c>finding status</c>'s <see cref="CommandDispatcher.ParsedCommand.FindingStatus"/>:
+    /// one positional token (card file path), nothing else — read-only, the same
+    /// <see cref="ParseSectionStatus"/> shape. Unlike <c>section status</c>, this also carries
+    /// <see cref="CommandDispatcher.CommandContext.WorkingDirectory"/>: staleness computation needs
+    /// the repository root to resolve an <see cref="Callboard.Cards.FindingExtent.Explicit"/>
+    /// extent's paths against (§6 block C ruling — the fingerprint is content, resolved relative to
+    /// the repo, never git).
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseFindingStatus(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'finding status' requires a card file path."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.FindingStatus(filePath, context.WorkingDirectory));
     }
 
     /// <summary>
@@ -634,6 +659,7 @@ internal static class CommandParser
         string? blindSpotFile = null;
         string? blindSpotTitle = null;
         string? blindSpotBody = null;
+        string? dispositionText = null;
 
         var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
@@ -649,6 +675,7 @@ internal static class CommandParser
             ["--blind-spot-file"] = value => blindSpotFile = value,
             ["--blind-spot-title"] = value => blindSpotTitle = value,
             ["--blind-spot-body"] = value => blindSpotBody = value,
+            ["--disposition"] = value => dispositionText = value,
         });
         if (flagRefusal is not null)
         {
@@ -756,6 +783,25 @@ internal static class CommandParser
             }
         }
 
+        // §6 block C: absent-or-"measured" declares the default (FindingDisposition.Measured,
+        // itself never re-verified by staleness) — same "argv-decidable, checked here" O-3
+        // discipline --blind-spot's own switch above already applies.
+        FindingDisposition disposition;
+        switch (dispositionText)
+        {
+            case null:
+            case "measured":
+                disposition = FindingDisposition.Measured;
+                break;
+            case "argued-clean":
+                disposition = FindingDisposition.ArguedClean;
+                break;
+            default:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unrecognised-disposition",
+                    $"'finding record' requires '--disposition <measured|argued-clean>' when supplied. Unrecognised value: '{dispositionText}'."));
+        }
+
         var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
         if (stdinRefusal is not null)
         {
@@ -765,7 +811,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.FindingRecord(
-            filePath, title, section, changeName, role, body, instrument, extent, verifiedAt, raiseRequest,
+            filePath, title, section, changeName, role, body, instrument, extent, verifiedAt, raiseRequest, disposition,
             context.WorkingDirectory, context.Clock()));
     }
 }

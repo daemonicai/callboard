@@ -172,6 +172,29 @@ internal static class CardFileWriter
             {
                 builder.Append("blind_spot_card: ").Append(CardFileFormat.EscapeFrontmatterValue(cardId)).Append('\n');
             }
+
+            // §6 block C's two additions, same "present only when set" convention. ExtentFingerprint
+            // is null whenever there is nothing to fingerprint (Instrument/BlockScope extent) or
+            // nothing was ever recorded (a card written before this field existed) — either way,
+            // omitting the line here is exactly the "no fingerprint recorded" state
+            // FindingStalenessEvaluator reads back as NotMeasurable, not Current.
+            if (findingFields.ExtentFingerprint is { } fingerprint)
+            {
+                var fingerprintItems = fingerprint.Files
+                    .Select(static file => $"{file.RelativePath}={file.ContentHash ?? "absent"}")
+                    .ToList();
+                builder.Append("extent_fingerprint: ").Append(CardFileFormat.JoinFrontmatterList(fingerprintItems)).Append('\n');
+            }
+
+            // Disposition's default (Measured) writes nothing at all — the same "undeclared and
+            // default are the same wire state" convention Extent's own BlockScope case uses.
+            var dispositionForm = findingFields.Disposition.Match(
+                onMeasured: static () => (string?)null,
+                onArguedClean: static () => "argued-clean");
+            if (dispositionForm is { } dispositionText)
+            {
+                builder.Append("disposition: ").Append(dispositionText).Append('\n');
+            }
         }
 
         // Unknown fields (a §5/§6 field this build does not model, or a hand-added line) are

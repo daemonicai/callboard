@@ -23,7 +23,9 @@ public sealed class CardFindingFieldsTests
             Instrument: "dotnet test",
             Extent: FindingExtent.Explicit(["src/Callboard/Cards/CardFileParser.cs"]),
             VerifiedAt: "8b44a51",
-            BlindSpot: FindingBlindSpotDeclaration.None);
+            BlindSpot: FindingBlindSpotDeclaration.None,
+            ExtentFingerprint: null,
+            Disposition: FindingDisposition.Measured);
         var card = new CardFile(Frontmatter("F-0100"), "Nothing dangerous found.", [], [], FindingFields: fields);
 
         var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
@@ -38,7 +40,9 @@ public sealed class CardFindingFieldsTests
             Instrument: "manual review",
             Extent: FindingExtent.Instrument("make gates"),
             VerifiedAt: "state-7",
-            BlindSpot: FindingBlindSpotDeclaration.RaisedAs("O-0009"));
+            BlindSpot: FindingBlindSpotDeclaration.RaisedAs("O-0009"),
+            ExtentFingerprint: null,
+            Disposition: FindingDisposition.Measured);
         var card = new CardFile(Frontmatter("F-0101"), "Clean, but see O-0009.", [], [], FindingFields: fields);
 
         var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
@@ -46,10 +50,46 @@ public sealed class CardFindingFieldsTests
         Assert.Equal(fields, parsed.FindingFields);
     }
 
+    // Reviewer's priority-5 gap (§6 block C review round 1): O-4's own corpus proved the *old*
+    // wire form still parses, but nothing proved a *freshly-written* card carrying real values for
+    // both of this block's new keys — a non-null ExtentFingerprint (with more than one file, to
+    // exercise the list encoding) and an ArguedClean disposition — round-trips with both keys
+    // landing in their own typed home rather than falling through to UnknownFrontmatterFields. This
+    // is exactly the defect shape that escaped block A (the parser was proven, the store was not):
+    // demonstrated by reverting FindingOnlyFrontmatterKeys to omit "extent_fingerprint"/
+    // "disposition" and watching this test fail with a non-empty UnknownFrontmatterFields, per the
+    // architect's instruction.
+    [Fact]
+    public void RoundTrips_FreshlyWrittenCard_WithARealExtentFingerprintAndArguedCleanDisposition_NoKeyFallsThroughToUnknownFields()
+    {
+        var fingerprint = new FindingExtentFingerprint(
+        [
+            new FindingExtentFileFingerprint("src/a.cs", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"),
+            new FindingExtentFileFingerprint("src/b.cs", null), // "absent" sentinel — a file missing at fingerprint time
+        ]);
+        var fields = new FindingCardFields(
+            Instrument: "manual review",
+            Extent: FindingExtent.Explicit(["src/a.cs", "src/b.cs"]),
+            VerifiedAt: "state-9",
+            BlindSpot: FindingBlindSpotDeclaration.None,
+            ExtentFingerprint: fingerprint,
+            Disposition: FindingDisposition.ArguedClean);
+        var card = new CardFile(Frontmatter("F-0103"), "Reasoned over the claim; no instrument to replay.", [], [], FindingFields: fields);
+
+        var serialized = CardFileWriter.Serialize(card);
+        Assert.Contains("extent_fingerprint: src/a.cs=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd,src/b.cs=absent", serialized, StringComparison.Ordinal);
+        Assert.Contains("disposition: argued-clean", serialized, StringComparison.Ordinal);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(serialized));
+
+        Assert.Equal(fields, parsed.FindingFields);
+        Assert.Empty(parsed.UnknownFrontmatterFields);
+    }
+
     [Fact]
     public void UndeclaredExtent_RoundTripsToBlockScope_AndEmitsNoExtentLines()
     {
-        var fields = new FindingCardFields(null, FindingExtent.BlockScope, null, FindingBlindSpotDeclaration.None);
+        var fields = new FindingCardFields(null, FindingExtent.BlockScope, null, FindingBlindSpotDeclaration.None, null, FindingDisposition.Measured);
         var card = new CardFile(Frontmatter("F-0102"), "Body.", [], [], FindingFields: fields);
 
         var serialized = CardFileWriter.Serialize(card);
@@ -224,7 +264,9 @@ public sealed class CardFindingFieldsTests
                 Instrument: "make gates",
                 Extent: FindingExtent.BlockScope,
                 VerifiedAt: "sha-abc",
-                BlindSpot: FindingBlindSpotDeclaration.None);
+                BlindSpot: FindingBlindSpotDeclaration.None,
+                ExtentFingerprint: null,
+                Disposition: FindingDisposition.Measured);
             var newCard = new NewCardFile(Frontmatter("F-0300"), "Body.", fields);
 
             var writeResult = CardStore.WriteCard(root, path, newCard, TimeSpan.FromSeconds(5), changeName);

@@ -55,8 +55,8 @@
 - [x] 6.2 Refuse a clean finding lacking either a declared blind spot or an explicit assertion of none
 - [x] 6.3 Raise a declared blind spot as an obligation or hazard that does not degrade at section close
 - [x] 6.4 Implement the three extent declaration forms, defaulting to block scope and requiring narrowing to be explicit
-- [ ] 6.5 Implement staleness computation against declared extent, presented as needing re-verification rather than as refutation
-- [ ] 6.6 Implement the clean-as-argued disposition, excluded from staleness computation and surfaced honestly
+- [x] 6.5 Implement staleness computation against declared extent, presented as needing re-verification rather than as refutation
+- [x] 6.6 Implement the clean-as-argued disposition, excluded from staleness computation and surfaced honestly
 - [ ] 6.7 Implement finding degradation at section close
 
 ## 7. Register

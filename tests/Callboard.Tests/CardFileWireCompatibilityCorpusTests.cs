@@ -119,6 +119,25 @@ public sealed class CardFileWireCompatibilityCorpusTests
             "Body text.\n" +
             "<!-- callboard:verdict by=supervisor verdict=approve range-from=e055e5b range-to=9671619 timestamp=2026-08-23T09:00:00+00:00 -->\n",
 
+        ["§6 block B (shipped, pre-fingerprint/pre-disposition) — finding card with an explicit extent, no extent_fingerprint or disposition keys"] =
+            "---\n" +
+            "id: F-0001\n" +
+            "kind: finding\n" +
+            "title: Reviewed the lock-acquisition path\n" +
+            "status: open\n" +
+            "owner: reviewer\n" +
+            "scope: section\n" +
+            "section: 6\n" +
+            "created: 2026-08-23T09:00:00+00:00\n" +
+            "updated: 2026-08-23T09:00:00+00:00\n" +
+            "instrument: manual review\n" +
+            "extent: explicit\n" +
+            "extent_value: src/Callboard/Cards/CardStore.cs\n" +
+            "verified_at: 7ea24e4\n" +
+            "blind_spot: none\n" +
+            "---\n" +
+            "No blind spot found.\n",
+
         ["§4 — question card with a comment thread and a handover, no kind-specific fields"] =
             "---\n" +
             "id: Q-0007\n" +
@@ -183,6 +202,25 @@ public sealed class CardFileWireCompatibilityCorpusTests
         Assert.Equal(SectionCardFields.Empty, parsed.SectionFields);
         Assert.Equal(FindingCardFields.Empty, parsed.FindingFields);
         Assert.Empty(parsed.UnknownFrontmatterFields);
+    }
+
+    [Fact]
+    public void PreFingerprintFindingFixture_HasNoExtentFingerprint_AndDefaultsToMeasuredDisposition()
+    {
+        var parsed = Parse("§6 block B (shipped, pre-fingerprint/pre-disposition) — finding card with an explicit extent, no extent_fingerprint or disposition keys");
+
+        Assert.Null(parsed.FindingFields.ExtentFingerprint);
+        Assert.Equal(FindingDisposition.Measured, parsed.FindingFields.Disposition);
+        Assert.Equal(FindingExtent.Explicit(["src/Callboard/Cards/CardStore.cs"]), parsed.FindingFields.Extent);
+
+        // §6 block C's own staleness lesson, proven against this exact block-B-era shape: no
+        // fingerprint was ever recorded, so this must read back NotMeasurable, never Current.
+        var status = FindingStalenessEvaluator.Evaluate(parsed.FindingFields, Path.GetTempPath());
+        Assert.Equal("not-measurable", status.Match(
+            onCurrent: static () => "current",
+            onStale: static _ => "stale",
+            onNotMeasurable: static _ => "not-measurable",
+            onNotApplicable: static _ => "not-applicable"));
     }
 
     [Fact]

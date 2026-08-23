@@ -38,6 +38,17 @@ namespace Callboard.Cards;
 /// comment states — a third, undeclared state is unrepresentable by construction, not merely
 /// discouraged.
 /// </para>
+///
+/// <para>
+/// <b><see cref="ExtentFingerprint"/> and <see cref="Disposition"/> are §6 block C's two additions.</b>
+/// <see cref="ExtentFingerprint"/> is optional (<see langword="null"/> when not recorded) even for
+/// an <see cref="FindingExtent.Explicit"/> extent — a finding §6 block B's shipped writer recorded,
+/// before this field existed, has no fingerprint at all, and that must read back as "cannot be
+/// measured", never as "current" (see <see cref="FindingStalenessEvaluator"/>). <see cref="
+/// Disposition"/> defaults to <see cref="FindingDisposition.Measured"/> — the same "undeclared and
+/// default are the same wire state" convention <see cref="Extent"/> already uses, since every
+/// finding written before this field existed was, in fact, measured rather than argued.
+/// </para>
 /// </summary>
 internal sealed record FindingCardFields
 {
@@ -57,20 +68,40 @@ internal sealed record FindingCardFields
     /// <see cref="FindingBlindSpotDeclaration"/>'s.</summary>
     internal FindingBlindSpotDeclaration BlindSpot { get; init; }
 
-    /// <summary>The four fields at their defaults — every card that is not a <c>finding</c>. Not a
+    /// <summary>The content fingerprint <see cref="Extent"/>'s covered files had at record time,
+    /// computed by <see cref="FindingExtentFingerprint.Compute"/>, or <see langword="null"/> when
+    /// <see cref="Extent"/> is not <see cref="FindingExtent.Explicit"/> (nothing to fingerprint) or
+    /// when it is but no fingerprint was ever recorded (a card older than this field). See this
+    /// type's own doc comment.</summary>
+    internal FindingExtentFingerprint? ExtentFingerprint { get; init; }
+
+    /// <summary>Whether this finding was <see cref="FindingDisposition.Measured"/> or
+    /// <see cref="FindingDisposition.ArguedClean"/> — see that type's own doc comment.</summary>
+    internal FindingDisposition Disposition { get; init; }
+
+    /// <summary>The six fields at their defaults — every card that is not a <c>finding</c>. Not a
     /// state a real finding is meant to be recorded in: <see cref="BlindSpot"/> here is
     /// <see cref="FindingBlindSpotDeclaration.None"/> only because this type's public surface
     /// requires <em>some</em> concrete declaration, the same way <see cref="Extent"/> here is
     /// <see cref="FindingExtent.BlockScope"/> only because absence itself is not representable —
     /// whether a real finding may be recorded with neither declared is 6.2's refusal, not this
     /// type's concern.</summary>
-    internal static readonly FindingCardFields Empty = new(null, FindingExtent.BlockScope, null, FindingBlindSpotDeclaration.None);
+    internal static readonly FindingCardFields Empty =
+        new(null, FindingExtent.BlockScope, null, FindingBlindSpotDeclaration.None, null, FindingDisposition.Measured);
 
-    internal FindingCardFields(string? Instrument, FindingExtent Extent, string? VerifiedAt, FindingBlindSpotDeclaration BlindSpot)
+    internal FindingCardFields(
+        string? Instrument,
+        FindingExtent Extent,
+        string? VerifiedAt,
+        FindingBlindSpotDeclaration BlindSpot,
+        FindingExtentFingerprint? ExtentFingerprint,
+        FindingDisposition Disposition)
     {
         this.Instrument = Instrument;
         this.Extent = Extent;
         this.VerifiedAt = VerifiedAt;
         this.BlindSpot = BlindSpot;
+        this.ExtentFingerprint = ExtentFingerprint;
+        this.Disposition = Disposition;
     }
 }

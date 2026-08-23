@@ -51,6 +51,9 @@ internal static class CardFileParser
     private static readonly HashSet<string> FindingOnlyFrontmatterKeys = new(StringComparer.Ordinal)
     {
         "instrument", "extent", "extent_value", "verified_at", "blind_spot", "blind_spot_card",
+        // §6 block C's two additions: extent_fingerprint (FindingExtentFingerprint) and
+        // disposition (FindingDisposition) — same two-pass classification, same rationale.
+        "extent_fingerprint", "disposition",
     };
 
     // The six comment-header fields this build recognises. Same rule, same reason, applied to the
@@ -631,7 +634,19 @@ internal static class CardFileParser
             return (null, blindSpotFailure);
         }
 
-        return (new FindingCardFields(instrument, extent!, verifiedAt, blindSpot!), null);
+        var (extentFingerprint, extentFingerprintFailure) = ParseExtentFingerprint(fields);
+        if (extentFingerprintFailure is not null)
+        {
+            return (null, extentFingerprintFailure);
+        }
+
+        var (disposition, dispositionFailure) = ParseDisposition(fields);
+        if (dispositionFailure is not null)
+        {
+            return (null, dispositionFailure);
+        }
+
+        return (new FindingCardFields(instrument, extent!, verifiedAt, blindSpot!, extentFingerprint, disposition!), null);
     }
 
     private static (FindingExtent? Extent, string? Failure) ParseExtent(IReadOnlyDictionary<string, string> fields)
@@ -722,6 +737,70 @@ internal static class CardFileParser
             default:
                 return (null, $"finding card has unrecognised 'blind_spot': '{form}'. Recognised declarations: none, raised-as.");
         }
+    }
+
+    /// <summary>
+    /// <c>extent_fingerprint</c> (§6 block C): a comma-joined list of <c>path=hash</c> items, the
+    /// same <see cref="CardFileFormat.SplitFrontmatterList"/> shape as <c>tasks</c>/<c>blocked_by</c>
+    /// and the same "split each item on its first <c>=</c>" convention <see cref="ParseGateResults"/>
+    /// already established — a path is never expected to itself contain <c>=</c>, and a SHA-256 hex
+    /// hash or the literal <c>absent</c> sentinel never does either. Absent-key parses to
+    /// <see langword="null"/> — see <see cref="FindingCardFields.ExtentFingerprint"/>'s own doc
+    /// comment for why <see langword="null"/> is itself a meaningful state (no fingerprint recorded,
+    /// distinct from "fingerprint of zero files"), not merely "not yet parsed".
+    /// </summary>
+    private static (FindingExtentFingerprint? ExtentFingerprint, string? Failure) ParseExtentFingerprint(
+        IReadOnlyDictionary<string, string> fields)
+    {
+        if (!fields.TryGetValue("extent_fingerprint", out var raw))
+        {
+            return (null, null);
+        }
+
+        var items = CardFileFormat.SplitFrontmatterList(raw);
+        var files = new List<FindingExtentFileFingerprint>(items.Count);
+        foreach (var item in items)
+        {
+            var separatorIndex = item.IndexOf('=');
+            if (separatorIndex < 0)
+            {
+                return (null, $"finding card has a malformed extent_fingerprint item (expected 'path=hash' or 'path=absent'): '{item}'");
+            }
+
+            var path = item[..separatorIndex];
+            var hashText = item[(separatorIndex + 1)..];
+            if (path.Length == 0)
+            {
+                return (null, $"finding card has an extent_fingerprint item with an empty path: '{item}'");
+            }
+
+            files.Add(new FindingExtentFileFingerprint(path, hashText == "absent" ? null : hashText));
+        }
+
+        return (new FindingExtentFingerprint(files), null);
+    }
+
+    /// <summary>
+    /// <c>disposition</c> (§6 block C): absent-or-<c>"measured"</c> → <see cref="FindingDisposition.
+    /// Measured"/> (the same "undeclared and default are the same wire state" convention <see cref="
+    /// ParseExtent"/> already applies for <c>block-scope</c>), <c>"argued-clean"</c> →
+    /// <see cref="FindingDisposition.ArguedClean"/>, or a parse failure for anything else.
+    /// </summary>
+    private static (FindingDisposition? Disposition, string? Failure) ParseDisposition(
+        IReadOnlyDictionary<string, string> fields)
+    {
+        if (!fields.TryGetValue("disposition", out var rawForm) || rawForm.Length == 0)
+        {
+            return (FindingDisposition.Measured, null);
+        }
+
+        var form = CardFileFormat.UnescapeFrontmatterValue(rawForm);
+        return form switch
+        {
+            "measured" => (FindingDisposition.Measured, null),
+            "argued-clean" => (FindingDisposition.ArguedClean, null),
+            _ => (null, $"finding card has unrecognised 'disposition': '{form}'. Recognised dispositions: measured, argued-clean."),
+        };
     }
 
     /// <summary>

@@ -117,14 +117,14 @@ public sealed class CardFindingRecordConcurrencyTests : IDisposable
                 startBarrier.SignalAndWait();
                 return CardStore.RecordFinding(
                     roundRoot, findingPathA, "A's finding", CardOwner.Worker, Section, "Body A.",
-                    instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequestA, Recorded, TimeSpan.FromSeconds(20), ChangeName);
+                    instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequestA, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(20), ChangeName);
             });
             tasksB[i] = Task.Run(() =>
             {
                 startBarrier.SignalAndWait();
                 return CardStore.RecordFinding(
                     roundRoot, findingPathB, "B's finding", CardOwner.Worker, Section, "Body B.",
-                    instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequestB, Recorded, TimeSpan.FromSeconds(20), ChangeName);
+                    instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequestB, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(20), ChangeName);
             });
         }
 
@@ -214,7 +214,7 @@ public sealed class CardFindingRecordConcurrencyTests : IDisposable
             var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Obligation, raisedPath, "Blind spot title", "Blind spot content.");
             var recordTask = Task.Run(() => CardStore.RecordFinding(
                 testRoot, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body.",
-                instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, Recorded, TimeSpan.FromSeconds(3), ChangeName));
+                instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(3), ChangeName));
 
             // Give the call time to acquire the finding's lock at least once, fail its zero-wait
             // probe of the (still planted) raised lock, and release — i.e. to be genuinely inside
@@ -276,7 +276,7 @@ public sealed class CardFindingRecordConcurrencyTests : IDisposable
         var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Obligation, raisedPath, "Blind spot title", "Blind spot content.");
         var recordTask = Task.Run(() => CardStore.RecordFinding(
             testRoot, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body.",
-            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, Recorded, TimeSpan.FromSeconds(5), ChangeName));
+            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName));
 
         await Task.Delay(TimeSpan.FromMilliseconds(300), TestContext.Current.CancellationToken);
         Assert.False(recordTask.IsCompleted, "the call finished before the planted lock was ever released.");
@@ -326,10 +326,10 @@ public sealed class CardFindingRecordConcurrencyTests : IDisposable
 
             tasks.Add(Task.Run(() => CardStore.RecordFinding(
                 roundRoot, finding1, "Finding 1", CardOwner.Worker, Section, "Body 1.",
-                instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest1, Recorded, perCallTimeout, ChangeName)));
+                instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest1, FindingDisposition.Measured, Recorded, perCallTimeout, ChangeName)));
             tasks.Add(Task.Run(() => CardStore.RecordFinding(
                 roundRoot, finding2, "Finding 2", CardOwner.Worker, Section, "Body 2.",
-                instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest2, Recorded, perCallTimeout, ChangeName)));
+                instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest2, FindingDisposition.Measured, Recorded, perCallTimeout, ChangeName)));
         }
 
         var overall = System.Diagnostics.Stopwatch.StartNew();

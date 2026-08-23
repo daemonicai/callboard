@@ -69,7 +69,7 @@ public sealed class CardFindingRecordTests : IDisposable
         var outcome = CardStore.RecordFinding(
             _root, findingPath, "Everything checked clean", CardOwner.Worker, Section, "Body of the finding.",
             instrument: "make gates", FindingExtent.BlockScope, verifiedAt: "abc123",
-            raiseRequest: null, Recorded, TimeSpan.FromSeconds(5), ChangeName);
+            raiseRequest: null, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
         var recorded = AssertRecorded(outcome);
         Assert.Null(recorded.RaisedCard);
@@ -98,7 +98,7 @@ public sealed class CardFindingRecordTests : IDisposable
 
         var outcome = CardStore.RecordFinding(
             _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
-            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, Recorded, TimeSpan.FromSeconds(5), ChangeName);
+            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
         var recorded = AssertRecorded(outcome);
         Assert.NotNull(recorded.RaisedCard);
@@ -141,7 +141,7 @@ public sealed class CardFindingRecordTests : IDisposable
 
         var outcome = CardStore.RecordFinding(
             _root, findingPath, "Everything checked clean", CardOwner.Worker, Section, "Body of the finding.",
-            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, Recorded, TimeSpan.FromSeconds(5), ChangeName);
+            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
         AssertRecorded(outcome);
         Assert.True(File.Exists(findingPath));
@@ -169,7 +169,7 @@ public sealed class CardFindingRecordTests : IDisposable
 
         var outcome = CardStore.RecordFinding(
             _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
-            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, Recorded, TimeSpan.FromSeconds(5), ChangeName);
+            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
         var alreadyExists = Assert.IsType<CardFindingRecordOutcome.FindingAlreadyExists>(outcome);
         Assert.Equal(findingPath, alreadyExists.FilePath);
@@ -199,7 +199,7 @@ public sealed class CardFindingRecordTests : IDisposable
 
         var outcome = CardStore.RecordFinding(
             _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
-            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, Recorded, TimeSpan.FromSeconds(5), ChangeName);
+            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
         var alreadyExists = Assert.IsType<CardFindingRecordOutcome.BlindSpotCardAlreadyExists>(outcome);
         Assert.Equal(raisedPath, alreadyExists.FilePath);
@@ -228,7 +228,7 @@ public sealed class CardFindingRecordTests : IDisposable
         // below able to land in the same, now-existing directory.
         var recordOutcome = CardStore.RecordFinding(
             _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
-            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, Recorded, TimeSpan.FromSeconds(5), ChangeName);
+            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
         AssertRecorded(recordOutcome);
 
         var sectionPath = WriteInitialSectionCard("s-0001", "S-0001");
@@ -319,7 +319,7 @@ public sealed class CardFindingRecordTests : IDisposable
         var stopwatch = Stopwatch.StartNew();
         var outcome = CardStore.RecordFinding(
             _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
-            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, Recorded, TimeSpan.FromSeconds(5), ChangeName);
+            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
         stopwatch.Stop();
 
         Assert.True(

@@ -35,6 +35,12 @@ internal sealed class FindingRecordResult : ICommandResult
     [JsonPropertyName("raisedCardKind")]
     public string? RaisedCardKind { get; init; }
 
+    /// <summary>The disposition actually recorded (§6 block C) — <c>"measured"</c> or
+    /// <c>"argued-clean"</c>, the two wire forms <see cref="Cards.FindingDisposition"/>
+    /// carries.</summary>
+    [JsonPropertyName("disposition")]
+    public required string Disposition { get; init; }
+
     [JsonPropertyName("actingRole")]
     public required string ActingRole { get; init; }
 

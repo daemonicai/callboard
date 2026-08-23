@@ -108,6 +108,7 @@ public sealed class CardCommentImmutabilityTests
             "CloseSection",                         // §5 block E: read-decide-write on Frontmatter.Status/SectionFields.ClosedBy/ClosedAt only; never touches Comments
             "CloseSectionUnderExistingLock",        // same, lock already held
             "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy; never touches a CardFile's Comments
+            "IsFindingCard",                        // §6 block C: the IsBlockCard/IsSectionCard counterpart for CardKind.Finding, shared with CommandDispatcher.RunFindingStatus; never touches a CardFile's Comments
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments
             "ReadAllCards",                         // read-only
             "ReadCard",                             // read-only
