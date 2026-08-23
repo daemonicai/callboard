@@ -128,16 +128,93 @@ public sealed class CommandDispatcherRegisterTests
     public void ObligationCreate_Succeeds()
     {
         using var repo = new TempGitRepo();
+        var sectionPath = Path.Combine(repo.CardsDirectory, "s-0001.md");
+        var sectionOutput = new StringWriter();
+        RunInRepo(
+            ["section", "create", sectionPath, "--title", "7. Register", "--role", "architect", "--change", ChangeName],
+            sectionOutput, repo.Path, "Body.");
+        using var sectionDoc = JsonDocument.Parse(sectionOutput.ToString());
+        var sectionId = sectionDoc.RootElement.GetProperty("result").GetProperty("id").GetString();
+
         var path = Path.Combine(repo.CardsDirectory, "o-0001.md");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["obligation", "create", path, "--title", "Settle the migration", "--role", "architect", "--change", ChangeName, "--owed-by", sectionId!],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.Equal("obligation", result.GetProperty("kind").GetString());
+        Assert.Equal(sectionId, result.GetProperty("owedBy").GetString());
+    }
+
+    [Fact]
+    public void ObligationCreate_MissingOwedBy_Refuses_WithItsOwnDistinctCode()
+    {
+        using var repo = new TempGitRepo();
+        var path = Path.Combine(repo.CardsDirectory, "o-0002.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             ["obligation", "create", path, "--title", "Settle the migration", "--role", "architect", "--change", ChangeName],
             output, repo.Path, "Body.");
 
-        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("obligation", doc.RootElement.GetProperty("result").GetProperty("kind").GetString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("obligation-missing-owed-by", refusal.GetProperty("code").GetString());
+        Assert.Contains("owed-by", refusal.GetProperty("message").GetString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void ObligationCreate_OwedByDoesNotResolve_Refuses()
+    {
+        using var repo = new TempGitRepo();
+        var path = Path.Combine(repo.CardsDirectory, "o-0003.md");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "obligation", "create", path, "--title", "Settle the migration", "--role", "architect",
+                "--change", ChangeName, "--owed-by", "S-9999",
+            ],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("card-id-not-found", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void ObligationCreate_OwedByNamesANonSectionCard_Refuses()
+    {
+        using var repo = new TempGitRepo();
+        var decisionPath = Path.Combine(repo.DecisionsDirectory, "d-0009.md");
+        var decisionOutput = new StringWriter();
+        RunInRepo(
+            ["decision", "create", decisionPath, "--title", "Adopt option A", "--role", "product-owner"],
+            decisionOutput, repo.Path, "Body.");
+        using var decisionDoc = JsonDocument.Parse(decisionOutput.ToString());
+        var decisionId = decisionDoc.RootElement.GetProperty("result").GetProperty("id").GetString();
+
+        var path = Path.Combine(repo.CardsDirectory, "o-0004.md");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "obligation", "create", path, "--title", "Settle the migration", "--role", "architect",
+                "--change", ChangeName, "--owed-by", decisionId!,
+            ],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.False(File.Exists(path));
     }
 
     [Fact]
@@ -267,6 +344,136 @@ public sealed class CommandDispatcherRegisterTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("not-a-register-card", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void DecisionSupersede_TwoOpenDecisions_Succeeds()
+    {
+        using var repo = new TempGitRepo();
+        var supersedingId = CreateDecision(repo, "d-0003", "Adopt option B");
+        var supersededId = CreateDecision(repo, "d-0004", "Adopt option A");
+
+        var output = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["decision", "supersede", supersedingId, "--supersedes", supersededId, "--role", "product-owner"],
+            output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.Equal(supersedingId, result.GetProperty("supersedingId").GetString());
+        Assert.Equal(supersededId, result.GetProperty("supersededId").GetString());
+        Assert.Equal("product-owner", result.GetProperty("dischargedBy").GetString());
+    }
+
+    [Fact]
+    public void DecisionSupersede_SameIdOnBothSides_Refuses_WithoutHanging()
+    {
+        using var repo = new TempGitRepo();
+        var id = CreateDecision(repo, "d-0005", "Adopt option A");
+
+        var output = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["decision", "supersede", id, "--supersedes", id, "--role", "product-owner"],
+            output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("self-supersession", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void DecisionSupersede_SupersededAlreadyDischarged_Refuses()
+    {
+        using var repo = new TempGitRepo();
+        var first = CreateDecision(repo, "d-0006", "Adopt option A");
+        var second = CreateDecision(repo, "d-0007", "Adopt option B");
+        var third = CreateDecision(repo, "d-0008", "Adopt option C");
+
+        var firstOutput = new StringWriter();
+        CommandDispatcher.Run(
+            ["decision", "supersede", second, "--supersedes", first, "--role", "product-owner"],
+            firstOutput, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        var output = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["decision", "supersede", third, "--supersedes", first, "--role", "product-owner"],
+            output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("already-discharged", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void DecisionSupersede_SupersedesIdDoesNotResolve_Refuses()
+    {
+        using var repo = new TempGitRepo();
+        var supersedingId = CreateDecision(repo, "d-0009", "Adopt option B");
+
+        var output = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["decision", "supersede", supersedingId, "--supersedes", "D-9999", "--role", "product-owner"],
+            output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("card-id-not-found", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void DecisionSupersede_SupersedesNamesANonDecisionCard_Refuses()
+    {
+        using var repo = new TempGitRepo();
+        var supersedingId = CreateDecision(repo, "d-0010", "Adopt option B");
+
+        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0010.md");
+        var ruleOutput = new StringWriter();
+        RunInRepo(
+            ["rule", "create", rulePath, "--title", "A repository rule", "--role", "architect", "--scope", "repository"],
+            ruleOutput, repo.Path, "Body.");
+        using var ruleDoc = JsonDocument.Parse(ruleOutput.ToString());
+        var ruleId = ruleDoc.RootElement.GetProperty("result").GetProperty("id").GetString();
+
+        var output = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["decision", "supersede", supersedingId, "--supersedes", ruleId!, "--role", "product-owner"],
+            output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // Retrieval by id after supersession, proven through the CLI boundary rather than the domain
+    // layer alone: 'decision status' does not exist (11.1 is out of scope for this block), so this
+    // reads back the file CardStore.ReadCard sees, the same evidence the resolver itself uses.
+    [Fact]
+    public void DecisionSupersede_SupersededDecision_StillReadableFromDiskAfterwards()
+    {
+        using var repo = new TempGitRepo();
+        var supersedingId = CreateDecision(repo, "d-0011", "Adopt option B");
+        var supersededId = CreateDecision(repo, "d-0012", "Adopt option A");
+        var supersededPath = Path.Combine(repo.DecisionsDirectory, "d-0012.md");
+
+        var output = new StringWriter();
+        CommandDispatcher.Run(
+            ["decision", "supersede", supersedingId, "--supersedes", supersededId, "--role", "product-owner"],
+            output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(supersededPath));
+        Assert.Equal(supersededId, read.Frontmatter.Id);
+        Assert.Equal("discharged", read.Frontmatter.Status);
+        Assert.Equal(supersedingId, read.RegisterFields.SupersededBy);
+    }
+
+    private static string CreateDecision(TempGitRepo repo, string fileStem, string title)
+    {
+        var path = Path.Combine(repo.DecisionsDirectory, fileStem + ".md");
+        var output = new StringWriter();
+        RunInRepo(["decision", "create", path, "--title", title, "--role", "product-owner"], output, repo.Path, "Body.");
+        using var doc = JsonDocument.Parse(output.ToString());
+        return doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

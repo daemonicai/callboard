@@ -62,7 +62,7 @@
 ## 7. Register
 
 - [x] 7.1 Implement the two-state lifecycle for `rule`, `hazard`, `obligation` and `decision`
-- [ ] 7.2 Implement `owed_by` on obligations and supersession links on decisions
+- [x] 7.2 Implement `owed_by` on obligations and supersession links on decisions
 - [ ] 7.3 Implement repository-scoped storage so archive is a directory-level filter with nothing in transit
 - [ ] 7.4 Test that archiving a change leaves rules, hazards and open questions live and unmoved
 - [ ] 7.5 Implement rule promotion across scope, preserving identity, text and thread

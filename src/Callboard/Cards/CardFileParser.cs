@@ -56,13 +56,15 @@ internal static class CardFileParser
         "extent_fingerprint", "disposition",
     };
 
-    // §7 block A's four fields — known only when the card's own kind is one of the four register
-    // kinds (rule, hazard, obligation, decision), the same two-pass reasoning as
-    // FindingOnlyFrontmatterKeys above.
-    private static readonly HashSet<string> RegisterOnlyFrontmatterKeys = new(StringComparer.Ordinal)
-    {
-        "condition", "cadence", "discharged_by", "discharged_at",
-    };
+    // Known only when the card's own kind is one of the four register kinds (rule, hazard,
+    // obligation, decision), the same two-pass reasoning as FindingOnlyFrontmatterKeys above.
+    // §7 block C remediation: built from RegisterCardFieldKeys.All — the one declaration
+    // CardFileWriter's own emission also reads from — rather than a second, independently
+    // hand-typed list. That type's own doc comment explains the defect this structurally closes:
+    // an earlier version of this HashSet listed four keys while the writer emitted seven, so the
+    // three it didn't know (owed_by/supersedes/superseded_by) were filed as unknown and re-emitted
+    // alongside the known line on every parse-then-write cycle, duplicating it without bound.
+    private static readonly HashSet<string> RegisterOnlyFrontmatterKeys = new(RegisterCardFieldKeys.All, StringComparer.Ordinal);
 
     // The six comment-header fields this build recognises. Same rule, same reason, applied to the
     // per-comment header instead of the frontmatter block.
@@ -690,11 +692,12 @@ internal static class CardFileParser
     }
 
     /// <summary>
-    /// Extracts §7 block A's four known-on-a-register-card fields from a frontmatter
-    /// <paramref name="fields"/> dictionary already confirmed to belong to a <c>rule</c>/
-    /// <c>hazard</c>/<c>obligation</c>/<c>decision</c> card — see the <c>isRegisterCard</c> gate in
-    /// <see cref="Parse"/>, the only caller. All four follow the same "absent or empty parses to
-    /// null" convention <see cref="BuildSectionFields"/> already uses for <c>closed_by</c>/
+    /// Extracts every known-on-a-register-card field from a frontmatter <paramref name="fields"/>
+    /// dictionary already confirmed to belong to a <c>rule</c>/<c>hazard</c>/<c>obligation</c>/
+    /// <c>decision</c> card — see the <c>isRegisterCard</c> gate in <see cref="Parse"/>, the only
+    /// caller. <c>condition</c>/<c>cadence</c> (§7 block A) and <c>owed_by</c>/<c>supersedes</c>/
+    /// <c>superseded_by</c> (§7 block C) all follow the same "absent or empty parses to null"
+    /// convention <see cref="BuildSectionFields"/> already uses for <c>closed_by</c>/
     /// <c>closed_at</c> — <c>discharged_by</c>/<c>discharged_at</c> are recorded together
     /// (<see cref="CardStore.DischargeRegisterCardUnderExistingLock"/> is the only writer of
     /// either), but this parser accepts either alone rather than refusing a hand-edited file,
@@ -704,11 +707,14 @@ internal static class CardFileParser
     private static (RegisterCardFields? RegisterFields, string? Failure) BuildRegisterFields(
         IReadOnlyDictionary<string, string> fields)
     {
-        var condition = ParseOptionalFrontmatterValue(fields, "condition");
-        var cadence = ParseOptionalFrontmatterValue(fields, "cadence");
+        var condition = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.Condition);
+        var cadence = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.Cadence);
+        var owedBy = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.OwedBy);
+        var supersedes = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.Supersedes);
+        var supersededBy = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.SupersededBy);
 
         CardOwner? dischargedBy = null;
-        if (fields.TryGetValue("discharged_by", out var dischargedByText) && dischargedByText.Length > 0)
+        if (fields.TryGetValue(RegisterCardFieldKeys.DischargedBy, out var dischargedByText) && dischargedByText.Length > 0)
         {
             if (!CardOwnerWireFormat.TryParse(dischargedByText, out var parsedDischargedBy))
             {
@@ -719,7 +725,7 @@ internal static class CardFileParser
         }
 
         DateTimeOffset? dischargedAt = null;
-        if (fields.TryGetValue("discharged_at", out var dischargedAtText) && dischargedAtText.Length > 0)
+        if (fields.TryGetValue(RegisterCardFieldKeys.DischargedAt, out var dischargedAtText) && dischargedAtText.Length > 0)
         {
             if (!TryParseTimestamp(dischargedAtText, out var parsedDischargedAt))
             {
@@ -729,7 +735,7 @@ internal static class CardFileParser
             dischargedAt = parsedDischargedAt;
         }
 
-        return (new RegisterCardFields(condition, cadence, dischargedBy, dischargedAt), null);
+        return (new RegisterCardFields(condition, cadence, dischargedBy, dischargedAt, owedBy, supersedes, supersededBy), null);
     }
 
     private static (FindingExtent? Extent, string? Failure) ParseExtent(IReadOnlyDictionary<string, string> fields)

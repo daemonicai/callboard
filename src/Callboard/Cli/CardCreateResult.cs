@@ -37,6 +37,11 @@ internal sealed class CardCreateResult : ICommandResult
     [JsonPropertyName("cadence")]
     public string? Cadence { get; init; }
 
+    /// <summary>The <c>section</c> card id this obligation is owed to — set for a created
+    /// <c>obligation</c> (§7 block C), <see langword="null"/> for every other kind.</summary>
+    [JsonPropertyName("owedBy")]
+    public string? OwedBy { get; init; }
+
     [JsonPropertyName("actingRole")]
     public required string ActingRole { get; init; }
 

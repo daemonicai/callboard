@@ -1,0 +1,226 @@
+using System.Text;
+using Callboard.Cards;
+
+namespace Callboard.Tests;
+
+/// <summary>
+/// 7.2 — <see cref="CardStore.SupersedeDecision"/>: the two-card write behind <c>decision
+/// supersede</c> (register: "A decision MAY name the decision it supersedes and the decision that
+/// supersedes it"). Covers the two-sided write, self-supersession, both already-discharged
+/// directions (the pair that rules out a cycle — see <see cref="SupersedeDecision_ThreeNodeCycle_
+/// TheClosingLinkRefuses"/>), wrong-kind, and — the spec's own load-bearing sentence — that the
+/// superseded decision "remains retrievable" by id after being superseded.
+/// </summary>
+public sealed class CardDecisionSupersedeTests : IDisposable
+{
+    private static readonly DateTimeOffset Created = new(2026, 8, 23, 9, 0, 0, TimeSpan.Zero);
+
+    private readonly string _root =
+        Path.Combine(Path.GetTempPath(), "callboard-decision-supersede-tests-" + Guid.NewGuid().ToString("N"));
+
+    private readonly string _decisionsDirectory;
+
+    public CardDecisionSupersedeTests()
+    {
+        _decisionsDirectory = Path.Combine(_root, CardLayout.DecisionsDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(_decisionsDirectory);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root))
+        {
+            Directory.Delete(_root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SupersedeDecision_TwoOpenDecisions_LinksBothSides_AndDischargesTheSupersededOne()
+    {
+        var supersedingPath = WriteDecisionCard("d-0001", "D-0001");
+        var supersededPath = WriteDecisionCard("d-0002", "D-0002");
+
+        var outcome = CardStore.SupersedeDecision(
+            _root, supersedingPath, supersededPath, CardOwner.ProductOwner, Created.AddDays(1), TimeSpan.FromSeconds(5));
+
+        var superseded = AssertSuperseded(outcome);
+        Assert.Equal("D-0002", superseded.SupersedingCard.RegisterFields.Supersedes);
+        Assert.Equal("open", superseded.SupersedingCard.Frontmatter.Status);
+        Assert.Equal("discharged", superseded.SupersededCard.Frontmatter.Status);
+        Assert.Equal("D-0001", superseded.SupersededCard.RegisterFields.SupersededBy);
+        Assert.Equal(CardOwner.ProductOwner, superseded.SupersededCard.RegisterFields.DischargedBy);
+
+        var supersedingRead = AssertParseSuccess(CardStore.ReadCard(supersedingPath));
+        Assert.Equal("D-0002", supersedingRead.RegisterFields.Supersedes);
+
+        var supersededRead = AssertParseSuccess(CardStore.ReadCard(supersededPath));
+        Assert.Equal("discharged", supersededRead.Frontmatter.Status);
+        Assert.Equal("D-0001", supersededRead.RegisterFields.SupersededBy);
+    }
+
+    // "remains retrievable" (register scenario) proven by execution: after supersession, the
+    // superseded decision still resolves by id through the same resolver §7 block B shipped —
+    // not deleted, not moved, not filtered out.
+    [Fact]
+    public void SupersedeDecision_SupersededDecision_StillResolvesByIdAfterwards()
+    {
+        var supersedingPath = WriteDecisionCard("d-0003", "D-0003");
+        var supersededPath = WriteDecisionCard("d-0004", "D-0004");
+
+        AssertSuperseded(CardStore.SupersedeDecision(
+            _root, supersedingPath, supersededPath, CardOwner.ProductOwner, Created.AddDays(1), TimeSpan.FromSeconds(5)));
+
+        var resolution = CardIdentityResolver.Resolve(_root, "D-0004");
+
+        resolution.Match<object?>(
+            onFound: (filePath, card) =>
+            {
+                Assert.Equal(supersededPath, filePath);
+                Assert.Equal("discharged", card.Frontmatter.Status);
+                Assert.Equal("D-0003", card.RegisterFields.SupersededBy);
+                return null;
+            },
+            onNotFound: id => throw new Xunit.Sdk.XunitException($"expected Found, got NotFound: '{id}' — a superseded decision must remain retrievable by id"),
+            onDuplicate: (id, filePaths) => throw new Xunit.Sdk.XunitException($"expected Found, got Duplicate: '{id}'"),
+            onUnreadable: (id, filePaths) => throw new Xunit.Sdk.XunitException($"expected Found, got Unreadable: '{id}'"));
+    }
+
+    [Fact]
+    public void SupersedeDecision_SameCardOnBothSides_Refuses_WithoutHangingOnItsOwnLock()
+    {
+        var path = WriteDecisionCard("d-0005", "D-0005");
+
+        var outcome = CardStore.SupersedeDecision(_root, path, path, CardOwner.ProductOwner, Created, TimeSpan.FromSeconds(5));
+
+        outcome.Match<object?>(
+            onSuperseded: superseded => throw new Xunit.Sdk.XunitException("expected SelfSupersession, got Superseded"),
+            onSelfSupersession: static _ => null,
+            onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got SupersededAlreadyDischarged: '{already.FilePath}'"),
+            onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
+            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got InvalidStatus: {invalid.Status}"),
+            onNotADecisionCard: notADecision => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got NotADecisionCard({notADecision.Kind.ToWireString()})"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got ToolFailure: {toolFailure.Reason}"));
+    }
+
+    [Fact]
+    public void SupersedeDecision_TargetAlreadyDischarged_Refuses_NotARe_Supersession()
+    {
+        var first = WriteDecisionCard("d-0006", "D-0006");
+        var second = WriteDecisionCard("d-0007", "D-0007");
+        var third = WriteDecisionCard("d-0008", "D-0008");
+
+        AssertSuperseded(CardStore.SupersedeDecision(_root, first, second, CardOwner.ProductOwner, Created.AddDays(1), TimeSpan.FromSeconds(5)));
+
+        var outcome = CardStore.SupersedeDecision(_root, third, second, CardOwner.ProductOwner, Created.AddDays(2), TimeSpan.FromSeconds(5));
+
+        outcome.Match<object?>(
+            onSuperseded: superseded => throw new Xunit.Sdk.XunitException("expected SupersededAlreadyDischarged, got Superseded"),
+            onSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got SelfSupersession: '{id.Id}'"),
+            onSupersededAlreadyDischarged: static _ => null,
+            onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
+            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got InvalidStatus: {invalid.Status}"),
+            onNotADecisionCard: notADecision => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got NotADecisionCard({notADecision.Kind.ToWireString()})"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got ToolFailure: {toolFailure.Reason}"));
+    }
+
+    // The check that closes the cycle: node B was discharged by A's own supersession above; B
+    // cannot now act as the superseder for a third node C, because a discharged decision cannot
+    // newly become another's successor. This is the "closing link" of any attempted 3-node cycle
+    // A→B→C→A — see CardStore.SupersedeDecision's own doc comment for the general proof this is
+    // one instance of.
+    [Fact]
+    public void SupersedeDecision_ThreeNodeCycle_TheClosingLinkRefuses()
+    {
+        var a = WriteDecisionCard("d-0010", "D-0010");
+        var b = WriteDecisionCard("d-0011", "D-0011");
+        var c = WriteDecisionCard("d-0012", "D-0012");
+
+        // A supersedes B: A stays open, B is discharged.
+        AssertSuperseded(CardStore.SupersedeDecision(_root, a, b, CardOwner.ProductOwner, Created.AddDays(1), TimeSpan.FromSeconds(5)));
+
+        // B (already discharged) attempts to supersede C — the acting card is already
+        // discharged, which must refuse regardless of C's own state.
+        var outcome = CardStore.SupersedeDecision(_root, b, c, CardOwner.ProductOwner, Created.AddDays(2), TimeSpan.FromSeconds(5));
+
+        outcome.Match<object?>(
+            onSuperseded: superseded => throw new Xunit.Sdk.XunitException("expected SupersedingAlreadyDischarged, got Superseded"),
+            onSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got SelfSupersession: '{id.Id}'"),
+            onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got SupersededAlreadyDischarged: '{already.FilePath}'"),
+            onSupersedingAlreadyDischarged: static _ => null,
+            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got InvalidStatus: {invalid.Status}"),
+            onNotADecisionCard: notADecision => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got NotADecisionCard({notADecision.Kind.ToWireString()})"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got ToolFailure: {toolFailure.Reason}"));
+
+        // C was never touched — still open, still carries no supersedes/superseded_by.
+        var cRead = AssertParseSuccess(CardStore.ReadCard(c));
+        Assert.Equal("open", cRead.Frontmatter.Status);
+        Assert.Null(cRead.RegisterFields.SupersededBy);
+    }
+
+    [Fact]
+    public void SupersedeDecision_SupersedingCardIsNotADecision_Refuses()
+    {
+        var rulePath = Path.Combine(_decisionsDirectory, "r-0001.md");
+        var ruleFrontmatter = new CardFrontmatter(
+            "R-0001", CardKind.Rule, "Title", RegisterLifecycleState.Open.ToWireString(), CardOwner.Architect,
+            CardScope.Repository, string.Empty, Created, Created);
+        File.WriteAllText(
+            rulePath,
+            CardFileWriter.Serialize(new CardFile(ruleFrontmatter, "Body.", [], [], RegisterFields: RegisterCardFields.Empty)),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var supersededPath = WriteDecisionCard("d-0013", "D-0013");
+
+        var outcome = CardStore.SupersedeDecision(_root, rulePath, supersededPath, CardOwner.ProductOwner, Created, TimeSpan.FromSeconds(5));
+
+        outcome.Match<object?>(
+            onSuperseded: superseded => throw new Xunit.Sdk.XunitException("expected NotADecisionCard, got Superseded"),
+            onSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got SelfSupersession: '{id.Id}'"),
+            onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got SupersededAlreadyDischarged: '{already.FilePath}'"),
+            onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
+            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got InvalidStatus: {invalid.Status}"),
+            onNotADecisionCard: static n => { Assert.Equal(CardKind.Rule, n.Kind); return null; },
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got ToolFailure: {toolFailure.Reason}"));
+    }
+
+    private string WriteDecisionCard(string fileStem, string id)
+    {
+        var path = Path.Combine(_decisionsDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Decision, "Title", RegisterLifecycleState.Open.ToWireString(), CardOwner.ProductOwner,
+            CardScope.Capability, string.Empty, Created, Created);
+        var card = new CardFile(frontmatter, "Body.", [], [], RegisterFields: RegisterCardFields.Empty);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    private static CardDecisionSupersedeOutcome.Superseded AssertSuperseded(CardDecisionSupersedeOutcome outcome) =>
+        outcome.Match(
+            onSuperseded: static superseded => superseded,
+            onSelfSupersession: static id => throw new Xunit.Sdk.XunitException($"expected Superseded, got SelfSupersession: '{id.Id}'"),
+            onSupersededAlreadyDischarged: static already => throw new Xunit.Sdk.XunitException($"expected Superseded, got SupersededAlreadyDischarged: '{already.FilePath}'"),
+            onSupersedingAlreadyDischarged: static already => throw new Xunit.Sdk.XunitException($"expected Superseded, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
+            onInvalidStatus: static invalid => throw new Xunit.Sdk.XunitException($"expected Superseded, got InvalidStatus: {invalid.Status}"),
+            onNotADecisionCard: static n => throw new Xunit.Sdk.XunitException($"expected Superseded, got NotADecisionCard({n.Kind.ToWireString()})"),
+            onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Superseded, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Superseded, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Superseded, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Superseded, got ToolFailure: {toolFailure.Reason}"));
+
+    private static CardFile AssertParseSuccess(CardFileParseResult result) =>
+        result.Match<CardFile>(
+            onSuccess: success => success.Card,
+            onFailure: failure => throw new Xunit.Sdk.XunitException($"expected parse success, got failure: {failure.Reason}"));
+}

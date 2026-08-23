@@ -361,10 +361,11 @@ internal static class CommandParser
     /// <see langword="true"/>), and a body read from stdin — the same read-only-extraction
     /// discipline <see cref="ParseFindingRecord"/> already applies. <paramref name="build"/> is the
     /// one place the resulting <see cref="CommandDispatcher.ParsedCommand"/> case differs; used
-    /// directly by <see cref="ParseSectionCreate"/> and <see cref="ParseObligationCreate"/>, whose
-    /// argv shape is otherwise identical. <see cref="ParseRuleCreate"/> and
-    /// <see cref="ParseHazardCreate"/> do not use this — they each have an extra required flag
-    /// (<c>--scope</c>, <c>--condition</c>/<c>--cadence</c>) this shape has no room for.
+    /// directly by <see cref="ParseSectionCreate"/> and <see cref="ParseDecisionCreate"/>, whose
+    /// argv shape is otherwise identical. <see cref="ParseRuleCreate"/>, <see cref="ParseHazardCreate"/>
+    /// and <see cref="ParseObligationCreate"/> do not use this — each has an extra required flag
+    /// (<c>--scope</c>; <c>--condition</c>/<c>--cadence</c>; <c>--owed-by</c>, §7 block C) this
+    /// shape has no room for.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseCardCreate(
         CommandDispatcher.CommandContext context,
@@ -1215,17 +1216,91 @@ internal static class CommandParser
 
     /// <summary>
     /// Builds <c>obligation create</c>'s <see cref="CommandDispatcher.ParsedCommand.ObligationCreate"/>
-    /// (§7 block A). Scope is always <see cref="CardScope.Change"/>, so <c>--change</c> is required
-    /// — the same shape <see cref="ParseSectionCreate"/> already shares via <see cref="ParseCardCreate"/>.
+    /// (§7 block A/C). Scope is always <see cref="CardScope.Change"/>, so <c>--change</c> is
+    /// required. Unlike block A's shipped shape, this no longer goes through the shared
+    /// <see cref="ParseCardCreate"/> — <c>--owed-by</c> (register: "An obligation SHALL name the
+    /// section expected to discharge it") is a required flag <see cref="ParseCardCreate"/>'s shape
+    /// has no room for, the same reason <see cref="ParseHazardCreate"/> does not use it either.
+    /// <b>Argv-decidable here, resolved against the record in <c>CommandDispatcher.
+    /// RunObligationCreate</c>:</b> a missing or blank <c>--owed-by</c> is refused at parse time
+    /// (O-3), naming exactly what is missing; whether the id actually resolves to a real
+    /// <c>section</c> card cannot be decided from argv alone and is checked afterward, through
+    /// <c>CommandDispatcher.ResolveCardReference</c>.
     /// </summary>
-    private static CommandDispatcher.ParseResult ParseObligationCreate(CommandDispatcher.CommandContext context) =>
-        ParseCardCreate(context, "'obligation create'", requireChange: true, build:
-            (filePath, title, role, body, changeName, workingDirectory, timestamp) =>
-                new CommandDispatcher.ParsedCommand.ObligationCreate(filePath, title, role, body, changeName!, workingDirectory, timestamp));
+    private static CommandDispatcher.ParseResult ParseObligationCreate(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation create' requires a card file path."));
+        }
+
+        string? title = null;
+        string? roleText = null;
+        string? changeName = null;
+        string? owedBy = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--title"] = value => title = value,
+            ["--role"] = value => roleText = value,
+            ["--change"] = value => changeName = value,
+            ["--owed-by"] = value => owedBy = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (title is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation create' requires '--title <text>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation create' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (changeName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation create' requires '--change <name>'."));
+        }
+
+        if (string.IsNullOrWhiteSpace(owedBy))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "obligation-missing-owed-by",
+                "'obligation create' requires '--owed-by <section-id>' — an obligation cannot be raised " +
+                "without naming the section expected to discharge it."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.ObligationCreate(
+            filePath, title, role, body, changeName, owedBy, context.WorkingDirectory, context.Clock()));
+    }
 
     /// <summary>
-    /// <c>decision</c>'s only job is routing to a subcommand: <c>create</c> and <c>discharge</c>
-    /// (§7 block A). Same peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// <c>decision</c>'s only job is routing to a subcommand: <c>create</c>, <c>discharge</c> and
+    /// <c>supersede</c> (§7 blocks A/C). Same peek-don't-take shape as <see cref="ParseIndex"/>,
+    /// same reason.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseDecision(CommandDispatcher.CommandContext context)
     {
@@ -1234,17 +1309,20 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'decision' requires a subcommand. Known subcommands: create, discharge."));
+                    "'decision' requires a subcommand. Known subcommands: create, discharge, supersede."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseDecisionCreate(context);
             case "discharge":
                 context.Arguments.TryTake();
                 return ParseRegisterDischarge(context, CardKind.Decision, "'decision discharge'");
+            case "supersede":
+                context.Arguments.TryTake();
+                return ParseDecisionSupersede(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'decision' subcommand: '{subcommand}'. Known subcommands: create, discharge."));
+                    $"no such 'decision' subcommand: '{subcommand}'. Known subcommands: create, discharge, supersede."));
         }
     }
 
@@ -1259,4 +1337,57 @@ internal static class CommandParser
         ParseCardCreate(context, "'decision create'", requireChange: false, build:
             (filePath, title, role, body, _, workingDirectory, timestamp) =>
                 new CommandDispatcher.ParsedCommand.DecisionCreate(filePath, title, role, body, workingDirectory, timestamp));
+
+    /// <summary>
+    /// Builds <c>decision supersede</c>'s <see cref="CommandDispatcher.ParsedCommand.DecisionSupersede"/>
+    /// (§7 block C, register: "A decision MAY name the decision it supersedes and the decision that
+    /// supersedes it"). One positional token — the superseding decision's own card <b>id</b>, not a
+    /// file path (block B's resolver is what makes this addressable by identity at all) — and
+    /// <c>--supersedes &lt;id&gt;</c> (required) plus <c>--role</c> (required). No stdin body: this
+    /// verb links two already-existing decisions, it does not write new prose, the same reason
+    /// <see cref="ParseRegisterDischarge"/> never reads stdin either.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseDecisionSupersede(CommandDispatcher.CommandContext context)
+    {
+        var supersedingId = context.Arguments.TryTake();
+        if (supersedingId is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'decision supersede' requires the superseding decision's card id."));
+        }
+
+        string? roleText = null;
+        string? supersededId = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--role"] = value => roleText = value,
+            ["--supersedes"] = value => supersededId = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'decision supersede' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (string.IsNullOrWhiteSpace(supersededId))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'decision supersede' requires '--supersedes <decision-id>'."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.DecisionSupersede(
+            supersedingId, supersededId, role, context.WorkingDirectory, context.Clock()));
+    }
 }

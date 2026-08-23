@@ -215,24 +215,44 @@ internal static class CardFileWriter
         {
             var registerFields = card.RegisterFields;
 
+            // §7 block C remediation: every key below is a RegisterCardFieldKeys constant, the
+            // one declaration CardFileParser's known-key set is also built from — see that type's
+            // own doc comment for the defect this closes (a writer-known, parser-unknown key was
+            // filed as unknown and re-emitted alongside the known line on every parse-then-write
+            // cycle, duplicating it without bound).
             if (registerFields.Condition is { } condition)
             {
-                builder.Append("condition: ").Append(CardFileFormat.EscapeFrontmatterValue(condition)).Append('\n');
+                builder.Append(RegisterCardFieldKeys.Condition).Append(": ").Append(CardFileFormat.EscapeFrontmatterValue(condition)).Append('\n');
             }
 
             if (registerFields.Cadence is { } cadence)
             {
-                builder.Append("cadence: ").Append(CardFileFormat.EscapeFrontmatterValue(cadence)).Append('\n');
+                builder.Append(RegisterCardFieldKeys.Cadence).Append(": ").Append(CardFileFormat.EscapeFrontmatterValue(cadence)).Append('\n');
+            }
+
+            if (registerFields.OwedBy is { } owedBy)
+            {
+                builder.Append(RegisterCardFieldKeys.OwedBy).Append(": ").Append(CardFileFormat.EscapeFrontmatterValue(owedBy)).Append('\n');
+            }
+
+            if (registerFields.Supersedes is { } supersedes)
+            {
+                builder.Append(RegisterCardFieldKeys.Supersedes).Append(": ").Append(CardFileFormat.EscapeFrontmatterValue(supersedes)).Append('\n');
+            }
+
+            if (registerFields.SupersededBy is { } supersededBy)
+            {
+                builder.Append(RegisterCardFieldKeys.SupersededBy).Append(": ").Append(CardFileFormat.EscapeFrontmatterValue(supersededBy)).Append('\n');
             }
 
             if (registerFields.DischargedBy is { } dischargedBy)
             {
-                builder.Append("discharged_by: ").Append(dischargedBy.ToWireString()).Append('\n');
+                builder.Append(RegisterCardFieldKeys.DischargedBy).Append(": ").Append(dischargedBy.ToWireString()).Append('\n');
             }
 
             if (registerFields.DischargedAt is { } dischargedAt)
             {
-                builder.Append("discharged_at: ").Append(FormatTimestamp(dischargedAt)).Append('\n');
+                builder.Append(RegisterCardFieldKeys.DischargedAt).Append(": ").Append(FormatTimestamp(dischargedAt)).Append('\n');
             }
         }
 

@@ -15411,6 +15411,396 @@ archive stays a directory move, the three new refusal codes hold up against the 
 and the `workingDirectory` seam is a proven no-op in production with no coverage lost. Refusal set:
 **39**, re-derived mechanically and confirmed twice now.
 
+**[architect]** → @worker — **block C brief (7.2).** Base for this block is `4839c40`.
+
+**Deliver:** `owed_by` on obligations, and supersession links on decisions. This is the first block
+to *consume* block B's resolver — `owed_by` is precisely the reference that could not be spelled
+before B existed, which is why block A shipped `obligation create` without it.
+
+**Spec — register, "Register kinds have a two-state lifecycle":**
+> An `obligation` SHALL name the section expected to discharge it. A `decision` MAY name the
+> decision it supersedes and the decision that supersedes it.
+>
+> Scenario: **WHEN** an obligation is raised **THEN** the card names the section expected to
+> discharge it.
+>
+> Scenario: **WHEN** a decision is superseded by a later one **THEN** the earlier decision is marked
+> discharged, names its successor, and **remains retrievable**.
+
+**What binds you:**
+
+1. **`owed_by` holds a section card id, resolved through `CardIdentityResolver`.** Not a label, not
+   a path. A value that does not resolve is refused; one that resolves to a card that is not a
+   `section` is refused. This is the entire point of block B — do not add a second way to name a
+   card.
+2. **`SHALL name` means required at creation.** Block A's `obligation create` shipped without
+   `owed_by` because B did not exist yet; it is your job to close that. An obligation that cannot
+   say who owes it is the incumbent's failure mode, not a convenience.
+3. **Supersession is a two-card write, and that is the hard part of this block.** The superseding
+   decision names what it supersedes; the earlier one is marked `discharged` **and** names its
+   successor. Both sides, or neither — a half-applied supersession leaves the record lying in a way
+   no reader can detect. `CardStore.RecordFinding` is the worked precedent for a multi-card write
+   under lock with rollback-by-content on failure; follow it rather than inventing a second shape.
+   Take locks in a deterministic order and say in your post what that order is and why it cannot
+   deadlock against itself.
+4. **`discharged` already exists** — block A shipped the state and the `already-discharged` refusal.
+   Supersession sets that state for a reason; it does not introduce a parallel one. Superseding an
+   already-discharged decision is a refusal, not a re-supersession.
+5. **Refuse self-supersession.** A decision superseding itself is not a coherent record. Then
+   consider **cycles** (A supersedes B supersedes A) and argue your answer in your post — whether
+   you detect them, and if not, why the record still cannot be walked into a loop by a reader. I am
+   not pre-deciding this; I want the reasoning on the record either way.
+6. **"Remains retrievable" is load-bearing.** A superseded decision is not deleted, not moved, not
+   filtered out of resolution. Prove it still resolves by id **after** being superseded — that
+   sentence is in the spec because losing the superseded text is the exact loss compaction and
+   supersession are designed to prevent.
+7. **Refusal codes follow the stated rule** — spec-named refusals get their own code, incidental
+   missing flags get the generic one. The set stands at **39**; if you change it, re-derive it
+   mechanically over every `CommandOutcome.Refusal` site rather than incrementing a remembered
+   number.
+
+**One thing I am deliberately keeping out, and why.** §6's `finding record` raises an obligation
+whose back-reference to its originating finding lives in **body prose** (`## NEXT` item 5 from §6).
+Give that obligation a real `owed_by` like any other — but **do not** invent a structured
+finding→obligation back-reference here. That belongs with `earned_from` in block E, and minting a
+near-synonym for it now is how this codebase ends up with two spellings of one concept. If you find
+the two genuinely cannot be separated, stop and post `❓ @architect` — that is my call.
+
+**Explicitly NOT in this block:** `earned_from` (E), promotion across scope (E), `absorbs` and
+compaction (F), citation counting (G), archive as a verb (D), any new read verb (11.1).
+
+**Done-gates — all four, quote the exit line, never the output:** `make build` → `BUILD_EXIT:0`,
+`make test` → `TEST_EXIT:0` (your new tests **and** all 529 existing), `make format` →
+`FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`.
+
+**Boundaries:** no commit, no ticks, no `Makefile` edit. Post progress here, hand off `→ @reviewer`.
+
+**[worker]** Implemented block C (7.2):
+
+- **`owed_by`** — `RegisterCardFields` grows `OwedBy`/`Supersedes`/`SupersededBy` (all optional
+  positionally after the existing four fields, so no call site broke). `obligation create` no
+  longer shares `ParseCardCreate` — it now parses `--owed-by` itself (same shape as
+  `ParseHazardCreate`'s extra-flag pattern) and refuses a missing/blank one at parse time under
+  its own code, `obligation-missing-owed-by` (spec-named: register's own "SHALL name" sentence).
+  `RunObligationCreate` resolves the id through the *same* resolver call `--section` already used
+  — generalised `ValidateSection` into `CommandDispatcher.ResolveCardReference(repoRoot, id,
+  expectedKind, matchesExpectedKind, flagLabel, createHint)`, so `--owed-by` and `--section` share
+  every refusal code (`card-id-not-found`/`duplicate-card-id`/`card-id-unresolvable`/
+  `wrong-card-kind`) rather than each minting its own. `ValidateSection` is now a one-line wrapper
+  over it.
+- **§6's raised obligation gets a real `owed_by` too** (brief's explicit ask, not a new
+  back-reference): `RecordFindingUnderLocks` sets the raised card's `owed_by` to
+  `findingFrontmatter.Section` when `raiseRequest.Kind` is `Obligation` — that field is already a
+  validated section id by the time `RecordFinding` runs (`RunFindingRecord`'s own `ValidateSection`
+  call happens first), so no new resolution is needed, just wiring the id that's already in hand.
+  A raised hazard carries no `owed_by` (register gives that field to obligations only). Did **not**
+  add a finding→obligation back-reference — that stays body-text, `earned_from`'s territory.
+- **Supersession** — new verb, **`decision supersede <superseding-id> --supersedes <superseded-id>
+  --role <role>`**, addressed entirely by id (no file-path positional) — the first §7 verb built
+  that way from the start, consistent with block B's ruling rather than bolted onto the
+  file-path-positional convention every earlier verb uses. Both ids resolve through the same
+  `ResolveCardReference`, kind-checked against `Decision` (new `CardStore.IsDecisionCard`, sibling
+  of `IsSectionCard`/`IsFindingCard`/`IsRegisterCard`).
+- **The two-card write** — `CardStore.SupersedeDecision`/`SupersedeDecisionUnderLocks`, following
+  `RecordFinding`'s shape (read fresh under lock, write the superseded card first, roll back on the
+  second write's failure) but not its *locking* shape. **Lock order: `StringComparer.Ordinal` over
+  the two resolved file paths — deterministic, and safe for a reason `AcquireLocksAndRecord`'s own
+  doc comment says its own ordinal-path attempt was not.** That method dropped ordering because one
+  of its two paths is caller-typed (`--blind-spot-file`) and can be spelled with different casing
+  across invocations naming the same physical file. Neither path here has that problem: both come
+  from `CardIdentityResolver.Resolve` — the same directory walk every time, over ids that never
+  change — so any two invocations naming the same physical pair always compute the identical order.
+  Self-supersession (same path both sides) is checked *before* any lock is requested — locking one
+  path twice from the same call would hang against itself, not deadlock against another invocation.
+- **Refuse self-supersession** — checked twice: once at the CLI on the raw id text (cheap, before
+  any resolving), once again under lock on the freshly-read ids (defensive). New code
+  `self-supersession`.
+- **Refuse superseding an already-discharged decision** — reused `already-discharged` for the
+  target side, per your ruling. **Refuse when the superseding (acting) decision is itself already
+  discharged too** — same code, distinguished by message
+  (`CardDecisionSupersedeOutcome.SupersedingAlreadyDischarged`). This is my answer to the cycles
+  question:
+  - **Cycles are ruled out by construction, not detected at runtime.** Both sides of a supersession
+    must be open at the moment of the call — the target because supersession discharges it exactly
+    once, the acting side because a decision that has already been superseded cannot newly become
+    another's successor. Proof: forming an n-node cycle requires every node to, at some point, act
+    as successor while still open, and later be discharged by its own predecessor's act. For the
+    cycle to close, the last node's discharge of the first node's predecessor-role act must precede
+    the first node's own successor-role act — but each node's successor-role act must itself
+    precede *its own* discharge by the previous node. Chasing that "must precede" relation all the
+    way around an n-node cycle produces a strict ordering that wraps back on itself, which is
+    impossible. No graph walk needed — the two local open-checks are exactly what makes that global
+    ordering unsatisfiable. `CardDecisionSupersedeTests.SupersedeDecision_ThreeNodeCycle_
+    TheClosingLinkRefuses` demonstrates the closing link of a 3-node attempt refusing.
+- **"Remains retrievable" proven by execution**, not asserted: after superseding, both
+  `CardDecisionSupersedeTests.SupersedeDecision_SupersededDecision_StillResolvesByIdAfterwards`
+  (calls `CardIdentityResolver.Resolve` directly on the superseded id) and the CLI-level
+  `DecisionSupersede_SupersededDecision_StillReadableFromDiskAfterwards` read the superseded card
+  back and assert it is discharged, not gone, not moved, still carrying its original body.
+- **Not built** (all out of scope per the brief): `earned_from`, promotion across scope, `absorbs`,
+  compaction, citation counting, archive as a verb, any new read verb (`decision status` does not
+  exist — proof above reads the domain layer / disk directly instead, not a new CLI surface).
+- **Refusal set: 41** — re-derived mechanically over every `CommandOutcome.Refusal` construction
+  site (was 39 at block B; +`obligation-missing-owed-by`, +`self-supersession`; every other code
+  `decision supersede` and `--owed-by` use — `card-id-not-found`, `duplicate-card-id`,
+  `card-id-unresolvable`, `wrong-card-kind`, `already-discharged` — is reused, not new).
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (544 tests: 529 existing + 15 new,
+all green). New test files: `CardDecisionSupersedeTests` (domain), plus additions to
+`CommandDispatcherRegisterTests` (CLI: `--owed-by` required/resolves/wrong-kind,
+`decision supersede` success/self/already-discharged/cycle-closing-link/wrong-kind/not-found/
+retrievable-after) and `CardFindingRecordTests` (raised obligation carries `owed_by`, raised hazard
+does not). `CardCommentImmutabilityTests`' complete method inventory updated for the four new
+`CardStore` members (`IsDecisionCard`, `SupersedeDecision`, `SupersedeDecisionUnderLocks`,
+`RestoreSupersededCard`) — each argued there never touches `Comments`.
+
+→ @reviewer
+
+**[reviewer]** Audit of block C (7.2). Gates re-run independently: `BUILD_EXIT:0`, `TEST_EXIT:0`
+(544/544), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0` — matches the report. Refusal set re-derived
+mechanically myself: 153 `CommandOutcome.Refusal(` sites, **41 distinct codes**, exactly
+`+obligation-missing-owed-by`, `+self-supersession` over block B's 39. Matches.
+
+**Verdict: Request changes.** One blocker, and it's severe — a confirmed, reproducible frontmatter
+corruption bug reachable through completely ordinary use of this block's own new verb.
+
+**Blocker — duplicate frontmatter keys on every read-modify-write of a card carrying `owed_by`,
+`supersedes` or `superseded_by`, compounding on every subsequent write.**
+
+`CardFileParser.RegisterOnlyFrontmatterKeys` (`src/Callboard/Cards/CardFileParser.cs:62-65`) was
+**not** updated to include the three new keys this block adds:
+
+```csharp
+private static readonly HashSet<string> RegisterOnlyFrontmatterKeys = new(StringComparer.Ordinal)
+{
+    "condition", "cadence", "discharged_by", "discharged_at",
+};
+```
+
+`owed_by`, `supersedes` and `superseded_by` are written by `CardFileWriter` (confirmed —
+`CardFileWriter.cs:225-241` emits all three as known fields) but are absent from this set, so on
+**parse** they fall through every `KnownXKeys` check in `CardFileParser.Parse`'s classification
+loop and land in `unknownFrontmatterFields` — even on a card where `BuildRegisterFields` *also*
+correctly parses them into `RegisterCardFields`. The field is captured twice, under two different
+mechanisms, and the writer re-emits both: once from `RegisterCardFields` (the "known field" block)
+and once from `unknownFrontmatterFields` (the "re-emit whatever wasn't recognised" block) — so
+every parse→write cycle prints the key a second time, and the parser has no de-duplication, so it
+compounds: **every subsequent cycle adds another copy of the line.**
+
+I did not take this on inspection alone — I reproduced it against the real production code, twice:
+
+1. **Direct parse→serialize round trip.** Constructed an obligation card with `OwedBy = "S-0001"`,
+   serialized it, parsed the result back with `CardFileParser.Parse`, and re-serialized the parsed
+   `CardFile`. The second serialization emits `owed_by: S-0001` **twice**.
+2. **The real two-hop chain this block's own cycle-argument depends on**, through the actual
+   `CardStore.SupersedeDecision` entry point, no test doubles: created three decision cards on
+   disk, had `B` supersede `A` (`B`'s file correctly gets one `supersedes: D-0001` line), then had
+   `C` supersede `B` — the exact "chain" shape a family of supersessions naturally produces, and
+   the same shape the brief's own cycle-argument reasons about. `B`'s file, which had to be
+   read and rewritten to add `superseded_by: D-0003` and discharge it, comes out with **two**
+   `supersedes: D-0001` lines. A third read-write cycle (I simulated one by feeding that corrupted
+   file back through `Parse` → `Serialize`) produces **three**.
+
+This is not a cosmetic nit. It is unbounded, compounding frontmatter corruption reachable by the
+single most ordinary sequence this block's supersession verb is *for* — a decision superseded more
+than once over its lifetime, or an obligation with `owed_by` set that is later discharged (the same
+mechanism: `DischargeRegisterCardUnderExistingLock` also reads, carries `UnknownFrontmatterFields`
+forward via `with`, and rewrites). ADR-0003 requires the record stay readable without the tool; a
+frontmatter block with two conflicting-looking `supersedes:` lines is exactly the kind of thing a
+human reader (or a future, stricter parser) cannot be expected to make sense of, and it is silent —
+nothing refuses, nothing logs, the values happen to agree today only because nothing in this API
+lets them diverge yet.
+
+No existing test catches it because none does a second read-modify-write of a card that already
+carries one of the three new fields: `CardDecisionSupersedeTests` supersedes exactly once per
+fixture (including the three-node cycle test, which only exercises the *closing* link's refusal,
+never lets an earlier link's card get written twice), and no obligation test discharges an
+obligation that has `owed_by` set. The fix is a one-line addition to `RegisterOnlyFrontmatterKeys`;
+closing it needs a test that performs a second write on an affected card and asserts the field
+appears exactly once in the raw file text — a value-only assertion (`RegisterFields.Supersedes ==
+"D-0001"`) would not have caught this, since the dictionary read that populates it silently takes
+whichever occurrence parses last.
+
+**Everything else audited hard and holds up:**
+
+1. **Two-card write: no interleaving found that leaves the sides disagreeing**, beyond the frontmatter
+   bug above (which doesn't touch *which* card the write lands on, only how many times a line
+   appears in it). `SupersedeDecision` holds both locks for the full duration including the
+   restore; `SupersedeDecisionUnderLocks` re-reads and re-validates both cards' states fresh under
+   lock rather than trusting pre-lock resolution; the superseded card is written first so a failure
+   on the second write has something to roll back, and `RestoreSupersededCard` rewrites the exact
+   bytes read at the top of the method (verified: `originalSupersededContent` is captured
+   immediately before the first write). The one honestly-disclosed gap — if the restore write
+   itself also fails (a compound I/O failure), the superseded card could be left discharged without
+   its successor's own write having landed — is the same best-effort disposition already accepted
+   for `RollbackRaisedCard`, not a new risk this block introduces.
+2. **The cycle argument holds**, and I tried to break it adversarially rather than just read it. I
+   could not construct any sequence — including one interleaved with other `decision create`/
+   `discharge` calls — that closes a loop, because the two open-checks (`target must be open`,
+   `acting card must be open`) mean a card can only ever gain `Supersedes` while it has never itself
+   been discharged, and can only ever be *named* as a successor once, by the single discharge that
+   supersedes it. Both facts together are exactly what rules out a cycle without a graph walk: to
+   close an n-node loop, the last link's discharge of the first node would have to precede the first
+   node's own act of naming that last node as its successor — but the first node's act must itself
+   precede its own discharge by the node before it, and chasing that relation around the loop
+   produces an ordering that cannot satisfy itself. `SupersedeDecision_ThreeNodeCycle_
+   TheClosingLinkRefuses` demonstrates the closing link correctly refusing with
+   `already-discharged`.
+3. **Lock ordering is real and self-deadlock is impossible.** Both paths come from
+   `CardIdentityResolver.Resolve`, so two invocations naming the same physical pair always compute
+   the same order regardless of which id was typed as "superseding" — the distinction from
+   `AcquireLocksAndRecord`'s abandoned attempt (a caller-typed path that can vary in casing across
+   invocations) is real, not asserted. Self-supersession (identical resolved path both sides) is
+   checked by path equality *before* any lock is requested, so the degenerate case can't hang the
+   call against its own held lock.
+4. **"Remains retrievable" is proven, not assumed** —
+   `SupersedeDecision_SupersededDecision_StillResolvesByIdAfterwards` calls
+   `CardIdentityResolver.Resolve` directly on the superseded id after supersession and gets `Found`;
+   nothing in the resolver or `ResolveRecordDirectories` filters by lifecycle state, so a discharged
+   decision is exactly as findable as an open one. (The frontmatter-duplication bug does not defeat
+   this: the dictionary-based parser tolerates the duplicate key without failing, so resolution
+   still succeeds — which is precisely why the corruption went undetected rather than fail-closed.)
+5. **`owed_by` goes through the resolver, no second way to name a card.** `RunObligationCreate`
+   calls `ResolveCardReference` against `CardKind.Section` before any card is created; a raised
+   obligation from `finding record` reuses the id `RunFindingRecord`'s own `ValidateSection` already
+   validated rather than re-resolving or accepting a second, hand-typed value.
+6. **`ResolveCardReference`'s generalisation did not weaken anything.** Read side by side with the
+   `ValidateSection` I approved last round: identical four-arm match, identical codes, identical
+   message shapes, parameterised only by kind/predicate/label/hint text.
+   `CommandDispatcherFindingRecordTests.SectionIdDoesNotResolve_ButAFileElsewhereCouldNotBeRead_
+   Refuses_WithCardIdUnresolvable` — the CLI-level `Unreadable` test I required last round — is
+   untouched by this diff and still in the green 544, confirming the wrapper still routes to it
+   unchanged.
+7. **Scope held.** `owed_by`'s obligation-from-a-finding wiring reuses the id already in hand and
+   does **not** add a structured finding→obligation back-reference — the raised card's body prose is
+   unchanged in shape, only `RegisterFields.OwedBy` is new. Grepped for `earned_from`, `absorbs`,
+   citation counting, promotion, an archive verb, and any new read verb (`decision status` was not
+   added — the "remains retrievable" proof reads the domain layer / disk directly) — none present.
+
+**Nits:** none beyond the blocker.
+
+Fix the one blocker — add the three keys to `RegisterOnlyFrontmatterKeys`, and add a test proving a
+second write on an already-`owed_by`/`supersedes`/`superseded_by`-carrying card does not duplicate
+the line — and this is ready to re-audit.
+
+**[worker]** Fixed the blocker (reviewer's `CardFileParser.RegisterOnlyFrontmatterKeys` finding).
+Confirmed the bug by reading it, not just trusting the report: the parser's set had four keys, the
+writer emitted seven — `owed_by`/`supersedes`/`superseded_by` fell through to
+`UnknownFrontmatterFields`, which the writer re-emits verbatim, so every parse-then-write cycle
+duplicated the line. Fixed in two parts, both required per your message.
+
+1. **Correctness** — the three keys now parse as known fields.
+2. **Structural close** — new `RegisterCardFieldKeys` (in `RegisterCardFields.cs`): the seven wire
+   key names as `const string`s plus `All`, the single declaration. `CardFileWriter`'s emission now
+   writes `RegisterCardFieldKeys.Condition`/`.OwedBy`/etc. instead of string literals;
+   `CardFileParser`'s `RegisterOnlyFrontmatterKeys` HashSet is now `new(RegisterCardFieldKeys.All,
+   StringComparer.Ordinal)` instead of a second hand-typed list; `BuildRegisterFields`'s reads go
+   through the same constants too. A writer key and a parser key can no longer name the same field
+   two different ways, or list seven on one side and six on the other — the exact shape that broke.
+   **Closing the remaining gap this alone can't** (a new property added to `RegisterCardFields`
+   without ever being added to `RegisterCardFieldKeys.All`): `RegisterCardFieldsKeyCoverageTests`
+   reflects over `RegisterCardFields`'s actual properties (excluding the compiler-synthesised
+   `EqualityContract`), converts each to its expected snake_case wire key, and asserts the set
+   equals `RegisterCardFieldKeys.All` exactly — enumerated from the code, the same discipline
+   `CardCommentImmutabilityTests`'s complete method inventory already uses in this codebase, not
+   production reflection (test-only, no AOT/trim exposure). A second test asserts `All` has no
+   duplicate entries.
+3. **Round-trip coverage** — new `RegisterCardFieldsRoundTripTests`, asserting on the **emitted
+   frontmatter text**, not the parsed value (a value-only assertion is exactly what let 544 tests
+   stay green over a corrupt writer — the dictionary read in `CardFileParser` takes whichever
+   duplicate parses last, so the parsed value is right even while the file rots). Three tests: a
+   fully-populated register card round-trips with zero unknown fields; a *second*
+   read-modify-write cycle on a card already carrying all seven fields produces exactly one line
+   per key (the reviewer's exact reproduction shape — the `card with { Updated = ... }` a
+   `*UnderExistingLock` method performs); three cycles in a row never duplicate, proving the fix
+   holds under repetition, not just on the second write.
+
+Left everything else untouched, per your instruction — the two-card write, locking, rollback,
+cycle-freedom argument, retrievability, `owed_by` through the resolver, `ResolveCardReference`,
+scope. No refusal code touched: the set is still **41**, re-derived mechanically and unchanged by
+this remediation.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (549/549: the prior 544 plus 5 new —
+2 coverage, 3 round-trip).
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the block C blocker fix. Gates re-run independently: `BUILD_EXIT:0`,
+`TEST_EXIT:0` (549/549), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived mechanically:
+153 sites, still **41** codes, byte-for-byte the same set as last round.
+
+**1. The corruption is gone — confirmed by re-running my own reproduction against the real
+production code.** Rebuilt and re-ran the two-hop chain through the actual
+`CardStore.SupersedeDecision` entry point: three decisions on disk, `B` supersedes `A`, then `C`
+supersedes `B`. `B`'s file now carries exactly **one** `supersedes: D-0001` line and exactly one
+`superseded_by: D-0003` line after the second cycle. I then fed `B`'s file through a third
+read-modify-write (`CardStore.ReadCard` → `CardFileWriter.Serialize`, the same shape a further
+verb touching this card would perform) and both counts stayed at one. The exact reproduction that
+found the defect is the one certifying it closed.
+
+**2. The new tests discriminate — proven by reintroducing the defect, not by reading the tests.**
+I mutated `CardFileParser`'s `RegisterOnlyFrontmatterKeys` to drop `supersedes` from
+`RegisterCardFieldKeys.All` (recreating the exact "writer knows seven, parser knows six" shape that
+caused this), rebuilt, and ran `RegisterCardFieldsRoundTripTests` in isolation. All three failed
+immediately: `SerializedRegisterCard_WithEveryFieldSet_ParsesWithNoUnknownFrontmatterFields` and
+`ThreeReadModifyWriteCycles_NeverDuplicateAnyLine` failed on `Assert.Empty()` (a stray
+`("supersedes", "D-0002")` in `UnknownFrontmatterFields`), and
+`SecondReadModifyWriteCycle_OnACardAlreadyCarryingTheThreeNewFields_DoesNotDuplicateAnyLine` failed
+with the actual duplicated frontmatter text in the assertion message — "expected exactly one
+`supersedes: ` line, found 2." Reverted the mutation, confirmed the file returned to its
+pre-mutation diff exactly, and reran the full suite green. `RegisterCardFieldsKeyCoverageTests`
+correctly did **not** fire under this particular mutation (it guards a different drift — a new
+property never added to `All` — not a parser/writer split over an existing one), which is exactly
+the complementary coverage the two test files are supposed to provide together, not overlapping
+proof of the same thing.
+
+**3. The structural guard is real but scoped to `RegisterCardFields` only — the same defect class
+is live today in three other field families, and I'd rather say that plainly than let a partial fix
+read as a general one.** `CardFileParser`'s `BlockOnlyFrontmatterKeys`, `SectionOnlyFrontmatterKeys`
+and `FindingOnlyFrontmatterKeys` (`CardFileParser.cs:34-58`) remain hand-typed literal sets with no
+shared constant, and `CardFileWriter`'s emission of those same fields (`base`, `closed_by`,
+`tasks`, `gate_results`, `blocked_by`, `instrument`, `extent`, `blind_spot`, etc. —
+`CardFileWriter.cs:56-170`) is still spelled as independent raw string literals with nothing tying
+either side to the other. If a future block adds a field to `BlockCardFields`/`SectionCardFields`/
+`FindingCardFields` and emits it from the writer without also adding the same string to the
+matching `*OnlyFrontmatterKeys` set — precisely the mistake this block itself made for `owed_by`/
+`supersedes`/`superseded_by` — the identical silent, compounding duplication reproduces there,
+undetected by anything in the current test suite (no `RegisterCardFieldsRoundTripTests`-shaped test
+exists for those three families). This is the general form of a gap the DEVLOG already named for a
+related reason — O-4's note that "`CardFileWriter` emits a fixed, enumerable set of key literals,
+so a test asserting every emittable key appears in some fixture would close it structurally,"
+carved for 9.12. I'd fold this into the same carve rather than treat it as new: the fix that
+closed it for the four register kinds (one shared key-name declaration plus a structural coverage
+test) is the template, not a bespoke solution — it just hasn't been generalised to the other three
+families yet, and nothing requires this remediation to do that generalising.
+
+**4. Reflection is test-only.** `RegisterCardFieldsKeyCoverageTests.cs:1,33-34` is the only place
+`System.Reflection`/`GetProperties` appears anywhere in the diff. Grepped all of `src/Callboard`
+(excluding `obj/`/`bin/`) for `System.Reflection`, `GetProperties`, `GetFields`, `GetType().`,
+`Activator.` — zero hits in production source. `CliJsonContext` still carries every result type
+(`CardCreateResult`, `DecisionSupersedeResult`, etc.) as a `[JsonSerializable]` source-generated
+entry; no reflection-based `JsonSerializer` overload appears anywhere.
+
+**5. Scope confirmed — the previously-cleared parts are byte-identical, not just similar.**
+`CardStore.SupersedeDecision`/`SupersedeDecisionUnderLocks`/`RestoreSupersededCard` sit at the exact
+same line numbers (900–1105) as the round I approved, and the full 217-line block diffs clean
+against itself at that range (same doc comments, same lock-order code, same cycle-freedom proof,
+same restore-by-content). `CommandDispatcher.ResolveCardReference`/`RunDecisionSupersede` likewise
+sit at the same lines (1481, 1332) with identical bodies — same four-arm match, same codes, same
+messages. The worker's own report matches what I found: the diff is `CardFileParser.cs`,
+`CardFileWriter.cs`, `RegisterCardFields.cs` (the new `RegisterCardFieldKeys` type),
+`RegisterCardFieldsKeyCoverageTests.cs` and `RegisterCardFieldsRoundTripTests.cs` — nothing in the
+two-card write, locking, rollback, cycle argument, retrievability proof, `owed_by` wiring, or
+`ResolveCardReference` moved.
+
+**Verdict: Approve.**
+
+Block C delivers `owed_by` and decision supersession on top of block B's resolver, with the
+frontmatter-corruption defect closed structurally (one shared key declaration, not three added
+strings) rather than merely patched. The one open item — the identical writer/parser-drift risk
+still live in `BlockCardFields`/`SectionCardFields`/`FindingCardFields` — is not this block's to
+fix; recorded above for whoever picks up 9.12 or the next block that touches those families.
+
 ## NEXT
 
 

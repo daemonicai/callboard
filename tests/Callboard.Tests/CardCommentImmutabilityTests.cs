@@ -111,6 +111,7 @@ public sealed class CardCommentImmutabilityTests
             "DischargeRegisterCard",                // §7 block A: read-decide-write on Frontmatter.Status/RegisterFields.DischargedBy/DischargedAt only; never touches Comments
             "DischargeRegisterCardUnderExistingLock", // same, lock already held
             "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy; never touches a CardFile's Comments
+            "IsDecisionCard",                       // §7 block C: the IsRegisterCard counterpart narrowed to CardKind.Decision, shared by CommandDispatcher's --owed-by/--supersedes resolution and SupersedeDecisionUnderLocks; never touches a CardFile's Comments
             "IsFindingCard",                        // §6 block C: the IsBlockCard/IsSectionCard counterpart for CardKind.Finding, shared with CommandDispatcher.RunFindingStatus; never touches a CardFile's Comments
             "IsRegisterCard",                       // §7 block A: the IsBlockCard/IsSectionCard/IsFindingCard counterpart for the four register kinds; never touches a CardFile's Comments
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments
@@ -125,8 +126,11 @@ public sealed class CardCommentImmutabilityTests
             "RecordSectionVerdictUnderExistingLock", // same, lock already held
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"
             "RemoveBlockedByUnderExistingLock",     // same, lock already held
+            "RestoreSupersededCard",                // §7 block C: best-effort re-write of the superseded card's pre-mutation bytes when the superseding card's own write then fails — never touches an existing card's Comments, it restores exactly what it read
             "RollbackRaisedCard",                   // §6 block B: best-effort delete of a just-written, brand-new raised card when the finding's own write then fails — never touches an existing card at all
             "ScopeForRaisedCard",                   // §6 block B: pure function from CardKind to its fixed CardScope; never touches a CardFile
+            "SupersedeDecision",                    // §7 block C: acquires both decisions' locks in a deterministic id-derived path order, then delegates to SupersedeDecisionUnderLocks — never touches a CardFile itself
+            "SupersedeDecisionUnderLocks",          // §7 block C: read-decide-write on Frontmatter.Status/RegisterFields.Supersedes/SupersededBy/DischargedBy/DischargedAt for both cards only; never touches Comments on either
             "TransferOwnership",                    // read-modify-write: overwrites Owner/Handovers only; Comments passes through the `success.Card with { ... }` unchanged
             "TransferOwnershipUnderExistingLock",   // same, lock already held
             "UpdateBlockedByUnderExistingLock",     // §5 block D: the read-decide-write shape AddBlockedByUnderExistingLock/RemoveBlockedByUnderExistingLock share; never touches Frontmatter.Status or Comments

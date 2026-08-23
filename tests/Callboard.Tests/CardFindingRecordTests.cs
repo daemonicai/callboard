@@ -117,11 +117,17 @@ public sealed class CardFindingRecordTests : IDisposable
         Assert.Equal(raisedKind, recorded.RaisedCard.Frontmatter.Kind);
         Assert.Equal(raisedKind == CardKind.Obligation ? CardScope.Change : CardScope.Repository, recorded.RaisedCard.Frontmatter.Scope);
 
+        // §7 block C: a raised obligation gets a real owed_by, set from the finding's own section —
+        // "give that obligation a real owed_by like any other" (Architect ruling). A raised hazard
+        // carries none; register gives owed_by to an obligation only.
+        Assert.Equal(raisedKind == CardKind.Obligation ? Section : null, recorded.RaisedCard.RegisterFields.OwedBy);
+
         // Both files actually landed on disk, independently readable.
         var findingRead = AssertParseSuccess(CardStore.ReadCard(findingPath));
         var raisedRead = AssertParseSuccess(CardStore.ReadCard(raisedPath));
         Assert.Equal(raisedId, findingRead.FindingFields.BlindSpot.Match(onNone: static () => (string?)null, onRaisedAs: id => id));
         Assert.Equal(raisedKind, raisedRead.Frontmatter.Kind);
+        Assert.Equal(raisedKind == CardKind.Obligation ? Section : null, raisedRead.RegisterFields.OwedBy);
     }
 
     // §6 block B remediation, reviewer blocker 3, named explicitly: the verb's primary use case is

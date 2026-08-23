@@ -836,6 +836,286 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// Supersedes one <c>decision</c> card with another (§7 block C, register: "A decision MAY
+    /// name the decision it supersedes and the decision that supersedes it"). A two-card write —
+    /// both sides or neither — following the shape <see cref="RecordFinding"/> already established
+    /// for a multi-card write under lock with rollback on failure, adapted for this call's own
+    /// shape: two cards that both already exist (no allocation, no create-only check), rather than
+    /// one brand-new card alongside an optional second one.
+    ///
+    /// <para>
+    /// <b>Lock order: <see cref="StringComparer.Ordinal"/> over the two resolved file paths,
+    /// deterministic and safe for a reason <see cref="AcquireLocksAndRecord"/>'s own doc comment
+    /// says an earlier version of <em>that</em> method's ordinal-path ordering was not.</b> That
+    /// method dropped path ordering because one of its two paths is caller-typed
+    /// (<c>--blind-spot-file</c>) and can be spelled with different casing across two invocations
+    /// naming the identical physical file, so an ordinal comparison over the raw strings could
+    /// disagree with itself invocation to invocation. Neither path here has that problem: both
+    /// <paramref name="supersedingFilePath"/> and <paramref name="supersededFilePath"/> are
+    /// supplied by the caller (<see cref="Callboard.Cli.CommandDispatcher.RunDecisionSupersede"/>)
+    /// already resolved through <see cref="CardIdentityResolver"/> — the same directory walk every
+    /// time, over ids that never change once allocated — so any two invocations naming the same
+    /// physical pair of decisions, regardless of which one is the "superseding" argument and which
+    /// is "superseded", always resolve to the identical two path strings and therefore compute the
+    /// identical order. No two invocations can ever disagree about which lock to take first, so no
+    /// AB/BA cycle can form between them.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Self-supersession is refused before any lock is requested</b> — if the two paths are
+    /// identical (the same id was named on both sides), locking the one path twice from the same
+    /// call would not deadlock against a different invocation, it would hang this one against
+    /// itself for the full timeout, since the second <see cref="CardLock.Acquire"/> would be
+    /// waiting on a lock this same call already holds. Checked by path equality here, ahead of the
+    /// id-based recheck under lock in <see cref="SupersedeDecisionUnderLocks"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Acyclic by construction, not by walking the chain (Architect's open question, §7 block C
+    /// brief item 5).</b> <see cref="SupersedeDecisionUnderLocks"/> refuses the operation when
+    /// either card is already discharged: the usual case (<see cref="CardDecisionSupersedeOutcome.
+    /// SupersededAlreadyDischarged"/> — "superseding an already-discharged decision is a refusal,
+    /// not a re-supersession", Architect ruling) <em>and</em> the case that closes the cycle
+    /// (<see cref="CardDecisionSupersedeOutcome.SupersedingAlreadyDischarged"/> — a decision that
+    /// has itself already been superseded cannot newly become another's successor). Proof this
+    /// rules out every cycle, not merely the two-node case: forming a cycle of any length n
+    /// requires every decision in it to, at some point, act as the successor for the next node in
+    /// the cycle while still open, and later be discharged by being named as the predecessor's
+    /// target. For the cycle to close, the last node's discharge (by the first node's own
+    /// supersession of it) must have already happened before the first node itself can be named as
+    /// a successor by the last node — but the first node discharging the last node happens
+    /// <em>after</em> the last node would need to have already acted as a successor while open.
+    /// Each "act while open" for node i must happen before node i is discharged by node i-1's own
+    /// act; chasing that requirement all the way around an n-node cycle produces a "happens-before"
+    /// relation from each act to the previous node's act that wraps back on itself — a cycle in a
+    /// strict ordering, which is impossible. No runtime graph walk is needed because the two local
+    /// checks (target not already discharged, acting card not already discharged) are exactly what
+    /// makes that global ordering unsatisfiable.
+    /// </para>
+    /// </summary>
+    /// <param name="supersedingFilePath">The already-existing decision naming what it supersedes —
+    /// resolved by id, not typed by the caller as a fresh path.</param>
+    /// <param name="supersededFilePath">The already-existing decision being superseded — resolved
+    /// the same way.</param>
+    internal static CardDecisionSupersedeOutcome SupersedeDecision(
+        string cardsRoot, string supersedingFilePath, string supersededFilePath, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout)
+    {
+        if (string.Equals(supersedingFilePath, supersededFilePath, StringComparison.Ordinal))
+        {
+            return new CardDecisionSupersedeOutcome.SelfSupersession(supersedingFilePath);
+        }
+
+        var deadline = DateTimeOffset.UtcNow + lockTimeout;
+        var orderedPaths = string.CompareOrdinal(supersedingFilePath, supersededFilePath) < 0
+            ? (First: supersedingFilePath, Second: supersededFilePath)
+            : (First: supersededFilePath, Second: supersedingFilePath);
+
+        var firstLockResult = CardLock.Acquire(orderedPaths.First, lockTimeout);
+        return firstLockResult.Match<CardDecisionSupersedeOutcome>(
+            onAcquired: firstAcquired =>
+            {
+                using (firstAcquired.Lock)
+                {
+                    var remaining = deadline - DateTimeOffset.UtcNow;
+                    if (remaining < TimeSpan.Zero)
+                    {
+                        remaining = TimeSpan.Zero;
+                    }
+
+                    var secondLockResult = CardLock.Acquire(orderedPaths.Second, remaining);
+                    return secondLockResult.Match<CardDecisionSupersedeOutcome>(
+                        onAcquired: secondAcquired =>
+                        {
+                            using (secondAcquired.Lock)
+                            {
+                                return SupersedeDecisionUnderLocks(
+                                    cardsRoot, supersedingFilePath, supersededFilePath, actingRole, timestamp);
+                            }
+                        },
+                        onTimedOut: timedOut => new CardDecisionSupersedeOutcome.ToolFailure(timedOut.Message));
+                }
+            },
+            onTimedOut: timedOut => new CardDecisionSupersedeOutcome.ToolFailure(timedOut.Message));
+    }
+
+    /// <summary>The locked step of <see cref="SupersedeDecision"/> — both cards' locks are already
+    /// held by the time this runs. Re-reads both cards fresh (rather than trusting whatever
+    /// <see cref="CardIdentityResolver"/> saw before either lock was acquired) so every check below
+    /// answers against the record's current state, not a stale snapshot.</summary>
+    private static CardDecisionSupersedeOutcome SupersedeDecisionUnderLocks(
+        string cardsRoot, string supersedingFilePath, string supersededFilePath, CardOwner actingRole, DateTimeOffset timestamp)
+    {
+        if (!File.Exists(supersedingFilePath))
+        {
+            return new CardDecisionSupersedeOutcome.CardNotFound(supersedingFilePath);
+        }
+
+        if (!File.Exists(supersededFilePath))
+        {
+            return new CardDecisionSupersedeOutcome.CardNotFound(supersededFilePath);
+        }
+
+        var supersedingRead = ReadCard(supersedingFilePath);
+        var supersedingCard = supersedingRead.Match<CardFile?>(onSuccess: static s => s.Card, onFailure: static _ => null);
+        if (supersedingCard is null)
+        {
+            var reason = supersedingRead.Match(onSuccess: static _ => string.Empty, onFailure: static f => f.Reason);
+            return new CardDecisionSupersedeOutcome.CardCorrupt(supersedingFilePath, reason);
+        }
+
+        var supersededRead = ReadCard(supersededFilePath);
+        var supersededCard = supersededRead.Match<CardFile?>(onSuccess: static s => s.Card, onFailure: static _ => null);
+        if (supersededCard is null)
+        {
+            var reason = supersededRead.Match(onSuccess: static _ => string.Empty, onFailure: static f => f.Reason);
+            return new CardDecisionSupersedeOutcome.CardCorrupt(supersededFilePath, reason);
+        }
+
+        if (!IsDecisionCard(supersedingCard))
+        {
+            return new CardDecisionSupersedeOutcome.NotADecisionCard(supersedingFilePath, supersedingCard.Frontmatter.Kind);
+        }
+
+        if (!IsDecisionCard(supersededCard))
+        {
+            return new CardDecisionSupersedeOutcome.NotADecisionCard(supersededFilePath, supersededCard.Frontmatter.Kind);
+        }
+
+        if (string.Equals(supersedingCard.Frontmatter.Id, supersededCard.Frontmatter.Id, StringComparison.Ordinal))
+        {
+            return new CardDecisionSupersedeOutcome.SelfSupersession(supersedingCard.Frontmatter.Id);
+        }
+
+        if (!RegisterLifecycleStateWireFormat.TryParse(supersedingCard.Frontmatter.Status, out var supersedingState))
+        {
+            return new CardDecisionSupersedeOutcome.InvalidStatus(supersedingFilePath, supersedingCard.Frontmatter.Status);
+        }
+
+        if (!RegisterLifecycleStateWireFormat.TryParse(supersededCard.Frontmatter.Status, out var supersededState))
+        {
+            return new CardDecisionSupersedeOutcome.InvalidStatus(supersededFilePath, supersededCard.Frontmatter.Status);
+        }
+
+        // Both sides must be open — the superseded side because supersession discharges it exactly
+        // once (Architect ruling: reuse the state block A already shipped, do not re-supersede),
+        // the superseding side because that is what rules out every cycle by construction — see
+        // this method's own doc comment on SupersedeDecision for the proof.
+        if (supersededState == RegisterLifecycleState.Discharged)
+        {
+            return new CardDecisionSupersedeOutcome.SupersededAlreadyDischarged(supersededFilePath);
+        }
+
+        if (supersedingState == RegisterLifecycleState.Discharged)
+        {
+            return new CardDecisionSupersedeOutcome.SupersedingAlreadyDischarged(supersedingFilePath);
+        }
+
+        var supersedingAnchored = AnchoredCardPath.TryCreate(
+            cardsRoot, supersedingFilePath, supersedingCard.Frontmatter.Scope, changeName: null, out var supersedingLayoutFailure);
+        if (supersedingAnchored is null)
+        {
+            return new CardDecisionSupersedeOutcome.LayoutMismatch(supersedingLayoutFailure!.Reason);
+        }
+
+        var supersededAnchored = AnchoredCardPath.TryCreate(
+            cardsRoot, supersededFilePath, supersededCard.Frontmatter.Scope, changeName: null, out var supersededLayoutFailure);
+        if (supersededAnchored is null)
+        {
+            return new CardDecisionSupersedeOutcome.LayoutMismatch(supersededLayoutFailure!.Reason);
+        }
+
+        // The superseded card is written first, so a failure on the second write (the superseding
+        // card) has something to roll back — the same "second write's failure is what makes
+        // rollback reachable" ordering RecordFinding uses. Both locks are held for this whole
+        // method's duration, so no third party can legitimately rewrite the superseded card between
+        // these two writes; the restore below is a plain re-write of the bytes read at the top of
+        // this method, not a compare-then-restore (unlike RecordFinding's delete-by-content, which
+        // guards against a concurrent writer RecordFinding's own locking does not fully exclude —
+        // here it does).
+        var originalSupersededContent = File.ReadAllText(supersededFilePath, Utf8NoBom);
+
+        var updatedSupersededCard = supersededCard with
+        {
+            Frontmatter = supersededCard.Frontmatter with { Status = RegisterLifecycleState.Discharged.ToWireString(), Updated = timestamp },
+            RegisterFields = supersededCard.RegisterFields with
+            {
+                DischargedBy = actingRole,
+                DischargedAt = timestamp,
+                SupersededBy = supersedingCard.Frontmatter.Id,
+            },
+        };
+
+        var supersededWriteResult = AtomicWrite(supersededAnchored, CardFileWriter.Serialize(updatedSupersededCard));
+        var supersededFailure = supersededWriteResult.Match<CardDecisionSupersedeOutcome?>(
+            onSuccess: static _ => null,
+            onNotFound: static notFound => new CardDecisionSupersedeOutcome.CardNotFound(notFound.FilePath),
+            onAlreadyExists: static alreadyExists => new CardDecisionSupersedeOutcome.LayoutMismatch(
+                $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+            onLayoutMismatch: static layoutMismatch => new CardDecisionSupersedeOutcome.LayoutMismatch(layoutMismatch.Reason),
+            onCorrupt: static corrupt => new CardDecisionSupersedeOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+            onToolFailure: static toolFailure => new CardDecisionSupersedeOutcome.ToolFailure(toolFailure.Reason));
+        if (supersededFailure is not null)
+        {
+            return supersededFailure;
+        }
+
+        var updatedSupersedingCard = supersedingCard with
+        {
+            Frontmatter = supersedingCard.Frontmatter with { Updated = timestamp },
+            RegisterFields = supersedingCard.RegisterFields with { Supersedes = supersededCard.Frontmatter.Id },
+        };
+
+        var supersedingWriteResult = AtomicWrite(supersedingAnchored, CardFileWriter.Serialize(updatedSupersedingCard));
+        return supersedingWriteResult.Match<CardDecisionSupersedeOutcome>(
+            onSuccess: _ => new CardDecisionSupersedeOutcome.Superseded(updatedSupersedingCard, updatedSupersededCard),
+            onNotFound: notFound =>
+            {
+                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                return new CardDecisionSupersedeOutcome.CardNotFound(notFound.FilePath);
+            },
+            onAlreadyExists: alreadyExists =>
+            {
+                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                return new CardDecisionSupersedeOutcome.LayoutMismatch(
+                    $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite.");
+            },
+            onLayoutMismatch: layoutMismatch =>
+            {
+                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                return new CardDecisionSupersedeOutcome.LayoutMismatch(layoutMismatch.Reason);
+            },
+            onCorrupt: corrupt =>
+            {
+                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                return new CardDecisionSupersedeOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason);
+            },
+            onToolFailure: toolFailure =>
+            {
+                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                return new CardDecisionSupersedeOutcome.ToolFailure(toolFailure.Reason);
+            });
+    }
+
+    /// <summary>All-or-nothing's other half for <see cref="SupersedeDecisionUnderLocks"/>: once
+    /// the superseding card's own write fails, restores the superseded card to the exact bytes it
+    /// held before this call touched it. Best-effort, same disposition as
+    /// <see cref="RollbackRaisedCard"/> — if the restore itself cannot complete, the caller already
+    /// has a failure to act on and this is not the place to escalate a cleanup problem into a
+    /// second, different one.</summary>
+    private static void RestoreSupersededCard(AnchoredCardPath supersededAnchored, string originalSupersededContent)
+    {
+        try
+        {
+            AtomicWrite(supersededAnchored, originalSupersededContent);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    /// <summary>
     /// Records a clean finding (findings: "Clean findings are cards") and, when
     /// <paramref name="raiseRequest"/> is supplied, the <c>obligation</c> or <c>hazard</c> its
     /// declared blind spot is raised as — in the same operation (§6 block B Architect ruling: "one
@@ -901,9 +1181,9 @@ internal static class CardStore
     /// codebase for exactly this reason.
     /// </para>
     /// </summary>
-    /// <param name="section">The section this finding was raised within, and the same section
-    /// recorded on the raised card for traceability — <c>owed_by</c> itself is §7's field, not
-    /// modelled yet.</param>
+    /// <param name="section">The section this finding was raised within — the same id a raised
+    /// obligation's own <c>owed_by</c> is set from (§7 block C), since a raised obligation is owed
+    /// to exactly the section that raised it.</param>
     /// <param name="changeName">Required for the finding (always <see cref="CardScope.Section"/>-
     /// scoped) and for an obligation (<see cref="CardScope.Change"/>-scoped) when one is raised;
     /// ignored for a hazard (<see cref="CardScope.Repository"/>-scoped).</param>
@@ -1152,12 +1432,36 @@ internal static class CardStore
 
             // The raised card's half of "each referencing the other" (§6 block B brief) — the
             // finding's own reference is FindingCardFields.BlindSpot.RaisedAs(raisedId), set by the
-            // caller of this method. No new frontmatter key is minted for this: §7 owns a raised
-            // card's structured owed_by/back-reference fields; this is a body-text reference only,
-            // the same "not modelled yet" boundary this method's own doc comment states for owed_by.
+            // caller of this method. No new frontmatter key is minted for the finding→raised-card
+            // direction: that stays a body-text reference only (§7 block C brief: "do not invent a
+            // structured finding→obligation back-reference — that belongs with earned_from").
+            //
+            // The other direction — a raised obligation's own owed_by — is §7 block C's, and is set
+            // here: findingFrontmatter.Section is already a validated section card id by the time
+            // this runs (RunFindingRecord's own ValidateSection call, ahead of RecordFinding), the
+            // same id CommandDispatcher.RunObligationCreate would otherwise require a caller to
+            // spell out via --owed-by. A raised obligation is owed to exactly the section that
+            // raised it, so this is the one case where that id is already in hand rather than
+            // supplied — "give that obligation a real owed_by like any other" (Architect ruling),
+            // not a free-text label, and not a second, hand-typed --owed-by a caller could get
+            // wrong. A raised hazard carries no owed_by (register: only an obligation is owed to a
+            // section) — the ternary is exhaustive over the only two kinds
+            // FindingBlindSpotRaiseRequest's own constructor ever allows.
+            var raisedIsObligation = raiseRequest.Kind.Match(
+                onBlock: static () => false,
+                onQuestion: static () => false,
+                onFinding: static () => false,
+                onObligation: static () => true,
+                onRule: static () => false,
+                onHazard: static () => false,
+                onDecision: static () => false,
+                onSection: static () => false);
+            var raisedRegisterFields = raisedIsObligation
+                ? new RegisterCardFields(null, null, null, null, OwedBy: findingFrontmatter.Section)
+                : RegisterCardFields.Empty;
             var raisedBody =
                 $"Raised from finding {findingFrontmatter.Id} — a blind spot declared while recording a clean result.\n\n{raiseRequest.Body}";
-            var raisedCardFile = new CardFile(raisedFrontmatter, raisedBody, [], []);
+            var raisedCardFile = new CardFile(raisedFrontmatter, raisedBody, [], [], RegisterFields: raisedRegisterFields);
             var serializedRaisedCard = CardFileWriter.Serialize(raisedCardFile);
 
             var raisedWriteResult = AtomicWrite(raisedAnchored, serializedRaisedCard);
@@ -1363,6 +1667,21 @@ internal static class CardStore
         onObligation: static () => true,
         onRule: static () => true,
         onHazard: static () => true,
+        onDecision: static () => true,
+        onSection: static () => false);
+
+    /// <summary>The <see cref="IsRegisterCard"/> counterpart narrowed to exactly
+    /// <see cref="CardKind.Decision"/> (§7 block C) — shared by <see cref="Callboard.Cli.
+    /// CommandDispatcher"/>'s <c>--owed-by</c>/<c>--supersedes</c> resolution and
+    /// <see cref="SupersedeDecisionUnderLocks"/>, so neither re-implements the same eight-arm match
+    /// a fifth time.</summary>
+    internal static bool IsDecisionCard(CardFile card) => card.Frontmatter.Kind.Match(
+        onBlock: static () => false,
+        onQuestion: static () => false,
+        onFinding: static () => false,
+        onObligation: static () => false,
+        onRule: static () => false,
+        onHazard: static () => false,
         onDecision: static () => true,
         onSection: static () => false);
 
