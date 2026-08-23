@@ -13056,6 +13056,388 @@ clean.
 
 No new findings. → @architect
 
+**[architect]** Block C closed. Reviewer `Approve` after one nit round; gates re-run by me —
+`BUILD_EXIT:0` `TEST_EXIT:0` (466/466) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`. 6.5 and 6.6
+ticked, committed as `2a95ed2`. **O-4's corpus passed its first real test**: the block widened the
+wire form with two keys, the reviewer reintroduced a widening defect itself, and three corpus
+fixtures fired naming the offender. The mechanism §5 asked for works.
+
+**[architect]** Brief — block D, task 6.7. This is §6's last block.
+
+**Task**
+
+- 6.7 Implement finding degradation at section close
+
+**Spec — `specs/findings/spec.md`**
+
+> A `finding` SHALL be section-scoped and SHALL degrade at section close. A `rule` SHALL carry none
+> of these fields and SHALL survive section close.
+>
+> #### Scenario: Finding degrades at section close
+> - **WHEN** the section that raised a finding closes
+> - **THEN** the finding is no longer offered as live and remains retrievable by identity
+
+And, from the blind-spot requirement — the half block B deferred to you:
+
+> A declared blind spot … SHALL be raised as an `obligation` or a `hazard`, and SHALL NOT degrade at
+> section close, because a blind spot filed under a clean heading has been observed to ship.
+>
+> #### Scenario: Declared blind spot outlives the section
+> - **WHEN** a clean finding is recorded with a declared blind spot and its section later closes
+> - **THEN** the finding degrades and the blind spot remains live as an obligation or hazard
+
+**Architect rulings binding this block**
+
+- **Degradation is derived, not stored.** This is the same answer §5 gave for `blocked`: no field, no
+  wire key, no write to any finding card at section close. A finding is degraded **because its
+  section card is closed** — one source of truth, already written by
+  `CloseSectionUnderExistingLock`. A stored flag would need every finding rewritten at close (six
+  write paths, all create-only — see below), would be a second thing that can disagree with the
+  section card, and would need migrating. Do not add one.
+- **`WriteCard` is create-only and stays that way.** If your implementation finds itself wanting to
+  rewrite existing finding cards at section close, that is the signal the derivation ruling is right
+  and the stored-flag design is wrong — not a reason to open a mutation path. Stop and post before
+  widening `CardStore`'s write surface.
+- **Degraded and stale are orthogonal, and both must be answerable.** Degradation is about
+  *liveness*; staleness is about whether a measured result still holds. A degraded finding still has
+  a staleness answer, and a `NotApplicable` (clean-as-argued) finding still degrades. Do not collapse
+  them into one status field — that would make "degraded" and "stale" indistinguishable to a caller
+  who needs to tell re-verification from expiry.
+- **"Remains retrievable" is the load-bearing half.** Degrading must not make a finding unreadable,
+  unparseable, or absent from `finding status`. The spec says *no longer offered as live*, and this
+  project has an established distinction: absent is a different answer from failed, and it applies
+  here too — a degraded finding answers, and its answer says it is degraded.
+- **Only `finding` cards degrade.** An `obligation` or `hazard` raised as a blind spot does not, and
+  neither does a `rule`. Make that a property of the kind rather than of which verb happened to
+  create the card — a blind-spot obligation and a hand-written obligation must behave identically.
+- **Invert block B's deferral test.** Block B holds 6.3's "does not degrade" in a test that this
+  block must invert or strengthen. Do that deliberately and say in the DEVLOG what it proves now
+  that it could not prove then. §5's caveat applies: make it fail for the right reason — the §8
+  precedent passed by a casing coincidence, and the section that inherited it was told to inherit it
+  accurate rather than lucky.
+- **Path-addressed, still.** Identity addressing remains §7/§8's open decision. "Retrievable by
+  identity" in the spec is satisfied here by the card remaining readable and answering; do not build
+  an id-addressed verb to satisfy it.
+
+**Done-gates for this block**
+
+- A finding whose section is open reads live; the same finding after its section closes reads
+  degraded — through the CLI's emitted JSON, not only at the domain layer.
+- The blind-spot `obligation`/`hazard` raised with it does **not** degrade, and a hand-written
+  obligation in the same section behaves identically to a blind-spot-raised one.
+- A degraded finding still answers `finding status`, still parses, still round-trips, and still has
+  a staleness answer distinct from its degradation.
+- No finding card is written or rewritten at section close — demonstrate this, don't assert it (file
+  mtimes, bytes, or a test that fails if a write path is added).
+- Block B's deferral test is inverted and fails for the right reason.
+- `make gates` → `GATES_EXIT:0`, quoted verbatim.
+
+**Note for your DEVLOG post:** §6 closes after this block, and the supervisor reviews the whole
+section over `8b44a51..HEAD`. Anything you know that a diff would not show — a deferral, a claim you
+could not demonstrate, an interaction you suspect but did not test — say it plainly in your post
+rather than leaving it for the supervisor to find or miss.
+
+→ @worker
+
+**[worker]** Block D (6.7) implemented.
+
+- **Degradation is derived, never stored** — no new frontmatter field, no write path on the finding
+  card. Added `Cards/FindingDegradationStatus` (closed union: `Live`/`Degraded`) and
+  `Cards/FindingDegradationEvaluator.Evaluate(CardFile finding, string findingFilePath)`, which reads
+  every card in the finding's own containing directory (`CardStore.ReadAllCards`) and matches the one
+  `section` card whose own `Section` label equals the finding's, then answers from that section
+  card's `closed_at` — nothing is written, ever.
+- **How the finding's section card is found, since identity addressing is still §7/§8's call:** a
+  finding's `Section` field is a free-text label (e.g. `"6"`), not a path or an id, and both the
+  finding and its section card live in the same change directory (`CardScope.Section`/`Change` both
+  resolve there). The evaluator scans that one directory and matches on the shared `Section` label —
+  path-addressed throughout, as the brief required. If no matching `section` card is found in that
+  directory, it reads `Live`, not `Degraded` — the record can't prove closure, so the honest answer is
+  "not proven closed" rather than a guess. **Flagging this explicitly for the supervisor:** this
+  scan-and-match is new domain machinery this block introduced; it's the only way I found to honour
+  both "path-addressed, still" and "no id-addressed verb" while still deriving liveness from a
+  *different* card's state. If there's a cheaper mechanism I didn't see, that's worth a second look
+  before §7/§8 revisit addressing.
+- **Wired into `finding status`**: `FindingStatusResult` gained a `"degraded": bool` field, computed
+  independently of `staleness` in the same handler — neither evaluator's outcome touches the other's
+  inputs. Verified via CLI JSON, not just the domain type (`CommandDispatcherFindingStatusTests`):
+  open section → `degraded: false`; `section close` via the real CLI verb → `degraded: true`, with
+  `staleness` unchanged across the close (`"current"` before and after).
+- **Only `finding` cards degrade, as a property of the kind.** `RunFindingStatus`'s existing
+  `WrongCardKind` gate (kind-based, not verb-based) means the evaluator is only ever reached for a
+  `finding` card; an `obligation`/`hazard` — raised via a declared blind spot or hand-written — is
+  simply never evaluated for degradation. Added a domain test proving a **hand-written** obligation in
+  the same section is left byte-identical by `section close`, exactly like the blind-spot-raised kind
+  block B already covered — parity by construction, not by two independent implementations agreeing.
+- **No finding card write path — demonstrated, not asserted:**
+  `ClosingTheSection_NeverWritesOrRewritesTheFindingCard` compares both file bytes *and*
+  `File.GetLastWriteTimeUtc` before/after `CloseSection`, so a write-then-write-back-identical-bytes
+  path would still be caught by the mtime half.
+- **"Remains retrievable" proven, not assumed:** `DegradedFinding_StillParsesAndRoundTrips` reads a
+  degraded finding, re-serialises it, asserts the bytes match the file on disk, and re-parses the
+  re-serialised text successfully.
+- **Block B's deferral test inverted, and demonstrated failing for the right reason** (not a casing
+  coincidence, per §8's carried caveat): `CardFindingRecordTests.
+  ClosingTheSection_LeavesTheRaisedCardUntouchedAndDegradesTheFinding` keeps the untouched-raised-card
+  assertion exactly as block B left it, keeps the finding's-bytes-are-unchanged assertion (still true,
+  now for the documented reason — derivation never writes), and adds the assertion that actually
+  matters: `Live` before close, `Degraded` after, through the same evaluator `finding status` calls.
+  I hand-broke `FindingDegradationEvaluator` (forced it to always answer `Live`) and confirmed exactly
+  four tests go red for the right reason — this inverted test, both new `FindingDegradationEvaluatorTests`
+  cases, and the new CLI close-then-status test — then restored the real implementation and re-ran
+  `make gates` green. Nothing else in the 475-test suite moved, confirming the sabotage was isolated
+  to degradation.
+- **Deferral, stated plainly:** I did not add a CLI-level test proving `obligation`/`hazard` parity
+  through a `finding status`-equivalent read verb, because no such verb exists yet for those kinds —
+  `finding status` itself refuses them at `wrong-card-kind` (existing coverage). The parity claim is
+  proven at the domain layer only (byte-identical after `CloseSection`), not through any CLI JSON for
+  those kinds, since §6 never wires one.
+- No refusal codes minted.
+
+**Done-gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (`make gates`,
+475/475 passing).
+
+§6 closes after this block (`8b44a51..HEAD`).
+
+→ @reviewer
+
+**[reviewer]** Audit, block D (6.7). **Verdict: Request changes.**
+
+Reproduced the worker's claims by execution, not by reading: `make gates` on the untouched tree —
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 475/475. Hand-broke
+`FindingDegradationEvaluator` to always answer `Live` and reran the suite — exactly the same four
+tests went red the worker named
+(`CardFindingRecordTests.ClosingTheSection_LeavesTheRaisedCardUntouchedAndDegradesTheFinding`,
+both new `FindingDegradationEvaluatorTests` cases, the new CLI close-then-status test), each for the
+real reason (a `Same()`/`True()` assertion on the actual computed status, not a stringly-typed or
+casing check) — the inversion is accurate, not lucky. Confirmed `CloseSectionUnderExistingLock`
+(`CardStore.cs:643-698`) writes only the `anchored` path derived from the section card's own lock —
+no finding-card write path exists or was newly opened. Confirmed via `FindingStatusResult.cs` and
+the CLI tests that `degraded` and `staleness` are independently computed and both answer on a
+degraded, clean-as-argued finding. Confirmed `finding status` gates on `CardStore.IsFindingCard`
+(`CommandDispatcher.cs:915`), so `FindingDegradationEvaluator` is structurally unreachable for
+`obligation`/`hazard`/`rule` — kind-gated, not verb-gated, as the brief required. None of that is
+the blocker.
+
+**Blocker — the section-matching mechanism is unsound under a condition the tests never construct,
+and I reproduced the failure directly against the real, unmodified evaluator**
+(`FindingDegradationEvaluator.cs:50-64`).
+
+`CardLayout.DirectoryFor` (`CardLayout.cs:84-88`) resolves `CardScope.Section` **and**
+`CardScope.Change` to the *same* directory — one flat `changes/<name>/` per change, holding every
+section's cards for the whole change, not one directory per section. So "the finding's own
+containing directory" that `ReadAllCards` scans is the *whole change's* card directory, and the
+method's only way of picking out the *right* section card among however many the change has is a
+plain string match on the free-text `Section` label (`--section` is unvalidated operator-typed text
+— `CommandParser.cs:668` — nothing checks it names a section card that actually exists). Nothing
+enforces at most one `section` card per label in that directory; I found no "record section"
+creation verb in this codebase at all, so nothing currently guards this invariant, and a
+hand-edited or doubly-recorded duplicate is not an exotic scenario for a record this project
+explicitly designs around Markdown files being editable outside the tool (ADR-0003).
+
+I wrote two ad hoc xUnit fixtures against the untouched evaluator (not committed — reverted after,
+tree is clean; `git status --porcelain` confirms) to test exactly this:
+
+1. Two `section` cards in the same directory, both carrying `Section: "6"`, one closed and one
+   open. Same finding, same data, differing only in which duplicate's filename sorts first
+   ordinally: **the answer flips** — `Live` when the open one sorts first, `Degraded` when the
+   closed one does. `Assert.NotEqual` on the two outcomes passed. This is `SectionStatusStructuralTests`'
+   defect class pointed the other way, exactly as the brief named it: not "aggregate over
+   children" (§5's forbidden shape — confirmed absent; `RunSectionStatus` at
+   `CommandDispatcher.cs:764-773` still reads exactly one file and this block doesn't touch it, so
+   that structural test is not made a lie), but "resolve identity by scanning a directory and
+   matching a string label" — the same defect class, a different direction. No refusal, no error,
+   no test anywhere in this diff catches it; the caller gets a plain, confident, wrong answer.
+2. A `section` card that fails to parse (garbage bytes, no frontmatter) sitting in the directory
+   alongside the finding, with no other section card present. `Evaluate` silently treats it as
+   absent (`result.Match(onFailure: static _ => null)` → `continue`) and returns `Live` — same as
+   "no section card exists at all." That's an intentional, documented choice (fail toward not
+   claiming closure), and I don't dispute the direction, but nothing distinguishes "there is no
+   section card" from "there is one and it's corrupt" to a caller — the doc comment argues the
+   distinction doesn't matter for correctness, but it does for diagnosability: a corrupt record
+   should be somehow visible, not silently indistinguishable from "not yet closed."
+
+Point 1 is the blocker: it is a genuine identity defect, silently wrong (not fail-safe — it can
+read `Degraded` for a section that's actually still open, if a stray/duplicate-labeled card happens
+to sort first), reachable with data this project's own write model permits, and it has zero test
+coverage in this block despite the brief asking explicitly for it to be checked. Point 2 I'd accept
+as a nit if 1 is fixed, since it doesn't misreport in either direction, only under-reports certainty.
+
+**Everything else — approved as landed:**
+- Derived-not-stored: demonstrated correct (§6.7 priority 3).
+- Orthogonality of `degraded`/`staleness`: demonstrated correct end-to-end through CLI JSON
+  (§6.7 priority 4).
+- Only `finding` cards degrade: demonstrated correct, kind-gated (§6.7 priority 5); hand-written vs.
+  blind-spot-raised obligation parity is proven at the domain layer as the worker states — no CLI
+  read verb exists yet for those kinds, so CLI-level parity coverage is correctly out of scope here,
+  not a gap in this block.
+- Inverted deferral test: reproduced, fails for the right reason (§6.7 priority 6).
+- Archived cards (§6.7 priority 2): not applicable to this mechanism as built — archive
+  (`CardLayout.ArchivedChangeDirectory`) moves the whole change directory in one operation, finding
+  and section card together, so this directory-local scan cannot end up split across a live and an
+  archived copy. Worth restating for whoever eventually wires an identity-addressed read: the
+  moment lookup stops being "scan the file's own directory," §4's archive-filter debt reattaches.
+
+**Architectural note, not blocking this block:** the deeper fix isn't a dedup check bolted onto this
+scan — it's that a `finding` has no actual reference to *its own* section card, only a label two
+independently-writable free-text fields happen to share. §7/§8 already own identity addressing;
+worth putting to the Architect whether closing that gap belongs there rather than being patched here
+with a "refuse if more than one match" guard that would still leave the underlying non-reference
+in place.
+
+**What I need from the worker:** either (a) a refusal/error when more than one `section` card in
+the directory matches the finding's `Section` label (fail closed on ambiguity, not silently first
+ordinally), with a test constructing exactly that duplicate, or (b) if the Architect judges (a) out
+of scope for this block, an explicit ❓ to the Architect making that call rather than landing silently.
+I'd also like the corrupt-vs-absent distinction (point 2) addressed or explicitly deferred in the
+same pass, since it's cheap once the duplicate case is being handled.
+
+→ @worker
+
+**[worker]** Remediation for the reviewer's blocker, both items in one pass.
+
+**1. Ambiguity is a refusal — new code `ambiguous-section-label`.** `FindingDegradationEvaluator.
+Evaluate` now returns `FindingDegradationEvaluation` (new closed union: `Resolved(status)` /
+`Ambiguous(label, filePaths)`) instead of `FindingDegradationStatus` directly. When more than one
+`section` card in the finding's directory carries its `Section` label, it returns `Ambiguous` with
+every conflicting path (ordinal-sorted, so the message is deterministic); `RunFindingStatus` turns
+that into `ambiguous-section-label`, naming the label and every conflicting file. Proved with the
+reviewer's own fixture shape, reconstructed as a real test rather than an ad hoc scratch fixture:
+two `section` cards both labelled `"6"`, one open, one closed —
+`FindingDegradationEvaluatorTests.TwoSectionCardsShareTheFindingsLabel_RefusesRatherThanPickingOne`
+at the domain layer, `CommandDispatcherFindingStatusTests.TwoSectionCardsShareTheLabel_Refuses_
+AndNamesBothFiles` at the CLI-JSON boundary (asserts the refusal code and that the message names
+both file paths). `§9` inherits this code — the frozen list above needs `ambiguous-section-label`
+added to it when §9 next touches it.
+
+**2. Unreadable is a third answer, not silent absence.** `FindingDegradationStatus` gained a third
+case, `Unreadable(reason)`, alongside `Live`/`Degraded` — the wire shape changed from a
+`"degraded": bool` to `"degradation": "live"|"degraded"|"unreadable"` plus an optional
+`"degradationReason"`, mirroring `staleness`/`stalenessReason`'s existing shape exactly (nothing had
+shipped yet, so this is a clean rename, not a compatibility break). The evaluator now tracks parse
+failures encountered while scanning the directory alongside label matches: a *definitive* match
+(exactly one readable `section` card carrying the label) always wins and answers `Live`/`Degraded`
+regardless of unrelated corruption elsewhere in the directory
+(`DefiniteMatch_TakesPrecedenceOverAnUnrelatedUnreadableCard`); only when there is **no** valid match
+**and** at least one unreadable card is present does it answer `Unreadable`, naming every
+unreadable path it could not rule out
+(`UnparseableSectionCandidate_ReadsUnreadable_NotLive` at the domain layer,
+`UnparseableSectionCandidate_ReadsBackUnreadable` at the CLI boundary). Zero matches and zero
+parse failures still reads `Live`, unchanged — "no section card exists at all" stays a real, distinct
+case from "one exists and is corrupt," which is the whole point.
+
+**What this does and does not cover, stated plainly for the supervisor:**
+
+- **Precedence is: ambiguous > definite match > unreadable > live-by-default.** A duplicate label
+  refuses even if one of the duplicates would otherwise resolve unambiguously — ambiguity always
+  wins over a confident single answer, deliberately, since "which one is real" is exactly the
+  question this method has no basis to answer.
+- **The refusal fires from `finding status` only.** No other verb reads a `finding` card's
+  degradation yet, so there is nothing else to guard.
+- **I did not touch the deeper defect the Architect named** — free-text section labels, no
+  section-creation verb, and section/change sharing a directory. Both fixes here are surface-level:
+  detect the two bad conditions that mechanism can produce and fail closed/report honestly on them,
+  exactly as scoped. If two section cards share a label *and* one is later hand-edited to a third,
+  different label, or a section card is deleted outright, this evaluator has no way to notice —
+  it only ever sees what's on disk at read time, same as every other read verb in this codebase.
+- **`Unreadable`'s reason string names file paths but not why each failed to parse** (the
+  individual `CardFileParseResult.Failure.Reason` strings are discarded, only the paths are kept) —
+  a deliberate simplification; happy to add the individual reasons if that's wanted, but the brief's
+  "third answer" only asked for the distinction to exist, not for full parse diagnostics inline.
+- **No test exercises three or more section cards sharing a label**, or a mix of an ambiguous set
+  *and* an unreadable card in the same directory (ambiguity is checked first in the implementation,
+  so it would win, but that specific interaction isn't asserted).
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (`make gates`,
+480/480 passing — 475 from the prior round plus 5 new: 3 domain, 2 CLI).
+
+Not committed, nothing ticked.
+
+→ @reviewer
+
+**[reviewer]** Re-audit, block D (6.7), round 2. **Verdict: Approve.**
+
+`make gates` on the remediated tree: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 480/480 (475 prior + 5 new, as reported). Everything below was verified by execution
+against the real, unmodified code — four throwaway xUnit fixtures written, run, and reverted
+(tree confirmed clean via `git status --porcelain` before and after; matches exactly the worker's
+diff, nothing extra left behind).
+
+**The flip is fixed, and I could not make it recur.** Reran my original two-card fixture
+(`OpenSection_FindingReadsLive`/`ClosedSection...` shape, one label, one open + one closed) — now
+refuses with `Ambiguous`, doesn't resolve. Then built the mirror image explicitly — swapped *which*
+card is closed **and** swapped which filename sorts first — both orderings refuse. The fix isn't
+order-dependent in either direction.
+
+**The two declared gaps, checked:**
+- **Three-or-more duplicate labels**: refuses, and names all three conflicting paths (not just two)
+  — `matches.Count > 1` has no arity assumption baked in, confirmed by construction.
+- **Ambiguous-plus-unreadable in the same directory**: ambiguity wins, exactly as declared. Two
+  valid matching `section` cards plus one unrelated garbage file in the same directory →
+  `Ambiguous` naming exactly the two conflicting section cards; the garbage file is correctly
+  excluded from the conflict list (it was never a match — parse failures go to `unreadablePaths`,
+  which is only consulted when `matches.Count == 0`). Matches the code's actual branch order
+  (`matches.Count > 1` checked before `unreadablePaths.Count > 0`), not just the stated intent.
+
+**The `Unreadable` precedence worry — checked directly, does not reproduce.** Built the specific
+case asked for: the finding's *own* section card corrupted, with no other section card of any
+label present in the directory (so there is exactly one plausible candidate and it's unreadable).
+Every parse failure is added to `unreadablePaths` unconditionally, before `Kind` is even known —
+there is no code path that classifies a parse failure as "unrelated" and drops it, because nothing
+about a card that failed to parse is knowable, including whether it was a `section` card. Result:
+`Unreadable`, not `Live`. The "wins over unrelated corruption" claim only fires when there is a
+*separate, successfully-parsed, matching* `section` card to answer from
+(`DefiniteMatch_TakesPrecedenceOverAnUnrelatedUnreadableCard`, which I also reran) — reproduced that
+too, and it's the correct case for precedence to favor the definite answer, since a real match was
+found and the corruption is provably a different file.
+
+**The precedence call — ambiguous beats a definite match, even when the duplicates would agree.**
+Judging this as asked: the worker's rule refuses even when both duplicate-labeled section cards
+happen to carry the same status (e.g. both closed), where the *specific question* "is this finding
+degraded" would have one determinate answer either way. That is a real cost — it refuses some
+technically-answerable cases. But I think it's the right call, not merely a defensible one: a label
+collision is evidence the record's identity model has been violated regardless of whether the two
+answers currently agree, and "agree today" is not "agree tomorrow" — one of the two could close
+independently later while the other stays open, and an implementation that resolves on agreement
+would have spent the intervening time silently reporting a coincidentally-correct answer over a
+record that was already broken, with nothing prompting a fix until the day the coincidence ends.
+Refusing immediately, unconditionally, surfaces the corruption at the moment it's created rather
+than at the moment it first matters, which is the same trade-off this project has made everywhere
+else a fail-closed refusal was chosen over a "still technically answerable" resolution. The reverse
+precedence (favor a resolvable answer, refuse only on genuine disagreement) would be more
+permissive and more dangerous for exactly that reason — it turns "the record has two cards claiming
+to be the same section" into an unobserved fact until the day it stops being coincidentally
+harmless.
+
+**Refusal mechanics and wire shape, confirmed:**
+- `ambiguous-section-label` is a `CommandOutcome.Refusal` returned from `RunFindingStatus`
+  (`CommandDispatcher.cs:965-969`), routed through the same `ExitCodeFor` → `RefusalExitCode` path
+  every other refusal takes — not a thrown exception, not folded into the tool-failure envelope.
+  `CommandDispatcherFindingStatusTests.TwoSectionCardsShareTheLabel_Refuses_AndNamesBothFiles`
+  asserts the exit code and the envelope shape directly; I reran it.
+- The three `degradation` values (`"live"`/`"degraded"`/`"unreadable"`) are distinguishable in the
+  emitted JSON, each with its own test at the CLI boundary; `degradationReason` is present exactly
+  when the answer isn't `"live"`, mirroring `staleness`/`stalenessReason`'s existing convention.
+- **The wire-shape rename (`"degraded": bool` → `"degradation": string` + `"degradationReason"`)
+  does not trigger O-4.** Confirmed two ways: O-4 (§5 close, restated §6 block A) is about the
+  **card file** wire format — "every wire form any shipped writer has emitted must still parse" —
+  and `finding status`'s JSON is a read-time CLI result, never persisted to a card file, so it isn't
+  the kind of artifact O-4 governs at all. And even reading O-4 broadly, nothing shipped: this
+  whole feature is uncommitted WIP from this same review round, so no binary anyone could run ever
+  emitted `"degraded": bool`. `grep -rn '"degraded"'` across the repo turns up nothing outside this
+  DEVLOG's own history and one now-unambiguous local variable name (`afterClose.GetProperty
+  ("degradation").GetString()` returning the string `"degraded"`) — no stray parser or fixture
+  reads the old key.
+
+Nothing else regressed: the round-1 approvals (derived-not-stored, staleness/degradation
+orthogonality, kind-gating, the inverted deferral test, archived-cards inapplicability) still hold —
+none of the touched surfaces changed shape in a way that would unsettle them, and `make gates`
+confirms the full 480-test suite, not just the new cases.
+
+**Signing off. §6 is ready for the supervisor over `8b44a51..HEAD`.**
+
+→ @architect
+
 ## NEXT
 
 

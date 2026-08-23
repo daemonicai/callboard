@@ -132,6 +132,98 @@ public sealed class CommandDispatcherFindingStatusTests
         Assert.Contains("state-42", status.GetProperty("stalenessReason").GetString());
     }
 
+    // §6 block D: "degradation" reads "live" while the section that raised the finding is still
+    // open, and this is asserted against the emitted JSON directly, not only against the domain
+    // evaluator — the same "answer must not under-report" discipline this file already applies to
+    // staleness.
+    [Fact]
+    public void OpenSection_FindingReadsBackLive()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0010.md");
+
+        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        WriteInitialSectionCard(repo, "s-0001", "S-0001");
+        var status = Status(repo, findingPath);
+
+        Assert.Equal("live", status.GetProperty("degradation").GetString());
+        Assert.False(status.TryGetProperty("degradationReason", out _));
+    }
+
+    // The other half: once the section actually closes (through the CLI's own `section close`,
+    // not a hand-built domain call), the same finding reads back degraded — and staleness is
+    // computed independently, so a Current finding stays Current even once degraded (§6 block D
+    // ruling: the two fields must not collapse into one).
+    [Fact]
+    public void SectionCloses_FindingReadsBackDegraded_AndStalenessIsUnaffected()
+    {
+        using var repo = new TempGitRepo();
+        var sourcePath = Path.Combine(repo.Path, "src", "Foo.cs");
+        Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+        File.WriteAllText(sourcePath, "original content");
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0011.md");
+
+        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var sectionPath = WriteInitialSectionCard(repo, "s-0002", "S-0002");
+
+        var beforeClose = Status(repo, findingPath);
+        Assert.Equal("live", beforeClose.GetProperty("degradation").GetString());
+        Assert.Equal("current", beforeClose.GetProperty("staleness").GetString());
+
+        var closeOutput = new StringWriter();
+        var closeExit = RunInRepo(["section", "close", sectionPath, "--role", "architect", "--change", ChangeName], closeOutput, repo.Path, "unused");
+        Assert.Equal(CommandDispatcher.SuccessExitCode, closeExit);
+
+        var afterClose = Status(repo, findingPath);
+        Assert.Equal("degraded", afterClose.GetProperty("degradation").GetString());
+        Assert.Equal("current", afterClose.GetProperty("staleness").GetString());
+    }
+
+    // §6 block D remediation (reviewer blocker 1), at the CLI boundary: two `section` cards in
+    // the finding's directory sharing its `--section` label refuse rather than silently picking
+    // whichever sorts first ordinally.
+    [Fact]
+    public void TwoSectionCardsShareTheLabel_Refuses_AndNamesBothFiles()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0012.md");
+
+        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var openPath = WriteInitialSectionCard(repo, "s-a-open", "S-0100");
+        var closedPath = WriteClosedSectionCard(repo, "s-b-closed", "S-0101");
+
+        var output = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["finding", "status", findingPath],
+            output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("ambiguous-section-label", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        var message = doc.RootElement.GetProperty("refusal").GetProperty("message").GetString()!;
+        Assert.Contains(openPath, message, StringComparison.Ordinal);
+        Assert.Contains(closedPath, message, StringComparison.Ordinal);
+    }
+
+    // §6 block D remediation (reviewer blocker 2), at the CLI boundary: a card in the finding's
+    // directory that fails to parse, with no valid `section` card matching its label, reads
+    // "unreadable" rather than silently "live".
+    [Fact]
+    public void UnparseableSectionCandidate_ReadsBackUnreadable()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0013.md");
+        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+
+        var garbagePath = Path.Combine(repo.CardsDirectory, "s-broken.md");
+        File.WriteAllText(garbagePath, "not a card at all");
+
+        var status = Status(repo, findingPath);
+
+        Assert.Equal("unreadable", status.GetProperty("degradation").GetString());
+        Assert.Contains(garbagePath, status.GetProperty("degradationReason").GetString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void RecordResult_ReportsTheDispositionActuallyRecorded()
     {
@@ -261,6 +353,27 @@ public sealed class CommandDispatcherFindingStatusTests
         var output = new StringWriter();
         var exitCode = RunInRepo(args.ToArray(), output, repo.Path, "Body of the finding.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+    }
+
+    private static string WriteInitialSectionCard(TempGitRepo repo, string fileStem, string id)
+    {
+        var path = Path.Combine(repo.CardsDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Section, "Title", "open", CardOwner.Architect, CardScope.Change, "6", FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    private static string WriteClosedSectionCard(TempGitRepo repo, string fileStem, string id)
+    {
+        var path = Path.Combine(repo.CardsDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Section, "Title", "closed", CardOwner.Architect, CardScope.Change, "6", FixedNow, FixedNow);
+        var sectionFields = new SectionCardFields(null, CardOwner.Architect, FixedNow, []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], sectionFields);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
     }
 
     private static JsonElement Status(TempGitRepo repo, string findingPath)

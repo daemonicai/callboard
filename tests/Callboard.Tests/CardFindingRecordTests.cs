@@ -210,14 +210,24 @@ public sealed class CardFindingRecordTests : IDisposable
 
     // 6.3's "does not degrade" — what a test can prove today, and what it cannot yet. Nothing in
     // this codebase currently degrades *anything* at section close (6.7 is what builds finding
-    // degradation); the property this test actually establishes is narrower and structural: the
-    // raised card's fixed scope (Change for an obligation, Repository for a hazard — never
-    // Section) means CloseSection, which only ever writes the section card's own file, has no way
-    // to reach it at all, regardless of what mechanism 6.7 eventually builds for findings. 6.7
-    // must not weaken this assertion for the raised card; it may only add a *separate* assertion,
-    // on the finding, that it now does degrade.
+    // degradation, since the raised card's fixed scope (Change for an obligation, Repository for
+    // a hazard — never Section) means CloseSection, which only ever writes the section card's own
+    // file, has no way to reach it at all. That half is unchanged by 6.7 and stays a byte
+    // comparison.
+    //
+    // §6 block D inverts the other half. The original (block B) version of this test asserted the
+    // *finding's* bytes were also unchanged after close — true then only because nothing degraded
+    // anything yet, so the assertion passed for a reason unrelated to the property it claimed to
+    // prove (the same casing-coincidence shape §8's carried caveat warns against, DEVLOG §6). Block
+    // D still asserts the finding's bytes are unchanged (derivation never rewrites the finding —
+    // that half of the old claim was actually right, just for the wrong reason) and additionally
+    // asserts what actually changes: the finding reads Live before close and Degraded after,
+    // through the same evaluator `finding status` calls. Break <see
+    // cref="FindingDegradationEvaluator.Evaluate"/> (e.g. make it always return
+    // <see cref="FindingDegradationStatus.Live"/>) and this test goes red on the post-close
+    // assertion — the failure block B's version could never produce.
     [Fact]
-    public void ClosingTheSection_LeavesTheRaisedCardCompletelyUntouched()
+    public void ClosingTheSection_LeavesTheRaisedCardUntouchedAndDegradesTheFinding()
     {
         var findingPath = Path.Combine(_directory, "f-0005.md");
         var raisedPath = RaisedCardPath(CardKind.Hazard, "h-0004");
@@ -236,16 +246,22 @@ public sealed class CardFindingRecordTests : IDisposable
         var raisedBytesBefore = File.ReadAllText(raisedPath);
         var findingBytesBefore = File.ReadAllText(findingPath);
 
+        var findingBeforeClose = AssertParseSuccess(CardStore.ReadCard(findingPath));
+        Assert.Same(FindingDegradationStatus.Live, AssertResolved(FindingDegradationEvaluator.Evaluate(findingBeforeClose, findingPath)));
+
         var closeOutcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Recorded.AddDays(1), TimeSpan.FromSeconds(5), ChangeName);
         Assert.IsType<CardSectionCloseOutcome.Closed>(closeOutcome);
 
         // The raised card: byte-identical. This is the part 6.7 must not break.
         Assert.Equal(raisedBytesBefore, File.ReadAllText(raisedPath));
 
-        // The finding: also byte-identical today, because nothing degrades it yet. This half is
-        // what 6.7 is expected to change — once it lands, this line (not the raised-card assertion
-        // above) is what should be replaced with a real degradation check.
+        // The finding: byte-identical too — degradation is derived, never written (6.7's ruling).
         Assert.Equal(findingBytesBefore, File.ReadAllText(findingPath));
+
+        // But it now reads as degraded, through the exact same read-and-evaluate path re-reading
+        // the (unchanged) bytes off disk.
+        var findingAfterClose = AssertParseSuccess(CardStore.ReadCard(findingPath));
+        Assert.Same(FindingDegradationStatus.Degraded, AssertResolved(FindingDegradationEvaluator.Evaluate(findingAfterClose, findingPath)));
     }
 
     // §6 block B remediation, reviewer blocker 2, exercised directly against RollbackRaisedCard
@@ -374,4 +390,10 @@ public sealed class CardFindingRecordTests : IDisposable
         result.Match<CardFile>(
             onSuccess: success => success.Card,
             onFailure: failure => throw new Xunit.Sdk.XunitException($"expected parse success, got failure: {failure.Reason}"));
+
+    private static FindingDegradationStatus AssertResolved(FindingDegradationEvaluation evaluation) =>
+        evaluation.Match(
+            onResolved: static status => status,
+            onAmbiguous: static (label, filePaths) =>
+                throw new Xunit.Sdk.XunitException($"expected Resolved, got Ambiguous('{label}', [{string.Join(", ", filePaths)}])."));
 }

@@ -887,13 +887,22 @@ internal static class CommandDispatcher
 
     /// <summary>
     /// <c>finding status</c> (§6 block C, findings' "Findings stale when their extent moves" /
-    /// "Findings that argue rather than measure are dispositioned separately"): reads
+    /// "Findings that argue rather than measure are dispositioned separately"; §6 block D, findings'
+    /// "A `finding` SHALL … degrade at section close"): reads
     /// <paramref name="parsed"/>'s own <see cref="ParsedCommand.FindingStatus.FilePath"/> via
     /// <see cref="CardStore.ReadCard"/>, then answers <see cref="FindingStalenessEvaluator.Evaluate"/>
-    /// against it — the CLI-JSON surface §6 block C's brief calls for so that "the answer must not
-    /// under-report" is asserted against emitted output directly, not only at the domain layer (§5's
-    /// own gap: no CLI verb ever read <c>GateStatus.Absent</c> back). <see langword="private"/>:
-    /// <see cref="CommandParser"/> cannot name this method.
+    /// and <see cref="FindingDegradationEvaluator.Evaluate"/> against it — the CLI-JSON surface §6
+    /// block C's brief calls for so that "the answer must not under-report" is asserted against
+    /// emitted output directly, not only at the domain layer (§5's own gap: no CLI verb ever read
+    /// <c>GateStatus.Absent</c> back). Staleness and degradation are answered independently and
+    /// emitted as two separate fields (§6 block D ruling) — neither evaluator's outcome influences
+    /// the other's. When <see cref="FindingDegradationEvaluator.Evaluate"/> answers <see
+    /// cref="FindingDegradationEvaluation.Ambiguous"/>, this mints <c>ambiguous-section-label</c>
+    /// rather than emitting any result at all (§6 block D remediation — the reviewer proved by
+    /// execution that two <c>section</c> cards sharing one <c>Section</c> label make the evaluator's
+    /// answer depend on filesystem enumeration order; picking one silently would be a guess this
+    /// method has no basis for). <see langword="private"/>: <see cref="CommandParser"/> cannot name
+    /// this method.
     /// </summary>
     private static CommandOutcome RunFindingStatus(ParsedCommand.FindingStatus parsed)
     {
@@ -929,18 +938,35 @@ internal static class CommandDispatcher
                     onNotMeasurable: static reason => ("not-measurable", (string?)reason),
                     onNotApplicable: static reason => ("not-applicable", (string?)reason));
 
-                return new CommandOutcome.Success(new FindingStatusResult
-                {
-                    FilePath = parsed.FilePath,
-                    Id = card.Frontmatter.Id,
-                    Title = card.Frontmatter.Title,
-                    Disposition = card.FindingFields.Disposition.Match(
-                        onMeasured: static () => "measured",
-                        onArguedClean: static () => "argued-clean"),
-                    VerifiedAt = card.FindingFields.VerifiedAt,
-                    Staleness = statusText,
-                    StalenessReason = reason,
-                });
+                var degradation = FindingDegradationEvaluator.Evaluate(card, parsed.FilePath);
+                return degradation.Match<CommandOutcome>(
+                    onResolved: status =>
+                    {
+                        var (degradationText, degradationReason) = status.Match(
+                            onLive: static () => ("live", (string?)null),
+                            onDegraded: static () => ("degraded", (string?)null),
+                            onUnreadable: static reason => ("unreadable", (string?)reason));
+
+                        return new CommandOutcome.Success(new FindingStatusResult
+                        {
+                            FilePath = parsed.FilePath,
+                            Id = card.Frontmatter.Id,
+                            Title = card.Frontmatter.Title,
+                            Disposition = card.FindingFields.Disposition.Match(
+                                onMeasured: static () => "measured",
+                                onArguedClean: static () => "argued-clean"),
+                            VerifiedAt = card.FindingFields.VerifiedAt,
+                            Staleness = statusText,
+                            StalenessReason = reason,
+                            Degradation = degradationText,
+                            DegradationReason = degradationReason,
+                        });
+                    },
+                    onAmbiguous: (label, filePaths) => new CommandOutcome.Refusal(
+                        "ambiguous-section-label",
+                        $"{filePaths.Count} 'section' cards carry the label '{label}' in this finding's directory " +
+                        $"({string.Join(", ", filePaths)}) — refusing to guess which one raised this finding rather " +
+                        $"than reading it from whichever file happened to sort first."));
             },
             onFailure: failure => throw new InvalidOperationException(
                 $"card '{parsed.FilePath}' could not be read as a finding card: {failure.Reason}"));

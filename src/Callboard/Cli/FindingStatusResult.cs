@@ -40,5 +40,19 @@ internal sealed class FindingStatusResult : ICommandResult
     [JsonPropertyName("stalenessReason")]
     public string? StalenessReason { get; init; }
 
+    /// <summary><c>"live"</c>, <c>"degraded"</c> or <c>"unreadable"</c> — <see
+    /// cref="Cards.FindingDegradationStatus"/>'s three wire forms (§6 block D, findings: "the
+    /// finding is no longer offered as live"; §6 block D remediation for <c>"unreadable"</c> — a
+    /// section card could not be ruled out but could not be read either, and that must not read
+    /// identically to "no section card exists"). Derived from the section card's own
+    /// <c>closed_at</c> every time this is read — never stored on the finding itself. Orthogonal to
+    /// <see cref="Staleness"/>: a degraded finding still carries a staleness answer, and a stale
+    /// finding is not necessarily degraded.</summary>
+    [JsonPropertyName("degradation")]
+    public required string Degradation { get; init; }
+
+    [JsonPropertyName("degradationReason")]
+    public string? DegradationReason { get; init; }
+
     public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CliJsonContext.Default.FindingStatusResult);
 }
