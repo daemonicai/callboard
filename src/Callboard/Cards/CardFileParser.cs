@@ -46,6 +46,13 @@ internal static class CardFileParser
         "base", "closed_by", "closed_at",
     };
 
+    // §6 block A's four fields — known only when the card's own kind is finding, the same
+    // two-pass reasoning as SectionOnlyFrontmatterKeys above.
+    private static readonly HashSet<string> FindingOnlyFrontmatterKeys = new(StringComparer.Ordinal)
+    {
+        "instrument", "extent", "extent_value", "verified_at", "blind_spot", "blind_spot_card",
+    };
+
     // The six comment-header fields this build recognises. Same rule, same reason, applied to the
     // per-comment header instead of the frontmatter block.
     private static readonly HashSet<string> KnownCommentHeaderKeys = new(StringComparer.Ordinal)
@@ -150,6 +157,16 @@ internal static class CardFileParser
             onDecision: static () => false,
             onSection: static () => true);
 
+        var isFindingCard = frontmatterResult.Frontmatter!.Kind.Match(
+            onBlock: static () => false,
+            onQuestion: static () => false,
+            onFinding: static () => true,
+            onObligation: static () => false,
+            onRule: static () => false,
+            onHazard: static () => false,
+            onDecision: static () => false,
+            onSection: static () => false);
+
         var unknownFrontmatterFields = new List<(string Key, string RawValue)>();
         foreach (var (key, value) in orderedFields)
         {
@@ -164,6 +181,11 @@ internal static class CardFileParser
             }
 
             if (isSectionCard && SectionOnlyFrontmatterKeys.Contains(key))
+            {
+                continue;
+            }
+
+            if (isFindingCard && FindingOnlyFrontmatterKeys.Contains(key))
             {
                 continue;
             }
@@ -197,6 +219,20 @@ internal static class CardFileParser
             // sectionFieldsResult.Failure is null here, so SectionFields is guaranteed non-null by
             // BuildSectionFields's own contract.
             sectionFields = sectionFieldsResult.SectionFields!;
+        }
+
+        var findingFields = FindingCardFields.Empty;
+        if (isFindingCard)
+        {
+            var findingFieldsResult = BuildFindingFields(fields);
+            if (findingFieldsResult.Failure is { } findingFieldsFailure)
+            {
+                return Failure(findingFieldsFailure);
+            }
+
+            // findingFieldsResult.Failure is null here, so FindingFields is guaranteed non-null by
+            // BuildFindingFields's own contract.
+            findingFields = findingFieldsResult.FindingFields!;
         }
 
         var bodyLines = new List<string>();
@@ -357,7 +393,7 @@ internal static class CardFileParser
 
         // frontmatterResult.Failure is null here, so Frontmatter is guaranteed non-null by BuildFrontmatter's own contract.
         return new CardFileParseResult.Success(
-            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts));
+            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts, findingFields));
     }
 
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
@@ -540,6 +576,152 @@ internal static class CardFileParser
         }
 
         return (new SectionCardFields(baseCommit, closedBy, closedAt, []), null);
+    }
+
+    /// <summary>
+    /// Extracts §6 block A's four known-on-a-finding-card fields from a frontmatter
+    /// <paramref name="fields"/> dictionary already confirmed to belong to a <c>finding</c> card —
+    /// see the <c>isFindingCard</c> gate in <see cref="Parse"/>, the only caller.
+    /// <c>instrument</c>/<c>verified_at</c> follow the same "absent or empty parses to null"
+    /// convention <see cref="BuildBlockFields"/> and <see cref="BuildSectionFields"/> already use.
+    ///
+    /// <para>
+    /// <c>extent</c> is absent-or-<c>"block-scope"</c> → <see cref="FindingExtent.BlockScope"/> (the
+    /// same default findings' "Extent is declared, widest by default" names for an undeclared
+    /// extent), <c>"instrument"</c> → <see cref="FindingExtent.Instrument"/> reading its command from
+    /// <c>extent_value</c>, or <c>"explicit"</c> → <see cref="FindingExtent.Explicit"/> reading its
+    /// comma-joined item list from <c>extent_value</c> the same way <c>tasks</c>/<c>blocked_by</c>
+    /// do. Every failure mode <see cref="FindingExtent"/>'s own constructors would otherwise throw
+    /// on (a missing/empty command, an empty or blank-item explicit list) is checked here first, the
+    /// same discipline <see cref="RequireNoEmptyListItem"/> already applies for
+    /// <see cref="BlockCardFields"/> — untrusted input becomes a parse failure, never an unhandled
+    /// exception. For the <c>explicit</c> form specifically, <see cref="ParseExtent"/> also wraps
+    /// the call to <see cref="FindingExtent.Explicit"/> in a try/catch, so that guarantee holds
+    /// regardless of whether these pre-checks stay correctly ordered ahead of construction — see the
+    /// comment at that call site.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>blind_spot</c> has no absent-parses-to-null convention: it is <c>"none"</c> →
+    /// <see cref="FindingBlindSpotDeclaration.None"/>, <c>"raised-as"</c> →
+    /// <see cref="FindingBlindSpotDeclaration.RaisedAs"/> reading the card id from
+    /// <c>blind_spot_card</c>, or a parse failure — including when the key is absent altogether.
+    /// This is deliberate: <see cref="FindingCardFields.BlindSpot"/> cannot represent "undeclared" at
+    /// all (see that type's own doc comment), so a finding card genuinely missing the field is
+    /// malformed input, the same way a card missing <c>id</c> or <c>kind</c> is — not a legacy wire
+    /// form to widen for, since no build has ever shipped a <c>finding</c> card writer before this
+    /// one (O-4 does not apply here).
+    /// </para>
+    /// </summary>
+    private static (FindingCardFields? FindingFields, string? Failure) BuildFindingFields(
+        IReadOnlyDictionary<string, string> fields)
+    {
+        var instrument = ParseOptionalFrontmatterValue(fields, "instrument");
+        var verifiedAt = ParseOptionalFrontmatterValue(fields, "verified_at");
+
+        var (extent, extentFailure) = ParseExtent(fields);
+        if (extentFailure is not null)
+        {
+            return (null, extentFailure);
+        }
+
+        var (blindSpot, blindSpotFailure) = ParseBlindSpot(fields);
+        if (blindSpotFailure is not null)
+        {
+            return (null, blindSpotFailure);
+        }
+
+        return (new FindingCardFields(instrument, extent!, verifiedAt, blindSpot!), null);
+    }
+
+    private static (FindingExtent? Extent, string? Failure) ParseExtent(IReadOnlyDictionary<string, string> fields)
+    {
+        if (!fields.TryGetValue("extent", out var rawForm) || rawForm.Length == 0)
+        {
+            return (FindingExtent.BlockScope, null);
+        }
+
+        var form = CardFileFormat.UnescapeFrontmatterValue(rawForm);
+        switch (form)
+        {
+            case "block-scope":
+                return (FindingExtent.BlockScope, null);
+
+            case "instrument":
+                {
+                    var command = ParseOptionalFrontmatterValue(fields, "extent_value");
+                    if (string.IsNullOrWhiteSpace(command))
+                    {
+                        return (null, "finding card has extent 'instrument' with no (or an empty) 'extent_value'");
+                    }
+
+                    return (FindingExtent.Instrument(command), null);
+                }
+
+            case "explicit":
+                {
+                    var items = fields.TryGetValue("extent_value", out var itemsText)
+                        ? CardFileFormat.SplitFrontmatterList(itemsText)
+                        : (IReadOnlyList<string>)[];
+
+                    if (items.Count == 0)
+                    {
+                        return (null, "finding card has extent 'explicit' with no items in 'extent_value'");
+                    }
+
+                    if (RequireNoEmptyListItem(items, "extent_value") is { } itemsFailure)
+                    {
+                        return (null, itemsFailure);
+                    }
+
+                    // The two checks above are the primary, message-bearing guard. This try/catch
+                    // is the backstop: FindingExtent.Explicit's own validating accessor rejects the
+                    // same two conditions by throwing ArgumentException, so if either check above is
+                    // ever removed or reordered, construction still degrades to a parse failure here
+                    // rather than an unhandled exception reaching untrusted-input callers (reviewer
+                    // finding, §6 block A).
+                    try
+                    {
+                        return (FindingExtent.Explicit(items), null);
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        return (null, $"finding card has an invalid extent 'explicit' declaration: {ex.Message}");
+                    }
+                }
+
+            default:
+                return (null, $"finding card has unrecognised 'extent': '{form}'. Recognised forms: instrument, explicit, block-scope.");
+        }
+    }
+
+    private static (FindingBlindSpotDeclaration? BlindSpot, string? Failure) ParseBlindSpot(IReadOnlyDictionary<string, string> fields)
+    {
+        if (!fields.TryGetValue("blind_spot", out var rawForm) || rawForm.Length == 0)
+        {
+            return (null, "missing required frontmatter field for a finding card: blind_spot");
+        }
+
+        var form = CardFileFormat.UnescapeFrontmatterValue(rawForm);
+        switch (form)
+        {
+            case "none":
+                return (FindingBlindSpotDeclaration.None, null);
+
+            case "raised-as":
+                {
+                    var cardId = ParseOptionalFrontmatterValue(fields, "blind_spot_card");
+                    if (string.IsNullOrWhiteSpace(cardId))
+                    {
+                        return (null, "finding card has blind_spot 'raised-as' with no (or an empty) 'blind_spot_card'");
+                    }
+
+                    return (FindingBlindSpotDeclaration.RaisedAs(cardId), null);
+                }
+
+            default:
+                return (null, $"finding card has unrecognised 'blind_spot': '{form}'. Recognised declarations: none, raised-as.");
+        }
     }
 
     /// <summary>

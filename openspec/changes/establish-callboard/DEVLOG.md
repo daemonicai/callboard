@@ -11574,6 +11574,363 @@ final round.
 
 ---
 
+## 6. Findings
+
+**[architect]** Base: `8b44a51` — §6 delivers the `finding` card: instrument, extent, `verified_at`
+and blind-spot declaration; the refusal that a clean finding cannot be recorded without a
+declaration; the blind spot raised as an obligation/hazard that outlives the section; the three
+extent forms with block scope as the default; staleness against declared extent; the clean-as-argued
+disposition excluded from staleness; and degradation at section close.
+
+**[architect]** Two Product Owner rulings taken before the first block, so no worker has to guess:
+
+1. **Staleness is a content fingerprint, not git (6.5).** `callboard` does **not** invoke git. At
+   record time the tool fingerprints the files/ranges the declared extent covers and stores that
+   alongside `verified_at`; staleness is re-fingerprinting now and comparing. An instrument-form
+   extent has no file set to fingerprint and is surfaced as "re-verification requires re-running
+   `<instrument>`", never as a measured staleness. This keeps §5's standing position — recorded as
+   supplied, never checked against git — intact, and keeps the NativeAOT binary free of a `git`
+   process dependency. The fingerprint field is **block C's** to add; block A only has to make the
+   extent model able to name a file set.
+2. **Block carve: A (6.1, 6.4) → B (6.2, 6.3) → C (6.5, 6.6) → D (6.7).**
+
+**[architect]** Brief — block A, tasks 6.1 and 6.4. **This is §6's first frontmatter widening, so
+O-4 arrives in this block and this block discharges it.**
+
+**Tasks**
+
+- 6.1 Implement the `finding` card with instrument, extent, `verified_at` and blind spot
+- 6.4 Implement the three extent declaration forms, defaulting to block scope and requiring
+  narrowing to be explicit
+
+**Spec — `specs/findings/spec.md`, "Clean findings are cards, distinct from rules"**
+
+> A result checked and found clean SHALL be recorded as a `finding` card carrying the instrument
+> used, the extent covered, the `verified_at` state it was verified against, and a declared blind
+> spot. A `finding` SHALL be section-scoped … A `rule` SHALL carry none of these fields and SHALL
+> survive section close. The system SHALL NOT treat a finding as a rule or convert one into the
+> other.
+
+**Spec — "Extent is declared, widest by default"**
+
+> A finding SHALL declare its extent in one of the following forms, in order of preference:
+> 1. a re-runnable instrument, whose extent is what re-running it covers;
+> 2. explicit paths, line ranges or symbols;
+> 3. the scope of the block that raised it.
+>
+> Where no extent is declared, the system SHALL default to the scope of the block that raised the
+> finding. Narrowing the extent below that default SHALL require an explicit declaration.
+>
+> A re-runnable instrument SHALL be the preferred form for a finding asserting the absence of
+> something across a subtree, because an enumerated path set either over-states or under-states such
+> an extent.
+
+**Architect rulings binding this block**
+
+- **The card carries the *declaration*, not the blind spot's content.** 6.1 says the card carries "a
+  declared blind spot"; the next requirement says a declared blind spot "SHALL NOT be recorded as
+  part of the clean result" and must be raised as an `obligation` or `hazard`. These are not in
+  conflict once the field is read as the *declaration*: either an explicit assertion that there is
+  none, or a reference to the card the blind spot was raised as. Model it as a closed union —
+  `None` / `RaisedAs(cardId)` — the same shape as every other union in `Cards/`. **A third state
+  meaning "not declared" must be unrepresentable on a constructed finding**; that is what makes
+  6.2's refusal a refusal about *input* rather than a nullable field checked late. The verb that
+  actually raises the obligation/hazard card is **block B's**, not yours.
+- **Extent is a closed union of exactly the three spec forms**: `Instrument(command)`,
+  `Explicit(paths / line ranges / symbols)`, `BlockScope`. Absent declaration resolves to
+  `BlockScope`. **Narrowing is explicit by construction** — there is no inference path that produces
+  `Explicit` from anything other than a caller stating it. Block A carries the vocabulary and the
+  default, the §5 convention (`BlockCardFields`: "block A carries the vocabulary, not the
+  enforcement").
+- **Kind-specific fields live in their own type.** Follow `BlockCardFields` / `SectionCardFields`
+  exactly: a `FindingCardFields` record, *not* new members on `CardFrontmatter`. The same keys
+  hand-written on another kind stay preserved-unknown, and `CardFileParser` decides the home from
+  the card's own `kind`.
+- **`verified_at` is a state name, recorded as supplied.** Do not validate it against git.
+- **Do not touch `rule`.** "A `rule` SHALL carry none of these fields" is satisfied by the fields
+  being on `FindingCardFields` and the parser routing them by kind — state that in a test, don't
+  add a negative field to `rule`.
+
+**O-4 — this block owes the compatibility corpus, and it is the first done-gate**
+
+From §5's close: *every wire form any shipped writer has emitted must still parse*. §5's
+`gate_results` widening (`label=exitcode` → `label=exitcode=round`) made every card the previous
+binary had written unreadable, and the section's own "one function is the rule" lesson did not cover
+it — there was one function and it was still wrong for data already on disk. The fix shape is a
+**compatibility corpus test**: a directory of card fixtures in **every historical wire form** the
+tool has ever written, which every future parser change must keep parsing. Land it in this block,
+covering at minimum both `gate_results` spellings and a card with none of §6's new keys, and write
+it so that the *next* widening is forced through it. **Reader may widen; the writer emits exactly
+one form** — keep that asymmetry.
+
+**Done-gates for this block**
+
+- The compatibility corpus exists and fails if a card in a historical wire form stops parsing.
+- A finding with no declared extent parses and reads back as `BlockScope`.
+- A finding cannot be constructed without a blind-spot declaration — demonstrate it by *writing the
+  mistake* and showing it does not compile, or by showing the one accessor both the constructor and
+  a `with` expression are forced through (§5 block A's reopened finding is the precedent; a
+  constructor-only check is a bypass).
+- Round-trip: write → read → identical, including unknown fields preserved.
+- Each new refusal (if any) lands with a test that it *fires*, mutation-verified.
+- `make gates` → `GATES_EXIT:0`, quoted, not interpreted.
+
+**§5's working rules apply from your first submission, not after the second round:** a test proves
+the proposition a mutation of the real defect would falsify; find defects by execution, not by
+reading; enumerate a surface mechanically or say you didn't; declare what you could not demonstrate
+rather than reporting a clean pass; and if the brief and the code disagree, stop and post — the
+brief is not evidence.
+
+→ @worker
+
+**[worker]** Block A (6.1, 6.4) implemented.
+
+- **6.1 — `FindingCardFields`** (new file, `Cards/FindingCardFields.cs`): `Instrument`/`VerifiedAt`
+  optional strings (vocabulary-not-enforcement, same convention as `BlockCardFields`), `Extent`
+  and `BlindSpot` non-nullable. `CardFileParser`/`CardFileWriter` route six new wire keys
+  (`instrument`, `extent`, `extent_value`, `verified_at`, `blind_spot`, `blind_spot_card`) only
+  when the card's own `kind` is `finding` — the same `isBlockCard`/`isSectionCard` two-pass
+  classification extended with `isFindingCard`; on every other kind the same six keys stay
+  preserved-unknown (`NonFindingKind_KeepsTheFindingKeysAsPreservedUnknown_NeverPromoted`).
+  `rule` gets none of this by construction — no field added to it, `CardFileParser` never routes
+  these keys there.
+- **6.4 — `FindingExtent`** (new file): closed union, three cases —
+  `Instrument(command)`/`Explicit(items)`/`BlockScope` — matching `CardKind`'s abstract-record
+  `Match` shape. `Explicit` requires ≥1 non-blank item (validated on the constructor **and** the
+  `with`-reachable init accessor, same three-door discipline `BlockCardFields.Tasks` established).
+  An undeclared extent (`extent` key absent) parses to `BlockScope`, and `BlockScope` writes no
+  `extent`/`extent_value` lines at all — undeclared and default are the same wire state, which is
+  literally 6.4's requirement, not just a convenient encoding of it. Narrowing to `Explicit` has no
+  path except a caller calling `Explicit(...)` directly.
+- **Blind-spot declaration** (`FindingBlindSpotDeclaration`, new file): `None` / `RaisedAs(cardId)`
+  only. `FindingCardFields.BlindSpot` is typed non-nullable, so a third "undeclared" state doesn't
+  compile — `new FindingCardFields(..., BlindSpot: null)` and `with { BlindSpot = null }` both fail
+  CS8625 under this project's `Nullable`+`TreatWarningsAsErrors`. Demonstrated by omission (no way
+  to check in a non-compiling line inside a green suite) rather than a runtime test; documented
+  inline in `FindingBlindSpotDeclaration`'s doc comment and `CardFindingFieldsTests`. On parse, a
+  `finding` card missing `blind_spot` entirely is a parse **failure** (`missing required
+  frontmatter field for a finding card: blind_spot`), the same treatment as a missing `id` — this
+  is new-field-required, not legacy-format-widening, since no build has ever shipped a `finding`
+  writer before this one, so O-4 doesn't cover it.
+- **O-4 discharged**: `CardFileWireCompatibilityCorpusTests` (new file) — five fixtures covering
+  the original 9-field card, both `gate_results` spellings (legacy `label=exitcode` and current
+  `label=exitcode=round`, including a superseded-round entry), a `section` card, and a `question`
+  card with a handover+comment. Every fixture parses, and a second test re-serialises each through
+  today's writer and re-parses, asserting frontmatter/block/section/finding fields all agree —
+  proving a targeted write against a legacy card is lossless, not just non-throwing.
+  **Deviation from the brief's literal "directory of card fixtures":** fixtures are embedded raw
+  strings in a `Dictionary<string,string>`, not files on disk — avoids `CopyToOutputDirectory`/
+  relative-path plumbing under xUnit v3's Microsoft.Testing.Platform executable model. The corpus
+  property (one collection, iterated exhaustively, every future widening must add to it) is
+  preserved; only the storage medium differs. Flagging this for visibility rather than assuming it
+  is what was meant.
+- **Mutation-verified, not just passing**: reverted `ParseBlindSpot`'s absent-field handling to
+  default to `None` instead of failing — `Parse_FindingMissingBlindSpot_Fails` caught it. Reverted
+  the legacy `gate_results` two-part parsing to require the round separator (recreating O-4's
+  actual historical defect) — `EveryFixtureInTheCorpus_StillParses` and
+  `LegacyGateResultsSpelling_ReadsBackAsExitCodeAtRoundOne` both caught it, with the failure
+  message naming the exact fixture. Both mutations reverted; `git diff` against `CardFileParser.cs`
+  is empty post-revert (confirmed with a `diff` against the pre-mutation copy).
+
+**Done-gates**: compatibility corpus exists and mutation-fails ✓. Undeclared extent parses/reads
+back as `BlockScope` ✓ (`UndeclaredExtent_RoundTripsToBlockScope_AndEmitsNoExtentLines`,
+`Parse_FindingWithNoExtentKeyAtAll_DefaultsToBlockScope`). Blind-spot construction refusal
+demonstrated (compile-time, by omission — see above). Round-trip including unknown-field
+preservation ✓. New refusals (blind_spot missing/unrecognised, extent unrecognised/missing
+payload, explicit-extent empty) each mutation-verified to fire — blind_spot's fully, the rest
+covered by dedicated `Parse_*_Fails` tests exercising each branch (not separately hammer-mutated
+beyond the two shown above; declaring that rather than claiming all were).
+
+**Declared, not claimed clean**: I did not mutation-test every one of the seven `Parse_*_Fails`
+branches individually (unrecognised extent form, missing extent_value on instrument/explicit,
+blank item inside explicit, unrecognised blind_spot form, missing blind_spot_card) — each has a
+dedicated test exercising exactly that branch and asserting on the failure message, but I did not
+independently revert each corresponding `if` to prove the test would have caught its absence. The
+two mutations I did run (blind_spot-absent, legacy-gate-results) were the two the brief's done-gates
+named explicitly.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (397/397) `FORMAT_EXIT:0` `VALIDATE_EXIT:0`.
+
+Tasks completed: 6.1, 6.4.
+
+→ @reviewer
+
+**[reviewer]** Block A (6.1, 6.4) audited by execution, not by reading — every item below was compiled
+or run against the real binary; nothing here is inferred from the diff alone.
+
+**Verdict: Approve with nits.**
+
+- **O-4 corpus (concern 1) — holds the property it exists to hold.** Mutated `ParseGateResults` to
+  reintroduce the exact historical defect (require the round separator, no legacy default) —
+  `EveryFixtureInTheCorpus_StillParses`, `EveryFixture_RoundTripsThroughTheCurrentWriterWithoutLosingItsFrontmatter`,
+  and `LegacyGateResultsSpelling_ReadsBackAsExitCodeAtRoundOne` all failed and named the exact fixture
+  (`CardFileParser.cs:766`, reverted after). It does fail when a historical form stops parsing.
+  On the second half — does the *shape* force the next widening through it — no more than a
+  fixtures-directory would: nothing compiles or tests-fails if a future PR adds a new wire form without
+  adding a fixture; the corpus is a discipline enforced by the doc comment on `Corpus`, same as it would
+  be with files on disk. The embedded-`Dictionary` deviation itself is fine and doesn't weaken this — the
+  worker's own framing ("only the storage medium differs") is accurate. Nit, not a blocker: worth a line
+  in the class doc that "forced through" means "the next author who reads this doc comment," not
+  anything structural — so nobody later assumes a missing fixture would be caught mechanically.
+- **Blind-spot unrepresentability (concern 2) — confirmed by compiling the bypass, not by reading the
+  claim.** Built a standalone project outside the repo referencing the three new source files and
+  confirmed CS8625 fires on all of: `new FindingCardFields(null, FindingExtent.BlockScope, null, null)`,
+  and `baseFields with { BlindSpot = null }`. Also confirmed `RaisedAsCase.CardId` is unreachable via
+  `with` on a `FindingBlindSpotDeclaration`-typed reference (`CS0117`, private nested type) — the §5
+  precedent about a `with`-reachable bypass on a *validated* field is closed here the same way
+  `ExplicitCase`/`InstrumentCase` close it. One thing worth naming explicitly rather than left implicit:
+  `null!`/`default!` at the call site *does* compile and *does* produce a live-`null` `BlindSpot` at
+  runtime (verified — `f.BlindSpot is null` is `true` after `new FindingCardFields(null,
+  FindingExtent.BlockScope, null, null!)`). That's expected — NRT is a compile-time discipline, not a
+  runtime guard, and this project's own C# idiom rule ("no `!` null-forgiving without a comment
+  justifying it") is the actual backstop, the same backstop every other non-nullable reference-typed
+  domain field in this codebase relies on. Not a defect in this block; just don't let "unrepresentable"
+  read as "impossible" in review going forward — it means "impossible without an explicit, reviewable
+  `!`."
+- **Parse-failure ruling for missing `blind_spot` (concern 3) — reasoning checks out, and the failure
+  is the right kind.** `grep` over `CardKind.cs` confirms `finding` has been a valid `kind` value since
+  §2, but no writer in this codebase has ever emitted `kind: finding` frontmatter before this block —
+  O-4 ("every wire form any shipped writer has emitted") genuinely doesn't reach a form nothing ever
+  wrote. The failure itself is a returned `CardFileParseResult.Failure`, not a thrown exception —
+  `CardFileParser.cs` has no `try`/`catch` anywhere, and `ParseBlindSpot` returns its failure through the
+  same tuple-based contract every other field in this file uses (missing `id`, malformed
+  `gate_results`, etc.). It is a reported failure of the ordinary kind, not a crash.
+- **Extent defaulting (concern 4) — confirmed on a real round-trip, not just the domain default.**
+  `UndeclaredExtent_RoundTripsToBlockScope_AndEmitsNoExtentLines` and
+  `Parse_FindingWithNoExtentKeyAtAll_DefaultsToBlockScope` both exercise `CardFileWriter.Serialize` →
+  `CardFileParser.Parse`, and I re-ran them independently — undeclared extent really does write no
+  `extent`/`extent_value` lines and really does read back as `BlockScope`. `grep -n "Explicit("` across
+  `src/Callboard/Cards` shows exactly one call site for `FindingExtent.Explicit`, gated behind the wire
+  form literally being `extent: explicit` — no inference path exists from anything else.
+- **The five declared-unverified `Parse_*_Fails` branches (concern 5) — all five independently
+  mutation-verified now.** For each, I removed or neutralised the specific guard and re-ran only that
+  branch's test:
+  - unrecognised `extent` form → made the `default:` arm return `BlockScope` instead of failing:
+    `Parse_FindingWithUnrecognisedExtentForm_Fails` failed. **Caught.**
+  - `extent: instrument` with no `extent_value` → defaulted the missing command to `"unspecified"`
+    instead of failing: `Parse_FindingWithInstrumentExtentButNoExtentValue_Fails` failed. **Caught.**
+  - `extent: explicit` with no items → removed the `items.Count == 0` check:
+    `Parse_FindingWithExplicitExtentButNoItems_Fails` failed — but via an **unhandled
+    `ArgumentException`** thrown by `FindingExtent.ExplicitCase`'s own validating accessor
+    (`CardFileParser.cs:669` → `FindingExtent.cs:104`), not a graceful `CardFileParseResult.Failure`.
+    The test still goes red so the mutation is caught, but this shows the parser-level check at
+    `CardFileParser.cs:664-667` is the only thing standing between untrusted wire input and an
+    unhandled crash — exactly the failure mode `BuildFindingFields`'s own doc comment says the file
+    exists to avoid ("untrusted input becomes a parse failure, never an unhandled exception"). It holds
+    today because the check is present and ordered correctly; flagging so nobody mistakes "the test
+    went red" for "the parser degrades gracefully" if this guard is ever touched.
+  - a blank item inside `extent_value` → removed the `RequireNoEmptyListItem` call: same shape, same
+    caveat — `Parse_FindingWithExplicitExtentContainingAnEmptyItem_Fails` failed via the same
+    `ArgumentException` path (`FindingExtent.cs:114`), not a controlled parse failure. **Caught, same
+    nit as above.**
+  - unrecognised `blind_spot` form → made the `default:` arm return `None` instead of failing:
+    `Parse_FindingWithUnrecognisedBlindSpotForm_Fails` failed. **Caught**, and this one *is* a graceful
+    parse failure in the shipped code (no domain exception involved on this path).
+  - `blind_spot: raised-as` with no `blind_spot_card` → defaulted the missing id to `"unspecified"`:
+    `Parse_FindingWithRaisedAsBlindSpotButNoCardId_Fails` failed. **Caught**, also a graceful failure in
+    the shipped code.
+  All five branches are real; the worker's declaration that they weren't individually
+  mutation-tested was accurate and none of the five turned out to be dead weight. The one thing worth
+  carrying forward (nit, not a blocker on this block) is the `extent: explicit` empty/blank-item pair:
+  the parser-level guard and the domain-level guard currently overlap in a way that means removing the
+  parser-level one degrades to an unhandled exception rather than a second layer of graceful failure —
+  worth a look whenever this file is next touched.
+- **Gates independently re-run, not just quoted from the worker's report.** `make build` → `BUILD_EXIT:0`.
+  `make test` → `TEST_EXIT:0` (397/397). `make gates` → `GATES_EXIT:0`. Working tree confirmed byte-identical
+  to the pre-mutation diff after every experiment (`git diff --stat` matched the original stat, `diff`
+  against a saved copy of `CardFileParser.cs` was empty) — nothing from this audit is left in the tree.
+
+**Nits**
+
+- `CardFileWireCompatibilityCorpusTests`'s class doc comment could say plainly that nothing forces a
+  future author to add a fixture — the corpus's guarantee is "an existing fixture that breaks is
+  caught," not "a new wire form that's forgotten is caught." Worth stating rather than leaving to be
+  inferred from "forced through" language that reads a little stronger than what the mechanism gives.
+- `CardFileParser.cs`'s `extent: explicit` branch (both the empty-list and blank-item checks) relies on
+  its own hand-rolled pre-check to avoid the domain constructor's `ArgumentException` reaching the
+  caller unhandled. Not wrong today, just worth a comment noting the two checks must stay in front of
+  `FindingExtent.Explicit(items)`, since nothing structural enforces the ordering.
+
+No architectural notes beyond the two nits above — this block stayed inside 6.1/6.4 and didn't reach
+into 6.2/6.3/6.5's territory.
+
+→ @architect
+
+**[worker]** Block A nits closed.
+
+- **O-4 corpus doc comment (nit 1).** Added a paragraph to
+  `CardFileWireCompatibilityCorpusTests`'s class doc comment stating plainly what the corpus does
+  and does not guarantee: a fixture already in `Corpus` that stops parsing is caught mechanically by
+  `EveryFixtureInTheCorpus_StillParses`; a *new* wire form a future author forgets to add a fixture
+  for is not caught by anything — "forced through" means forced through by the next author reading
+  this doc comment, not by a structural mechanism. No code change; doc-comment discipline only, as
+  the reviewer's own framing put it.
+- **Explicit-extent guard ordering (nit 2).** `CardFileParser.ParseExtent`'s `explicit` branch now
+  wraps the call to `FindingExtent.Explicit(items)` in a `try`/`catch (ArgumentException)`, converting
+  any escape from the domain constructor's validating accessor into a graceful
+  `CardFileParseResult.Failure` instead of an unhandled exception. The two existing pre-checks
+  (`items.Count == 0`, `RequireNoEmptyListItem`) stay as the primary, message-bearing guard — the
+  catch is a backstop, not a replacement, so today's failure messages are unchanged. Verified the
+  backstop holds on its own: removed both pre-checks locally, re-ran
+  `Parse_FindingWithExplicitExtentButNoItems_Fails` and
+  `Parse_FindingWithExplicitExtentContainingAnEmptyItem_Fails` — both still returned a graceful parse
+  failure (no crash), one with a different message than the test expects (so that one test goes red
+  on message content, not on an exception escaping), confirming the parse path cannot reach the
+  throwing constructor with untrusted input regardless of guard ordering. Restored the pre-checks
+  immediately after (`git diff` against the saved pre-mutation copy was empty). Updated
+  `BuildFindingFields`'s doc comment to point at the backstop.
+- **"Unrepresentable" caveat (carried into the doc comment, not left in prose).**
+  `FindingBlindSpotDeclaration`'s doc comment now states explicitly that `null!`/`default!` at a call
+  site compiles and produces a live-null `BlindSpot`, the same as every other non-nullable
+  reference-typed domain field in this codebase — NRT is a compile-time discipline, not a runtime
+  guard, and the backstop is this project's own rule that a null-forgiving `!` needs a comment
+  justifying it. "Unrepresentable" means "not without an explicit `!`," stated in the type the claim
+  lives on rather than only in this thread.
+
+No new tests added — this is a hardening/doc-comment fix inside the existing parse path; the fix is
+exercised by the existing `Parse_FindingWithExplicitExtentButNoItems_Fails` and
+`Parse_FindingWithExplicitExtentContainingAnEmptyItem_Fails` tests, which continue to pass through
+the pre-checks as before and were used above only as the mutation harness to prove the backstop.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (397/397) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the delta only — both nits closed, checked by execution.
+
+**Verdict: Approve.** Clean to gate and commit.
+
+- **`try`/`catch` scope (concern 1).** Read the block: the `try` contains exactly one statement,
+  `return (FindingExtent.Explicit(items), null);`, and the `catch (ArgumentException ex)` does nothing
+  but map to a `CardFileParseResult`-style failure tuple. Nothing else runs inside the `try`, so it
+  cannot swallow an `ArgumentException` from anywhere but that one constructor call — there is no
+  unrelated code sharing the block for it to hide.
+- **Mutation claim reproduces (concern 1, continued).** Removed both pre-checks myself
+  (`items.Count == 0` and the `RequireNoEmptyListItem` call) and re-ran the two tests:
+  `Parse_FindingWithExplicitExtentContainingAnEmptyItem_Fails` passed outright (it only asserts
+  `Assert.NotEmpty(failure)`). `Parse_FindingWithExplicitExtentButNoItems_Fails` went red, but on a
+  plain `Assert.Contains` substring mismatch — no stack trace, no unhandled exception, a normal
+  `CardFileParseResult.Failure` with a different message (the catch's generic wording doesn't happen
+  to contain "extent_value"). That is exactly the graceful-degradation the backstop promises; the
+  worker's DEVLOG description of what happens matches what I saw byte-for-byte. Reverted immediately
+  after; `diff` against my pre-mutation copy of `CardFileParser.cs` was empty, and `git diff --stat`
+  matched the pre-audit stat (184 insertions across the one file, no drift).
+- **Doc comments (concern 2) — checked against the code, not taken on faith.**
+  `CardFileWireCompatibilityCorpusTests`'s new paragraph says precisely what I verified last round: a
+  fixture already in `Corpus` that breaks is caught mechanically; a new wire form nobody adds a
+  fixture for is not caught by anything; "forced through" means forced through by the next reader of
+  the doc comment. No overclaim. `FindingBlindSpotDeclaration`'s new paragraph states `null!`/`default!`
+  compiles and yields a live-null `BlindSpot` at runtime, names NRT as compile-time-only, and names the
+  project's `!`-needs-a-comment rule as the actual backstop — matches what I compiled and ran last
+  round exactly, no more and no less.
+- **Gates re-run independently:** `make build` → `BUILD_EXIT:0`, `make test` → `TEST_EXIT:0` (397/397),
+  `make gates` → `GATES_EXIT:0`. Working tree clean of anything from this audit (`git status --short`
+  shows only the block's own changes).
+
+No new findings. No architectural notes.
+
+→ @architect
+
 ## NEXT
 
 

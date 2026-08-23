@@ -51,10 +51,10 @@
 
 ## 6. Findings
 
-- [ ] 6.1 Implement the `finding` card with instrument, extent, `verified_at` and blind spot
+- [x] 6.1 Implement the `finding` card with instrument, extent, `verified_at` and blind spot
 - [ ] 6.2 Refuse a clean finding lacking either a declared blind spot or an explicit assertion of none
 - [ ] 6.3 Raise a declared blind spot as an obligation or hazard that does not degrade at section close
-- [ ] 6.4 Implement the three extent declaration forms, defaulting to block scope and requiring narrowing to be explicit
+- [x] 6.4 Implement the three extent declaration forms, defaulting to block scope and requiring narrowing to be explicit
 - [ ] 6.5 Implement staleness computation against declared extent, presented as needing re-verification rather than as refutation
 - [ ] 6.6 Implement the clean-as-argued disposition, excluded from staleness computation and surfaced honestly
 - [ ] 6.7 Implement finding degradation at section close

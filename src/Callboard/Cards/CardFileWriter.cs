@@ -120,6 +120,60 @@ internal static class CardFileWriter
             }
         }
 
+        // §6 block A's four finding-only fields — same "present only when set" convention as the
+        // block/section fields above, and the same guarantee that a card of any other kind never
+        // reaches here with non-default FindingFields (CardFileParser only ever populates it for
+        // kind finding). Extent's own default (FindingExtent.BlockScope) writes nothing at all —
+        // an undeclared extent and a wire-absent extent are the same state, by design (see
+        // FindingCardFields' own doc comment). BlindSpot is always emitted: it can never be the
+        // "not yet recorded" state the other optional fields represent by omission, because that
+        // state is not representable on FindingCardFields.BlindSpot in the first place.
+        var isFindingCard = frontmatter.Kind.Match(
+            onBlock: static () => false,
+            onQuestion: static () => false,
+            onFinding: static () => true,
+            onObligation: static () => false,
+            onRule: static () => false,
+            onHazard: static () => false,
+            onDecision: static () => false,
+            onSection: static () => false);
+
+        if (isFindingCard)
+        {
+            var findingFields = card.FindingFields;
+
+            if (findingFields.Instrument is { } instrument)
+            {
+                builder.Append("instrument: ").Append(CardFileFormat.EscapeFrontmatterValue(instrument)).Append('\n');
+            }
+
+            var (extentForm, extentValue) = findingFields.Extent.Match(
+                onInstrument: static command => ("instrument", CardFileFormat.EscapeFrontmatterValue(command)),
+                onExplicit: static items => ("explicit", CardFileFormat.JoinFrontmatterList(items)),
+                onBlockScope: static () => ((string?)null, (string?)null));
+
+            if (extentForm is { } form)
+            {
+                builder.Append("extent: ").Append(form).Append('\n');
+                builder.Append("extent_value: ").Append(extentValue).Append('\n');
+            }
+
+            if (findingFields.VerifiedAt is { } verifiedAt)
+            {
+                builder.Append("verified_at: ").Append(CardFileFormat.EscapeFrontmatterValue(verifiedAt)).Append('\n');
+            }
+
+            var (blindSpotForm, blindSpotCardId) = findingFields.BlindSpot.Match(
+                onNone: static () => ("none", (string?)null),
+                onRaisedAs: static cardId => ("raised-as", (string?)cardId));
+
+            builder.Append("blind_spot: ").Append(blindSpotForm).Append('\n');
+            if (blindSpotCardId is { } cardId)
+            {
+                builder.Append("blind_spot_card: ").Append(CardFileFormat.EscapeFrontmatterValue(cardId)).Append('\n');
+            }
+        }
+
         // Unknown fields (a §5/§6 field this build does not model, or a hand-added line) are
         // re-emitted after the known ones rather than interleaved back into their original
         // position — the parser records only the value at each known key, not a full original
