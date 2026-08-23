@@ -67,11 +67,12 @@ internal static class FindingDegradationEvaluator
 {
     internal static FindingDegradationEvaluation Evaluate(CardFile finding, string findingFilePath)
     {
-        var directory = Path.GetDirectoryName(findingFilePath);
-        if (string.IsNullOrEmpty(directory))
-        {
-            return FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Live);
-        }
+        // §6 remediation (round 2) — an empty directory component means "the current directory",
+        // not "no directory": Path.GetDirectoryName("F-0001.md") returns "" for a bare filename, and
+        // treating that as "nothing to look in" answered Live without reading a single card. Same
+        // idiom as AnchoredCardPath.TryCreate.
+        var rawDirectory = Path.GetDirectoryName(findingFilePath);
+        var directory = string.IsNullOrEmpty(rawDirectory) ? "." : rawDirectory;
 
         var matches = new List<(string FilePath, CardFile Card)>();
         var otherSectionPaths = new List<string>();

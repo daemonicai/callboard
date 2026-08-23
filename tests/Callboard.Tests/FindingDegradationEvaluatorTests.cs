@@ -4,6 +4,25 @@ using Callboard.Cards;
 namespace Callboard.Tests;
 
 /// <summary>
+/// §6 remediation, round 3 (reviewer blocker) — <see cref="FindingDegradationEvaluatorTests"/> and
+/// <see cref="CommandDispatcherFindingStatusTests"/> each mutate the process-global current
+/// directory (<see cref="Directory.SetCurrentDirectory"/>) to prove the empty-directory-component
+/// fix, because the underlying reason they must is that <c>CommandDispatcher</c>'s
+/// <c>workingDirectory</c> parameter does not govern relative-path resolution for a command's own
+/// file argument — only the real process CWD does (a §7 concern, not touched here). Without an
+/// explicit shared collection, xUnit's default one-collection-per-class parallelism lets these two
+/// classes run concurrently against that same global state; the reviewer reproduced
+/// <see cref="Directory.GetCurrentDirectory"/> itself throwing when a concurrent test's CWD change
+/// raced it. This collection serializes the two classes against each other — remove it only if the
+/// tests stop mutating the current directory, not because it looks like unused ceremony.
+/// </summary>
+[CollectionDefinition(Name)]
+public sealed class CurrentDirectoryMutatingTests
+{
+    internal const string Name = "current-directory-mutating-tests";
+}
+
+/// <summary>
 /// §6 block D — finding degradation at section close, at the domain layer:
 /// <see cref="FindingDegradationEvaluator"/>. CLI-level coverage (the emitted JSON field, and its
 /// independence from staleness) lives in <c>CommandDispatcherFindingStatusTests</c>; this file
@@ -30,6 +49,7 @@ namespace Callboard.Tests;
 /// zero-candidates case still reads <c>Live</c> — that one is honest.
 /// </para>
 /// </summary>
+[Collection(CurrentDirectoryMutatingTests.Name)]
 public sealed class FindingDegradationEvaluatorTests : IDisposable
 {
     private static readonly DateTimeOffset Recorded = new(2026, 8, 23, 9, 0, 0, TimeSpan.Zero);
@@ -236,6 +256,33 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
 
         var card = AssertParseSuccess(CardStore.ReadCard(findingPath));
         Assert.Same(FindingDegradationStatus.Degraded, AssertResolved(FindingDegradationEvaluator.Evaluate(card, findingPath)));
+    }
+
+    // §6 section remediation, round 2 (supervisor blocker) — Path.GetDirectoryName returns "" for
+    // a bare filename with no directory component, and the evaluator used to treat that as "no
+    // directory to look in" and answer Live without reading a single card. This is the one domain
+    // fixture that constructs a non-absolute findingFilePath rather than one built through
+    // Path.Combine(_directory, ...) — every other fixture in this file would pass even with the
+    // bug present, which is exactly why the CLI-level test in
+    // CommandDispatcherFindingStatusTests is the load-bearing one.
+    [Fact]
+    public void BareFilenameWithNoDirectoryComponent_StillResolvesToTheCurrentDirectory()
+    {
+        var findingPath = WriteFinding("f-0010");
+        WriteSectionCard("s-0008", "S-0103", closed: true);
+        var card = AssertParseSuccess(CardStore.ReadCard(findingPath));
+
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(_directory);
+            var evaluation = FindingDegradationEvaluator.Evaluate(card, "f-0010.md");
+            Assert.Same(FindingDegradationStatus.Degraded, AssertResolved(evaluation));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+        }
     }
 
     private string WriteFinding(string fileStem)

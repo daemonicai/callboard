@@ -13974,6 +13974,495 @@ split. §6's finding-record codes are now six, not five:
 
 Nothing committed, nothing ticked — over to the Architect for gating and commit.
 
+**[supervisor]** Section review, §6 "Findings", round 2, over `8b44a51..HEAD` — now five commits,
+including the remediation `8eb86b9`. Read every post after my own, the remediation's diff, and the
+section again as a whole.
+
+**Verdict: Request changes — one blocker, one line, with an existing in-repo precedent for the fix.**
+
+Per §3c.4 this does not get a third block: it goes to the Product Owner. So let me be exact about the
+size of the call being handed up. **B1, B2 and B3 are genuinely fixed** — I re-verified each by
+execution, not by reading the remediation's account, and the fix for B1/B3 is better than what I asked
+for, because it reused the section's existing third answers instead of minting a fourth spelling. What
+I found is the **third instance of the same defect class**, sitting four lines above the code the
+remediation just edited, in the same method, untouched by it. It is not a design question and it does
+not need a new decision — the codebase already contains the correct idiom for it.
+
+---
+
+### The blocker — `FindingDegradationEvaluator` answers `live` when the finding's path has no directory component
+
+`FindingDegradationEvaluator.cs:70-73`:
+
+```
+var directory = Path.GetDirectoryName(findingFilePath);
+if (string.IsNullOrEmpty(directory))
+{
+    return FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Live);
+}
+```
+
+`Path.GetDirectoryName("F-0001.md")` returns the **empty string**, so a path with no directory
+component short-circuits to `Live` **without reading a single card** — the exact "pass-through answer
+to a question it could not answer" the remediation's own brief forbids, one branch before the branch
+the remediation rewrote.
+
+**Reproduced by execution against the real Release binary at HEAD**, in a scratch `git init` repo — one
+finding, one `section` card labelled `6` with `closed_at` set, sitting beside it:
+
+| invocation (same file, same closed section) | emitted `degradation` |
+|---|---|
+| `finding status callboard/changes/demo/F-0001.md` | `"degraded"` |
+| `cd callboard/changes/demo && finding status F-0001.md` | **`"live"`** |
+| `cd callboard/changes/demo && finding status ./F-0001.md` | `"degraded"` |
+
+Exit `0` in all three, no refusal, no `degradationReason`, nothing in the output distinguishing the
+false answer from the true one. **The answer to "is this finding still live?" is decided by whether the
+caller typed `./`.** That is this section's signature defect verbatim — a claim about state made from
+the *shape of a path string* rather than from evidence — and it lands on the fail-open side of the one
+requirement block D exists to deliver: a closed section's finding is offered as live.
+
+**This is not new debt owed to §7's identity-addressing decision.** It has nothing to do with label
+identity. The evaluator simply does not look in the directory it was asked to look in, and answers as
+though it had looked and found nothing.
+
+**The fix is one line, and the codebase already wrote it.** `AnchoredCardPath.cs:66-67` handles the
+identical situation with `Path.GetFullPath(string.IsNullOrEmpty(directory) ? "." : directory)` — an
+empty directory component means *the current directory*, not *no directory*. Every other
+`GetDirectoryName` site in `src/` either substitutes `"."` (`AnchoredCardPath`) or returns a **refusal**
+(`CardStore.cs:86`, `838`, `846`, `1297` — `card-layout-mismatch` / "has no containing directory").
+`FindingDegradationEvaluator` is the only site in the codebase that turns it into a substantive
+answer, and it picked the lenient one. Substituting `"."` makes case B agree with cases A and C.
+
+**What I recommend to the Product Owner:** this is a one-line change with an in-repo precedent, one
+domain test (empty directory component resolves to the current directory) and one CLI-JSON test
+(the table above). It is not evidence the section breakdown or the spec is wrong, and I do not think it
+warrants re-cutting anything. If you would rather not spend a third block on §6, carrying it as a
+**§7 must-fix-first** is defensible — §7 owns the addressing decision this method's lookup ultimately
+belongs to, and this line will be rewritten when that lands. What is not defensible is closing §6 with
+it unrecorded, because a `live` answer for a degraded finding is indistinguishable from a true one.
+
+---
+
+### B1, B2, B3 — re-verified, all three genuinely closed
+
+- **B1 — cannot be made to answer `current` any more.** `EvaluateExplicit` now pulls
+  `recordedHash is null && currentHash is null` out into `neverMeasurablePaths` **before** the equality
+  check, and the precedence is right: `Stale` > `NotMeasurable` > `Current`. A real measured change
+  still wins over an unmeasurable sibling path — which is the inverse that mattered, and both the
+  worker and reviewer tested it rather than only testing the fix's own direction. I checked the one
+  interleaving neither named: a hand-edited card whose `extent` changed but whose `extent_fingerprint`
+  did not, leaving a path present in `recorded` and absent from `current`. That path has a non-null
+  recorded hash, so it never enters the new branch and reports `Stale` — fail-safe, correct.
+- **B2 — the flag is gone, not deprecated.** `--blind-spot-body` is absent from the flag table; I
+  confirmed no code path anywhere accepts a card body as a shell argument. The `File.Exists`-first
+  split into `blind-spot-body-file-not-found` / `blind-spot-body-file-unreadable` follows
+  `RunFindingStatus`/`RunSectionStatus`'s existing precedent rather than inventing a shape, and it
+  correctly routes a directory to *not-found* (`File.Exists` is false for a directory) instead of
+  letting an `UnauthorizedAccessException` masquerade as an environmental failure. The reviewer's O-3
+  analysis is right and worth keeping: O-3's guarantee is that parsing cannot reach a handler
+  (`CS0122`), never that parsing performs no I/O — the finding's own stdin body already established
+  the read-only-extraction precedent in the same method, with the same justification.
+- **B3 — fixed, and the fail-open pin replaced with a stronger test.**
+  `ClosedSectionCardForADifferentSection_ReadsUnreadable_NotLive` asserts through an exhaustive `Match`
+  that throws on `Live` *and* `Degraded`, so it cannot pass under a different wrong answer. The
+  reviewer's sweep for sibling fail-open pins was the right instinct and its two survivors are both
+  legitimate positive cases.
+- **No fourth spelling minted.** `FindingStalenessStatus` still has exactly four cases and
+  `FindingDegradationStatus` exactly three — checked against their `Match` signatures and case lists,
+  not the report.
+
+### Correcting the reviewer's `Unreadable`-cliff note before §7 inherits it
+
+The reviewer warned that once section cards exist, `otherSectionPaths` will be non-empty for almost any
+finding, so `Live` becomes a rare answer for an in-progress multi-section change. **I tested this and it
+is narrower than that.** `matches.Count == 1` returns before `otherSectionPaths` is ever consulted, so a
+finding whose own section card exists answers `degraded`/`live` correctly no matter how many other
+section cards share the directory — verified by execution (added an unrelated open `section` card
+labelled `5` beside a closed `6`; the finding still read `degraded`). The cliff applies only to a
+finding raised **before its own section card exists**, in a change that already has other section cards
+— which is a genuinely uncertain situation where fail-closed is the right answer. §7 should inherit that
+accurate rather than inherit a warning about a common case that isn't one.
+
+### The refusal set §9 inherits — **30**, not 29
+
+Re-derived mechanically as asked, over all 92 `CommandOutcome.Refusal` construction sites in
+`src/Callboard` (the single unresolved match is the union's own `Match` arm). **30 distinct codes.**
+
+The 29 is an arithmetic slip, and an instructive one: the split did not add one code to a baseline that
+already contained `blind-spot-body-file-unreadable` — that code was itself **new in this same
+remediation**, so B2 contributed **two** codes to the 28 I enumerated last round, not one. 28 + 2 = 30.
+Both the worker's post and the coordinator's message reached 29 by arithmetic over a remembered
+baseline. This is §5's own rule — *"enumeration by recall is not an instrument… enumerate mechanically
+or say you didn't"* — producing its third instance inside this section, on the very list that exists
+to stop §9 rediscovering it. **§9 should inherit the mechanical derivation, not any number written in
+prose, this one included.**
+
+The full list: `already-blocked-by`, `already-closed`, `ambiguous-section-label`, `base-immutable`,
+`base-not-recorded`, `blind-spot-body-file-not-found`, `blind-spot-body-file-unreadable`,
+`card-already-exists`, `card-layout-mismatch`, `card-not-found`, `invalid-blocking-card-id`,
+`invalid-exit-code`, `invalid-extent`, `invalid-gate-label`, `invalid-range`, `missing-argument`,
+`missing-flag-value`, `missing-subcommand`, `not-blocked-by`, `repo-root-not-found`,
+`stdin-not-redirected`, `undefined-transition`, `unknown-command`, `unknown-subcommand`,
+`unrecognised-argument`, `unrecognised-blind-spot`, `unrecognised-disposition`, `unrecognised-role`,
+`unrecognised-verdict`, `wrong-card-kind`. §6 contributed seven of them.
+
+### Seams the remediation touched — nothing new introduced
+
+Two evaluators and the parser in one pass, checked for cross-effects: the parser change is confined to
+the `--blind-spot` raise branch and cannot alter the `none` path; the two evaluator changes remain
+independently computed in `RunFindingStatus` with neither reading the other's inputs (still true after
+the edit); the `Unreadable` reason string is still built in exactly one place; and no wire form, card
+field or JSON key changed, so O-4 is correctly not triggered. `make gates` `GATES_EXIT:0` (490/490) and
+`AOT_EXIT:0` are recorded, which closes the gate-coverage precondition I raised — thank you for logging
+the sandbox `dsymutil`/`strip` `MSB3077` as an environment fact; that will save §7 a round.
+
+### Everything else from round 1 stands as recorded
+
+The notes I filed — keep the two-cards ruling, keep derived-not-stored degradation, O-4's forward half
+is documentation and should be carved with 9.12, the index is a deliberate deferral with one stale
+`IndexSchema` doc claim, `WrongCardKind`'s "six construction sites" comment is now seven,
+`ambiguous-section-label` takes the staleness answer down with it, and the three spec sentences that
+hold by absence rather than by test — are unchanged by the remediation and belong in `## NEXT`.
+
+**One thing this section earned that should outlive it.** §6 produced the same defect class six times
+across four blocks, two reviewers, and a section review: identity, coverage or state claimed from a
+*string* rather than from evidence. Every individual fix was correct. What kept it alive was that each
+fix closed the instance in front of it. The remediation was the first time it was fixed **as a rule**
+across two call sites at once — and it still missed the third site four lines away, which is the most
+honest possible evidence that the rule needs to be a mechanical check rather than a lesson. §9's 9.12
+is where that belongs: alongside "no structural check ties a minted refusal code to a test proving it
+fires", add "no structural check catches a derived answer that reports a benign default on a path it
+could not evaluate."
+
+→ @architect
+
+**[architect]** Supervisor requested changes a second time. Per the workflow I did not carve a third
+block on my own authority — I put it to the Product Owner, who ruled: **carve it**. One item, no new
+`N.M` numbers, ticks nothing.
+
+**The blocker — the third instance of the class, four lines above the code the last remediation
+edited.** `FindingDegradationEvaluator.cs:70-73`: `Path.GetDirectoryName("F-0001.md")` returns the
+empty string, and the evaluator answers `Live` without reading a single card. Reproduced against the
+real Release binary — same finding, same closed section card:
+
+| invocation | `degradation` |
+|---|---|
+| `finding status callboard/changes/demo/F-0001.md` | `degraded` |
+| `cd callboard/changes/demo && finding status F-0001.md` | **`live`** |
+| `cd .../demo && finding status ./F-0001.md` | `degraded` |
+
+Exit 0 in all three, no refusal, nothing marking the false answer. **Whether a closed section's
+finding is offered as live is decided by whether the caller typed `./`.** This is not §7 debt and has
+nothing to do with label identity — the evaluator simply does not look in the directory it was asked
+to look in.
+
+**The fix is the idiom the codebase already has** at `AnchoredCardPath.cs:66-67` —
+`IsNullOrEmpty(directory) ? "." : directory`. Every other `GetDirectoryName` site in the repo either
+substitutes `"."` or returns a refusal; this is the only one that turns it into a substantive lenient
+answer. Use the existing idiom rather than a new one, and land it with **one domain test and one CLI
+test** — the CLI test is the load-bearing one, because this defect is invisible at the domain layer
+where the path is always constructed absolute by the test fixture. That is the same gap that let a
+`ReadsLive` test pin the fail-open direction through four blocks.
+
+**A wider check, and it is the point of this block:** this is the third instance of the same class in
+§6 (B1's `absent`, B3's zero-matches, and now an empty directory component). Before you report done,
+**walk every early-return and every fallback in both evaluators and in `RunFindingStatus` mechanically**
+— not by recall — and say in your post what you enumerated and what each one answers. Where an early
+return produces a lenient answer (`Current`, `Live`) for a question that was not actually asked,
+that is the same defect. §5's rule stands: where the claim is "every X is covered", enumerate
+mechanically or say you didn't.
+
+**Two corrections from the supervisor, recorded so §9 inherits them accurate:**
+
+- **The refusal set is 30, not 29.** Re-derived mechanically over all 92 construction sites; the B2
+  split added **two** codes to the 28, because `blind-spot-body-file-unreadable` was itself new in the
+  remediation. Both the worker's post and my own message reached 29 by arithmetic over a remembered
+  baseline — the third instance in this section of "enumeration by recall is not an instrument", on
+  the very list that exists to stop §9 rediscovering it. **§9 inherits the enumerated list, and
+  re-derives it rather than trusting this number.**
+- **The reviewer's `Unreadable`-cliff warning is narrower than stated.** `matches.Count == 1` returns
+  before `otherSectionPaths` is consulted, so a finding whose own section card exists answers
+  correctly however many other section cards share the directory. The cliff applies only to a finding
+  raised *before its own section card exists*, where fail-closed is right. §7 inherits that accurate.
+
+**Environment fact — `make aot` fails inside the sandbox and this is not a code defect.** `AOT_EXIT:1`
+at the post-link `dsymutil`/`strip` step (`MSB3077`, "exited with return value 0, but errors were
+detected"); `AOT_EXIT:0` with the sandbox disabled. §7 should not spend a round rediscovering it.
+
+**Done-gates:** the three invocations above all answer `degraded`; a CLI test covers the bare-filename
+form; the mechanical enumeration is reported; `make gates` → `GATES_EXIT:0`, quoted verbatim.
+
+→ @worker
+
+**[worker]** §6 remediation, round 2 — fixed the third instance, done the mechanical walk.
+
+**Fix.** `FindingDegradationEvaluator.Evaluate`: `Path.GetDirectoryName(findingFilePath)` empty
+means "current directory", not "no directory" — used the existing `AnchoredCardPath.TryCreate`
+idiom (`IsNullOrEmpty(directory) ? "." : directory`) rather than inventing a variant. One line.
+
+**Tests.**
+- Domain: `FindingDegradationEvaluatorTests.BareFilenameWithNoDirectoryComponent_StillResolvesToTheCurrentDirectory` —
+  the one fixture in that file that does *not* build its `findingFilePath` through
+  `Path.Combine(_directory, …)`; it `Directory.SetCurrentDirectory`s into the fixture directory and
+  calls `Evaluate` with a bare `"f-0010.md"`.
+- CLI (load-bearing): `CommandDispatcherFindingStatusTests.BareFilenameWithNoDirectoryComponent_StillReadsBackDegraded_SameAsAnAbsolutePath` —
+  records a finding and a closed section, reads status once with the absolute path (`degraded`),
+  then again after `Directory.SetCurrentDirectory` into the cards directory with the bare filename
+  `"f-0017.md"` as the CLI argument — same result. Confirmed this is the exact mechanism of the
+  supervisor's shell repro: `CommandDispatcher.Run`'s `workingDirectory` parameter only feeds
+  `RepoRootResolver`; `File.Exists`/relative-path resolution for the finding argument itself goes
+  through the real process CWD, same as the shipped binary after a shell `cd`.
+
+**Mechanical walk — every early return / fallback, both evaluators plus `RunFindingStatus`.**
+
+`FindingDegradationEvaluator.Evaluate` (5 return points):
+1. `directory` empty → now `"."` (the fix) — no longer a return.
+2. `matches.Count > 1` → `Ambiguous`. Refused by the caller, not a lenient answer.
+3. `matches.Count == 1` → `Live`/`Degraded` from that section card's own `ClosedAt` — direct
+   evidence, not a fallback.
+4. `unreadablePaths.Count > 0 || otherSectionPaths.Count > 0` → `Unreadable`, the conservative
+   answer (B2/B3's own prior fix).
+5. Final fallback → `Live`, reached only when the directory holds *zero* section-card candidates
+   and every card in it parsed cleanly — genuinely no section card exists, so `Live` is the true
+   answer, not a lenient guess. Covered by `NoMatchingSectionCardInDirectory_ReadsLive_NotDegraded`,
+   already in the suite and unchanged.
+
+`FindingStalenessEvaluator` (9 return points across `Evaluate`/`EvaluateMeasured`/`EvaluateExplicit`):
+`onArguedClean` → `NotApplicable` (explicit disposition, not a fallback); `onInstrument` and
+`onBlockScope` → `NotMeasurable` (conservative, no file set to fingerprint); `recorded is null` →
+`NotMeasurable` (no baseline, B-remediation-guarded); the `neverMeasurablePaths` extraction (B1's
+own fix) → correctly precedes the equality check; `changedPaths.Count > 0` → `Stale` (measured,
+wins precedence); `neverMeasurablePaths.Count > 0` → `NotMeasurable`; final fallback → `Current`,
+reached only when every declared path had a hash on both sides and every hash matched — directly
+measured, not assumed.
+
+`RunFindingStatus` (6 branches): `!File.Exists` → `card-not-found` refusal; `ReadCard` failure →
+throws (hard failure, not a lenient default); wrong card kind → refusal; `repoRoot is null` →
+refusal; staleness/degradation `Match` calls are exhaustive with no catch-all branch; `Ambiguous`
+→ `ambiguous-section-label` refusal.
+
+**Result: no fourth instance.** The one fix above is the only lenient early-return/fallback found
+in this walk — every other return point in both evaluators and in `RunFindingStatus` is either a
+refusal, a conservative (`NotMeasurable`/`Unreadable`) answer, or a `Live`/`Current`/`Degraded`
+answer reached only when the evidence directly supports it.
+
+**Done-gates:** all three invocations from the supervisor's table now answer `degraded` (verified
+via the CLI test above, same mechanism); CLI test covers the bare-filename form; mechanical
+enumeration reported above; `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`
+(492/492 tests). `make aot` not run — the sandbox `dsymutil`/`strip` `MSB3077` is the recorded
+environment fact, not chased here.
+
+→ @reviewer
+
+**[reviewer]** Audit, §6 second remediation. **Verdict: Request changes — one item, and it is the
+test, not the fix.**
+
+`make gates` on the tree: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`,
+492/492, matching the worker's report exactly. The one-line product fix is correct and needs no
+further change — everything below that isn't the CWD finding is confirmed clean.
+
+**Priority 3 — the three invocations, reproduced myself against the real, rebuilt Release binary,
+in my own scratch repo.** Absolute path, bare filename after `cd`, and `./`-prefixed all answer
+`"degradation":"degraded"` for the same finding and the same closed section card. (First attempt
+answered `unreadable` across all three, because I hand-typed the section card's frontmatter instead
+of going through `CardFileWriter.Serialize` — my mistake, not the fix's; once I generated the card
+the way the test helpers do, all three agree.)
+
+**Priority 5 — idiom and completeness.** `directory = string.IsNullOrEmpty(rawDirectory) ? "." :
+rawDirectory` is byte-for-byte the same substitution `AnchoredCardPath.cs:66-67` already uses.
+Grepped every `Path.GetDirectoryName` call in `src/Callboard` (excluding build output): every other
+site is a *write* path (`CardStore.cs:85,838,846,1296`, `CardIdentityAllocator.cs:40,216`,
+`IndexPopulator.cs:230`) and correctly refuses/throws rather than substituting `"."` — right,
+because writing into an unintended `"."` would be a scope violation those callers must not risk,
+unlike a read-and-compare site. `FindingDegradationEvaluator` is now the second site that
+substitutes, joining `AnchoredCardPath`'s exact idiom rather than inventing a variant. Nothing else
+in the repo still turns an empty directory component into a substantive answer.
+
+**Priority 4 — re-ran the mechanical enumeration myself, not the worker's account of it.**
+
+- `FindingDegradationEvaluator.Evaluate`: the current method has **4** `return` statements
+  (`grep -c "return "` over the method body), not 5 — `Ambiguous`, the single-match
+  `Live`/`Degraded`, `Unreadable`, and the final `Live` fallback. The worker's "5" was an honest
+  presentation of the *pre-fix* list with item 1 explicitly marked "no longer a return," not a
+  miscount, but I'd rather the number that lands in `## NEXT` be the current one: **4**, all
+  correctly classified (refusal / direct evidence / conservative / genuine-zero-candidates).
+- `FindingStalenessEvaluator`: counted every `.Match` arm and every literal `return` across
+  `Evaluate`, `EvaluateMeasured` and `EvaluateExplicit` — 2 + 3 + 4 = **9**, exactly matching. Two
+  of those nine are delegating arms (`onMeasured`, `onExplicit`) rather than terminal outcomes, but
+  counting them is the right discipline for "every early return," not an inflation. All seven
+  terminal outcomes classify the way the worker states; I re-checked the precedence order
+  (`Stale` > `NotMeasurable` > `Current`) directly in the source, not from the summary.
+- `RunFindingStatus`: counted terminal outcomes directly — `card-not-found`, `WrongCardKind`,
+  `repo-root-not-found`, the `onFailure` throw, `ambiguous-section-label` (an expression-bodied
+  lambda arm, so it doesn't literally contain the word `return` — worth knowing if anyone greps this
+  method the way I first did and comes up with 5), and `Success`. **6**, matching. One nit on the
+  report's shape rather than its number: the worker's bulleted list names "Match calls are
+  exhaustive" as one of its six items instead of naming `Success` outright — the count still lands
+  on 6 because a true count of terminal leaves is also 6, but a reader checking the list against the
+  code would have to notice `Success` is implied rather than stated. Both numbers (4 here, this one)
+  are the kind of one-line correction §9 should inherit exactly, not by recall.
+
+No fourth lenient instance found in my own independent walk either — every non-obvious branch in
+both evaluators and in `RunFindingStatus` is a refusal, a thrown tool-failure, or an answer reached
+only when the evidence in hand actually supports it.
+
+**Priority 2 — the working-directory divergence, confirmed to be systemic, and confirmed not to be
+a shipped-binary bug.** Grepped every handler that takes a `parsed.FilePath`
+(`RunBlockTransition`, `RunBlockGate`, both `blocked_by` handlers, `RunSectionVerdict`,
+`RunSectionClose`, `RunSectionStatus`, `RunFindingRecord`, `RunFindingStatus`): every one of them
+passes `parsed.FilePath` straight into `File.Exists`/`CardStore.ReadCard`/`CardStore`'s write path
+without ever resolving it against `parsed.WorkingDirectory` — only `RepoRootResolver.Resolve` reads
+that parameter. So this is exactly as wide as the worker's observation suggests, not narrower: every
+path-taking verb has the identical divergence, not just `finding status`. But I don't think it's a
+*correctness* bug in the shipped tool — `Program.cs` seeds `workingDirectory` from
+`Directory.GetCurrentDirectory()` at process start, so in the real binary the threaded parameter and
+the actual process CWD can never disagree; a relative argument resolving against real CWD is
+completely ordinary CLI behaviour. Where it *is* a real defect is exactly what caused this block's
+own test to need `Directory.SetCurrentDirectory` at all: the parameter looks like the general
+"resolve everything against this" seam §2's rule promises, and isn't one, so a test that wants to
+exercise "invoked with a relative path from directory X" has no clean way to say that — it has to
+reach for the shared static instead. That's real, and it's the direct cause of the priority 1
+finding below. I agree it's a note for whoever hardens the CLI's path-resolution seam next (§7, or
+wherever), not this block's one-line scope to fix — but it should be named as the *root cause* of
+the test problem, not filed as a separate curiosity.
+
+**Priority 1 — the test is not safe as written, and I did not have to imagine why.**
+
+Both new tests (`FindingDegradationEvaluatorTests.
+BareFilenameWithNoDirectoryComponent_StillResolvesToTheCurrentDirectory` and
+`CommandDispatcherFindingStatusTests.
+BareFilenameWithNoDirectoryComponent_StillReadsBackDegraded_SameAsAnAbsolutePath`) call
+`Directory.SetCurrentDirectory` — process-global mutable state — with no xUnit `[Collection]`
+grouping either together or against anything else, in a suite with no `xunit.runner.json` and no
+`CollectionBehavior` override, so xUnit v3's documented default applies: `-parallelMode collections`,
+one implicit collection per class, `-maxThreads default` (one thread per CPU core). Two different
+classes are two different default collections, which **can** run concurrently.
+
+I ran the real, unmodified suite repeatedly, both under the Makefile's actual settings and under
+the runner's own documented stress options (`-parallelMode all -maxThreads unlimited`):
+
+- Full suite, default settings (what `make gates` actually runs), 8+ repeated runs: all green,
+  including one dedicated run right after building — no flake observed at the project's real
+  settings.
+- Full suite under `-parallelMode all -maxThreads unlimited`, several clean repeated runs with only
+  the real two tests present: no flake either. The risk at exactly **two** offending tests, sharing
+  no collection, is real but its current hit rate is low.
+- I then built a throwaway harness (not part of this diff, written and deleted, tree confirmed
+  clean before and after) that runs the identical `SetCurrentDirectory`-then-restore pattern
+  concurrently across 60 tasks. It failed on the **first** run I ran it —
+  `Directory.GetCurrentDirectory()` itself throwing `System.IO.FileNotFoundException` from inside
+  `Interop.Sys.GetCwd()`, because a concurrently-running window had already deleted the directory
+  the process's CWD was still pointing at. This is not a subtle assertion mismatch; it's the runtime
+  unable to answer "what directory am I in" at all. I also captured one run (confounded by a
+  leftover build of that same throwaway harness still on disk, since deleted) where the two *real*
+  production tests failed together with the identical `FileNotFoundException`, under the stress
+  flags — so the failure mode I mechanically proved is exploitable is not purely theoretical for
+  these two specific tests either, only rarer than my 60-way harness made it.
+
+So, precisely: this is a demonstrated-real, currently-low-probability hazard against a codebase rule
+stated plainly at §2 — "test seams are threaded parameters, never shared statics" — and it is
+demonstrated to corrupt a sibling (each other, today; anything else that later adopts the same
+"just `SetCurrentDirectory` it" shortcut, going forward) once enough concurrency is applied, which a
+CI runner with more cores than this sandbox, or a future test suite with a third or fourth instance
+of the pattern, supplies for free. I don't think "it hasn't flaked yet under our exact settings" is
+the right bar for a rule this codebase wrote down for itself after presumably learning it once
+already.
+
+**What I'm asking for is small and matches this block's own size.** Not the workingDirectory
+architecture fix (that's the right *eventual* fix and it's §7-or-later-sized, per priority 2 above,
+not this block's to do) — just make the two existing tests unable to race each other: an explicit
+shared `[Collection("CurrentDirectoryMutation")]` (or equivalent) on both test classes, so xUnit
+serializes them relative to each other rather than leaving it to scheduling luck. That's a
+same-shape, in-scope, few-line addition — it does not touch the fix under review, does not add a
+new `N.M`, and it closes the actual gap between "this pattern is safe" and "this pattern hasn't
+lost yet."
+
+**Everything else: clean, verified, ready.** The one-line degradation fix is correct, matches the
+existing idiom exactly, is proven against the real binary in all three path shapes, and the
+mechanical walk holds with only presentational (not substantive) corrections to the counts. Once the
+two tests are protected from each other, I have nothing further — this should be the supervisor's
+last look at §6.
+
+→ @architect
+
+**[worker]** §6 remediation, round 3 (reviewer blocker) — the two new tests, not the fix.
+
+**Fix.** Both `FindingDegradationEvaluatorTests` and `CommandDispatcherFindingStatusTests` now
+carry an explicit `[Collection("current-directory-mutating-tests")]`, defined once via
+`CollectionDefinition` in `FindingDegradationEvaluatorTests.cs` (`CurrentDirectoryMutatingTests`).
+xUnit now serializes the two classes against each other instead of leaving them to the runner's
+default one-collection-per-class parallelism, which is what let them race on the process-global
+current directory. The collection declaration carries a doc comment stating why it exists: both
+classes call `Directory.SetCurrentDirectory` to exercise the empty-directory-component fix, and the
+underlying reason they must is that `CommandDispatcher`'s `workingDirectory` parameter doesn't
+govern relative-path resolution for a command's own file argument — only the real process CWD does,
+which is §7's concern and untouched here. No other test class in the file mutates the current
+directory, so the collection is scoped to exactly the two that need it.
+
+**Nothing else changed** — no `workingDirectory` architecture work, no test restructuring beyond
+the collection attribute and its doc comment, per the coordinator's instruction.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (492/492 tests).
+
+→ @reviewer
+
+**[reviewer]** Re-audit, §6 remediation round 3. **Verdict: Approve. Signing off.**
+
+`make gates` on the tree: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`,
+492/492, matching the worker's report. Both asks verified by execution, not by reading the diff.
+
+**That the collection actually serializes — confirmed, after my harness lied to me once.** I added a
+throwaway class (`ZReproCollectionStressTests_Protected`, not part of this diff, written and deleted,
+tree confirmed clean before and after) with 30 `[Theory]` rows running the identical
+`SetCurrentDirectory`-sleep-restore shape, tagged into the *same*
+`[Collection(CurrentDirectoryMutatingTests.Name)]` as the real two classes, and ran it alongside them
+under the runner's own maximum-stress options. First pass showed 30/30 "failures" — which turned out
+to be my own harness bug, not a race: `Path.GetTempPath()` returns `/tmp/...` on this machine, but
+`Directory.GetCurrentDirectory()` returns the OS's symlink-resolved `/private/tmp/...`, so my
+pre-built expected string never matched regardless of concurrency. Fixed by capturing "expected"
+from `GetCurrentDirectory()` itself immediately after the `Set` call, then re-reading after a random
+sleep — isolating canonicalization from the actual question. With that fixed: **8 repeated runs of
+the real two classes plus the 30-row stress class, all sharing the collection, under
+`-maxThreads unlimited` — zero failures**, at both the default `-parallelMode collections` (what
+`make gates` actually uses) and under `-parallelMode all`. Before the fix, the identical unprotected
+pattern (no `[Collection]` tag) failed reliably and immediately under the same stress — so the
+harness genuinely discriminates protected from unprotected, and the collection attribute is doing
+real work, not sitting unused.
+
+**One thing worth naming precisely, since it bears on the second question.** I also ran the
+protected three-class group *alongside* a deliberately unprotected fourth class doing the same CWD
+mutation with no `[Collection]` tag. The unprotected class could still fail (expected — nothing
+should protect it) and, in a minority of those runs, a protected test failed too — **not because the
+collection failed to serialize its own members, but because process CWD is one value for the whole
+OS process, and a class outside the collection can still race in from outside it.** The collection
+guarantees "members don't run concurrently with each other"; it cannot and does not guarantee
+"nothing outside the collection touches this global." That's expected behaviour, not a flaw in the
+fix — it just means the fix's completeness depends on nothing else joining the race from outside,
+which is exactly the second thing I was asked to check.
+
+**That no other test mutates process-global state — confirmed, mechanically, not by trusting the
+audit that found the original two.** `grep -rn "SetCurrentDirectory\|SetEnvironmentVariable\|
+AppContext.SetSwitch"` across every file in `tests/Callboard.Tests/` returns exactly the two call
+sites inside the two protected classes, nothing else. Also swept for mutable shared statics more
+generally (`static` fields that aren't `readonly`/`const`) — found none; every `static` in the test
+suite is either a `static class`, a `static` factory/helper method, or a `static` lambda (a
+performance idiom, not shared state). So today the collection is complete, not merely sized to what
+this block happened to add — there is nothing left uncovered for it to miss. If a future test ever
+adds another process-global mutation (an environment variable, another `SetCurrentDirectory`,
+anything in that family), it will need to join `CurrentDirectoryMutatingTests.Name` explicitly to be
+protected — the mechanism is a convention future authors must remember, not a compiler-enforced
+guarantee, the same shape of caveat this codebase already states plainly for `CardLock` being
+advisory. Worth a line in `## NEXT` for whoever next adds a test in this family, not a blocker here.
+
+**Everything from the prior two rounds stands**, re-confirmed on this tree: the one-line degradation
+fix, the mechanical enumeration, and the three path-shape invocations all still verified correct.
+
+**Signing off plainly.** The blocker is closed, closed correctly, and I found nothing else. §6 is
+ready for the supervisor's third and final look.
+
+→ @architect
+
 ## NEXT
 
 

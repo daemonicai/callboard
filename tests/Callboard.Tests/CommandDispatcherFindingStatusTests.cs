@@ -12,6 +12,13 @@ namespace Callboard.Tests;
 /// contract's own proof, the same discipline <c>CommandDispatcherFindingRecordTests</c> already
 /// applies to <c>finding record</c>.
 /// </summary>
+/// <remarks>
+/// §6 remediation, round 3 (reviewer blocker) — this class and
+/// <see cref="FindingDegradationEvaluatorTests"/> both mutate the process-global current
+/// directory to exercise the empty-directory-component fix; see
+/// <see cref="CurrentDirectoryMutatingTests"/> for why the explicit collection exists.
+/// </remarks>
+[Collection(CurrentDirectoryMutatingTests.Name)]
 public sealed class CommandDispatcherFindingStatusTests
 {
     private const string ChangeName = "establish-callboard";
@@ -213,6 +220,50 @@ public sealed class CommandDispatcherFindingStatusTests
         var afterClose = Status(repo, findingPath);
         Assert.Equal("degraded", afterClose.GetProperty("degradation").GetString());
         Assert.Equal("current", afterClose.GetProperty("staleness").GetString());
+    }
+
+    // §6 section remediation, round 2 (supervisor blocker) — `Path.GetDirectoryName` returns the
+    // empty string for a bare filename, not null, and the evaluator used to treat "" as "no
+    // directory to look in" and answer Live without reading a single card. Reproduced exactly as
+    // the supervisor did: same finding, same closed section, invoked two ways that only differ in
+    // whether the path carries a directory component. Both must answer "degraded".
+    [Fact]
+    public void BareFilenameWithNoDirectoryComponent_StillReadsBackDegraded_SameAsAnAbsolutePath()
+    {
+        using var repo = new TempGitRepo();
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0017.md");
+
+        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        WriteClosedSectionCard(repo, "s-0018", "S-0018");
+
+        var absoluteStatus = Status(repo, findingPath);
+        Assert.Equal("degraded", absoluteStatus.GetProperty("degradation").GetString());
+
+        // Path.Exists/File.Exists resolve a relative argument against the real process working
+        // directory, not the workingDirectory parameter CommandDispatcher.Run threads through for
+        // repo-root resolution — the same as the real binary invoked from a shell after `cd`, which
+        // is exactly the supervisor's repro. Only this test needs the process CWD moved; every
+        // other test in this file passes an absolute findingPath and is unaffected.
+        var previousDirectory = Directory.GetCurrentDirectory();
+        string output;
+        int exitCode;
+        try
+        {
+            Directory.SetCurrentDirectory(repo.CardsDirectory);
+            var writer = new StringWriter();
+            exitCode = CommandDispatcher.Run(
+                ["finding", "status", "f-0017.md"],
+                writer, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.CardsDirectory, clock: static () => FixedNow);
+            output = writer.ToString();
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+        }
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output);
+        Assert.Equal("degraded", doc.RootElement.GetProperty("result").GetProperty("degradation").GetString());
     }
 
     // §6 block D remediation (reviewer blocker 1), at the CLI boundary: two `section` cards in
