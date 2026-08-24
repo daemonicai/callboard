@@ -4,9 +4,8 @@ namespace Callboard.Cards;
 /// One enumerated claim of an approval (review-certification: "Certification enumerates its
 /// claims", §8 block A) — one entry in a <c>block</c> card's append-only claim sequence
 /// (<see cref="CardFile.Claims"/>). Carries its own stable <see cref="Id"/> (Architect ruling: "each
-/// claim carrying its own id") because 8.8's <c>recertify</c> (out of this block's scope) re-asserts
-/// an existing approval's claims individually — a caller needs a handle to name one claim, not the
-/// whole enumerated set, and claim text is prose that cannot itself serve as that handle (two claims
+/// claim carrying its own id") — a reader discussing one claim from an enumerated set needs a
+/// handle to name it, and claim text is prose that cannot itself serve as that handle (two claims
 /// can read identically; an id never does). Modelled as its own append-only entry rather than a
 /// comma-joined frontmatter list for the same reason <see cref="BlockCardFields"/>'s own doc comment
 /// gives for <see cref="BlockCardFields.Tasks"/>: claim text is free-form prose that will contain

@@ -36,23 +36,16 @@ namespace Callboard.Cards;
 /// ever <see langword="true"/> when <paramref name="IsNit"/> is; meaningless, and always
 /// <see langword="false"/>, otherwise.</param>
 /// <param name="Sites">The sites the nit names, in the order recorded — repeatable
-/// <c>--site</c> at raise time (Architect ruling: "record sites now … even though nothing in this
-/// block reads them back", so a later block does not need to retrofit the wire format). Only ever
-/// non-empty when <paramref name="IsNit"/> is.</param>
+/// <c>--site</c> at raise time. Guidance to whoever picks up the fix, so they know where to
+/// start (review-certification: "guidance to whoever does the work and SHALL NOT be treated as a
+/// bound on what the fix may touch — where the reviewer noticed the problem, not a claim about
+/// where the problem ends"). Only ever non-empty when <paramref name="IsNit"/> is.</param>
 /// <param name="Disposition">The disposition this comment records, or <see langword="null"/> for
 /// every comment that is not a disposition — including the nit-raising comment itself. A
 /// disposition is a <em>later</em> comment naming the nit it dispositions via
 /// <paramref name="Resolves"/>, never a mutation of the nit comment — <see cref="CardComment"/>
 /// offers no mutation path by construction (this type's own class doc comment), the same idiom
 /// <paramref name="Resolves"/> already established for a reply resolving an earlier comment.</param>
-/// <param name="IsRecertification">&#160;<see langword="true"/> only on the comment
-/// <see cref="CardStore.RecordRecertification"/> appends to record one <c>block recertify</c> call
-/// (review-certification: "Recertification re-asserts an existing claim set", §8 block C) —
-/// <see langword="false"/> for every other comment, including a nit or a disposition. This is the
-/// structural marker <see cref="CardCommentRouting.HasRecertification"/> scans for to derive "how
-/// many recertifications since the current approval" (8.10) — computed over the record each time,
-/// never stored as a raw boolean on the card that would need its own reset logic on every new
-/// approval (Architect ruling: "do not implement this as a boolean on the card that never resets").</param>
 internal sealed record CardComment(
     string Id,
     CardOwner Author,
@@ -65,8 +58,7 @@ internal sealed record CardComment(
     bool IsNit = false,
     bool Required = false,
     IReadOnlyList<string>? Sites = null,
-    NitDisposition? Disposition = null,
-    bool IsRecertification = false)
+    NitDisposition? Disposition = null)
 {
     /// <summary>Normalises the constructor's <see langword="null"/> <see cref="Sites"/> default to
     /// an empty list, once, here — the same reason <see cref="CardFile.Handovers"/> normalises its
@@ -92,8 +84,7 @@ internal sealed record CardComment(
         && IsNit == other.IsNit
         && Required == other.Required
         && Sites.SequenceEqual(other.Sites)
-        && EqualityComparer<NitDisposition?>.Default.Equals(Disposition, other.Disposition)
-        && IsRecertification == other.IsRecertification;
+        && EqualityComparer<NitDisposition?>.Default.Equals(Disposition, other.Disposition);
 
     public override int GetHashCode()
     {
@@ -110,7 +101,6 @@ internal sealed record CardComment(
         hash.Add(Required);
         hash.Add(Sites.Count);
         hash.Add(Disposition);
-        hash.Add(IsRecertification);
         return hash.ToHashCode();
     }
 }

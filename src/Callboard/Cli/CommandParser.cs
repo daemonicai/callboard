@@ -100,7 +100,7 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'block' requires a subcommand. Known subcommands: transition, gate, add-blocker, remove-blocker, approve, recertify, amendment-requested."));
+                    "'block' requires a subcommand. Known subcommands: transition, gate, add-blocker, remove-blocker, approve, amendment-requested."));
             case "transition":
                 context.Arguments.TryTake();
                 return ParseBlockTransition(context);
@@ -118,16 +118,13 @@ internal static class CommandParser
             case "approve":
                 context.Arguments.TryTake();
                 return ParseBlockApprove(context);
-            case "recertify":
-                context.Arguments.TryTake();
-                return ParseBlockRecertify(context);
             case "amendment-requested":
                 context.Arguments.TryTake();
                 return ParseBlockAmendmentRequested(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition, gate, add-blocker, remove-blocker, approve, recertify, amendment-requested."));
+                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition, gate, add-blocker, remove-blocker, approve, amendment-requested."));
         }
     }
 
@@ -189,21 +186,7 @@ internal static class CommandParser
                 "instead."));
         }
 
-        // §8 block C (Architect ruling, same reasoning as 'approve' and 'fix-before-land' above):
-        // 'recertification-refused' is raised only as the side effect of a refused 'block
-        // recertify' claim — a bare transition through this path would move a block back to
-        // 'briefed' with no claim genuinely refused. Argv-decidable, so refused here rather than
-        // left to execute. A successful recertification is never a table edge at all
-        // (BlockFlowTransitions's own doc comment), so there is no 'recertify' name to refuse here.
-        if (string.Equals(transitionName, "recertification-refused", StringComparison.Ordinal))
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "recertification-refused-via-transition-refused",
-                "'recertification-refused' cannot be applied through 'block transition' — it is only raised " +
-                "as the side effect of a refused 'block recertify' claim. Use 'block recertify' instead."));
-        }
-
-        // §8 block C remediation (Architect ruling, same reasoning as the three refusals above):
+        // §8 block C remediation (Architect ruling, same reasoning as the two refusals above):
         // 'amendment-requested' is the architect deliberately reopening an approved block — a bare
         // transition through this path would move a block back to 'briefed' with no architect
         // decision actually recorded as having made that call. Argv-decidable, so refused here
@@ -365,23 +348,35 @@ internal static class CommandParser
     /// split <c>rule compact</c>'s Architect-only restriction already uses (<see cref="Cards.
     /// CardStore.CompactRules"/>) — it is a fact about who may perform this operation, not about the
     /// shape of the argument.
+    ///
+    /// <para>
+    /// <b><c>--claims</c>/<c>--limits</c> are repeatable, not comma-joined (§8 remediation blocker
+    /// 3).</b> Certification text SHALL be "actionable by a reviewer who did not author it"
+    /// (review-certification: "Certification enumerates its claims") — exactly the free-form prose
+    /// most likely to contain a comma. A single comma-joined value routed through
+    /// <see cref="CardFileFormat.SplitFrontmatterList"/> silently split one claim's own prose into
+    /// two claims, each with its own id, with no refusal at all: storage was never the problem
+    /// (block A gave each claim its own line and id), only this CLI boundary. Same repeatable shape
+    /// <c>nit raise --site</c> and (previously) <c>--changed</c> already established: one flag
+    /// occurrence per item, taken in argv order.
+    /// </para>
     /// </summary>
     private static CommandDispatcher.ParseResult ParseBlockApprove(CommandDispatcher.CommandContext context)
     {
         string? id = null;
         string? roleText = null;
         string? state = null;
-        string? claimsRaw = null;
-        string? limitsRaw = null;
         string? changeName = null;
+        var claims = new List<string>();
+        var limits = new List<string>();
 
         var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
             ["--id"] = value => id = value,
             ["--role"] = value => roleText = value,
             ["--state"] = value => state = value,
-            ["--claims"] = value => claimsRaw = value,
-            ["--limits"] = value => limitsRaw = value,
+            ["--claims"] = value => claims.Add(value),
+            ["--limits"] = value => limits.Add(value),
             ["--change"] = value => changeName = value,
         });
         if (flagRefusal is not null)
@@ -415,23 +410,21 @@ internal static class CommandParser
                 "uncommitted working-tree content it covers."));
         }
 
-        var claims = CardFileFormat.SplitFrontmatterList(claimsRaw ?? string.Empty);
         foreach (var claim in claims)
         {
             if (!CardApprovalClaim.IsValidText(claim))
             {
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                    "invalid-claim", $"'--claims' cannot contain an empty or whitespace-only item: '{claimsRaw}'."));
+                    "invalid-claim", "'--claims' cannot name an empty or whitespace-only item."));
             }
         }
 
-        var limits = CardFileFormat.SplitFrontmatterList(limitsRaw ?? string.Empty);
         foreach (var limit in limits)
         {
             if (!CardApprovalLimit.IsValidText(limit))
             {
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                    "invalid-limit", $"'--limits' cannot contain an empty or whitespace-only item: '{limitsRaw}'."));
+                    "invalid-limit", "'--limits' cannot name an empty or whitespace-only item."));
             }
         }
 
@@ -439,9 +432,9 @@ internal static class CommandParser
         {
             return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                 "no-claims-or-limits",
-                "'block approve' requires at least one of '--claims <text>[,<text>...]' or '--limits " +
-                "<text>[,<text>...]' — certification text is read by a later reviewer who did not write it, so " +
-                "an approval enumerating nothing is refused."));
+                "'block approve' requires at least one of '--claims <text>' or '--limits <text>' (each " +
+                "repeatable) — certification text is read by a later reviewer who did not write it, so an " +
+                "approval enumerating nothing is refused."));
         }
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.BlockApprove(
@@ -449,130 +442,14 @@ internal static class CommandParser
     }
 
     /// <summary>
-    /// Builds <c>block recertify</c>'s <see cref="CommandDispatcher.ParsedCommand.Recertify"/> (§8
-    /// block C, review-certification: "Recertification re-asserts an existing claim set" /
-    /// "Recertification is bounded"). Addressed by <c>--id</c>, the same identity-addressing
-    /// convention <c>block approve</c> already established. <c>--assert</c>/<c>--refuse</c> are
-    /// repeatable (the same shape <c>nit raise --site</c> already established) and each names one of
-    /// the current approval's claims individually by its own stable id (Architect ruling: "claims
-    /// already have stable identity — use it. Do not invent a second addressing scheme"). Everything
-    /// argv-decidable is decided here: <c>--role</c>'s wire-format validity, <c>--state</c>
-    /// non-empty/whitespace (the same "an empty name names nothing" check <c>block approve</c>'s own
-    /// <c>--state</c> uses), every claim id non-blank, and a claim id named by both
-    /// <c>--assert</c> and <c>--refuse</c> in the same call (an ambiguous, argv-decidable
-    /// self-contradiction). <c>--changed &lt;path&gt;</c> is repeatable and required (§8 block D
-    /// brief item 1, review-certification: "Recertification is bounded") — omitted entirely is
-    /// refused here (never read as "an empty difference, vacuously confined"), a blank value is
-    /// refused here; whether each path is actually confined to a dispositioned nit's site depends
-    /// on the card's on-disk state, so that is left to the execute phase, same as the claim checks
-    /// below. Whether a named id actually belongs to the current approval's claim set, and whether
-    /// every one of that set received an outcome, both depend on the card's on-disk state, so both
-    /// are left to the execute phase. Role <em>permission</em> (reviewer/supervisor only) is
-    /// likewise left to execute, the same split <c>block approve</c>'s own role check uses.
-    /// </summary>
-    private static CommandDispatcher.ParseResult ParseBlockRecertify(CommandDispatcher.CommandContext context)
-    {
-        string? id = null;
-        string? roleText = null;
-        string? state = null;
-        string? changeName = null;
-        var assertedClaimIds = new List<string>();
-        var refusedClaimIds = new List<string>();
-        var changedPaths = new List<string>();
-
-        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
-        {
-            ["--id"] = value => id = value,
-            ["--role"] = value => roleText = value,
-            ["--state"] = value => state = value,
-            ["--assert"] = value => assertedClaimIds.Add(value),
-            ["--refuse"] = value => refusedClaimIds.Add(value),
-            ["--changed"] = value => changedPaths.Add(value),
-            ["--change"] = value => changeName = value,
-        });
-        if (flagRefusal is not null)
-        {
-            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
-        }
-
-        if (id is null)
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'block recertify' requires '--id <card-id>'."));
-        }
-
-        if (roleText is null)
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'block recertify' requires '--role <role>'."));
-        }
-
-        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
-        }
-
-        if (string.IsNullOrWhiteSpace(state))
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "state-required",
-                "'block recertify' requires '--state <text>' naming the exact amended state re-certified, " +
-                "including any uncommitted working-tree content it covers."));
-        }
-
-        foreach (var claimId in assertedClaimIds.Concat(refusedClaimIds))
-        {
-            if (string.IsNullOrWhiteSpace(claimId))
-            {
-                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                    "invalid-claim-id", "'--assert'/'--refuse' cannot name an empty or whitespace-only claim id."));
-            }
-        }
-
-        var conflicting = assertedClaimIds.Intersect(refusedClaimIds, StringComparer.Ordinal).ToList();
-        if (conflicting.Count > 0)
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "conflicting-claim-outcome",
-                $"the following claim id(s) were named by both '--assert' and '--refuse': {string.Join(", ", conflicting)}. " +
-                "Each claim receives exactly one outcome."));
-        }
-
-        // review-certification: "the difference between certified and amended states SHALL be
-        // confined to the sites of the dispositioned nits" (§8 block D brief item 1) — required,
-        // not merely accepted: omitting '--changed' must not be read as "an empty difference,
-        // vacuously confined", which would turn the precondition off by omission.
-        if (changedPaths.Count == 0)
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "changed-paths-required",
-                "'block recertify' requires at least one '--changed <path>' naming a path the amendment " +
-                "touched — the mechanical precondition that confines the difference to the sites of the " +
-                "dispositioned nits has nothing to check without it."));
-        }
-
-        foreach (var changedPath in changedPaths)
-        {
-            if (string.IsNullOrWhiteSpace(changedPath))
-            {
-                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                    "invalid-changed-path", "'--changed' cannot name an empty or whitespace-only path."));
-            }
-        }
-
-        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.Recertify(
-            id, role, state, assertedClaimIds, refusedClaimIds, changedPaths, changeName, context.WorkingDirectory, context.Clock()));
-    }
-
-    /// <summary>
     /// Builds <c>block amendment-requested</c>'s <see cref="CommandDispatcher.ParsedCommand.
     /// AmendmentRequested"/> (§8 block C remediation, work-lifecycle: "`amendment-requested` is the
-    /// architect deliberately reopening an approved block for a further amendment"). Addressed by
-    /// <c>--id</c>, the same identity-addressing convention <c>block approve</c>/<c>block
-    /// recertify</c> already established. Everything argv-decidable is decided here: <c>--role</c>'s
-    /// wire-format validity. Role <em>permission</em> (architect-only) is left to the execute phase,
-    /// the same split every other role-bounded verb here uses.
+    /// architect deliberately reopening an approved block" — the only route from <c>approved</c>
+    /// back to work that is not a supervisor's recurrence). Addressed by <c>--id</c>, the same
+    /// identity-addressing convention <c>block approve</c> already established. Everything
+    /// argv-decidable is decided here: <c>--role</c>'s wire-format validity. Role <em>permission</em>
+    /// (architect-only) is left to the execute phase, the same split every other role-bounded verb
+    /// here uses.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseBlockAmendmentRequested(CommandDispatcher.CommandContext context)
     {

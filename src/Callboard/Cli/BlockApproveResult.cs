@@ -36,9 +36,8 @@ internal sealed class BlockApproveResult : ICommandResult
     public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CliJsonContext.Default.BlockApproveResult);
 }
 
-/// <summary>One claim <see cref="BlockApproveResult"/> enumerated: its stable id (8.8's
-/// <c>recertify</c>, out of this block's scope, addresses one by this id to assert or refuse it) and
-/// its text.</summary>
+/// <summary>One claim <see cref="BlockApproveResult"/> enumerated: its stable id and its
+/// text.</summary>
 internal sealed class BlockApprovalClaimResult
 {
     [JsonPropertyName("id")]

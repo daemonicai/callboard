@@ -21,10 +21,11 @@ internal static class CardCommentNitFieldKeys
     /// SHALL NOT bind the architect's disposition"). Omitted when <see langword="false"/>.</summary>
     internal const string Required = "required";
 
-    /// <summary>The sites the nit names, comma-joined (<see cref="CardComment.Sites"/>) — recorded
-    /// so a later block (8.11: "the difference … confined to the sites of the dispositioned nits")
-    /// has them to read, even though nothing in this block reads them back. Omitted when
-    /// empty.</summary>
+    /// <summary>The sites the nit names, comma-joined (<see cref="CardComment.Sites"/>) —
+    /// guidance to whoever picks up the fix, so they know where to start (review-certification:
+    /// "guidance to whoever does the work and SHALL NOT be treated as a bound on what the fix may
+    /// touch — where the reviewer noticed the problem, not a claim about where the problem ends").
+    /// Omitted when empty.</summary>
     internal const string Sites = "sites";
 
     /// <summary>The disposition this comment records (<see cref="CardComment.Disposition"/>) —

@@ -4,12 +4,11 @@ namespace Callboard.Cards;
 /// One stated limit of an approval — what the certification does NOT establish
 /// (review-certification: "An approval SHALL enumerate the claims it makes and state what it does
 /// not establish", §8 block A). One entry in a <c>block</c> card's append-only limit sequence
-/// (<see cref="CardFile.Limits"/>). Unlike <see cref="CardApprovalClaim"/>, carries no id: a limit is
-/// never individually asserted or refused (8.8's <c>recertify</c>, out of this block's scope,
-/// re-asserts <em>claims</em> one at a time — the requirement text and its scenarios never mention
-/// asserting a limit), so it needs no handle of its own, only the <see cref="Round"/> it was
-/// certified in (Architect ruling: "Limits are part of the same certification record; they are never
-/// individually asserted, so they need no ids").
+/// (<see cref="CardFile.Limits"/>). Unlike <see cref="CardApprovalClaim"/>, carries no id: a limit
+/// is never individually addressed — the requirement text and its scenarios never single one out —
+/// so it needs no handle of its own, only the <see cref="Round"/> it was certified in (Architect
+/// ruling: "Limits are part of the same certification record; they are never individually asserted,
+/// so they need no ids").
 /// </summary>
 /// <param name="Round">The block's remediation round this limit was certified in — the same scoping
 /// <see cref="CardApprovalClaim.Round"/> uses, for the same reason.</param>

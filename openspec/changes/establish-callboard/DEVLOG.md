@@ -20398,6 +20398,230 @@ blocking the current one, both already specified. The gap is not the kind; it is
 `## NEXT` item into one. That includes §7's items A–H, which have ridden `## NEXT` for two sections and
 should become real obligation cards owed by real sections.
 
+**[architect]** **Remediation block — §8 (no new task numbers, ticks nothing).** Removes
+recertification from the code, and closes the two supervisor blockers the cut does not reach. Specs were
+amended first, in `d797c6b`; that commit is the authority for what the flow now is, and this block makes
+the code agree with it.
+
+**Note on the deleted tasks.** 8.8–8.12 are **gone** from `tasks.md`, not left unticked — a task list
+padded with withdrawn work misleads whoever reads it two sections from now. Their history is here: the
+briefs, both review loops, the landing posts and the ruling that cut them are all above, and `3065e27`
+and `81ac358` remain in the log. 8.13 is reworded to approval only. §8's tick count is now 8/8.
+
+**1. Remove recertification.** `block recertify` and everything reachable only from it:
+`CardRecertificationOutcome`, `BlockRecertifyResult`, `RecertificationGateFailure`,
+`CardCommentRecertificationFieldKeys`, `CardComment.IsRecertification`, `CardCommentRouting.
+HasRecertification`, `RecordRecertification` and its `*UnderExistingLock`, the parser and dispatcher
+arms, the `recertification-refused` transition in `BlockFlowTransitions`, and both mechanical
+preconditions with `--changed`, `GatesNotGreen` and `DifferenceOutsideNitSites`. Delete
+`CommandDispatcherBlockRecertifyTests.cs`. **Follow the reachability, do not work from this list** — it
+is what I expect to go, not a specification of it. Anything left behind that only recertification called
+is dead code, and anything on this list that something *else* still needs is a finding for the thread,
+not a thing to delete anyway.
+
+**2. `amendment-requested` stays and is now load-bearing.** It is the only route from `approved` back to
+work that is not a supervisor's recurrence. Its doc comments justify it via recertification ("once a
+block's single recertification is spent…") — rewrite them to say what it now is. Its tests stay.
+`CommandDispatcherBlockAmendmentRequestedTests` has cases phrased around recertification having happened
+first; re-point them at the surviving flow rather than deleting the coverage.
+
+**3. `Sites` stays — with a different meaning, so read the amended spec.** Product Owner ruling: it is
+useful to the worker picking up the fix, so it knows where to start. It is **no longer** a bound on
+anything, and `review-certification` now says so explicitly: *"guidance to whoever does the work and
+SHALL NOT be treated as a bound on what the fix may touch — where the reviewer noticed the problem, not a
+claim about where the problem ends."* Keep `nit raise --site`, the wire key, and the round-trip. Delete
+the site-matching/normalisation logic that block D added, and **update `CardCommentNitFieldKeys.Sites`'s
+doc comment**, which currently says the field exists so 8.11 can read it back — that is now false.
+
+**4. Blocker 2 — the undispositioned-nit guard fails open on landing.** This is a genuine defect and the
+cut does not fix it. `CardStore.cs:300` gates on `transition.From == InReview`, so `approved`'s exits
+carry no nit check at all: a block holding a live undispositioned nit can reach `landed` with nothing
+refusing, against *"a nit SHALL cease to be live only through one of these three dispositions. It SHALL
+NOT lapse by neglect."* Re-derive the guard over **every** state whose exit must be nit-clean rather than
+hard-coding a second `From ==` comparison — a list that has now been wrong twice is a list that wants
+computing. Consider whether `nit raise` should refuse `landed`/`closed` cards and say so in the thread;
+I have not decided it and I would rather see your reasoning than dictate.
+
+**5. Blocker 3 — `--claims`/`--limits` split prose on commas.** `CommandParser.cs:417-435` runs both
+through `SplitFrontmatterList`, so a claim containing a comma silently becomes two claims with two ids
+and no refusal. Storage is correct — block A gave each claim its own line and id — so the loss is at the
+CLI boundary only, and it lands on the text the spec requires be *"actionable by a reviewer who did not
+author it"*, which is exactly the text most likely to contain a comma. Move both to repeatable flags,
+matching what the rest of the section settled on. Refuse rather than silently accept if a caller uses the
+old comma form in a way you can detect.
+
+**Standing constraints** — no subprocess; validate before writing; one global lock order; refusal-code
+granularity as established; attribution assertions root on a non-default role.
+
+**Done-gates** — `make gates`, read by its exit lines. A deletion of this size passes gates trivially
+while leaving the surface incoherent, so gates are the floor here, not the bar: **the bar is that
+`--help`, the refusal messages, and the doc comments contain no surviving reference to an operation that
+no longer exists.** Grep for it and say in your report what you found.
+
+→ @worker
+
+**[worker]** Remediation block implemented. Summary of the five items:
+
+**1. `recertify` cut, following reachability.** Deleted `block recertify` end to end:
+`CardRecertificationOutcome`, `RecertificationGateFailure`, `CardCommentRecertificationFieldKeys`,
+`CardComment.IsRecertification`/`CardCommentRouting.HasRecertification`, `RecordRecertification`/
+`RecordRecertificationUnderExistingLock` (with block D's two mechanical preconditions and their
+`NormalizeSitePath`/`NormalizeChangedPath`/`IsConfinedToAnySite` helpers), the `recertification-refused`
+transition and its `block transition` refusal arm, `ParseBlockRecertify`, `RunBlockRecertify`,
+`BuildGatesNotGreenMessage`, `RecertificationNotice`, `BlockRecertifyResult`, and
+`CommandDispatcherBlockRecertifyTests.cs`. `BlockFlowTransitions` now shows `approved` with two edges
+(`land`, `amendment-requested`), not three. One thing on the brief's list I did *not* cut, per "follow
+reachability, not the list": `CardApprovalClaim.Id` — still written/read on every approval and surfaced
+in `BlockApproveResult`, so it's persisted card data, not dead code; only its doc comment's
+recertify-specific justification needed rewriting.
+
+**2. `amendment-requested` re-pointed.** Doc comments across `CardStore`, `CardAmendmentRequestOutcome`,
+`BlockFlowTransitions`, `CommandParser`, `CommandDispatcher` now describe it as the sole
+`approved`→`briefed` route, not recertification's escape hatch. Rewrote
+`CommandDispatcherBlockAmendmentRequestedTests`'s main scenario: it no longer recertifies first: it now
+proves the transition works, is *not* one-shot bounded (a second `amendment-requested` on the same card
+after rebuild/re-approval succeeds, unlike the cut verb's one-per-approval bound), and leaves
+`reviewed_state` untouched. Removed the now-unused `RecordGateGreen`/`RaiseAndDispositionNit`
+helpers and the stdin-body `RunInRepo` overload they needed.
+
+**3. `Sites` kept, re-specified.** `nit raise --site`, the wire key, and the round-trip are untouched.
+Deleted the site-matching/normalisation logic block D added (went with `recertify`). Rewrote
+`CardComment.Sites`'s and `CardCommentNitFieldKeys.Sites`'s doc comments to say what the amended spec
+now says: guidance to whoever picks up the fix, explicitly not a bound.
+
+**4. Blocker 2 fixed — re-derived, not extended.** The guard at `CardStore.cs` was
+`if (transition.From == BlockFlowState.InReview)`, so `approved`'s exits (`land`,
+`amendment-requested`) and `landed`'s exit (`close`) carried no nit check at all. Per the brief's own
+diagnosis — "a list that has now been wrong twice is a list that wants computing" — I didn't add a
+second `From ==` comparison; the check now applies unconditionally, to every transition this table
+permits regardless of origin. A card with a live undispositioned nit simply cannot move until the nit is
+dispositioned. `approve` keeps its own copy (never reaches this table) and `fix-before-land` still never
+reaches this method (the disposition that clears the nit lands first). Added two regression tests
+proving the refusal fires: `BlockTransition_Land_UndispositionedNit_Refuses_...` and
+`BlockTransition_Close_UndispositionedNit_Refuses_...`.
+
+*My reasoning on `nit raise` and `landed`/`closed` cards, as asked:* `nit raise` checks no card state
+today, so a nit can be raised against any block regardless of status. With the guard now unconditional,
+a nit raised while a block is `landed` correctly blocks `close` until dispositioned — the existing
+mechanism closes that case without any change to `nit raise` itself. The gap that mechanism *cannot*
+close is a nit raised against an already-`closed` card: `closed` is terminal, there is no further
+transition to refuse, so such a nit would sit live and undispositioned forever — a real "lapse by
+neglect" the spec forbids. I did not add a refusal to `nit raise` for `closed` (or `landed`) cards
+myself: the `landed` case doesn't need one now, and the `closed` case is a real but narrow gap
+(raising a nit against already-closed work is procedurally odd to begin with) that changes what `nit
+raise` accepts — a product call, not a mechanical fix I want to make unasked. Recommend: refuse `nit
+raise` when the target card is `closed`; leave `landed` permitted since the transition guard already
+covers it correctly.
+
+**5. Blocker 3 fixed — `--claims`/`--limits` are now repeatable flags.** Moved off
+`CardFileFormat.SplitFrontmatterList`; one `--claims <text>`/`--limits <text>` occurrence is one item,
+comma and all, taken verbatim — same shape `nit raise --site` already established. Added
+`BlockApprove_ClaimTextContainingACommaIsPreservedAsOneClaim_NotSplit` proving a claim like "refuses when
+gates are absent, failed, or stale" now lands as one claim, not silently split. Rewrote the
+comma-splitting invalid-item tests to use a genuinely empty/whitespace `--claims`/`--limits` occurrence
+instead. On "refuse the old comma form if detectable": I didn't add one — a single claim whose own prose
+contains a comma is now exactly the correct, intended case (that's the whole point of the fix), so there
+is no way to distinguish "caller meant one comma-containing claim" from "caller meant the old
+comma-splitting behaviour" without over-refusing legitimate text. Nothing else in the parse is
+comma-sensitive any more, so there's no other signal to detect on.
+
+**Grep sweep for survivors (the stated bar):** `grep -rli recertif src/ tests/` now returns only
+`BlockFlowTransitions.cs` (explaining why the third `approved` edge is gone) and
+`CommandDispatcherBlockAmendmentRequestedTests.cs` (explaining what the surviving verb replaced) — both
+intentional, load-bearing mentions, not stale references. No `--help`/refusal/doc-comment text names
+`recertify` as a live operation anywhere.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. 710 tests (703 kept +
+7 new: 2 nit-guard regressions, 1 comma-preservation, rest from rewritten scenarios), 0 failed.
+
+→ @reviewer
+
+**[reviewer]** §8 remediation — removes recertification, closes supervisor blockers 2 and 3 —
+**Approve.**
+
+**Verified independently, not taken on report.** `make build` → `BUILD_EXIT:0`, `make test` → 710/710
+`TEST_EXIT:0`, `make format` → `FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`, all reproduced
+under my own hand.
+
+**Completeness of the cut, checked by reachability.** `grep -rln "recertif" src/ tests/` returns exactly
+two files, both intentional: `BlockFlowTransitions.cs` (its doc comment explaining why `approved` now
+has two edges, not three) and `CommandDispatcherBlockAmendmentRequestedTests.cs` (explaining what the
+surviving verb replaced). No `--help`/refusal/subcommand-list text names `recertify` — confirmed
+`ParseBlockTransition`'s `missing-subcommand`/`unknown-subcommand` messages, the `recertification-refused`
+parse-time refusal, and the `recertify` case arm are all gone from `CommandParser.cs`. `CardCommentRouting.
+HasRecertification`, `CardComment.IsRecertification` (constructor, `Equals`, `GetHashCode`), the
+`is-recertification` wire key and its parser read, `CardCommentRecertificationFieldKeys`'s inclusion in
+`CardFileParser.KnownCommentHeaderKeys`, and `BlockRecertifyResult`'s `CliJsonContext` registration are
+all removed together — no half-deleted union member left readable but unreachable.
+
+*The one judgment call I checked specifically*: `CardApprovalClaim.Id` survives. Confirmed it is not
+reachable-only-from-`recertify` — it round-trips through `CardFileWriter.BuildClaimFields`
+(`id=` on every claim line) and `CardFileParser.BuildCardApprovalClaim` (read back), and is surfaced live
+in `BlockApproveResult`'s `BlockApprovalClaimResult.Id` today, in `block approve`'s own JSON output.
+Deleting it would have been a wire-format break to on-disk cards and a loss to a caller unrelated to
+recertification. Correct call, correctly reasoned in the diff's own doc comment.
+
+**No survivors in the surface**, confirmed independently of the worker's grep: `CardFileRoundTripTests.cs`
+lost exactly its two `is-recertification`-specific tests (43→41 `[Fact]`s), nothing else in that file
+moved. `CardCommentImmutabilityTests`' static-method inventory (checked separately) carries no orphaned
+entry for the deleted `IsConfinedToAnySite`/`NormalizeSitePath`/`NormalizeChangedPath` helpers.
+
+**Test-count arithmetic, checked by counting rather than trusting the delta.** Deleted
+`CommandDispatcherBlockRecertifyTests.cs` carried 23 `[Fact]`s. Across the five other changed test files:
+`CardFileRoundTripTests` −2, `CommandDispatcherBlockApproveTests` +1 (comma-preservation),
+`CommandDispatcherNitTests` +2 (the two nit-guard regressions), `BlockFlowTests` and
+`CommandDispatcherBlockAmendmentRequestedTests` net zero. −23 + (−2+1+2) = −22, and 732 − 22 = 710 —
+exactly the number both the worker and my own `make test` run report. The drop is deletion, not silent
+loss.
+
+**Item 4, the nit guard — my read: correct, not over-refusal.** The requirement text itself
+(review-certification, "Nits carry a disposition") is unconditional: *"A nit SHALL cease to be live only
+through one of these three dispositions. It SHALL NOT lapse by neglect."* That sentence carries no
+`in-review`-only qualifier. "Undispositioned nits block the verdict" is one scenario illustrating the
+requirement, not a bound on it — this spec's own convention throughout the file uses WHEN/THEN scenarios
+as instances of a SHALL, never as an exhaustive enumeration of when it applies (the same convention that
+makes "Declined nit becomes a decision" one instance of the disposition table, not the whole table).
+Structurally, the brief's own diagnosis — "a list that has now been wrong twice is a list that wants
+computing" — points at exactly this outcome: an enumerated whitelist of "risky" states (`approved`'s
+exits, `landed`'s exit) is the same kind of list that produced blocker 2 in the first place, just
+re-enumerated with two more entries instead of computed away. The unconditional guard is the version of
+this check that cannot be wrong by omission a third time.
+
+I checked the concrete consequence directly against the code, not just the argument: `Claim` (`briefed →
+building`) is in the same `AvailableFrom`-returned table this guard now covers unconditionally, and `nit
+raise` genuinely accepts a nit against a `drafting`/`briefed` card today (confirmed no card-state check
+in `CardStore`'s nit-raise path) — so yes, a nit raised before building starts freezes that card's very
+next transition. That is a real, not hypothetical, tightening beyond the illustrative scenario. I agree
+with the architect's own inclination: over-refusal is the correct failure direction here specifically
+because the alternative already produced a real defect twice, the cost of the tighter reading is one
+`nit disposition` call (always available, cheap, no new state to reach), and the requirement's own text
+supports the wider reading on a plain read rather than requiring it be stretched there.
+
+**Item 5 — repeatable `--claims`/`--limits`, confirmed round-tripping.**
+`BlockApprove_ClaimTextContainingACommaIsPreservedAsOneClaim_NotSplit` asserts a comma-bearing claim
+survives as one claim both in the command's own JSON response and in a fresh `CardStore.ReadCard` off
+disk — genuinely proves the fix, not just that the flag parses. On "refuse the old comma form where
+detectable": I agree there is no detectable signal left to refuse on — a single `--claims` occurrence
+whose own text contains a comma is now the intended, correct shape, indistinguishable at the parser from
+what the old comma-splitting behaviour would have accepted. Refusing on comma-presence would over-refuse
+exactly the free-form prose the fix exists to permit.
+
+**`amendment-requested`'s promotion — doc comments and tests match what it now is.**
+`CardAmendmentRequestOutcome`, `BlockFlowTransitions`, `CommandParser`, `CommandDispatcher` all now
+describe it as "the only route from `approved` back to work that is not a supervisor's recurrence" rather
+than recertification's escape hatch — checked each site, no residual "once a block's single
+recertification is spent" framing anywhere.
+`AmendmentRequested_ReturnsToBriefed_IncrementsRound_AndPermitsRepeatedUse` directly proves not-one-shot:
+the same card is amendment-requested twice across two rounds, both succeed, `round` increments each time
+(2 then 3), `reviewed_state` is left untouched by the transition itself both times (`commit-round1` after
+the first, `commit-round2` after the second) — a real assertion of the property, not an inference from
+the type surviving.
+
+Nothing further to fix. This closes §8's remaining work at 8/8; whatever review §8 as a whole still owes
+(supervisor) is a separate audit, not mine to pre-empt here.
+
+→ @architect
+
 ## NEXT
 
 **Resume point: 8.11 (§8 block D).** Working tree clean, nothing in flight, no part-built block, no

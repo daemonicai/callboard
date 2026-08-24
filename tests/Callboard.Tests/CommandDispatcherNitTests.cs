@@ -512,6 +512,56 @@ public sealed class CommandDispatcherNitTests
         Assert.Equal("undispositioned-nits", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
+    // §8 remediation blocker 2: the guard originally checked only 'transition.From == InReview',
+    // so 'approved's own exit ('land') carried no nit check at all — a block holding a live
+    // undispositioned nit (raised, e.g., during the provisional window while a sibling block's
+    // change lands) could reach 'landed' with nothing refusing. Nit raise itself never checks the
+    // card's current state, so a nit landing on an already-approved card is a real path, not a
+    // contrived one.
+    [Fact]
+    public void BlockTransition_Land_UndispositionedNit_Refuses_AndLeavesTheCardByteIdentical()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo.Path, "b-0020", "B-0020", BlockFlowState.Approved);
+        var nitId = RaiseNit(repo, "B-0020");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "land", "--role", "architect", "--change", ChangeName],
+            output, repo, string.Empty);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("undispositioned-nits", refusal.GetProperty("code").GetString());
+        Assert.Contains(nitId, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // Same requirement, the 'close' exit — a nit raised while a block sits 'landed' (again, nit
+    // raise checks no state) must not be allowed to lapse by neglect through to 'closed' either.
+    [Fact]
+    public void BlockTransition_Close_UndispositionedNit_Refuses_AndLeavesTheCardByteIdentical()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo.Path, "b-0021", "B-0021", BlockFlowState.Landed);
+        var nitId = RaiseNit(repo, "B-0021");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "close", "--role", "architect", "--change", ChangeName],
+            output, repo, string.Empty);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("undispositioned-nits", refusal.GetProperty("code").GetString());
+        Assert.Contains(nitId, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
     // §8 block B: fix-before-land is only ever raised as the side effect of a nit disposition —
     // the same "one door" discipline block A's own approve-via-transition-refused established.
     [Fact]

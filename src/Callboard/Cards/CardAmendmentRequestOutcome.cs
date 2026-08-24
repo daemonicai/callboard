@@ -3,13 +3,14 @@ namespace Callboard.Cards;
 /// <summary>
 /// Closed union over how <see cref="CardStore.RecordAmendmentRequest"/> (§8 block C remediation,
 /// work-lifecycle: "`amendment-requested` is the architect deliberately reopening an approved
-/// block for a further amendment") can end. Its own type rather than a reuse of
+/// block" — the only route from <c>approved</c> back to work that is not a supervisor's
+/// recurrence) can end. Its own type rather than a reuse of
 /// <see cref="CardBlockTransitionOutcome"/>: this verb is role-bounded to <c>architect</c> — the
 /// one fact <see cref="CardBlockTransitionOutcome"/>'s generic path never checks, since every
 /// other edge on that table records the acting role rather than restricting it — so this type
 /// carries its own <see cref="RoleNotPermitted"/> case, the same split
-/// <see cref="CardApprovalOutcome"/>/<see cref="CardRecertificationOutcome"/> already use for
-/// their own role-bounded verbs. <see cref="RoleNotPermitted"/>, <see cref="NotABlockCard"/>,
+/// <see cref="CardApprovalOutcome"/> already uses for its own role-bounded verb.
+/// <see cref="RoleNotPermitted"/>, <see cref="NotABlockCard"/>,
 /// <see cref="CardNotFound"/>, <see cref="UndefinedTransition"/> and <see cref="LayoutMismatch"/>
 /// are refusal-shaped (caller-correctable); <see cref="CardCorrupt"/> and <see cref="ToolFailure"/>
 /// are not — a caller wired over this type (see <see cref="Callboard.Cli.CommandDispatcher.

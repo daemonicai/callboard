@@ -106,7 +106,6 @@ public sealed class CardCommentImmutabilityTests
             "ApplyBlockTransitionUnderExistingLock", // same, lock already held
             "ArchiveChange",                        // §7 block D: settles open obligations via DischargeRegisterCard (unchanged), then Directory.Move's the whole change directory — never opens, reads, or rewrites a repository- or capability-scoped card, and never touches Comments on any card it does settle
             "AtomicWrite",                          // the shared byte-writer every path above funnels through; it writes whatever CardFileWriter.Serialize(card) produces for the CardFile each of those paths built — none of them builds one with a truncated Comments list
-            "BuildRecertificationBody",             // §8 block C: pure string formatter for the recertification-record comment's Body; never touches a CardFile
             "CloseSection",                         // §5 block E: read-decide-write on Frontmatter.Status/SectionFields.ClosedBy/ClosedAt only; never touches Comments
             "CloseSectionUnderExistingLock",        // same, lock already held
             "CompactRules",                         // §7 block F: dedupes/self-checks on paths, then acquires N+1 locks in ordinal path order and delegates to CompactRulesUnderLocks — never touches a CardFile itself
@@ -117,18 +116,15 @@ public sealed class CardCommentImmutabilityTests
             "DischargeRegisterCardUnderExistingLock", // same, lock already held
             "DispositionNit",                       // §8 block B: role check, allocates the raised card's identity (defer/decline), then acquires the block's lock (and, for defer/decline, the raised card's) and delegates to DispositionNitUnderLocks; never touches a CardFile itself
             "DispositionNitUnderLocks",              // §8 block B: appends one disposition comment (never edits or drops the nit comment it resolves), and — for defer/decline — create-only writes a second card via AtomicWrite; for fix-before-land, read-decide-write on Frontmatter.Status/BlockFields.Round/Transitions only when the edge actually applies
-            "IsApprovingRole",                      // §8 block A: pure predicate over CardOwner (reviewer/supervisor only), shared by RecordApproval and (expected) block C's recertify; never touches a CardFile
+            "IsApprovingRole",                      // §8 block A: pure predicate over CardOwner (reviewer/supervisor only), shared by RecordApproval; never touches a CardFile
             "IsArchitectRole",                       // §8 block B: pure predicate over CardOwner (architect only), shared by DispositionNit; never touches a CardFile
             "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy/RecordApproval; never touches a CardFile's Comments
-            "IsConfinedToAnySite",                  // §8 block D: pure string-comparison predicate over normalised changed-path/site text for RecordRecertificationUnderExistingLock's site-confinement precondition; never touches a CardFile
             "IsDecisionCard",                       // §7 block C: the IsRegisterCard counterpart narrowed to CardKind.Decision, shared by CommandDispatcher's --owed-by/--supersedes resolution and SupersedeDecisionUnderLocks; never touches a CardFile's Comments
             "IsFindingCard",                        // §6 block C: the IsBlockCard/IsSectionCard counterpart for CardKind.Finding, shared with CommandDispatcher.RunFindingStatus; never touches a CardFile's Comments
             "IsObligationCard",                     // §7 block D: the IsRegisterCard counterpart narrowed to CardKind.Obligation, shared by ArchiveChange's obligation scan; never touches a CardFile's Comments
             "IsRegisterCard",                       // §7 block A: the IsBlockCard/IsSectionCard/IsFindingCard counterpart for the four register kinds; never touches a CardFile's Comments
             "IsRuleCard",                            // §7 block E: the IsRegisterCard counterpart narrowed to CardKind.Rule, shared by CommandDispatcher's `rule promote` resolution and PromoteRuleUnderExistingLock; never touches a CardFile's Comments
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments
-            "NormalizeChangedPath",                 // §8 block D: pure trim/backslash normalisation of a caller-supplied '--changed' path for the site-confinement precondition; never touches a CardFile
-            "NormalizeSitePath",                    // §8 block D: pure trim/backslash/colon-split normalisation of a dispositioned nit's Sites entry for the same precondition; never touches a CardFile
             "PromoteRule",                          // §7 block E: acquires the rule's own lock, then delegates to PromoteRuleUnderExistingLock; never touches a CardFile itself
             "PromoteRuleUnderExistingLock",         // §7 block E, remediation blocker 3: File.Move's the card to callboard/register/, then read-decide-write on Frontmatter.Scope/Updated and one appended attribution comment via the ordinary AnchoredCardPath/AtomicWrite path — appends, never edits or drops an existing comment
             "ReadAllCards",                         // read-only
@@ -143,8 +139,6 @@ public sealed class CardCommentImmutabilityTests
             "RecordApprovalUnderExistingLock",      // §8 block A: read-decide-write on Frontmatter.Status/BlockFields.ReviewedState/Transitions/Claims/Limits only, in one write with the transition; never touches Comments
             "RecordGateResult",                     // §5 block D: read-modify-write on BlockFields.GateResults only; never touches Frontmatter.Status or Comments — see the structural argument in GateStatus's doc comment
             "RecordGateResultUnderExistingLock",    // same, lock already held
-            "RecordRecertification",                // §8 block C: role check, then acquires the block's lock and delegates to RecordRecertificationUnderExistingLock; never touches a CardFile itself
-            "RecordRecertificationUnderExistingLock", // §8 block C: read-decide-write on BlockFields.ReviewedState/Round/Frontmatter.Status/Transitions and one appended recertification-record comment only — appends, never edits or drops an existing comment
             "RecordSectionVerdict",                 // §5 block E: append-only write on SectionFields.Verdicts only; never touches Frontmatter.Status or Comments
             "RecordSectionVerdictUnderExistingLock", // same, lock already held
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"

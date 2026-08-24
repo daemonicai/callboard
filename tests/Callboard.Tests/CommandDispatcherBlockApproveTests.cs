@@ -37,7 +37,8 @@ public sealed class CommandDispatcherBlockApproveTests
             [
                 "block", "approve", "--id", "B-0001", "--role", "reviewer",
                 "--state", state,
-                "--claims", "the refusal fires on an unresolved blocking finding,the write is atomic",
+                "--claims", "the refusal fires on an unresolved blocking finding",
+                "--claims", "the write is atomic",
                 "--limits", "does not certify the test suite as exhaustive",
                 "--change", ChangeName,
             ],
@@ -64,6 +65,34 @@ public sealed class CommandDispatcherBlockApproveTests
         var transition = Assert.Single(read.Transitions);
         Assert.Equal("approve", transition.Name);
         Assert.Equal(CardOwner.Reviewer, transition.By);
+    }
+
+    // §8 remediation blocker 3: '--claims'/'--limits' used to run every value through
+    // SplitFrontmatterList (comma-separated), so a claim's own prose containing a comma was
+    // silently split into two claims with two ids and no refusal — exactly the certification text
+    // review-certification requires be "actionable by a reviewer who did not author it", which is
+    // the text most likely to contain a comma. Now repeatable: one '--claims' occurrence is one
+    // claim, comma and all, taken verbatim.
+    [Fact]
+    public void BlockApprove_ClaimTextContainingACommaIsPreservedAsOneClaim_NotSplit()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo.Path, "b-0012", "B-0012", BlockFlowState.InReview);
+        const string claimWithComma = "refuses when gates are absent, failed, or stale";
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "approve", "--id", "B-0012", "--role", "reviewer", "--state", "commit-abc", "--claims", claimWithComma, "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var claims = doc.RootElement.GetProperty("result").GetProperty("claims").EnumerateArray().ToList();
+        var claim = Assert.Single(claims);
+        Assert.Equal(claimWithComma, claim.GetProperty("text").GetString());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(claimWithComma, Assert.Single(read.Claims).Text);
     }
 
     [Fact]
@@ -220,7 +249,7 @@ public sealed class CommandDispatcherBlockApproveTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["block", "approve", "--id", "B-0010", "--role", "reviewer", "--state", "commit-abc", "--claims", "one,,three", "--change", ChangeName],
+            ["block", "approve", "--id", "B-0010", "--role", "reviewer", "--state", "commit-abc", "--claims", "one", "--claims", "   ", "--change", ChangeName],
             output, repo.Path);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -236,7 +265,7 @@ public sealed class CommandDispatcherBlockApproveTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["block", "approve", "--id", "B-0011", "--role", "reviewer", "--state", "commit-abc", "--limits", " ,two", "--change", ChangeName],
+            ["block", "approve", "--id", "B-0011", "--role", "reviewer", "--state", "commit-abc", "--limits", "two", "--limits", " ", "--change", ChangeName],
             output, repo.Path);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);

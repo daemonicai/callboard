@@ -7,16 +7,18 @@ namespace Callboard.Tests;
 
 /// <summary>
 /// §8 block C remediation at the CLI boundary: <c>block amendment-requested</c> — work-lifecycle's
-/// "`amendment-requested` is the architect deliberately reopening an approved block for a further
-/// amendment". Closes the blocker the reviewer found in block C's original shape: once a block's
-/// single recertification was spent, <c>land</c> was <c>approved</c>'s only remaining exit, so an
-/// amended block could only be landed carrying a stale <c>reviewed_state</c>.
+/// "`amendment-requested` is the architect deliberately reopening an approved block" — the only
+/// route from <c>approved</c> back to work that is not a supervisor's recurrence (Product Owner
+/// ruling: cutting `recertify`). An approval certifies one exact state; any change to that state
+/// spends it, and this transition is how the block is handed back for the fresh review that change
+/// requires — not, as <c>recertify</c> once was, a re-assertion of the same claims over the
+/// difference.
 ///
 /// <para>
 /// Every call in this file routes through <see cref="TempGitRepo.Clock"/>'s
-/// <see cref="AdvancingClock"/>, the same idiom <c>CommandDispatcherBlockRecertifyTests</c>
-/// established — "the current approval" is derived from the most recent <c>approve</c> transition's
-/// timestamp, so a fixed clock cannot distinguish it from an earlier, already-superseded one.
+/// <see cref="AdvancingClock"/> — "the current approval" is derived from the most recent
+/// <c>approve</c> transition's timestamp, so a fixed clock cannot distinguish it from an earlier,
+/// already-superseded one.
 /// </para>
 /// </summary>
 public sealed class CommandDispatcherBlockAmendmentRequestedTests
@@ -24,41 +26,19 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
     private const string ChangeName = "establish-callboard";
     private static readonly DateTimeOffset FixedNow = new(2026, 8, 24, 9, 0, 0, TimeSpan.Zero);
 
-    // The blocker's own regression guard: approved -> recertified successfully -> amendment-
-    // requested -> briefed with round incremented, then rebuilt, re-approved, and granted a FRESH
-    // recertification. This is the property block C shipped with no route to at all — before this
-    // remediation, 'amendment-requested' did not exist as a transition or a verb, so a card that
-    // had spent its one recertification had 'land' as its only legal move out of 'approved'.
+    // approved -> amendment-requested -> briefed with round incremented, then rebuilt, re-approved,
+    // and amendment-requested a SECOND time — unlike the cut recertify's one-shot bound,
+    // amendment-requested is not spent by use: it is the architect's own deliberate act, available
+    // every time an approval needs to be reopened, not limited to once per approval.
     [Fact]
-    public void AmendmentRequested_AfterASuccessfulRecertification_ReturnsToBriefed_IncrementsRound_AndPermitsAFreshApprovalAndRecertification()
+    public void AmendmentRequested_ReturnsToBriefed_IncrementsRound_AndPermitsRepeatedUse()
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialBlockCard(repo, "b-0001", "B-0001", BlockFlowState.Drafting);
 
         EnterInReview(repo, path, firstRound: true);
         var round1ClaimIds = Approve(repo, path, "B-0001", "commit-round1", "round one claim");
-        RecordGateGreen(repo, path, "build");
-        RaiseAndDispositionNit(repo, "B-0001", "src/Round1.cs");
 
-        // Successful recertification: spends the one recertification this approval permits: round
-        // does not move, status stays approved.
-        Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
-            [
-                "block", "recertify", "--id", "B-0001", "--role", "reviewer", "--state", "commit-round1-amended",
-                "--assert", round1ClaimIds[0], "--changed", "src/Round1.cs", "--change", ChangeName,
-            ],
-            new StringWriter(), repo));
-        var afterRecertification = AssertParseSuccess(CardStore.ReadCard(path));
-        Assert.Equal("approved", afterRecertification.Frontmatter.Status);
-        Assert.Equal(1, afterRecertification.BlockFields.Round);
-
-        // The blocker: a further amendment now has no route back to briefed except this verb.
-        // Confirmed by hand before landing this remediation: with 'amendment-requested' absent
-        // from BlockFlowTransitions.AvailableFrom(Approved) (the pre-fix table), this call fails
-        // with 'undefined-transition' instead of succeeding — the same failure the reviewer's
-        // blocker post traced through 'block recertify' (recertification-already-performed) and
-        // 'block transition ... recertification-refused' (refused at parse), leaving 'land' as the
-        // only door out of 'approved'.
         var output = new StringWriter();
         var exitCode = RunInRepo(
             ["block", "amendment-requested", "--id", "B-0001", "--role", "architect", "--change", ChangeName],
@@ -75,9 +55,9 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
         var afterAmendmentRequested = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("briefed", afterAmendmentRequested.Frontmatter.Status);
         Assert.Equal(2, afterAmendmentRequested.BlockFields.Round);
-        // reviewed_state is untouched by the transition itself — still the recertified state, not
+        // reviewed_state is untouched by the transition itself — still the certified state, not
         // cleared or blanked.
-        Assert.Equal("commit-round1-amended", afterAmendmentRequested.BlockFields.ReviewedState);
+        Assert.Equal("commit-round1", afterAmendmentRequested.BlockFields.ReviewedState);
         var transition = afterAmendmentRequested.Transitions.Last();
         Assert.Equal("amendment-requested", transition.Name);
         Assert.Equal(CardOwner.Architect, transition.By);
@@ -92,29 +72,17 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
         Assert.Equal("approved", afterReapproval.Frontmatter.Status);
         Assert.Equal(2, afterReapproval.BlockFields.Round);
 
-        // Round 2's own evidence — the round-1 gate result and dispositioned nit stay on the card
-        // but are scoped to round 1 (round-1 gate result carries Round=1; the round-1 nit site sits
-        // before the 'amendment-requested' transition's own 'To: briefed' boundary).
-        RecordGateGreen(repo, path, "build");
-        RaiseAndDispositionNit(repo, "B-0001", "src/Round2.cs");
+        // A second amendment-requested on the same card: not a one-shot verb.
+        var secondOutput = new StringWriter();
+        var secondExitCode = RunInRepo(
+            ["block", "amendment-requested", "--id", "B-0001", "--role", "architect", "--change", ChangeName],
+            secondOutput, repo);
 
-        // 8.10's own bound is scoped to the approval, not the card (Architect ruling): this
-        // approval has never been recertified, so it gets a FRESH recertification even though the
-        // card as a whole has already been recertified once, in an earlier round.
-        var freshOutput = new StringWriter();
-        var freshExitCode = RunInRepo(
-            [
-                "block", "recertify", "--id", "B-0001", "--role", "reviewer", "--state", "commit-round2-amended",
-                "--assert", round2ClaimIds[0], "--changed", "src/Round2.cs", "--change", ChangeName,
-            ],
-            freshOutput, repo);
-
-        Assert.Equal(CommandDispatcher.SuccessExitCode, freshExitCode);
-        using var freshDoc = JsonDocument.Parse(freshOutput.ToString());
-        Assert.Equal("commit-round2-amended", freshDoc.RootElement.GetProperty("result").GetProperty("reviewedState").GetString());
+        Assert.Equal(CommandDispatcher.SuccessExitCode, secondExitCode);
         var final = AssertParseSuccess(CardStore.ReadCard(path));
-        Assert.Equal("approved", final.Frontmatter.Status);
-        Assert.Equal(2, final.BlockFields.Round);
+        Assert.Equal("briefed", final.Frontmatter.Status);
+        Assert.Equal(3, final.BlockFields.Round);
+        Assert.Equal("commit-round2", final.BlockFields.ReviewedState);
     }
 
     // work-lifecycle: "`amendment-requested` is the architect deliberately reopening an approved
@@ -161,10 +129,9 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 
-    // §8's one-door discipline, extended a fourth time: a bare transition through
-    // 'amendment-requested' would move a block back to 'briefed' with no architect decision
-    // actually recorded as having made that call — refused outright at parse, the same as
-    // 'approve', 'fix-before-land' and 'recertification-refused'.
+    // §8's one-door discipline: a bare transition through 'amendment-requested' would move a
+    // block back to 'briefed' with no architect decision actually recorded as having made that
+    // call — refused outright at parse, the same as 'approve' and 'fix-before-land'.
     [Fact]
     public void BlockTransition_AmendmentRequested_Refuses_AndLeavesTheCardByteIdentical()
     {
@@ -219,33 +186,6 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
         Assert.Equal("missing-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
-    // §8 block D's mechanical preconditions (review-certification: "Recertification is bounded")
-    // need real evidence on the card — same helpers CommandDispatcherBlockRecertifyTests
-    // established, driving the real verbs rather than hand-seeding GateResult/CardComment values.
-    private static void RecordGateGreen(TempGitRepo repo, string path, string label)
-    {
-        Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
-            ["block", "gate", path, label, "0", "--role", "worker", "--change", ChangeName], new StringWriter(), repo));
-    }
-
-    private static string RaiseAndDispositionNit(TempGitRepo repo, string id, string site)
-    {
-        var raiseOutput = new StringWriter();
-        var raiseExit = RunInRepo(
-            ["nit", "raise", "--id", id, "--role", "reviewer", "--site", site, "--change", ChangeName],
-            raiseOutput, repo, "A nit for the recertification bound.");
-        Assert.Equal(CommandDispatcher.SuccessExitCode, raiseExit);
-        using var raiseDoc = JsonDocument.Parse(raiseOutput.ToString());
-        var nitId = raiseDoc.RootElement.GetProperty("result").GetProperty("nitId").GetString()!;
-
-        var dispositionOutput = new StringWriter();
-        var dispositionExit = RunInRepo(
-            ["nit", "disposition", "--id", nitId, "--role", "architect", "--disposition", "fix-before-land", "--change", ChangeName],
-            dispositionOutput, repo, "Fixed within the recertified amendment.");
-        Assert.Equal(CommandDispatcher.SuccessExitCode, dispositionExit);
-        return nitId;
-    }
-
     private static List<string> Approve(TempGitRepo repo, string path, string id, string state, string claimsRaw)
     {
         var output = new StringWriter();
@@ -259,8 +199,7 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
             .ToList();
     }
 
-    // Same shape as CommandDispatcherBlockRecertifyTests.EnterInReview — drives a card from its
-    // current state into in-review via the plain flow edges.
+    // Drives a card from its current state into in-review via the plain flow edges.
     private static void EnterInReview(TempGitRepo repo, string path, bool firstRound)
     {
         if (firstRound)
@@ -294,20 +233,13 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
         CommandDispatcher.Run(
             args, output, TextReader.Null, TextWriter.Null, isInputRedirected: true, workingDirectory: repo.Path, clock: repo.Clock.Next);
 
-    // 'nit raise'/'nit disposition' read their body from stdin (ADR-0001/D1).
-    private static int RunInRepo(string[] args, TextWriter output, TempGitRepo repo, string body) =>
-        CommandDispatcher.Run(
-            args, output, new StringReader(body), TextWriter.Null, isInputRedirected: true, workingDirectory: repo.Path, clock: repo.Clock.Next);
-
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(
             onSuccess: success => success.Card,
             onFailure: failure => throw new Xunit.Sdk.XunitException($"expected parse success, got failure: {failure.Reason}"));
 
-    // Same advancing-clock idiom CommandDispatcherBlockRecertifyTests established (§8 block B
-    // remediation) — ticking forward on every call so "since the current approval" round-scoping
-    // genuinely has distinct instants to distinguish, rather than every event sharing one
-    // timestamp.
+    // Ticks forward on every call so "since the current approval" round-scoping genuinely has
+    // distinct instants to distinguish, rather than every event sharing one timestamp.
     private sealed class AdvancingClock
     {
         private DateTimeOffset _current = FixedNow;
