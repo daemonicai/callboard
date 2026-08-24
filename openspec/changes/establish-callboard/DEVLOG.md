@@ -18319,458 +18319,254 @@ verified.
 
 §7 is ready for the supervisor's third and final review.
 
+---
+
+**[supervisor]** Third and final section review of **§7 Register** — scope `git diff 8d8e237..HEAD`
+throughout, now through `b478f8f`. Gates read from the thread: `BUILD_EXIT:0`, `TEST_EXIT:0` (658),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived independently with my own extraction —
+**236 construction sites, 53 distinct codes**, matching the reviewer's count exactly; this round's
+two new sites reuse `missing-argument` and `unrecognised-role`, which is the right side of the
+granularity rule (`--owed-by` on a question is not a spec-named refusal the way a hazard's condition
+is).
+
+**Verdict: Approve. §7 is closed.**
+
+### The fourth blocker — closed, and it closed the requirement with it
+
+`question create` now takes a required `--owed-by <role>`, parsed in its own function rather than
+through `ParseCardCreate` (`src/Callboard/Cli/CommandParser.cs:1839-1916`), and `RunQuestionCreate`
+passes it as the card's owner while `--role` keeps meaning the acting role
+(`src/Callboard/Cli/CommandDispatcher.cs:1427-1445`). The refusal text says why it is not defaulted
+("the raiser and the answerer are usually different roles"), which is the right thing to put in a
+message a caller will hit.
+
+The part worth naming: **this is what actually made register's second archive scenario true.** In my
+first review I recorded "Question outlives its change" as holding by construction, because questions
+are repository-scoped and archive never touches them. That was only half of it — the scenario says
+the question *continues to surface to the role that owes its answer*, and until this round the only
+creation verb could not name that role. The section now satisfies that scenario through its own
+surface rather than by accident of scope.
+
+Taking the verb apart rather than the report: `ParseQuestionCreate` refuses a missing `--owed-by`
+and an unparseable one before any write; `CreateCard` receives `parsed.OwedByRole` as owner and
+`MapCardCreateOutcome` receives `parsed.ActingRole` separately, so the two facts are carried
+distinctly all the way through rather than reconstructed at the end. The test that pinned the defect
+was changed with the code and now asserts both directions (`CardOwner.ProductOwner`, and explicitly
+`NotEqual(CardOwner.Worker)`), which is the assertion that would have caught the original.
+
+### The hole the fix opened — genuinely closed, and I checked the shape rather than the instance
+
+The reviewer is right that making `actingRole` a parameter turned a self-check into caller-trust for
+all six creation verbs, and right that the mutation proved it. `CreationVerb_ResponseActingRole_
+MatchesOwnerReadBackFromDisk` closes it properly: the comparison is against `Frontmatter.Owner` read
+back through a *fresh* `CardStore.ReadCard`, not off the response object, so the two reads are
+genuinely independent; all five sharing verbs are covered; and rooting every case on `--role worker`
+is load-bearing rather than incidental — the reviewer demonstrated that the same mutation passes
+under `architect` because the hardcode and the caller's value coincide. `MemberData` over reflection
+is the correct call here and the reasoning given for it is sound: there is no single type whose
+members are "the five verbs", so there is no shape to reflect over.
+
+**Does anything else of that shape remain? No removed self-check — but one weakness, and it is
+section-wide rather than local.** I classified every `ActingRole` assignment in the dispatcher: six
+read back from the written card or the outcome, seven echo the parsed value. Only
+`MapCardCreateOutcome` ever *lost* a read-back; the other echoes were echoes from birth and claim
+nothing they don't have. What does generalise is the blind spot the reviewer found, not the defect:
+`CommandDispatcherRulePromoteTests:39,48` asserts both the response's `actingRole` and the promotion
+comment's author as `architect`, and both descend from the same `parsed.ActingRole` — a hardcode in
+either would survive that test exactly as it survived in `RunRuleCreate`. Nothing is wrong today;
+the test simply cannot discriminate. That belongs in `## NEXT` as a habit, not in a fix block.
+
+### The register spec, requirement by requirement
+
+| requirement | state |
+|---|---|
+| Rules and hazards injected unconditionally | **Ground prepared, §10 delivers.** Hazards are repository-only, so archive cannot reach them; "live rules" now has one correct statement (`ResolveLiveRecordDirectories`). §7 precludes nothing. |
+| Register kinds have a two-state lifecycle | **Met.** `open`/`discharged` for all four kinds, flow states refused (`invalid-register-status`), `owed_by` required on obligations and resolved to a real section, decisions carry both supersession links. |
+| The register lives above the change | **Met, both scenarios.** Archive settles change-scoped obligations and moves one directory; register and decisions are never enumerated. No carry-forward step exists. The question scenario now holds through the surface, per above. |
+| Promotion is retrospective and preserves the link | **Met.** `rule promote --id` moves the file keeping id, body and thread, and now records who did it in the same write; `rule author --earned-from` creates a new card recording its findings, which are unchanged. No durability flag anywhere. |
+| Rules compact into families by supersession | **Met.** Absorbed rules are discharged and carry `superseded_by`; the family carries `absorbs`; every member stays retrievable by identity. The architect constraint lives in `CompactRules` itself, so both entry points inherit it. `rule propose-compact` records a durable `question` and applies nothing. |
+| Register size triggers review, never eviction | **Met as domain logic; not yet observable.** Counting, the soft ceiling and the uncited queue are correct and prohibition-respecting, and nothing retires anything — but no CLI verb reaches them, so under ADR-0001 no caller can see this requirement work until §10 wires it. Sanctioned and correct for §7; carried into `## NEXT` as an explicit obligation rather than an assumption. |
+| Hazards carry a verification condition | **Met.** Both fields refused by their own spec-named codes at raise time; discharge covers the lapse. "Ceases to be injected" is §10's, and reachable. |
+| The project constitution stays outside agent control | **Met.** Refuses every role including `product-owner`, never names the file, and leaves a durable attributed comment addressed to the Product Owner. |
+
+### The section-level lenses, one last pass
+
+**Refusal coverage as a set.** 236 sites, 53 codes, re-derived rather than counted forward. The two
+granularity rulings hold everywhere I checked: spec-named facts have their own codes
+(`hazard-missing-condition`/`-cadence`, `obligation-missing-owed-by`, `empty-absorb-set`), incidental
+absent flags share `missing-argument`, and role authorisation is one `role-not-permitted` covering
+both `CompactRules` and 7.12. Every transition §7 made reachable passes a guard: creation through
+`CardScopeRules` plus per-kind required fields, discharge through kind/status checks, promotion
+through scope checks, compaction through role, scope, status and self/duplicate-member checks before
+any lock, supersession through the same shape plus an acyclicity argument that holds at any chain
+length, archive through name validation, existence, already-archived and an unreadable-file
+fail-closed. I could not find a transition with no guard in front of it.
+
+**CLI surface coherence.** One verb naming its subject three ways is still the section's roughest
+edge, correctly deferred to the Product Owner with `--id` binding from §8 — I said in round two that
+does not block and it still does not. Nothing this round widened it: `--owed-by` and `--proposal-file`
+are new flags on their own verbs, not new ways to name an existing verb's subject.
+
+**Record/index divergence.** None. §7 added no index column and no read path that treats the index as
+authoritative; `IndexPopulator` was refactored onto the shared directory resolver so population and
+resolution cannot drift, and it deliberately kept the archive-inclusive walk.
+
+**Identity addressing.** Even. Every card-to-card reference — `--section`, `--owed-by` (obligation),
+`--supersedes`, `--absorbs`, `--earned-from`, `--id` — resolves through `ResolveCardReference`, and
+the one free-text match left (`RuleCitations.NamesRuleId`) is an advisory count that gates nothing,
+with the structured alternative rejected by the Product Owner on the record.
+
+**Duplicated abstractions and dead scaffolding.** The multi-card write paths are one discipline, not
+four lookalikes: `RecordFinding`, `SupersedeDecision` and `CompactRules` share the read-fresh-under-
+lock/write/rollback shape with deterministic lock ordering and each states its own failure guarantee
+honestly, and `PromoteRule` folded its new attribution into the write it already had rather than
+growing a second phase. `rule propose-compact` writes through the same `CardStore.CreateCard`
+primitive as `question create` rather than inventing a second way onto disk. No superseded scaffolding
+survives; the two unwired functions are deferred surface, named below rather than left silent.
+
+The binding ADRs hold across the sum, not just per block: one CLI surface with no daemon and no
+interactive path, every write under `WithLock` through `AtomicWrite` or a same-filesystem rename,
+the index derived and never a lock, refusals failing closed, comments append-only, identities never
+recycled, and `callboard/` legible without the tool — including a compacted family, where the
+back-link on each absorbed rule means an over-abstract family can be unpicked by reading files.
+
+### For `## NEXT` — what §8 onward inherits
+
+1. **The writer/parser wire-key guard, with a deadline.** `RegisterCardFields` has
+   `RegisterCardFieldKeys.All` plus a reflective coverage test, after that drift silently duplicated
+   frontmatter lines without bound. `CardFrontmatter`, `BlockCardFields`, `SectionCardFields` and
+   `FindingCardFields` still hand-list their keys twice (`CardFileParser.cs:25-53` and again in the
+   writer). §7 added no field to any of them, so the debt did not grow — **it should be closed before
+   the next section that adds a field to block, section or finding cards**, because the failure mode
+   is silent record corruption and it is currently guarded for one of five field types.
+2. **§10 owes the register its surface.** `RuleCitations.CeilingPassed` and `UncitedOpenRules` have
+   no production caller (verified: declaration and doc references only). Until §10 wires them, "size
+   triggers review" is correct code no caller can reach. §10 must also use
+   `ResolveLiveRecordDirectories` — not `ResolveRecordDirectories` — for anything it calls "live".
+3. **Do not put `CountCitations` on a per-brief path.** `UncitedOpenRules` calls it per rule and each
+   call walks and parses the whole record; it is O(rules × cards). Fine for a compaction review, not
+   for the working-context response.
+4. **Root attribution assertions on a non-default role.** The `architect`-shaped stand-in that hid
+   the `MapCardCreateOutcome` mutation is a property of how the tests are written, not of that one
+   verb; `CommandDispatcherRulePromoteTests:39,48` has the same weakness today.
+5. **`--owed-by` now takes two different argument types** — a section card id on `obligation create`,
+   a role on `question create`. Defensible (the concept is the same; the answerer differs by kind),
+   but §9 adds question verbs against this flag, so decide deliberately rather than inheriting it.
+6. **`question create`'s response does not report the card's owner** — a caller gets `actingRole`
+   (the raiser) and a `null` `owedBy` (that field is the obligation register field, not this one).
+   The record is right; the response is just less informative than the card. Worth closing when §9
+   grows the question result shape.
+7. **Repository-scoped compaction still has no closing move.** A proposal is now a durable question
+   owned by the Product Owner, which is a real improvement — but no verb applies a decided family.
+   §11 should say how the Product Owner's answer reaches the record.
+
+Three rounds, four blockers, all four closed on the code rather than in the report. §7 is done.
+
+→ @architect
+
 ## NEXT
 
-
-**Resume point: 7.1.** §6 is closed; §7 has not been opened. Nothing is in flight — working tree
+**Resume point: 8.1.** §7 is closed; §8 has not been opened. Nothing is in flight — working tree
 clean, no uncommitted WIP, no part-built block.
 
-**§6 "Findings" — CLOSED.** Supervisor `Approve` over `8b44a51..9377e9a` on the third round. 6.1–6.7
-ticked. Six commits, sixteen review rounds:
+**§7 "Register" — CLOSED.** Supervisor `Approve` over `8d8e237..b478f8f` on the third round. 7.1–7.12
+ticked. Nine commits:
 
 | commit | what | rounds |
 |---|---|---|
-| `2b078a7` | block A — `FindingCardFields`, `FindingExtent`, the blind-spot declaration, **O-4's compatibility corpus** (6.1, 6.4) | 2 |
-| `7ea24e4` | block B — `finding record`, the blind-spot refusal, the raised card under lock (6.2, 6.3) | 4, all in the locking |
-| `2a95ed2` | block C — staleness as a content fingerprint, clean-as-argued, `finding status` (6.5, 6.6) | 2 |
-| `c623a88` | block D — degradation derived from the section card's closed state (6.7) | 2 |
-| `8eb86b9` | remediation — supervisor B1/B2/B3. Ticked nothing | 2 |
-| `9377e9a` | remediation — supervisor round-2 blocker + test isolation. Ticked nothing | 3 |
+| `a59e1a5` | block A — two-state register lifecycle, creation verbs for five kinds, hazard condition (7.1, 7.11) | 2 |
+| `4839c40` | block B — **the id resolver**, validated `--section`, finding→section rewired, the `workingDirectory` seam. Ticked nothing | 2 |
+| `3863d16` | block C — `owed_by`, decision supersession as a two-card write (7.2) | 2 |
+| `df76f66` | block D — `change archive` as a directory-level filter (7.3, 7.4) | 2 + nit |
+| `a6cffe3` + `c45d24d` | block E — `rule promote`, `rule author`, `earned_from` (7.5, 7.6) | 1 + nit |
+| `3701edd` | block F — `rule compact`, families by supersession, archive hook (7.7, 7.8) | 4 |
+| `4911464` | block G — citation counting, compaction proposals, the constitution refusal (7.10, 7.9, 7.12) | 2 |
+| `374e993` | remediation — supervisor blockers 1–3. Ticked nothing | 2 |
+| `b478f8f` | remediation — supervisor round-2 blocker + the hole that fix opened. Ticked nothing | 2 + nit |
 
-Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (492/492) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0` /
-`GATES_EXIT:0`, and `AOT_EXIT:0` outside the sandbox.
+Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (658/658) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0` /
+`GATES_EXIT:0`. Refusal set **53 codes across 236 sites**, re-derived mechanically at close.
 
-**Two remediation blocks, which the workflow caps at one.** The supervisor requested changes twice;
-the second time I did **not** carve a third block on my own authority — I put it to the Product
-Owner, who ruled to carve it. The rule held: the third block was authorised, not improvised.
+**Two remediation blocks again, and the cap held again.** The supervisor requested changes twice. The
+second time I did **not** carve a third block on my own authority — it went to the Product Owner, who
+authorised it on the reasoning that the finding was not a recurrence but a defect in surface the
+first remediation had introduced. §6 set this precedent; §7 followed it.
 
-**§1–§5 are also closed**, each with a `[supervisor]` `Approve` under its own `## N.` heading. **No
+**§1–§6 are also closed**, each with a `[supervisor]` `Approve` under its own `## N.` heading. **No
 section is awaiting a review.**
 
-### Starting §7 — read this before carving blocks
+### What §7 settled that later sections inherit
 
-**1. Identity addressing must be *decided* in §7, not carried a third time.** §5 asked for it; §6 hit
-it twice and fail-closed both times. A finding has **no reference to its own section card** — only a
-free-text label that two independently-writable fields happen to share, matched by ordinal equality,
-in a directory `CardLayout.DirectoryFor` shares between `Section` and `Change` scope. `--section` is
-unvalidated and **there is no section-creation verb**. §6's fixes buy time and answer nothing.
-*Correction to a block reviewer's warning that would otherwise mislead you:* `Unreadable` does **not**
-become the common answer once section cards exist — `matches.Count == 1` returns before
-`otherSectionPaths` is consulted, so a finding whose own section card exists answers correctly however
-many others share the directory (verified by execution). The cliff applies only to a finding raised
-*before its own section card exists*, where fail-closed is right.
+**1. Cards address each other by resolved identity. This is decided, not open.** `CardIdentityResolver`
+answers id → card by reading the record — never the index — across `register/`, `decisions/`, every
+live change and **every archived change**. A duplicate id refuses rather than picking; an id that
+might live in an unreadable file is never reported absent. Free-text labels are no longer an
+addressing mechanism anywhere. Identity survives archive *because resolution searches the archive*,
+which is what lets archive stay a directory move — do not trade that away.
 
-**2. `workingDirectory` is not the path-resolution seam it looks like.** All eight path-taking
-handlers pass `parsed.FilePath` straight into `File.Exists` / `CardStore.ReadCard` / the write path
-without ever resolving it against `parsed.WorkingDirectory`; that parameter feeds only
-`RepoRootResolver.Resolve` and `RunIndexRebuild`. **Not a shipped-binary bug** — `Program.cs:10` seeds
-it from `Directory.GetCurrentDirectory()`, so the two cannot diverge in production. It is a
-**testability** defect: a test wanting "invoked with a relative path from directory X" has no
-parameter to say that with, and must reach for the process-global CWD — which is exactly what forced
-§6's last two tests into a shared xUnit collection. **Fix the seam and the collection becomes
-unnecessary.**
+**2. `--id` binds from §8 onward** for naming a verb's subject. §1–§6 name a card by positional path;
+§7 introduced `--id` and §7 is the one that is right. **Harmonising the existing verbs is an open
+Product Owner decision** — it changes shipped surface, so it was deliberately not smuggled into a
+remediation. Until they rule, do not "fix" a §1–§6 verb's argument shape in passing.
 
-**3. The xUnit collection is a convention, not a guarantee.** `CurrentDirectoryMutatingTests`
-serialises its two member classes *against each other*; it cannot stop a class outside it touching the
-same global, demonstrated by the reviewer with a deliberately unprotected fourth class. A future test
-mutating any process-global must **remember** to join it. The completeness sweep behind it also missed
-`ThreadPool.SetMinThreads` (`CardFindingRecordConcurrencyTests.cs:63,70`) — benign, but the collection
-is complete for *current-directory* mutation specifically, not process-global mutation generally.
+**3. Refusal-code granularity, settled three times over.** A refusal the **spec names** gets its own
+code; an **incidental** missing flag gets `missing-argument`/`missing-flag-value`. Where several
+refusals name **one fact** differing only in a parameter, they collapse into one code whose *message*
+carries the parameters — `WrongCardKind` first, `role-not-permitted` most recently. Re-derive the set
+mechanically; **never increment a remembered number**, which has been wrong by arithmetic twice.
 
-**4. `ambiguous-section-label` refuses the whole `finding status` read**, taking a determinate
-staleness answer down with it. Defensible fail-closed; worth revisiting when a finding read path is
-next built.
+**4. Multi-card and multi-phase writes are one discipline.** `RecordFinding`, `SupersedeDecision`,
+`CompactRules`, `PromoteRule` and `ArchiveChange` all validate everything before writing anything,
+take locks in one global order, and **state their failure guarantee honestly rather than claiming
+atomicity they lack**. Extend that; do not add a sixth shape.
 
-**5. No CLI read verb exists for `obligation`/`hazard`.** The blind spot's "remains live" half of the
-spec is proven at the domain layer only; `finding status` refuses those kinds at `wrong-card-kind`,
-and its JSON surfaces neither the instrument nor the blind-spot reference the card carries. §7 owns a
-raised card's structured `owed_by` — today the back-reference lives in body prose.
+### Carried into §8+ — the supervisor's parting items, plus mine
 
-**6. Small corrections §6 leaves behind, both claims that decayed in comments whose whole purpose is
-the claim:** `WrongCardKind`'s doc comment says "Six construction sites" and enumerates them — there
-are seven (`RunFindingStatus`); and `IndexSchema`'s says the blocked-on/citation fields "do not exist
-in the primary record yet (§5 and §6 own them)" — §5 shipped `blocked_by`, §6 shipped
-`blind_spot_card`.
+**A. The writer/parser wire-key guard is half-closed, and this is the one to fix first.**
+`RegisterCardFields` has a single shared declaration (`RegisterCardFieldKeys`) that both writer and
+parser read, guarding against drift. `CardFrontmatter`, `BlockCardFields`, `SectionCardFields` and
+`FindingCardFields` **do not**. The failure mode is not cosmetic: when this drifted in §7, every
+parse→write cycle silently duplicated a frontmatter line and **compounded**, and 544 tests were green
+over it. §7 did not grow the debt (it added no field to those four), which is why it was recorded
+rather than fixed. **It should close before the next section that adds a field to any of them.**
 
-### The refusal set is 30 codes — and derive it, don't trust it
+**B. "Register size triggers review, never eviction" is domain logic no CLI verb reaches.**
+`RuleCitations` implements counting, the ceiling and the uncited queue correctly — and under ADR-0001
+no caller can observe any of it, because nothing surfaces it. **§10 owes it a surface.** This is an
+obligation, not an assumption.
 
-Re-derived mechanically at HEAD over all **92** `CommandOutcome.Refusal` construction sites in
-`src/Callboard`. §6 contributed seven (**bold**):
+**C. §10 must use `ResolveLiveRecordDirectories` for anything it calls live.** Liveness excludes
+archived changes; resolution includes them. They are different questions and §7 separated them
+deliberately — a rule sitting `open` in an archived change is resolvable but not live. Getting this
+wrong makes the register grow monotonically with every archived change, which is exactly the bug the
+supervisor found.
 
-`already-blocked-by`, `already-closed`, **`ambiguous-section-label`**, `base-immutable`,
-`base-not-recorded`, **`blind-spot-body-file-not-found`**, **`blind-spot-body-file-unreadable`**,
-**`card-already-exists`**, `card-layout-mismatch`, `card-not-found`, `invalid-blocking-card-id`,
-`invalid-exit-code`, **`invalid-extent`**, `invalid-gate-label`, `invalid-range`, `missing-argument`,
-`missing-flag-value`, `missing-subcommand`, `not-blocked-by`, `repo-root-not-found`,
-`stdin-not-redirected`, `undefined-transition`, `unknown-command`, `unknown-subcommand`,
-`unrecognised-argument`, **`unrecognised-blind-spot`**, **`unrecognised-disposition`**,
-`unrecognised-role`, `unrecognised-verdict`, `wrong-card-kind`.
+**D. `CountCitations` is O(rules × cards) and must not go on a per-brief path.** It walks the record.
+Fine on demand; not fine inside the response that must be assembled for every brief.
 
-**This count has been wrong twice by arithmetic over a remembered baseline (27, then 29) and right
-twice by mechanical derivation.** §9 must re-derive it rather than trust this list. The command is the
-instrument, not the number.
+**E. Attribution assertions should root on a non-default role.** `CommandDispatcherRulePromoteTests:39,48`
+asserts both the response role and the promotion comment's author as `architect`, both descending
+from the same value — so a hardcode there would survive. Nothing is wrong today; the test simply
+cannot discriminate. The general habit: **assert with a role that is not the one the code would
+default to.** This is how an `architect`-shaped stand-in went unseen through a whole remediation.
 
-### What §6 established that later sections must not re-derive
+**F. `--owed-by` now means two things across two verbs** — a *section card id* on `obligation create`,
+a *role* on `question create`. Both are correct in their own requirement, and §9 builds on questions.
+Watch that the two do not get conflated.
 
-- **Neither evaluator may return a benign answer to a question it could not answer.** `Current` and
-  `Live` are reachable only from direct evidence; everything else is `NotMeasurable`, `Unreadable`, or
-  a refusal. §5's "absent is a different answer from passing", made structural in two more places. The
-  whole product contains exactly **two** lenient return sites, both guarded and both enumerated.
-- **A finding is section-scoped by construction** (`CardStore.RecordFinding` hardcodes
-  `CardScope.Section`), and a blind spot's raised card takes its scope **from its kind** — obligation →
-  `Change`, hazard → `Repository` — pinned against `CardScopeRules.Validate` by
-  `CardFindingRecordScopeAgreementTests`. A caller never chooses either.
-- **Degradation is derived, never stored.** No field, no wire key, no write to a finding card at
-  section close; `WriteCard` is still create-only. The same answer §5 gave for `blocked`. Proven by
-  asserting bytes *and* mtime, not by asserting no write path exists.
-- **Staleness is a content fingerprint and `callboard` never invokes git.** File granularity,
-  deliberately over-reporting; `absent` is a fingerprinted state; a real measured change outranks an
-  unmeasurable sibling path (`Stale` > `NotMeasurable` > `Current`).
-- **Clean-as-argued is a recorded disposition, excluded from staleness structurally** — the
-  `ArguedClean` arm of a closed-union match returns `NotApplicable` and never reaches the measured
-  half. Deleting the exclusion means deleting an arm, which does not compile.
-- **Lock identity is decided from evidence, never from a path string.** `CardLock.CurrentlyNames`
-  compares a lock file's own per-acquisition nonce; `AcquireLocksAndRecord` acquires no lock while
-  holding another (acquire-probe-release-retry), so **no ordering exists for two callers to disagree
-  about**. §4's "when two values must agree, delete one", arriving a third time.
-- **`finding record` is the tool's first card-creating verb and its first stdin consumer.** Identity is
-  allocated before the create-only check, so a refused record burns an id — correct and harmless:
-  `VerifyCounters` only flags a counter *below* the observed max, so "never recycled" holds.
-- **No card body ever arrives as a shell argument.** ADR-0001's rule, enforced: the finding's body
-  comes on stdin, the blind spot's from `--blind-spot-body-file`. The inline flag was removed, not
-  deprecated.
+**G. `question create`'s response omits the owner**, which is the one fact that verb exists to set.
 
-### Working rules earned in §6 — the section's real output
+**H. Repository-scoped compaction has no closing move.** `rule propose-compact` records a proposal as
+a question owed by the Product Owner and applies nothing — correct per spec. But nothing applies an
+*accepted* proposal, and §7 had no requirement for it. **§11 or a later change owes this**, or a
+proposal is a thing that can only ever be raised.
 
-- **A claim about identity, state or coverage made from a *string* rather than from *evidence* is this
-  project's signature defect.** Six instances in §6: the unlocked raised-card write, the `Ordinal`
-  same-file fast path, the cross-invocation lock ordering, `absent`-equals-`absent`, the zero-match
-  section label, and an empty directory component read as "no directory". Every fix was correct; what
-  kept the class alive is that each fix closed only the instance in front of it. **Fix this class as a
-  rule across every call site at once, and verify the rule by enumerating the sites mechanically.**
-- **A test can pin the wrong direction.** `ClosedSectionCardForADifferentSection_FindingReadsLive` was
-  a passing, green, deliberate test asserting the fail-open answer — through four blocks and two
-  audits. When a test's name says a lenient answer is expected, that is a claim to check, not evidence.
-- **A defect can be invisible at the layer its tests live at.** Every degradation fixture built its
-  path with `Path.Combine`, so the bare-filename defect could not appear at the domain layer at all.
-  Where a value's *shape* is the input, a test that always constructs it one way proves nothing about
-  the other shapes.
-- **Enumerate mechanically or say you didn't — including the pattern list.** A grep-based sweep is only
-  as complete as the patterns recalled into it, which is how the completeness claim behind the xUnit
-  collection missed `ThreadPool.SetMinThreads`. Fourth instance of this rule in §6, after two refusal
-  count miscounts.
-- **The reader may be widened; the writer emits exactly one form.** Held through two widenings.
-- **A block that applies the previous block's lessons from its first submission costs half the
-  rounds.** Block C applied block B's two rules immediately and took 2 rounds where B took 4.
-- **What finds this defect class is a mechanical check, not more reading.** None of §6's six were found
-  by reading a diff; every one fell to execution — compiling a bypass, racing two processes, mutating a
-  guard, running the real binary three ways. The check that would have caught them as a class:
-  enumerate every return site of a closed union with a benign case, and require each benign one to be
-  evidence-reachable. **Belongs with 9.12.**
+### Starting §8 — read this before carving blocks
 
-### Obligations
+§8 is **"Review and certification"** (8.1–8.6). It has no supervisor `Approve` and no `Base:` post
+yet. Post the base commit **before** briefing the first block; `b478f8f` is HEAD at §7's close.
 
-- **O-1, O-2, O-3 — DISCHARGED** (§4 block B ×2, §5 block B). Unchanged.
-- **O-4 — DISCHARGED (§6 block A), one half structurally.** The compatibility corpus mechanically
-  catches a fixture that stops parsing, proven three times by mutation including against block C's real
-  widening. The **forward** half — a *new* wire form nobody adds a fixture for — is **documentation
-  only**, stated plainly in the corpus's own doc comment rather than overclaimed. `CardFileWriter`
-  emits a fixed, enumerable set of 26 key literals, so a test asserting every emittable key appears in
-  some fixture would close it structurally. **Carve with 9.12**, alongside the lenient-return check
-  above and the standing note that no structural check ties a minted refusal code to a test proving it
-  fires — all three are the same shape.
-
-### What §5 established that later sections must not re-derive
-
-- **The block flow is a closed union with a total transition table.** Seven states; `changes-requested`
-  is a **transition landing in `briefed`**, not a state; `closed` has no available transitions.
-  Refusal messages read available transitions from `AvailableFrom` — never a second hand-maintained list.
-- **`blocked` is not storable.** No field, no union case, no wire key. Derived from a non-empty
-  `blocked_by`; flow state is preserved across blocking and unblocking, so clearing a blocker restores
-  nothing.
-- **A narrative claim is never gate evidence, structurally.** `BlockCardFields` has no `Comments` field,
-  so the gate reader cannot reach prose — there is no line to revert. A gate with no recorded exit code
-  is **absent**, which is a different answer from failed.
-- **Gate evidence is round-scoped**: results carry the round they were recorded in, only the current
-  round counts as evidence, and superseded rounds are **retained**. This is the same answer §5 gave for
-  section verdicts — superseded evidence is part of the trail, not noise.
-- **A section's status is answerable from the section entity alone.** The handler opens the file it is
-  given; nothing in its signature could carry the section's other cards. Verified by two agents
-  independently swapping in aggregate-over-children implementations and watching the tests go red.
-- **`section` is the eighth card kind**, change-scoped. `card-model`'s spec was amended in place after
-  it contradicted `design.md` D3 and `work-lifecycle` — a Product Owner ruling, not an Architect
-  improvisation. §4's supervisor approval covered seven kinds; §5's supervisor re-verified the eighth
-  against every §4 surface.
-- **`WriteCard` is still create-only.** Six write paths, all `WithLock` → read → decide →
-  `AnchoredCardPath.TryCreate` → `AtomicWrite`. `block transition` is the only path that can write a
-  block card's `status`.
-- **Acting role is recorded, not authorised.** All six write methods take a `CardOwner` and all six CLI
-  results carry `actingRole`; three persist it, three surface it without persisting, and the reason is
-  stated on the outcome types. **Who may do what is §8's and §9's**, and §5 deliberately built no
-  half-version of it.
-
-### Working rules earned in §5 — the section's real output
-
-- **A test proves a proposition, and the proposition is whatever a mutation of the real defect would
-  falsify.** Name what would have to break, then break exactly that. Block C spent four rounds in the gap
-  between "it passes" and "it would catch the thing it exists to catch": the fix for a misclassification
-  could be reverted to the original defect with all 263 tests still green, because the tests established
-  that the *domain* constructed the right case and nothing established that the *CLI* handed the caller
-  the right instruction.
-- **Every defect in §5 was found by execution — compiling a bypass, mutating a call site, or running the
-  real binary. Not one was found by reading.** Both auditors' most valuable work was writing the mistake
-  and seeing whether the compiler or the tool allowed it.
-- **Enumeration by recall is not an instrument.** A `repo-root-not-found` site sitting *beside* a tested
-  sibling survived two independent enumeration passes and fell only to someone walking every site. Where
-  the claim is "every X is covered", enumerate mechanically or say you didn't.
-- **Worker honesty is load-bearing, and it paid four times.** Workers declared what they could not
-  demonstrate — an unwatched red test, a future bypass that would still compile, an unrun hammer loop, a
-  self-caught DEVLOG corruption — instead of reporting a clean pass. Every one of those declarations got
-  a real gap settled properly. A confident clean report would have landed a hole.
-- **Stop when the brief and the code disagree.** Block E's worker refused to build on my false premise
-  that `section` was already a card kind, and caught a spec contradiction that would otherwise have
-  surfaced mid-implementation or at the section review. The brief is not evidence.
-- **The tool must read back what the tool wrote — including what *older versions* of the tool wrote.**
-  Three instances in §5: a card written then refused as corrupt, a crash where a refusal belonged, and a
-  format change that orphaned existing cards. See O-4.
-- **A review loop that teaches shows up in the round count.** Block D took two rounds where block C took
-  four, and the diff shows why: block C's lessons were applied from the first submission rather than
-  rediscovered.
-
-### Notes owed to later sections
-
-- **§7/§8 — decide identity addressing before the first id-addressed verb, not after.** All six §5 verbs
-  take **file paths**; nothing is addressed by card identity yet, and §7/§8's read verbs will fork the
-  surface if the question is answered twice. The supervisor asked for this one to be *decided* rather
-  than carried.
-- **§9 — the refusal set is 22 codes and this is the frozen list:** `unknown-command`,
-  `missing-subcommand`, `unknown-subcommand`, `unrecognised-argument`, `repo-root-not-found`,
-  `missing-argument`, `missing-flag-value`, `unrecognised-role`, `unrecognised-verdict`,
-  `invalid-gate-label`, `invalid-exit-code`, `invalid-blocking-card-id`, `invalid-range`,
-  `card-not-found`, `card-layout-mismatch`, `wrong-card-kind`, `undefined-transition`,
-  `base-not-recorded`, `base-immutable`, `already-blocked-by`, `not-blocked-by`, `already-closed`.
-  `card-write-failed` was minted and **deleted** in the same block — it conflated tool-failure with
-  refusal and is not a member.
-- **§9 — no structural check ties a minted refusal code, or a validated field, to a test proving it
-  fires.** Flagged in blocks C, D, E and both supervisor rounds. The 18 existing instances are
-  mutation-verified; what is missing is the check for the *next* one. This is 9.12's shape.
-- **§8 — `reviewed_state` has no producer, deliberately.** 8.2 owns it. The deferral is held in
-  `ReviewedStateProducerTests`, which **8.2 must invert**. Two caveats the supervisor found: its
-  allowlist currently passes by a **casing coincidence** (`CardFileParser.cs` does set the field via a
-  lowercase local, so a refactor to named arguments would fire it and falsely claim 8.2 landed), and §8
-  should inherit it accurate rather than lucky.
-- **§8/§10 — the archived-card filter is deferred, not discharged.** Binds whoever builds the first
-  `blocked_by`-resolving read path; archived cards are indexed indistinguishably from live ones.
-- **Verdict commit ranges are recorded as supplied and never checked against git**, and `section verdict`
-  never parses the card's status. §8 and §9 lean on this data.
-- **`--base` is accepted on every transition**, not only those that record it.
-- **No CLI query verb reads `GateStatusOf` back** — the write verb exists, so `GateStatus.Absent` is
-  proven at the domain and wire layers with no CLI-JSON shape verified.
-- **`ParseGateResults`' doc claim that "nothing rewrites the file" is inaccurate** — the writer emits
-  three parts, so the next targeted write normalises a legacy card in place. Lossless; only the claim is
-  wrong.
-- **`ParseSectionVerdict` still hand-copies the flag loop** (third copy) while `ConsumeKnownFlags`'
-  comment describes the duplication as closed.
-- **`BlockCardFields.Tasks` is unreachable from any CLI verb today** — whichever section wires a verb
-  that sets it owns checking the CLI/file-parser agreement for it.
-- **The lifecycle test drives `CardStore`, not the dispatcher**, and gate evidence stays unattributed on
-  the record (decided, not drift).
-
-### What §4 established that later sections must not re-derive
-
-- **The card model is complete and reviewed**: seven kinds and four scopes as closed unions; identity
-  kind-prefixed, allocated from a committed counter file under `CardLock`, never recycled, never from
-  the index; scope an **attribute** validated as a refusal over the `(kind, scope)` pair, so promotion
-  is expressible; ownership handover attributed to a **third-party acting role**; comments append-only
-  with structural addressing.
-- **A role's queue is a union** — cards it owns **∪** cards carrying a live thread addressed to it — and
-  **resolution is per-comment, not per-card**. `BelongsInQueue` and the index's `owner`/`addressed_to`/
-  `resolved` columns are the same predicate over the same `IsResolved`; the supervisor verified they
-  compose. Do not build a second answer.
-- **Resolution is an appended comment naming what it resolves** (`Resolves`, same shape as `ReplyTo`),
-  not a flag flipped on the resolved comment. Architect ruling, because flipping `Resolved` *is*
-  editing a comment the spec forbids editing. `CardComment.Resolved` no longer exists.
-- **Comment deletion is unexpressible, not refused.** `WriteCard` is create-only, `AtomicWrite` is
-  private, and `CardStore`'s whole method surface is inventoried by a test that fails on any
-  unaccounted-for member. §4 minted **no refusal codes** by design.
-- **The archive is part of the record.** `callboard/changes/archive/<name>/`, stated once in
-  `CardLayout`, walked as a *container* rather than a change; `archive` is a reserved live-change name.
-  The index and the counter-violation check both see archived cards.
-- **A duplicated identity is a reported failure inside a *successful* rebuild**, naming the colliding
-  files, and one bad card never costs a healthy one. `ObservedMaxIdByKind` is computed **before**
-  duplicate exclusion — an identity existing only on an excluded file must still count against the
-  counter, or R2's fix silently reopens R1.
-- **The honest limit: `callboard` cannot refuse a text editor.** The card is a git-committed Markdown
-  file humans are expected to hand-edit (ADR-0003). The tool guarantees that *it* never rewrites or
-  drops a comment; git history guards the rest. Do not mistake 4.8's guarantee for a wider one.
-
-### Working rules earned in §4 — the section's real output
-
-- **A mechanism can be mandatory, compile, and still be a convention — if it proves the wrong
-  proposition.** This is §3's rule sharpened, and §4 hit it three times: `heldLock` proved *a* lock
-  existed, not that this file's lock was held; a reflection test proved its *filter* was safe, not that
-  the surface was; a doc comment claimed no other write path existed while `WriteCard` was one. **Ask
-  what proposition a mechanism establishes, never whether a mechanism is present.**
-- **When two values must agree, the guarantee is deleting one, not checking they match.** A guard that
-  must run is a convention with a compiler's endorsement. Used four times: `heldLock`+`filePath` →
-  `heldLock.CardPath`; handover scalars → history alone; `WriteCard` replacement → create-only;
-  `CardFile` on create → `NewCardFile`.
-- **A test that enumerates a surface by name proves only what its filter admits.** 4.8's reflection test
-  filtered `CardStore`'s members for `Comment` and so never saw `WriteCard`. Where the claim is "nothing
-  here can do X", enumerate the whole surface and account for every member.
-- **A doc comment asserting a guarantee is a claim, and claims decay when the code around them
-  changes.** Both of R3's overstating comments were *true when written* — one until block C added a
-  write path, one of the paths its author was thinking about. Nothing re-examined them because nothing
-  changed *in* them. "There is no other path" is a property of the whole surface: it belongs in a test
-  that enumerates the surface, not in prose beside one member.
-- **A test that constructs its own subject proves the construction.** 4.3 hand-built the archive path as
-  a string, making the test the codebase's only statement of it — so it proved "a file survives a
-  directory move", which no §4 code could break, rather than "resolution reaches an archived card",
-  which no §4 code satisfied. **Before landing a test, break the production code and watch it go red.**
-- **Every defect in §4 that mattered was found by execution; not one would have been found by reading.**
-  That holds across both block reviews and both supervisor rounds.
-
-### Why the section review is a different lens, not a wider one
-
-All three supervisor blockers were **unions, not diffs** — none was visible in any single block's
-changes, and the block reviewer was demonstrably rigorous (it found real defects by execution in both B
-and C). **Every blocker sat in the seam between two changes that were correct in isolation:** R1 because
-block A built the guard and the test and block C never revisited either; R2 because §3 made `comment_id`
-a key when it was a label and block C made it load-bearing a section later; R3 because block B made
-`Owner` derivable and block C narrowed `WriteCard` for an unrelated reason. A block reviewer sees one
-side of a seam by construction.
-
-### What §2–§3 established that later sections must not re-derive
-
-- **Frontmatter is hand-rolled, and `design.md` Open Question 2 is closed with evidence.** YamlDotNet
-  16.2.1 published for `osx-arm64` emits `IL3050`/`IL2104`/`IL3053` from its reflection-based builders,
-  which `TreatWarningsAsErrors=true` makes fatal. No `PackageReference` in `src/`. A later section may
-  reopen this only with new measurements, not with a preference.
-- **Unknown fields are preserved verbatim, never dropped.** This is §2's stated extensibility rule and
-  the reason §5 and §6 can add kind-specific fields without read-modify-write eating them.
-- **Closed unions, not enums**, for `CardKind`/`CardScope`/`CardOwner` — matching `CommandOutcome` from
-  §1, and confirmed against the spec at §4's 4.1 rather than rebuilt.
-- **`CommandContext.Output` and `Error` are already deleted** (block A, `0531805`). §1's carried
-  obligation is discharged; the §2 re-audit's note to delete them at the start of §3 is stale, and §3
-  must not go looking for members that are gone.
-- **Ordinal comparison is explicit** throughout `Cards/` — §1's carried constraint, discharged.
-
-**From §3 — the derived index.**
-
-- **The index is provably derived, and provably not a lock.** Destroyed and rebuilt three times with
-  identical answers; hand-mutated rows, a fabricated row for a non-existent file, and a deleted card all
-  discarded on rebuild; the record path works with the index **absent entirely** and never creates one;
-  concurrent writes behave identically present, absent, or deleted mid-flight under a held `CardLock`.
-  Rebuild is **replace, never merge**. Do not re-derive any of this — `IndexInvariantTests` holds it.
-- **No narrative reaches the database**, asserted against the file's **bytes**, not against the writer.
-- **The CLI's enforcement points are structural**, not conventional: argument consumption checked once
-  past `Dispatch`'s single exit; `System.Console` banned outside `Program.cs` by analyzer; the stdin
-  guard a precondition of *obtaining* the reader.
-- **Refusal, tool-failure and reported-failure are three different things.** Refusal = stop.
-  Tool-failure = enforcement unavailable, proceed unenforced. A corrupt card = **neither** — a reported
-  failure inside a *successful* rebuild, because degraded mode is what `record-retrieval` requires the
-  loop to survive.
-- **Enforcement overrides a `Success`, never a `Refusal`** — the handler's domain reason is always more
-  specific, and a refusal naming the wrong problem sends an agent to fix the wrong thing.
-
-### Platform facts, established by hammer loop and not to be re-litigated
-
-- **`File.Move(overwrite: false)` is NOT atomic here.** Check-then-`rename(2)` TOCTOU, reproduced
-  independently by two agents (13,847 successes across 2,000 rounds where 2,000 were expected). Any
-  section reaching for a create-only rename must not assume atomicity.
-- **`File.Move(overwrite: true)` IS atomic** — 3,000 racing rounds with a concurrent reader, zero torn
-  finals. `CardStore`'s atomic write rests on this.
-- **Unix `FileShare.None` is enforced as a second step after `CreateNew` succeeds**, so it cannot
-  provide mutual exclusion. Cost: one wedged-card bug at ~1 in 544K attempts.
-
-### Working rules earned in §2–§3 — these are the sections' real output
-
-- **Every guard lands with a test that it *refuses*.** Not that it permits the good case. §2's traversal
-  guard survived three rounds while guarding nothing, and no test would have caught its removal. **9.12
-  already asks for exactly this for refusal rules** — treat it as live now rather than at §9.
-- **Every operation that establishes or relies on ownership verifies its effect immediately before
-  acting on it**, and treats a mismatch as a lost race rather than an error. Four separate `CardLock`
-  defects were one violation of this.
-- **Rarity of trigger and severity of consequence are independent axes.** "30 runs green" bounds the
-  first and says nothing about the second. Where a defect wedges or corrupts, absence of observation is
-  not evidence of absence — applies to harness hazards as much as production ones.
-- **Test seams are threaded parameters, never shared statics.** Codebase precedent, set in §2.
-- **A disposition that names a mechanism is making a claim** and needs evidence. My deferral of §2's
-  traversal nit rested on "`DirectoryFor` is the function block B's writer calls"; it wasn't, and both
-  agents then worked inside that frame.
-
-**From §3.**
-
-- **If you can write the mistake and it compiles, it is a convention, not a guarantee.** A mechanism a
-  caller must remember to invoke is documentation with better ergonomics. Test the claim by *writing the
-  mistake* — that is how the per-arm argument wrapper was disproved.
-- **Two independent mutations of one property beat two readings of one test.** A reviewer who re-runs the
-  worker's probe confirms the worker's imagination, not the test's coverage. Block C converged in one
-  round on this; block B took four because its early evidence was agreement.
-- **Green tests do not exercise the machine contract.** `index rebuild` mislabelled its own JSON envelope
-  through 104 passing tests and two approvals, because everything asserted on outcomes and exit codes and
-  nothing on the artefact. Assert against emitted output directly.
-- **An obligation conditioned on an unscheduled event is already lost** — indistinguishable from one
-  discharged. Name a trigger the plan actually contains, or hold it in code that fails when the trigger
-  arrives.
-- **Hold an accepted trade-off in a must-be-inverted test**, not a bullet in a rewritten file. Standing
-  pattern, adopted at §3 close on the supervisor's recommendation.
-
-### Notes owed to later sections — carried from §1–§4
-
-- **§5/§7 — archived cards are now indexed indistinguishably from live ones.** Derivable from
-  `file_path`, but a queue that does not filter them will offer archived work as live. This is the cost
-  of R1 and it is the right trade; the filter is owed where a queue is built.
-- **§9 — the refusal set becomes a closed union.** §3 minted the first five and §4 added none by design;
-  §5 minted the rest. **Superseded — the frozen 22-code list is in §5's notes above**, and it is the
-  retrofit list. `card-write-failed` was minted and deleted within §5 and is not a member.
-- **§9 — `tool-failure` must not become a member of the closed refusal set**; consider a third `error`
-  payload on the envelope. `CliEnvelope.cs:6-8` is stale: it still says `ok` discriminates success from
-  refusal and describes only two payload shapes.
-- **§9 — card-model's "the system refuses and states that corrections are appended"** is owed by
-  whichever section wires a comment-editing verb. §4 made the operation unexpressible instead, which is
-  stronger, but the *message* is still owed if a verb ever offers the operation.
-- **Archive-as-a-verb must be a move, not a copy**, and should land with a test that it is one. A
-  half-completed archive (both copies present) currently fail-closes both — correct behaviour, and worth
-  keeping deliberate rather than accidental.
-- **`ArchivedChangeDirectory` permits the reserved name that `ChangesDirectory` refuses**, and a `*.md`
-  directly at `callboard/changes/archive/` is silently unread. Both are supervisor notes from §4's
-  close, judged non-blocking; whichever section builds archive-as-a-verb owns them.
-- **§10 — `Microsoft.Data.Sqlite` connection pooling served a stale cached handle** across a
-  delete-then-rebuild cycle; §3's tests needed `Pooling=false`. §10's read path opens against the stable
-  `databasePath`, which `index rebuild` renames out from under it. **A pooled handle answering from a
-  deleted database is the index becoming authoritative over the record by accident**, arriving through a
-  connection-pool default rather than a design decision.
-- **Tooling — any writer that appends to this file must anchor on a line-start heading match**, never a
-  substring search, and must verify the file still has exactly **one** `## NEXT` heading in final
-  position after every write. §3 broke this file's structure three times; §4 broke it none, having
-  adopted the check.
-- **Opportunistic** — `Escape*` was left unmerged while `Unescape*` was collapsed, so the duplication
-  risk is half-closed; a forward `Dictionary<char,string>` mirror finishes it. `CardFile` lacks the
-  `Equals`/`GetHashCode` override `CardComment` has. The `InvalidUtf8Bytes` corruption test passes for
-  the wrong reason. `AtomicWrite` **and** `IndexPopulator.WriteDatabase` both have a throwing `finally` —
-  fix both in one pass, since fixing one leaves the other looking intentional. There is no bounded read
-  primitive.
-- **Dependency changes — run `make aot` at section close** and quote `AOT_EXIT:0`. Not in `make gates`
-  by Product Owner decision (§3 close): NativeAOT compilation is slow and gates run several times per
-  block. §4's closing tree: `AOT_EXIT:0`.
-  **§6 close: `AOT_EXIT:0` — but only with the command sandbox disabled.** Inside it the post-link
-  `dsymutil`/`strip` step fails (`MSB3077`, "exited with return value 0, but errors were detected")
-  while the compile itself succeeds. Environment fact, not a code defect — do not spend a round on it.
-- **Before anything ships** — one source of truth for the version string (`CommandDispatcher.cs` versus
-  an absent `<Version>` in the csproj).
-- **Gate hygiene** — `-k` aggregation on a red `make gates` has still never been demonstrated. Worth
-  proving once when a section next has a genuine failure.
-
-### Environment — resolved, no override needed
-
-
-`make gates` is green **inside** the sandbox. Two causes, both closed: `/tmp` and `/private/tmp` added to
-`sandbox.filesystem.allowWrite` (MSBuild's IPC sockets); and tests moved to **xUnit v3 on
-Microsoft.Testing.Platform**, selected by the repo-root **`global.json`** (`test.runner`) — not
-`dotnet.config`. MTP rejects `--nologo` and exits **5** on "zero tests ran", so a green `TEST_EXIT:0`
-means tests actually executed. `sandbox.excludedCommands` does **not** exempt a command from the sandbox.
-**`dotnet restore` is the one command that still needs the override** — the sandbox proxies egress
-through a loopback port NuGet is denied (`NU1301 ... Permission denied (localhost:<port>)`) — and that
-bites only when package references change. **Agents run `make gates` sandboxed**; an override needs a
-fresh observed denial.
+The register's *unconditional injection* requirement ("every brief carries the register; where a
+response must be shortened, the register SHALL NOT be what is shortened") is **§10's**, not §8's —
+but §8's certification surface is the first thing that could quietly preclude it. Keep item B above
+in view.
