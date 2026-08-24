@@ -97,12 +97,16 @@ claim SHALL be a first-class outcome that returns the block to `briefed` and inc
 ### Requirement: Recertification is bounded
 
 The system SHALL permit at most one recertification per approval. A further amendment after a
-recertification SHALL require a new round.
+recertification SHALL require a new round, obtained through the `amendment-requested` transition
+(`work-lifecycle`), by which the architect deliberately reopens the approved block and returns it to
+`briefed` with `round` incremented. A refused recertification SHALL NOT itself move the block; refusals
+of a recertification attempt leave the card untouched.
 
 Mechanical preconditions SHALL gate recertification and SHALL be able only to refuse it, never to
 satisfy it: every gate on the card SHALL have been re-run to a passing exit code, and the difference
 between certified and amended states SHALL be confined to the sites of the dispositioned nits. A
-difference extending beyond those sites SHALL send the block to full re-review.
+difference extending beyond those sites SHALL send the block to full re-review, by the same
+`amendment-requested` route: the precondition refuses, and the architect reopens the block.
 
 #### Scenario: Second recertification is refused
 
@@ -112,7 +116,8 @@ difference extending beyond those sites SHALL send the block to full re-review.
 #### Scenario: Out-of-scope difference forces full re-review
 
 - **WHEN** an amendment touches code outside the sites of the dispositioned nits
-- **THEN** the system refuses recertification and routes the block to full re-review
+- **THEN** the system refuses recertification, leaves the card untouched, and names `amendment-requested`
+  as the route to full re-review
 
 #### Scenario: Green preconditions do not confer approval
 

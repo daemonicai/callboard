@@ -16,13 +16,19 @@ drafting ──▶ briefed ──▶ building ──▶ in-review ──┬─�
                 ▲                                 │        │
                 ├──── changes-requested ◀─────────┤        │
                 ├──── fix-before-land ◀───────────┘        │
-                └──── recertification-refused ◀────────────┘
-                            (round += 1 on all three)
+                ├──── recertification-refused ◀────────────┤
+                └──── amendment-requested ◀────────────────┘
+                            (round += 1 on all four)
 ```
 
-`changes-requested` and `fix-before-land` both leave `in-review`; `recertification-refused` leaves
-`approved`. They are distinct named transitions because the name is recorded in the card's history —
-see `review-certification` for what raises each.
+`changes-requested` and `fix-before-land` both leave `in-review`; `recertification-refused` and
+`amendment-requested` both leave `approved`. They are distinct named transitions because the name is
+recorded in the card's history — see `review-certification` for what raises each.
+
+`amendment-requested` is the architect deliberately reopening an approved block for a further
+amendment. It is the transition that delivers `review-certification`'s "a further amendment after a
+recertification SHALL require a new round": once a block's single recertification is spent, this is
+the only way back to `briefed`, and it is invoked on purpose rather than falling out of a refusal.
 
 Every transition SHALL record the acting role and the time it occurred.
 
