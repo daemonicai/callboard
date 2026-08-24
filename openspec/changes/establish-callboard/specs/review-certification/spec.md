@@ -58,6 +58,20 @@ sites SHALL be guidance to whoever does the work and SHALL NOT be treated as a b
 touch: a nit's stated sites are where the reviewer noticed the problem, not a claim about where the
 problem ends.
 
+A nit SHALL be raised only against a block that is under review. Raising one against a block in any
+other state SHALL be refused, naming the state the block is in and the obligation route below.
+
+An observation made outside a review is not thereby lost: where the architect or the Product Owner
+judges that it needs fixing, it SHALL be recorded as an `obligation` naming the section expected to
+discharge it. That judgement SHALL NOT be automated — the system SHALL NOT promote a refused nit to an
+obligation on its own, because whether an observation needs fixing is exactly the decision the system
+cannot make and MUST NOT record as though it had been made.
+
+This bound is what makes the rule below enforceable rather than aspirational. A nit ceases to be live
+only by disposition, and a disposition is refused while the block cannot move; a nit raised against a
+terminal block could therefore never be dispositioned and never block anything, lapsing by exactly the
+neglect this requirement forbids.
+
 A nit SHALL cease to be live only through one of these three dispositions. It SHALL NOT lapse by
 neglect.
 
@@ -70,6 +84,12 @@ neglect.
 
 - **WHEN** the architect defers a nit
 - **THEN** the system creates an `obligation` card naming what will discharge it
+
+#### Scenario: Nit raised outside review is refused
+
+- **WHEN** a nit is raised against a block that is not under review
+- **THEN** the system refuses, names the block's current state, and names recording an `obligation` as
+  the route for an observation the architect or Product Owner judges needs fixing
 
 #### Scenario: Undispositioned nits block the verdict
 

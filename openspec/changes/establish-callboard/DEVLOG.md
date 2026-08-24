@@ -20622,6 +20622,155 @@ Nothing further to fix. This closes §8's remaining work at 8/8; whatever review
 
 → @architect
 
+
+**[supervisor]** §8 re-audit, `afaad73..HEAD` (now including `d797c6b` and `8efa015`) — **Request
+changes**, on one narrow item that is a decision, not work.
+
+**Everything I raised is closed, and blocker 1 was closed better than I asked.** The ruling is right and
+the reasoning behind it is the section's own thesis applied to the one operation that had been exempted
+from it. I read the `in-review`-only branch as the wrong half of a contradiction; it was the right half
+and the spec sentence above it was wrong. Recording that plainly, because the value of the finding was
+in naming the contradiction, not in my guess at which side would give.
+
+**The cut is complete by reachability, not by grep.** Checked independently: `BlockRecertifyResult` is
+gone from `CliJsonContext` (25 registrations, none orphaned), `AvailableFrom(approved)` is
+`[Land, AmendmentRequested]`, no `recertification-refused` arm survives in the table or the parser, and
+the only surviving `recertif` strings in `src/`/`tests/` are three doc-comment lines and three test
+comments, all of which explain what a surviving thing *replaced* — history, not stale reference. Nothing
+half-deleted: no union case readable but unreachable, no wire key parsed but never written.
+
+**`Sites` came through the cut correctly.** It round-trips, is surfaced in `nit raise`'s JSON, and now
+has a specified meaning for the first time — guidance, explicitly not a bound. The block-D matching and
+normalisation logic went with `recertify`. Stored-and-read, not stored-but-unread.
+
+**Blocker 3 is properly fixed.** Repeatable `--claims`/`--limits`, comma preserved verbatim, proven
+through both the response and a fresh read off disk. I agree there is no detectable signal left to refuse
+the old comma form on — a comma-bearing claim is now the correct case, and refusing on comma presence
+would over-refuse exactly the prose the fix exists to permit.
+
+**My "two definitions of this round" note is resolved by the cut, and I checked what survived rather
+than assuming.** The `briefed`-anchored window went with block D. The one remaining definition is
+`DispositionNitUnderLocks`'s, anchored at the last transition **into `in-review`**
+(`src/Callboard/Cards/CardStore.cs:891`) — which is the correct anchor for the question it asks, and it
+is now the only one. Note closed.
+
+**On whether the unconditional guard over-refuses — asked directly, so: no, and I'd have argued for it.**
+The requirement sentence carries no `in-review` qualifier; the scenario is one instance of a SHALL, which
+is this spec file's convention throughout. The concrete tightening is real — a nit raised against a
+`briefed` card freezes its `claim` — and it is the right direction: the escape is one always-available
+`nit disposition` call, and a card carrying an outstanding reviewer nit arguably *should* not be handed to
+a worker as if clean. An enumerated whitelist is what produced blocker 2; computing it away is the version
+that cannot be wrong by omission a third time. Reviewer's reasoning on this is sound and I endorse it.
+
+---
+
+**The one finding: the guard was computed over the transition table, but not every writer goes through
+the table — and the exception list in its own comment is now incomplete.**
+
+`ApplyBlockTransitionUnderExistingLock` (`CardStore.cs:295-314`) names its exceptions precisely:
+`approve`, which carries its own copy (`CardStore.cs:467`), and `fix-before-land`, which clears the nit
+first. There is a third writer that changes block state and never reaches that method, and it is not
+named: **`RecordAmendmentRequestUnderExistingLock` (`CardStore.cs:540-600`) has no nit check at all.**
+It reads `AvailableFrom` at line 572 and writes at 586 with nothing in between.
+
+So a block sitting `approved` with a live undispositioned nit can still be moved: `amendment-requested`
+succeeds, the card reaches `briefed` at `round + 1`, and the nit is still live. This one **fails closed**
+— the next `claim` is refused, so the card freezes at `briefed` rather than landing — so it is an
+inconsistency with the stated invariant ("a card with a live undispositioned nit simply does not move"),
+not a hole. On its own it would be a note.
+
+**What makes it a finding is the case underneath it, which the worker identified, reasoned correctly, and
+asked to have decided — and which nobody answered before the section closed.** A nit raised against a
+`closed` card sits live and undispositioned forever: `closed` is terminal, there is no transition left to
+refuse, and the widened guard cannot reach it. That is *"a nit SHALL cease to be live only through one of
+these three dispositions. It SHALL NOT lapse by neglect"* failing **open** — the same sentence blocker 2
+was raised on, and the one case where the wide reading the remediation deliberately chose has nothing to
+bite on. Narrow, but it is a record that something is outstanding with nothing making it so, which is the
+incumbent failure this tool exists to replace.
+
+**Both cases have one root, and the cut is what exposes it.** `nit raise` reads no card state at all
+(`CommandDispatcher.cs:1114-1160`). Before the ruling, a nit on an `approved` block had a purpose: it fed
+`recertify`'s site bound. **That purpose no longer exists.** After the cut, a nit raised outside review
+feeds nothing — no operation on an `approved`, `landed` or `closed` block reads it, and the amended spec
+scopes nit sites to "a worker picking the fix up", which presupposes work still to do. So the answer the
+worker was reaching for is available and is cheaper than chasing writers: **bound `nit raise` to the
+states where a review is actually happening**, and both cases close at the source — the terminal-card
+nit becomes unraisable, and `amendment-requested` cannot encounter one because approval already refused
+on live nits.
+
+**❓ @architect / Product Owner** — this is my second `Request changes` on §8, so per `CLAUDE.md` §3c.4 I
+am handing it up rather than expecting a third carve. But I want to be precise about what is being handed
+up, because "won't converge" would be the wrong read: **the section converged.** What is open is a single
+undecided question the worker put in the thread and the architect deliberately left for a product call:
+
+> should `nit raise` refuse a card that is not in review — and if the answer is only "refuse `closed`",
+> does `amendment-requested` need its own copy of the guard?
+
+One answer settles both. If the ruling is "leave it", say so in the thread and I will withdraw this
+verdict on the record — an accepted, reasoned gap is a different thing from an unnoticed one, and this
+one is now fully reasoned in the thread either way. What I will not do is close a section on a `SHALL NOT
+lapse by neglect` that is silently unenforced when the person who found it asked for a decision and did
+not get one.
+
+**Remediation shape, if it is remediated:** one state check in `nit raise` with its own refusal code and
+a test per accepted/refused state; a nit check in `RecordAmendmentRequestUnderExistingLock` *or* a
+sentence in `ApplyBlockTransition`'s comment naming it as a reasoned third exception — but not silence,
+since that comment is now the only place the guard's coverage is written down. No task numbers; ticks
+nothing.
+
+**Architectural notes — `## NEXT`, not the fix:**
+
+- `--claims`/`--limits` are repeatable but still plural, while `--site` is singular-repeatable. Cosmetic,
+  and §13 is the place to settle it, but the surface now says "one occurrence, one item" in two different
+  grammatical voices.
+- `ParsedCommand.Match`'s delegate count dropped from 30 to 29 with the cut. Still the shape that will
+  make §8a/§9 expensive; still worth a deliberate decision by §13 rather than a default.
+- Claims and limits remain `callboard:claim` / `callboard:limit` HTML comments, per §5's precedent. The
+  certification text a reviewer is now *more* likely to read cold — the cut makes a fresh review the only
+  route, so that text is read by someone who did not write it every time — is the part a rendered view
+  hides. Worth one look before the human view is specified.
+- My earlier `defer`/`decline` site-bound question is moot: sites bound nothing now. Withdrawn.
+
+→ @architect
+
+**[architect]** **Product Owner ruling — a nit can only be raised in review; outside it, the observation
+becomes an obligation.** Settles the supervisor's second `Request changes`, which was handed up as an
+undecided question rather than a convergence failure — correctly, and §3c.4 routed it to the Product
+Owner as it should have.
+
+**The ruling.** A nit is raisable **only** against a block under review. An observation made at any other
+time becomes an **obligation**, if the architect or the Product Owner judges it needs fixing.
+
+**Reading, and it decides the work: the tool refuses and names the route; it does not promote.** *"If the
+Architect or Product Owner decide it needs fixing"* is a human judgement, and this is the project that
+refuses to record promises it cannot verify — the same call already made twice in this section, on
+`recertify`'s re-derivation obligation and on gate freshness. An auto-promotion path would have the tool
+assert that someone judged an observation worth fixing, which is exactly the fact it cannot know. The
+spec now says so explicitly: *"That judgement SHALL NOT be automated."*
+
+**Why this is better than the three options I put up.** All three were state checks bolted onto symptoms.
+The supervisor found two: a nit on a `closed` card lapses (terminal, no transition left for the widened
+guard to refuse), and `RecordAmendmentRequestUnderExistingLock` writes without consulting the guard at
+all. Both have one root — `nit raise` reads no card state whatsoever — and bounding it to review kills
+the class:
+
+- a nit can no longer be raised on a terminal card, so the lapse is **unreachable** rather than refused;
+- no card can leave `in-review` carrying a live nit (the existing guard), and none outside `in-review`
+  can acquire one, so **no `approved`, `landed` or `closed` card can ever hold a live nit**. That makes
+  `amendment-requested`'s missing guard copy unreachable too, and it does it without a second hard-coded
+  state list — the thing that produced blocker 2 in the first place.
+
+**A note on where this came from.** It began as the Product Owner asking whether the question still
+mattered "now we've decided nits are a kind of obligation" — which we had not decided; carried debt is an
+obligation, and a nit only becomes one via `defer`. But the near-miss was the better idea: it exposed
+that all three dispositions are flavours of one routing question, and that the *raising* of a nit had
+never been bounded at all. Making nits obligations outright would contradict *"raised as an addressed
+comment, not as a card, so that raising one is no more costly than commenting"* — cheapness is the
+feature. Bounding where a nit may be raised keeps that and closes the hole.
+
+`review-certification` gains the bound, the obligation route, the explicit refusal of automation, and a
+scenario. `VALIDATE_EXIT:0`.
+
 ## NEXT
 
 **Resume point: 8.11 (§8 block D).** Working tree clean, nothing in flight, no part-built block, no
