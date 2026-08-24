@@ -407,6 +407,11 @@ internal static class CardFileWriter
             fields.Append(' ').Append(CardCommentNitFieldKeys.Sites).Append('=').Append(CardFileFormat.JoinSiteList(comment.Sites));
         }
 
+        if (comment.IsRecertification)
+        {
+            fields.Append(' ').Append(CardCommentRecertificationFieldKeys.IsRecertification).Append("=true");
+        }
+
         if (comment.Disposition is { } disposition)
         {
             fields.Append(' ').Append(CardCommentNitFieldKeys.Disposition).Append('=').Append(disposition.ToWireString());

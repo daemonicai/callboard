@@ -57,12 +57,20 @@ public sealed class BlockFlowTests
     }
 
     [Fact]
-    public void Approved_HasExactlyOneAvailableTransition_ToLanded()
+    public void Approved_HasThreeAvailableTransitions_LandRecertificationRefusedAndAmendmentRequested()
     {
-        var only = Assert.Single(BlockFlowTransitions.AvailableFrom(BlockFlowState.Approved));
+        var available = BlockFlowTransitions.AvailableFrom(BlockFlowState.Approved);
 
-        Assert.Equal("land", only.Name);
-        Assert.Same(BlockFlowState.Landed, only.To);
+        Assert.Equal(3, available.Count);
+
+        var land = Assert.Single(available, t => t.Name == "land");
+        Assert.Same(BlockFlowState.Landed, land.To);
+
+        var recertificationRefused = Assert.Single(available, t => t.Name == "recertification-refused");
+        Assert.Same(BlockFlowState.Briefed, recertificationRefused.To);
+
+        var amendmentRequested = Assert.Single(available, t => t.Name == "amendment-requested");
+        Assert.Same(BlockFlowState.Briefed, amendmentRequested.To);
     }
 
     [Fact]

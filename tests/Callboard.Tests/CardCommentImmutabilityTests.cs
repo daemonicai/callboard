@@ -106,6 +106,7 @@ public sealed class CardCommentImmutabilityTests
             "ApplyBlockTransitionUnderExistingLock", // same, lock already held
             "ArchiveChange",                        // §7 block D: settles open obligations via DischargeRegisterCard (unchanged), then Directory.Move's the whole change directory — never opens, reads, or rewrites a repository- or capability-scoped card, and never touches Comments on any card it does settle
             "AtomicWrite",                          // the shared byte-writer every path above funnels through; it writes whatever CardFileWriter.Serialize(card) produces for the CardFile each of those paths built — none of them builds one with a truncated Comments list
+            "BuildRecertificationBody",             // §8 block C: pure string formatter for the recertification-record comment's Body; never touches a CardFile
             "CloseSection",                         // §5 block E: read-decide-write on Frontmatter.Status/SectionFields.ClosedBy/ClosedAt only; never touches Comments
             "CloseSectionUnderExistingLock",        // same, lock already held
             "CompactRules",                         // §7 block F: dedupes/self-checks on paths, then acquires N+1 locks in ordinal path order and delegates to CompactRulesUnderLocks — never touches a CardFile itself
@@ -133,10 +134,14 @@ public sealed class CardCommentImmutabilityTests
             "AcquireLocksAndRecord",                // §6 block B remediation: acquires one or two CardLocks in ordinal path order and runs the record step under them; never touches a CardFile
             "RecordFinding",                        // §6 block B: allocates identities, pre-creates directories, then delegates to AcquireLocksAndRecord/RecordFindingUnderLocks — never touches an existing card's Comments, it only ever creates brand-new cards with an empty comment list
             "RecordFindingUnderLocks",              // same: writes the raised card (if any) then the finding, both create-only via AtomicWrite, rolling the raised card back (by content, not by path) on the finding's own write failing — never an edit or drop of an existing comment
+            "RecordAmendmentRequest",               // §8 block C remediation: role check, then acquires the block's lock and delegates to RecordAmendmentRequestUnderExistingLock; never touches a CardFile itself
+            "RecordAmendmentRequestUnderExistingLock", // §8 block C remediation: read-decide-write on Frontmatter.Status/BlockFields.Round/Transitions only; never touches Comments or ReviewedState
             "RecordApproval",                       // §8 block A: role check, then acquires the block's lock and delegates to RecordApprovalUnderExistingLock; never touches a CardFile itself
             "RecordApprovalUnderExistingLock",      // §8 block A: read-decide-write on Frontmatter.Status/BlockFields.ReviewedState/Transitions/Claims/Limits only, in one write with the transition; never touches Comments
             "RecordGateResult",                     // §5 block D: read-modify-write on BlockFields.GateResults only; never touches Frontmatter.Status or Comments — see the structural argument in GateStatus's doc comment
             "RecordGateResultUnderExistingLock",    // same, lock already held
+            "RecordRecertification",                // §8 block C: role check, then acquires the block's lock and delegates to RecordRecertificationUnderExistingLock; never touches a CardFile itself
+            "RecordRecertificationUnderExistingLock", // §8 block C: read-decide-write on BlockFields.ReviewedState/Round/Frontmatter.Status/Transitions and one appended recertification-record comment only — appends, never edits or drops an existing comment
             "RecordSectionVerdict",                 // §5 block E: append-only write on SectionFields.Verdicts only; never touches Frontmatter.Status or Comments
             "RecordSectionVerdictUnderExistingLock", // same, lock already held
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"

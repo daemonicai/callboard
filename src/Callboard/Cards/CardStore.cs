@@ -508,6 +508,301 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// Records one <c>block recertify</c> call (review-certification: "Recertification re-asserts
+    /// an existing claim set", §8 block C) — the one door to re-stamping <c>reviewed_state</c> on
+    /// an already-<c>approved</c> block, or to refusing it back to <c>briefed</c> claim-by-claim.
+    /// Same lock/role/read-decide-write shape as <see cref="RecordApproval"/>.
+    /// </summary>
+    internal static CardRecertificationOutcome RecordRecertification(
+        string cardsRoot, string filePath, string amendedState, IReadOnlyList<string> assertedClaimIds, IReadOnlyList<string> refusedClaimIds,
+        CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => RecordRecertificationUnderExistingLock(heldLock, cardsRoot, amendedState, assertedClaimIds, refusedClaimIds, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardRecertificationOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="RecordRecertification"/>. Same structural lock
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type — the target is
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>. Role checked
+    /// first, ahead of <see cref="File.Exists(string)"/>, the same ordering
+    /// <see cref="RecordApprovalUnderExistingLock"/> already uses (<see cref="IsApprovingRole"/> —
+    /// 8.13's recertification half, reused rather than re-derived).
+    ///
+    /// <para>
+    /// <b>"Since the current approval" (8.10) is derived, not stored.</b> The bound attaches to the
+    /// <em>approval</em>, not the card (Architect ruling: a block recertified, sent back to
+    /// <c>briefed</c>, rebuilt and approved again is a new approval and gets a fresh
+    /// recertification). Rather than a raw boolean field that would need its own reset logic on
+    /// every fresh <c>approve</c> — exactly the shape that has already produced two defects in this
+    /// section (§8 block B's own remediation, twice) — this scans the record: the current
+    /// approval's start is the timestamp of the most recent <see cref="CardBlockTransitionEntry"/>
+    /// named <c>approve</c> (<see cref="BlockFlowTransitions.AvailableFrom"/>'s only edge into
+    /// <see cref="BlockFlowState.Approved"/>), and <see cref="CardCommentRouting.
+    /// HasRecertification"/> is asked only about comments at or after that timestamp — the same
+    /// round-boundary idiom §8 block B's remediation established for <see cref="CardCommentRouting.
+    /// HasFixBeforeLandDisposition"/>. A recertification from a superseded, earlier approval never
+    /// counts against a later one.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Every claim must receive an outcome (Architect ruling).</b> The current approval's whole
+    /// claim set is <c>card.Claims</c> whose <see cref="CardApprovalClaim.Round"/> equals the
+    /// card's current <see cref="BlockCardFields.Round"/> — the same round-scoping
+    /// <see cref="RecordApprovalUnderExistingLock"/> stamps a claim with in the first place, so it
+    /// stays exactly the approval's claim set for as long as the card remains <c>approved</c> (no
+    /// other transition touches <c>Round</c> while <c>approved</c>). A caller-named id outside that
+    /// set is refused (<see cref="CardRecertificationOutcome.UnknownClaimIds"/>); a claim in that
+    /// set named by neither <c>--assert</c> nor <c>--refuse</c> is refused
+    /// (<see cref="CardRecertificationOutcome.MissingClaimOutcomes"/>) — both checked, and both
+    /// refuse, before anything is written.
+    /// </para>
+    /// </summary>
+    internal static CardRecertificationOutcome RecordRecertificationUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string amendedState, IReadOnlyList<string> assertedClaimIds, IReadOnlyList<string> refusedClaimIds,
+        CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!IsApprovingRole(actingRole))
+        {
+            return new CardRecertificationOutcome.RoleNotPermitted(actingRole);
+        }
+
+        if (!File.Exists(filePath))
+        {
+            return new CardRecertificationOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardRecertificationOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsBlockCard(card))
+                {
+                    return new CardRecertificationOutcome.NotABlockCard(card.Frontmatter.Kind);
+                }
+
+                if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
+                {
+                    return new CardRecertificationOutcome.CardCorrupt(
+                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
+                }
+
+                if (currentState != BlockFlowState.Approved)
+                {
+                    return new CardRecertificationOutcome.NotApproved(currentState);
+                }
+
+                var approvedAt = DateTimeOffset.MinValue;
+                for (var i = card.Transitions.Count - 1; i >= 0; i--)
+                {
+                    if (string.Equals(card.Transitions[i].Name, "approve", StringComparison.Ordinal))
+                    {
+                        approvedAt = card.Transitions[i].Timestamp;
+                        break;
+                    }
+                }
+
+                var commentsSinceApproval = card.Comments.Where(c => c.Timestamp >= approvedAt).ToList();
+                if (CardCommentRouting.HasRecertification(commentsSinceApproval))
+                {
+                    return new CardRecertificationOutcome.AlreadyRecertified();
+                }
+
+                var currentRound = card.BlockFields.Round ?? 1;
+                var currentClaimIds = new HashSet<string>(
+                    card.Claims.Where(claim => claim.Round == currentRound).Select(claim => claim.Id), StringComparer.Ordinal);
+
+                var namedIds = new HashSet<string>(StringComparer.Ordinal);
+                var unknownIds = new List<string>();
+                foreach (var id in assertedClaimIds.Concat(refusedClaimIds))
+                {
+                    namedIds.Add(id);
+                    if (!currentClaimIds.Contains(id))
+                    {
+                        unknownIds.Add(id);
+                    }
+                }
+
+                if (unknownIds.Count > 0)
+                {
+                    return new CardRecertificationOutcome.UnknownClaimIds(unknownIds);
+                }
+
+                var missingIds = currentClaimIds.Where(id => !namedIds.Contains(id)).ToList();
+                if (missingIds.Count > 0)
+                {
+                    return new CardRecertificationOutcome.MissingClaimOutcomes(missingIds);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardRecertificationOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var recordComment = new CardComment(
+                    Id: $"recertification-{Guid.NewGuid():N}", Author: actingRole, Timestamp: timestamp,
+                    Body: BuildRecertificationBody(amendedState, assertedClaimIds, refusedClaimIds),
+                    ReplyTo: null, To: null, Resolves: null, UnknownHeaderFields: [], IsRecertification: true);
+
+                CardFile updated;
+                if (refusedClaimIds.Count == 0)
+                {
+                    // review-certification: "A successful recertification SHALL re-stamp
+                    // reviewed_state to the amended state" — round does not move (Architect
+                    // ruling), and status stays approved, so nothing else on the card changes.
+                    updated = card with
+                    {
+                        Frontmatter = card.Frontmatter with { Updated = timestamp },
+                        BlockFields = card.BlockFields with { ReviewedState = amendedState },
+                        Comments = [.. card.Comments, recordComment],
+                    };
+                }
+                else
+                {
+                    var transition = BlockFlowTransitions.AvailableFrom(currentState)
+                        .First(candidate => string.Equals(candidate.Name, "recertification-refused", StringComparison.Ordinal));
+                    var entry = new CardBlockTransitionEntry(actingRole, transition.Name, transition.From, transition.To, timestamp, []);
+                    updated = card with
+                    {
+                        Frontmatter = card.Frontmatter with { Status = transition.To.ToWireString(), Updated = timestamp },
+                        BlockFields = card.BlockFields with { Round = (card.BlockFields.Round ?? 0) + 1 },
+                        Transitions = [.. card.Transitions, entry],
+                        Comments = [.. card.Comments, recordComment],
+                    };
+                }
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardRecertificationOutcome>(
+                    onSuccess: _ => refusedClaimIds.Count == 0
+                        ? new CardRecertificationOutcome.Recertified(updated, assertedClaimIds)
+                        : new CardRecertificationOutcome.ClaimsRefused(updated, assertedClaimIds, refusedClaimIds),
+                    onNotFound: notFound => new CardRecertificationOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardRecertificationOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardRecertificationOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardRecertificationOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardRecertificationOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardRecertificationOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// Records one <c>block amendment-requested</c> call (§8 block C remediation, work-lifecycle:
+    /// "`amendment-requested` is the architect deliberately reopening an approved block for a
+    /// further amendment") — the one door to the <c>approved → briefed</c> edge of that name.
+    /// Role-bounded to <c>architect</c> (<see cref="IsArchitectRole"/>, the same predicate
+    /// <see cref="DispositionNit"/> already uses), unlike <see cref="ApplyBlockTransition"/>'s
+    /// generic path, which never restricts who may apply a named edge — this verb specifically
+    /// exists to be a deliberate architect act, not a fact any role may record.
+    /// </summary>
+    internal static CardAmendmentRequestOutcome RecordAmendmentRequest(
+        string cardsRoot, string filePath, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => RecordAmendmentRequestUnderExistingLock(heldLock, cardsRoot, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardAmendmentRequestOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="RecordAmendmentRequest"/>. Same structural lock
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type — the target is
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>. Role checked
+    /// first, ahead of <see cref="File.Exists(string)"/>, the same ordering <see cref="
+    /// RecordApprovalUnderExistingLock"/> and <see cref="RecordRecertificationUnderExistingLock"/>
+    /// already use.
+    /// </summary>
+    internal static CardAmendmentRequestOutcome RecordAmendmentRequestUnderExistingLock(
+        CardLock heldLock, string cardsRoot, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!IsArchitectRole(actingRole))
+        {
+            return new CardAmendmentRequestOutcome.RoleNotPermitted(actingRole);
+        }
+
+        if (!File.Exists(filePath))
+        {
+            return new CardAmendmentRequestOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardAmendmentRequestOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsBlockCard(card))
+                {
+                    return new CardAmendmentRequestOutcome.NotABlockCard(card.Frontmatter.Kind);
+                }
+
+                if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
+                {
+                    return new CardAmendmentRequestOutcome.CardCorrupt(
+                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
+                }
+
+                var available = BlockFlowTransitions.AvailableFrom(currentState);
+                var transition = available.FirstOrDefault(candidate => string.Equals(candidate.Name, "amendment-requested", StringComparison.Ordinal));
+                if (transition is null)
+                {
+                    return new CardAmendmentRequestOutcome.UndefinedTransition(currentState, available);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardAmendmentRequestOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var entry = new CardBlockTransitionEntry(actingRole, transition.Name, transition.From, transition.To, timestamp, []);
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Status = transition.To.ToWireString(), Updated = timestamp },
+                    BlockFields = card.BlockFields with { Round = (card.BlockFields.Round ?? 0) + 1 },
+                    Transitions = [.. card.Transitions, entry],
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardAmendmentRequestOutcome>(
+                    onSuccess: _ => new CardAmendmentRequestOutcome.Requested(updated),
+                    onNotFound: notFound => new CardAmendmentRequestOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardAmendmentRequestOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardAmendmentRequestOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardAmendmentRequestOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardAmendmentRequestOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardAmendmentRequestOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>Free-form prose recorded on the recertification-record comment
+    /// (<see cref="CardComment.IsRecertification"/>) — human-readable context for a card read
+    /// without the tool (ADR-0003); nothing re-parses this back. The structural facts (which claims,
+    /// which outcome, whether the block moved) live in <see cref="CardRecertificationOutcome"/>'s
+    /// own cases and the CLI response, not in this text.</summary>
+    private static string BuildRecertificationBody(string amendedState, IReadOnlyList<string> assertedClaimIds, IReadOnlyList<string> refusedClaimIds)
+    {
+        var assertedText = assertedClaimIds.Count == 0 ? "none" : string.Join(", ", assertedClaimIds);
+        if (refusedClaimIds.Count == 0)
+        {
+            return $"Recertified against '{amendedState}'. Asserted claim(s): {assertedText}.";
+        }
+
+        var refusedText = string.Join(", ", refusedClaimIds);
+        return $"Recertification against '{amendedState}' refused. Asserted claim(s): {assertedText}. Refused claim(s): {refusedText}.";
+    }
+
+    /// <summary>
     /// review-certification: "Every nit SHALL receive a disposition chosen by the architect" — the
     /// Architect's reading of that sentence as role-bounding the verb (§8 block B brief item 6, the
     /// reading most open to challenge).

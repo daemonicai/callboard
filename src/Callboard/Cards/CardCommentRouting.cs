@@ -155,4 +155,26 @@ internal static class CardCommentRouting
 
         return false;
     }
+
+    /// <summary>
+    /// True when any comment in <paramref name="comments"/> is a recertification record
+    /// (<see cref="CardComment.IsRecertification"/>) — <see cref="HasFixBeforeLandDisposition"/>'s
+    /// sibling for review-certification's "at most one recertification per approval" bound (§8
+    /// block C). The same "caller narrows the slice, this type never filters by round itself" idiom
+    /// this type's own class doc comment records: a caller scopes <paramref name="comments"/> to
+    /// those recorded since the current approval before calling this, so a recertification from a
+    /// prior, already-superseded approval never counts against a later one.
+    /// </summary>
+    internal static bool HasRecertification(IReadOnlyList<CardComment> comments)
+    {
+        for (var i = 0; i < comments.Count; i++)
+        {
+            if (comments[i].IsRecertification)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

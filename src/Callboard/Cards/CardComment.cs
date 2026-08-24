@@ -45,6 +45,14 @@ namespace Callboard.Cards;
 /// <paramref name="Resolves"/>, never a mutation of the nit comment — <see cref="CardComment"/>
 /// offers no mutation path by construction (this type's own class doc comment), the same idiom
 /// <paramref name="Resolves"/> already established for a reply resolving an earlier comment.</param>
+/// <param name="IsRecertification">&#160;<see langword="true"/> only on the comment
+/// <see cref="CardStore.RecordRecertification"/> appends to record one <c>block recertify</c> call
+/// (review-certification: "Recertification re-asserts an existing claim set", §8 block C) —
+/// <see langword="false"/> for every other comment, including a nit or a disposition. This is the
+/// structural marker <see cref="CardCommentRouting.HasRecertification"/> scans for to derive "how
+/// many recertifications since the current approval" (8.10) — computed over the record each time,
+/// never stored as a raw boolean on the card that would need its own reset logic on every new
+/// approval (Architect ruling: "do not implement this as a boolean on the card that never resets").</param>
 internal sealed record CardComment(
     string Id,
     CardOwner Author,
@@ -57,7 +65,8 @@ internal sealed record CardComment(
     bool IsNit = false,
     bool Required = false,
     IReadOnlyList<string>? Sites = null,
-    NitDisposition? Disposition = null)
+    NitDisposition? Disposition = null,
+    bool IsRecertification = false)
 {
     /// <summary>Normalises the constructor's <see langword="null"/> <see cref="Sites"/> default to
     /// an empty list, once, here — the same reason <see cref="CardFile.Handovers"/> normalises its
@@ -83,7 +92,8 @@ internal sealed record CardComment(
         && IsNit == other.IsNit
         && Required == other.Required
         && Sites.SequenceEqual(other.Sites)
-        && EqualityComparer<NitDisposition?>.Default.Equals(Disposition, other.Disposition);
+        && EqualityComparer<NitDisposition?>.Default.Equals(Disposition, other.Disposition)
+        && IsRecertification == other.IsRecertification;
 
     public override int GetHashCode()
     {
@@ -100,6 +110,7 @@ internal sealed record CardComment(
         hash.Add(Required);
         hash.Add(Sites.Count);
         hash.Add(Disposition);
+        hash.Add(IsRecertification);
         return hash.ToHashCode();
     }
 }

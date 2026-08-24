@@ -67,11 +67,15 @@ internal static class CardFileParser
     private static readonly HashSet<string> RegisterOnlyFrontmatterKeys = new(RegisterCardFieldKeys.All, StringComparer.Ordinal);
 
     // The six comment-header fields this build recognises, plus the four §8 block B nit-only ones
-    // (CardCommentNitFieldKeys.All — the one shared declaration this set and CardFileWriter's own
-    // emission both read from, the wire-key drift guard carried from §7's close). Same rule, same
-    // reason, applied to the per-comment header instead of the frontmatter block.
+    // and the one §8 block C recertification-only one (CardCommentNitFieldKeys.All /
+    // CardCommentRecertificationFieldKeys.All — the shared declarations this set and
+    // CardFileWriter's own emission both read from, the wire-key drift guard carried from §7's
+    // close). Same rule, same reason, applied to the per-comment header instead of the frontmatter
+    // block.
     private static readonly HashSet<string> KnownCommentHeaderKeys = new(
-        new[] { "id", "author", "reply-to", "to", "resolves", "timestamp" }.Concat(CardCommentNitFieldKeys.All),
+        new[] { "id", "author", "reply-to", "to", "resolves", "timestamp" }
+            .Concat(CardCommentNitFieldKeys.All)
+            .Concat(CardCommentRecertificationFieldKeys.All),
         StringComparer.Ordinal);
 
     // The three handover-line fields this build recognises (card-model 4.5). Same rule again.
@@ -1218,7 +1222,10 @@ internal static class CardFileParser
             disposition = parsedDisposition;
         }
 
-        return (new CardComment(id, author, timestamp, body, replyTo, to, resolves, unknownFields, isNit, required, sites, disposition), null);
+        var isRecertification = fields.TryGetValue(CardCommentRecertificationFieldKeys.IsRecertification, out var isRecertificationText)
+            && string.Equals(isRecertificationText, "true", StringComparison.Ordinal);
+
+        return (new CardComment(id, author, timestamp, body, replyTo, to, resolves, unknownFields, isNit, required, sites, disposition, isRecertification), null);
     }
 
     private static (CardHandover? Handover, string? Failure) BuildHandover(
