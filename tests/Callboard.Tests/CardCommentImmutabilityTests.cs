@@ -114,7 +114,8 @@ public sealed class CardCommentImmutabilityTests
             "DescribeUnexpectedDischargeOutcome",   // §7 block D: pure string formatter over a CardRegisterDischargeOutcome for ArchiveChange's tool-failure message; never touches a CardFile
             "DischargeRegisterCard",                // §7 block A: read-decide-write on Frontmatter.Status/RegisterFields.DischargedBy/DischargedAt only; never touches Comments
             "DischargeRegisterCardUnderExistingLock", // same, lock already held
-            "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy; never touches a CardFile's Comments
+            "IsApprovingRole",                      // §8 block A: pure predicate over CardOwner (reviewer/supervisor only), shared by RecordApproval and (expected) block C's recertify; never touches a CardFile
+            "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy/RecordApproval; never touches a CardFile's Comments
             "IsDecisionCard",                       // §7 block C: the IsRegisterCard counterpart narrowed to CardKind.Decision, shared by CommandDispatcher's --owed-by/--supersedes resolution and SupersedeDecisionUnderLocks; never touches a CardFile's Comments
             "IsFindingCard",                        // §6 block C: the IsBlockCard/IsSectionCard counterpart for CardKind.Finding, shared with CommandDispatcher.RunFindingStatus; never touches a CardFile's Comments
             "IsObligationCard",                     // §7 block D: the IsRegisterCard counterpart narrowed to CardKind.Obligation, shared by ArchiveChange's obligation scan; never touches a CardFile's Comments
@@ -129,6 +130,8 @@ public sealed class CardCommentImmutabilityTests
             "AcquireLocksAndRecord",                // §6 block B remediation: acquires one or two CardLocks in ordinal path order and runs the record step under them; never touches a CardFile
             "RecordFinding",                        // §6 block B: allocates identities, pre-creates directories, then delegates to AcquireLocksAndRecord/RecordFindingUnderLocks — never touches an existing card's Comments, it only ever creates brand-new cards with an empty comment list
             "RecordFindingUnderLocks",              // same: writes the raised card (if any) then the finding, both create-only via AtomicWrite, rolling the raised card back (by content, not by path) on the finding's own write failing — never an edit or drop of an existing comment
+            "RecordApproval",                       // §8 block A: role check, then acquires the block's lock and delegates to RecordApprovalUnderExistingLock; never touches a CardFile itself
+            "RecordApprovalUnderExistingLock",      // §8 block A: read-decide-write on Frontmatter.Status/BlockFields.ReviewedState/Transitions/Claims/Limits only, in one write with the transition; never touches Comments
             "RecordGateResult",                     // §5 block D: read-modify-write on BlockFields.GateResults only; never touches Frontmatter.Status or Comments — see the structural argument in GateStatus's doc comment
             "RecordGateResultUnderExistingLock",    // same, lock already held
             "RecordSectionVerdict",                 // §5 block E: append-only write on SectionFields.Verdicts only; never touches Frontmatter.Status or Comments

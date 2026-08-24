@@ -346,6 +346,144 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// <see langword="true"/> for the two roles review-certification's "Approval is role-bounded"
+    /// permits to record an <c>approve</c> verdict or a recertification — <c>reviewer</c> and
+    /// <c>supervisor</c>. §8 block A ships this half of 8.13's enforcement (approval's own role
+    /// check); block C's <c>recertify</c> is expected to call this same predicate rather than
+    /// re-deriving the same two-role fact a second way.
+    /// </summary>
+    internal static bool IsApprovingRole(CardOwner role) => role.Match(
+        onArchitect: static () => false,
+        onWorker: static () => false,
+        onReviewer: static () => true,
+        onSupervisor: static () => true,
+        onProductOwner: static () => false);
+
+    /// <summary>
+    /// Records a binary approval on the block card at <paramref name="filePath"/>
+    /// (review-certification: "Approve is binary and certifies one state" / "Certification
+    /// enumerates its claims", §8 block A) — the one door to <see cref="BlockFlowState.Approved"/>:
+    /// stamps <c>reviewed_state</c>, appends the enumerated claim/limit sequence, and appends the
+    /// <c>approve</c> <see cref="CardBlockTransitionEntry"/>, all under the card's lock, in the
+    /// same write (Architect ruling: "the certification is stamped in the same write as the
+    /// transition"). <see cref="ApplyBlockTransition"/>'s own <c>approve</c> edge is never reached
+    /// through this call — <c>block transition</c>'s CLI parse arm refuses the name outright before
+    /// any card is ever touched (§8 block A brief item 1), so this is the only path that can ever
+    /// land a block on <c>approved</c>.
+    /// </summary>
+    /// <param name="reviewedState">The exact state this approval certifies, including any
+    /// uncommitted working-tree content it covers — caller-supplied text, verified against nothing
+    /// (§8's own standing fact: the tool does not shell out, does not resolve a SHA). Never empty or
+    /// whitespace-only — checked by <see cref="Callboard.Cli.CommandParser"/>'s <c>block approve</c>
+    /// parse arm before this is ever called, since that is argv-decidable.</param>
+    /// <param name="claimTexts">The claims this approval enumerates, in the order given. May be
+    /// empty only when <paramref name="limitTexts"/> is not — review-certification: "no claims and
+    /// no limits" is refused, not "no claims" alone (§8 block A brief item 5) — checked by the CLI
+    /// parse arm for the same argv-decidable reason as <paramref name="reviewedState"/>.</param>
+    /// <param name="limitTexts">The limits this approval states, in the order given.</param>
+    internal static CardApprovalOutcome RecordApproval(
+        string cardsRoot, string filePath, string reviewedState, IReadOnlyList<string> claimTexts, IReadOnlyList<string> limitTexts,
+        CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => RecordApprovalUnderExistingLock(heldLock, cardsRoot, reviewedState, claimTexts, limitTexts, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardApprovalOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="RecordApproval"/>. Same structural lock precondition
+    /// as every other <c>*UnderExistingLock</c> method on this type — the target is
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>. The role check is
+    /// the very first thing decided, ahead of even <see cref="File.Exists(string)"/> — the same
+    /// ordering <see cref="CompactRules"/>'s own doc comment justifies: "role-not-permitted is a fact
+    /// about whether this call is allowed to happen at all, not about the shape of its arguments."
+    /// Everything else is validated — kind, current state, layout — before the one
+    /// <see cref="AtomicWrite"/> call that lands claims, limits, <c>reviewed_state</c> and the
+    /// transition together.
+    /// </summary>
+    internal static CardApprovalOutcome RecordApprovalUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string reviewedState, IReadOnlyList<string> claimTexts, IReadOnlyList<string> limitTexts,
+        CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!IsApprovingRole(actingRole))
+        {
+            return new CardApprovalOutcome.RoleNotPermitted(actingRole);
+        }
+
+        if (!File.Exists(filePath))
+        {
+            return new CardApprovalOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardApprovalOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsBlockCard(card))
+                {
+                    return new CardApprovalOutcome.NotABlockCard(card.Frontmatter.Kind);
+                }
+
+                if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
+                {
+                    return new CardApprovalOutcome.CardCorrupt(
+                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
+                }
+
+                var available = BlockFlowTransitions.AvailableFrom(currentState);
+                var transition = available.FirstOrDefault(candidate => string.Equals(candidate.Name, "approve", StringComparison.Ordinal));
+                if (transition is null)
+                {
+                    return new CardApprovalOutcome.UndefinedTransition(currentState, available);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardApprovalOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                // The block's round at the moment this approval is recorded — the same "unset
+                // reads as round 1" default ApplyBlockTransitionUnderExistingLock and
+                // RecordGateResultUnderExistingLock both already apply, so a claim/limit recorded
+                // against a block never yet briefed still reads back as round 1.
+                var currentRound = card.BlockFields.Round ?? 1;
+                var claims = claimTexts
+                    .Select(text => new CardApprovalClaim(Guid.NewGuid().ToString("N"), currentRound, text, []))
+                    .ToImmutableArray();
+                var limits = limitTexts
+                    .Select(text => new CardApprovalLimit(currentRound, text, []))
+                    .ToImmutableArray();
+
+                var entry = new CardBlockTransitionEntry(actingRole, transition.Name, transition.From, transition.To, timestamp, []);
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Status = transition.To.ToWireString(), Updated = timestamp },
+                    BlockFields = card.BlockFields with { ReviewedState = reviewedState },
+                    Transitions = [.. card.Transitions, entry],
+                    Claims = [.. card.Claims, .. claims],
+                    Limits = [.. card.Limits, .. limits],
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardApprovalOutcome>(
+                    onSuccess: _ => new CardApprovalOutcome.Approved(updated, claims, limits),
+                    onNotFound: notFound => new CardApprovalOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardApprovalOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardApprovalOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardApprovalOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardApprovalOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardApprovalOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
     /// Records one gate's exit code on the block card at <paramref name="filePath"/>
     /// (work-lifecycle: "A gate result SHALL be recorded on the card as a label paired with the
     /// exit code the gate returned", §5 block D) — reads the current card, and only if it is a
@@ -2364,11 +2502,15 @@ internal static class CardStore
             onFailed: failed => ((string?)null, (string?)failed.Reason));
 
     /// <summary>Shared by <see cref="ApplyBlockTransitionUnderExistingLock"/>,
-    /// <see cref="RecordGateResultUnderExistingLock"/> and <see cref="UpdateBlockedByUnderExistingLock"/>
-    /// — the one place "is this card's kind block" is decided, over the closed
-    /// <see cref="CardKind"/> union, so the three verbs cannot drift on what counts as a block
-    /// card.</summary>
-    private static bool IsBlockCard(CardFile card) => card.Frontmatter.Kind.Match(
+    /// <see cref="RecordGateResultUnderExistingLock"/>, <see cref="UpdateBlockedByUnderExistingLock"/>
+    /// and <see cref="RecordApprovalUnderExistingLock"/> — the one place "is this card's kind block"
+    /// is decided, over the closed <see cref="CardKind"/> union, so the four verbs cannot drift on
+    /// what counts as a block card. <see langword="internal"/> (§8 block A, same reason
+    /// <see cref="IsSectionCard"/> already went <see langword="internal"/> in §5 remediation) so
+    /// <see cref="Callboard.Cli.CommandDispatcher.RunBlockApprove"/> can pass this to
+    /// <see cref="Callboard.Cli.CommandDispatcher.ResolveCardReference"/> instead of re-implementing
+    /// the same eight-arm match a second time.</summary>
+    internal static bool IsBlockCard(CardFile card) => card.Frontmatter.Kind.Match(
         onBlock: static () => true,
         onQuestion: static () => false,
         onFinding: static () => false,

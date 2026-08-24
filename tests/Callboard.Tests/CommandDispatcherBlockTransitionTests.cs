@@ -61,8 +61,11 @@ public sealed class CommandDispatcherBlockTransitionTests
         var before = File.ReadAllBytes(path);
         var output = new StringWriter();
 
+        // "land" (not "approve" — §8 block A refuses that name outright, its own separate
+        // 'approve-via-transition-refused' code, tested in CommandDispatcherBlockApproveTests) is a
+        // real transition name that is simply not available from 'drafting'.
         var exitCode = RunInRepo(
-            ["block", "transition", path, "approve", "--role", "reviewer", "--change", ChangeName],
+            ["block", "transition", path, "land", "--role", "reviewer", "--change", ChangeName],
             output, repo.Path);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);

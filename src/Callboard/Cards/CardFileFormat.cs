@@ -42,6 +42,30 @@ internal static class CardFileFormat
     internal const string VerdictLineSuffix = " -->";
 
     /// <summary>
+    /// One enumerated claim of an approval (review-certification: "Certification enumerates its
+    /// claims", §8 block A). Self-contained, no body and no footer — the same shape as
+    /// <see cref="TransitionLinePrefix"/>/<see cref="VerdictLinePrefix"/> — but, unlike those two,
+    /// more than one can belong to the same approval, so each carries its own <c>id</c> (Architect
+    /// ruling: "each claim carrying its own id" — 8.8, out of this block's scope, re-asserts an
+    /// existing approval's claims individually and needs a stable handle to assert or refuse) and a
+    /// <c>round</c> tying it to the remediation round it was certified in, the same scoping
+    /// <see cref="GateResult.Round"/> already established for "only the current round's evidence is
+    /// evidence".
+    /// </summary>
+    internal const string ClaimLinePrefix = "<!-- callboard:claim ";
+    internal const string ClaimLineSuffix = " -->";
+
+    /// <summary>
+    /// One stated limit of an approval — what the certification does NOT establish
+    /// (review-certification: "An approval SHALL ... state what it does not establish"). Same shape
+    /// as <see cref="ClaimLinePrefix"/>, minus an <c>id</c>: a limit is never individually asserted
+    /// or refused (8.8 re-asserts claims, never limits — Architect ruling), so it needs no identity
+    /// of its own, only the <c>round</c> it was certified in.
+    /// </summary>
+    internal const string LimitLinePrefix = "<!-- callboard:limit ";
+    internal const string LimitLineSuffix = " -->";
+
+    /// <summary>
     /// True for a line that, written unescaped, would be misread as a structural delimiter on
     /// the next parse — the header prefix, the footer, or an already-escaped instance of either
     /// (any number of leading backslashes stripped still matches). Escaping is checked against
@@ -54,7 +78,9 @@ internal static class CardFileFormat
             || string.Equals(unescaped, CommentFooter, StringComparison.Ordinal)
             || unescaped.StartsWith(HandoverLinePrefix, StringComparison.Ordinal)
             || unescaped.StartsWith(TransitionLinePrefix, StringComparison.Ordinal)
-            || unescaped.StartsWith(VerdictLinePrefix, StringComparison.Ordinal);
+            || unescaped.StartsWith(VerdictLinePrefix, StringComparison.Ordinal)
+            || unescaped.StartsWith(ClaimLinePrefix, StringComparison.Ordinal)
+            || unescaped.StartsWith(LimitLinePrefix, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -103,6 +129,16 @@ internal static class CardFileFormat
     internal static bool IsVerdictLine(string line) =>
         line.StartsWith(VerdictLinePrefix, StringComparison.Ordinal)
             && line.EndsWith(VerdictLineSuffix, StringComparison.Ordinal);
+
+    /// <summary>An unescaped, self-contained approval-claim entry line.</summary>
+    internal static bool IsClaimLine(string line) =>
+        line.StartsWith(ClaimLinePrefix, StringComparison.Ordinal)
+            && line.EndsWith(ClaimLineSuffix, StringComparison.Ordinal);
+
+    /// <summary>An unescaped, self-contained approval-limit entry line.</summary>
+    internal static bool IsLimitLine(string line) =>
+        line.StartsWith(LimitLinePrefix, StringComparison.Ordinal)
+            && line.EndsWith(LimitLineSuffix, StringComparison.Ordinal);
 
     private static readonly IReadOnlyDictionary<char, char> FrontmatterEscapeTable =
         new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r' };
@@ -162,6 +198,27 @@ internal static class CardFileFormat
 
     /// <summary>Reverses <see cref="EscapeCommentHeaderValue"/>.</summary>
     internal static string UnescapeCommentHeaderValue(string value) => UnescapeUsing(value, CommentHeaderEscapeTable);
+
+    private static readonly IReadOnlyDictionary<char, char> CertificationTextEscapeTable =
+        new Dictionary<char, char> { ['s'] = ' ', ['n'] = '\n', ['r'] = '\r' };
+
+    private static readonly IReadOnlyDictionary<char, string> CertificationTextEscapeForwardTable =
+        new Dictionary<char, string> { ['\\'] = "\\\\", [' '] = "\\s", ['\n'] = "\\n", ['\r'] = "\\r" };
+
+    /// <summary>
+    /// Escapes a claim's or limit's free-text <c>text</c> field (§8 block A) — the same
+    /// space-escaping <see cref="EscapeCommentHeaderValue"/> applies (the line is <c>key=value</c>
+    /// tokens joined by a single space, so an unescaped space would split a value across tokens),
+    /// plus newline/carriage-return escaping <see cref="EscapeCommentHeaderValue"/> does not need
+    /// for its own <c>id</c>/<c>reply-to</c> values (always a single generated token, never
+    /// free-flowing prose) but certification text does: review-certification's own text is written
+    /// as sentences a later reviewer reads, and a literal newline embedded unescaped in a
+    /// single-physical-line format would corrupt the next line's own parse.
+    /// </summary>
+    internal static string EscapeCertificationTextValue(string value) => EscapeUsing(value, CertificationTextEscapeForwardTable);
+
+    /// <summary>Reverses <see cref="EscapeCertificationTextValue"/>.</summary>
+    internal static string UnescapeCertificationTextValue(string value) => UnescapeUsing(value, CertificationTextEscapeTable);
 
     private static readonly IReadOnlyDictionary<char, char> FrontmatterListItemEscapeTable =
         new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r', [','] = ',' };

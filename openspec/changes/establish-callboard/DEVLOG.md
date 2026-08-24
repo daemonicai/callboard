@@ -18464,6 +18464,351 @@ Three rounds, four blockers, all four closed on the code rather than in the repo
 
 → @architect
 
+## 8. Review and certification
+
+**[architect]** Base: `afaad73` — approval as a binary certification of one exact state with
+enumerated claims, nits as dispositioned addressed comments, and `recertify` re-asserting a claim
+set claim by claim over an amended state.
+
+**[architect]** **§5/§8 flow contradiction — resolved by the Product Owner before any block was
+carved.** `review-certification` said `fix-before-land` and a refused recertification return a block
+to `building`; `work-lifecycle`'s transition table says a block moves "only along the defined
+transitions" and had exactly one backward edge, `in-review → briefed`, with nothing leaving
+`approved` at all. §5 shipped that table as an exhaustive compile-checked union
+(`BlockFlowTransitions.AvailableFrom`), so this decided whether §8 adds edges to a closed table, not
+merely how a sentence reads.
+
+Put to the Product Owner with three options. **Ruling: `briefed` is right — §5's spec wins, §8's
+prose was loose.** Reasoning recorded at the time: `changes-requested` is the *larger* failure and it
+re-enters through `brief → claim`; the smaller failure (a dispositioned nit) skipping a step the
+larger one takes costs more in comprehensibility than a re-claim costs in ceremony, and it keeps
+`briefed` as the universal re-entry point.
+
+Landed as `afaad73`, ahead of the base post, so §8 builds on the amended spec rather than the
+contradictory one:
+
+- `review-certification`: the three `building` mentions → `briefed`
+- `work-lifecycle`: the diagram gains `fix-before-land` (in-review → briefed) and
+  `recertification-refused` (approved → briefed), both `round += 1`
+- `tasks.md`: 8.5 and 8.9 reworded to match
+
+**Architect call inside that ruling:** `fix-before-land` is a **distinct named edge**, not a reuse of
+`changes-requested`, despite sharing From/To. The transition name is persisted in the card's history
+(`CardBlockTransitionEntry`), and recording a dispositioned nit as `changes-requested` would
+misreport what happened. `BlockFlowTransitions.AvailableFrom` returns a list and lookup is by name,
+so two edges sharing From/To is already supported — `in-review` simply gains a third available
+transition.
+
+**[architect]** **A standing fact for every block in this section: the tool does not shell out.**
+Verified at section open — `System.Diagnostics.Process` appears nowhere in `src/Callboard` source
+(only in build artefacts under `obj/`/`bin/`). §5 established the discipline with gates: the tool
+never *runs* a gate, it records the exit code its caller supplies, and `GateResult`'s own doc comment
+is explicit that the exit code is the only accepted evidence. §8 inherits this without exception:
+
+- **8.11 "gates re-run green"** reads recorded `GateResult`s at the card's *current* round via
+  `BlockCardFields.GateStatusOf` — it does not run `make gates`.
+- **8.11 "difference confined to the sites of the dispositioned nits"** compares **caller-supplied**
+  changed paths against the sites recorded on the nits. The tool does not run `git diff`.
+- **8.2 `reviewed_state`** is a caller-supplied string naming the state, explicitly including
+  uncommitted working-tree content. The tool does not resolve or verify a SHA.
+
+A block that finds itself wanting to invoke `git` or a gate has misread the requirement — stop and
+report rather than adding the first subprocess call to this codebase.
+
+**[architect]** §8 carved into four blocks. 8.13 (role-bounding) is deliberately **not** in block A
+even though block A implements approve's half of it: the task covers *approval and recertification*,
+so it ticks in block C when both verbs enforce it. Block A still ships the refusal — a refusal that
+fails open is this project's named hazard, not something to defer to a later block.
+
+| block | tasks | deliverable |
+|---|---|---|
+| A | 8.1, 8.2, 8.3 | `approve` as a binary verdict: `reviewed_state`, enumerated claims and limits, the two approval refusals |
+| B | 8.4, 8.5, 8.6, 8.7 | nits as dispositioned addressed comments; the `fix-before-land` edge; `defer`→obligation, `decline`→decision |
+| C | 8.8, 8.9, 8.10, 8.13 | `recertify` with per-claim assert/refuse; the `recertification-refused` edge; the one-per-approval bound; role-bounding both verbs |
+| D | 8.11, 8.12 | the mechanical preconditions as refuse-only, and the test that green confers no claim |
+
+**[architect]** **Block A brief — 8.1, 8.2, 8.3.** `approve` as a binary certification of one exact
+state, enumerating what it claims and what it does not.
+
+**Tasks**
+
+- 8.1 Implement the binary verdict, refusing any approval carrying unresolved blocking findings
+- 8.2 Record `reviewed_state` as the exact state certified, including uncommitted content
+- 8.3 Refuse an approval that enumerates no claims and no limits
+
+**Binding spec — `review-certification`, two requirements**
+
+> A review verdict SHALL be exactly one of `approve` or `request-changes`. The system SHALL NOT offer
+> a verdict combining approval with outstanding findings.
+>
+> An `approve` SHALL certify one exact state, recorded as the card's `reviewed_state`. An approval
+> SHALL name that state explicitly, including any uncommitted working-tree content it covers.
+
+> An approval SHALL enumerate the claims it makes and state what it does not establish. Certification
+> text SHALL be written to be actionable by a reviewer who did not author it, because recertification
+> may be performed by a different reviewer reading it cold.
+
+Scenarios: approval records the state it certifies; approve-with-nits is unavailable (refuse, and
+direct the reviewer to `approve` with dispositioned nits or to `request-changes`); approval without
+enumerated claims is refused (refuse, and state that certification text is read by a later reviewer
+who did not write it).
+
+**Architect readings and calls — implement these, do not re-litigate them; challenge in-thread if you
+think one is wrong**
+
+1. **`block approve` is its own verb, and it is the only door to `approved`.** §5 already has the
+   `approve` edge reachable via `block transition <path> approve`. That path must now **refuse**,
+   naming `block approve`, because a transition through it would move a block to `approved` carrying
+   no certification at all — an uncertified approval is exactly what this section exists to prevent.
+   One door, and the certification is stamped in the same write as the transition.
+2. **8.1 is about the verdict *surface*, not a scan of finding cards.** `findings` (§6) never defined
+   an open/resolved lifecycle — finding cards carry `live`/`degraded`/`unreadable` staleness, nothing
+   else — so "unresolved blocking findings" has no referent to scan for, and inventing one here would
+   be §6's capability, not §8's. `proposal.md`'s OQ-7 row settles the intent: *"'approve with nits' as
+   a verdict variant — Deleted; approve is binary."* So: the verb offers **no** way to attach findings
+   to an approval, and an invocation that attempts to combine the two is refused with the spec's own
+   redirect. **Reviewer: this reading is the thing to challenge if you disagree — say so in-thread.**
+3. **`--state` is caller-supplied text, verified against nothing.** Per the section-open post: the
+   tool does not shell out. It does not resolve a SHA, does not ask git what is uncommitted, does not
+   validate the string's shape. A reviewer certifying uncommitted work writes something like
+   `afaad73 + uncommitted working tree (src/Callboard/Cards/CardStore.cs)` and that whole string is
+   what `reviewed_state` records. Refuse an empty/whitespace-only `--state`; that is all.
+4. **Claims and limits need stable identity from day one.** 8.8 re-asserts an existing approval's
+   claims *individually*, so each claim must be addressable later. Do not store them as a
+   comma-joined frontmatter list — claim text is prose and will contain commas. Use the append-only
+   HTML-comment sequence the format already establishes for `callboard:handover`,
+   `callboard:transition` and `callboard:verdict` (see `CardFileFormat`), with each claim carrying
+   its own id. Limits are part of the same certification record; they are never individually
+   asserted, so they need no ids.
+5. **8.3 refuses on "no claims **and** no limits" — that is the spec's own conjunction.** An approval
+   with claims but no limits is permitted, as is one with limits but no claims. Do not tighten this to
+   require both.
+6. **`--id` binds** (§7's settled ruling): name the block by `--id`, not by positional path. Do not
+   touch the argument shape of any §1–§6 verb in passing — harmonising those is an open Product Owner
+   decision.
+
+**Standing constraints for this section**
+
+- **No subprocess, anywhere.** `System.Diagnostics.Process` appears nowhere in `src/Callboard` source
+  and this block does not introduce it.
+- **Wire-key drift guard (carried from §7's close, item A).** `RegisterCardFields` has a single shared
+  key declaration (`RegisterCardFieldKeys`) that writer and parser both read; `BlockCardFields` does
+  **not**, and when that drifted in §7 every parse→write cycle silently duplicated a frontmatter line
+  and compounded, green over 544 tests. §7's parting note says it closes *before the next section that
+  adds a field to any of them*. **That is this block if you add a field to `BlockCardFields` — close
+  it first, in that case.** `ReviewedState` already exists there, so 8.2 may well need no new field;
+  if the certification record lives entirely in the body sequence, the guard obligation does not fire
+  — but whatever new keys the certification sequence introduces get a single shared declaration from
+  the start, not two hand-maintained lists.
+- **Refusal-code granularity** (settled three times in §7): a refusal the spec *names* gets its own
+  code; an incidental missing flag gets `missing-argument`/`missing-flag-value`. Where several
+  refusals name one fact differing only in a parameter, collapse them into one code whose *message*
+  carries the parameter. **Re-derive the refusal set mechanically; never increment a remembered
+  number** — that has been wrong by arithmetic twice.
+- **Validate everything before writing anything**, one global lock order, and state the failure
+  guarantee honestly rather than claiming atomicity you do not have. Five existing multi-phase writers
+  already do this — extend the discipline, do not invent a sixth shape.
+- **Attribution assertions root on a non-default role** (§7 item E): assert with a role the code would
+  *not* default to, so a hardcode cannot survive the test.
+
+**Done-gates** — `make build` → `BUILD_EXIT:0`, `make test` → `TEST_EXIT:0` (new tests and all
+existing), `make format` → `FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`. Report the exit lines
+verbatim; do not summarise them. A test per refusal rule, per the amended S5.
+
+Post progress here as you go. → @worker
+
+**[worker]** Block A (8.1–8.3) implemented and self-tested.
+
+- **8.1** `block approve` (new verb, `--id`/`--role`/`--state`/`--claims`/`--limits`/`--change`) is
+  now the only door to `approved`. `block transition <path> approve` refuses outright at parse time
+  (`approve-via-transition-refused`, names `block approve`) — argv-decidable, so checked before any
+  card is touched. No flag exists on `block approve` to attach findings/nits (Architect reading 2):
+  the verdict surface structurally cannot combine approval with outstanding findings.
+- **8.2** `--state` is caller-supplied text, refused only when empty/whitespace (`state-required`);
+  otherwise stamped verbatim to `reviewed_state` in the same write as the transition. Replaced
+  `ReviewedStateProducerTests` (its own doc comment required this) with
+  `CommandDispatcherBlockApproveTests.BlockApprove_LegalApproval_Succeeds_RecordsExactReviewedStateClaimsAndLimits`,
+  which asserts the exact string (including an uncommitted-working-tree-shaped value) round-trips
+  through the card file, not merely that a producer exists.
+- **8.3** Claims and limits are each their own append-only body-sequence line
+  (`callboard:claim id=… round=… text=…` / `callboard:limit round=… text=…`), reusing the
+  handover/transition/verdict shape; a claim carries a generated id, a limit does not (ruling 4).
+  Refuses only "no claims AND no limits" (ruling 5) — claims-only and limits-only both pass, tested
+  both ways. New escape table (`EscapeCertificationTextValue`) handles backslash/space/newline/CR
+  since claim/limit text is prose, unlike `id`/`reply-to`'s existing header escaping.
+
+**Decisions/notes not in the brief, recorded here rather than re-litigated:**
+- `IsBlockCard` went `private`→`internal` (same move §5 remediation already made for `IsSectionCard`)
+  so the CLI's `--id` resolution can pass it to `ResolveCardReference`.
+- Role permission (reviewer/supervisor only) is checked in `CardStore.RecordApprovalUnderExistingLock`
+  — first thing decided, ahead of `File.Exists`, mirroring `CompactRules`'s own ruling ("role-not-
+  permitted is a fact about whether this call is allowed to happen at all"). This ships 8.13's
+  approval half only, per the brief; block C is expected to reach `IsApprovingRole` the same way for
+  `recertify`.
+- Added a `RoleNotPermitted` overload taking `IReadOnlyList<CardOwner>` (approval permits two roles,
+  not one) — same code, same wording convention, the single-role overload now delegates to it.
+- New wire-key drift guard for the new format: `CardApprovalFieldKeys` is the one shared declaration
+  both `CardFileWriter` and `CardFileParser`'s known-key sets read from, per §7's close item A.
+- No `System.Diagnostics.Process` introduced; `--state` is verified against nothing (no SHA
+  resolution, no git shell-out).
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` →
+`GATES_EXIT:0`), 676 tests (was 658; +18, plus the 3 pre-existing tests updated to match the new
+behaviour: the static-method-surface inventory, the undefined-transition CLI test's transition
+name, and `ReviewedStateProducerTests`'s replacement).
+
+Files: `src/Callboard/Cards/{CardApprovalClaim,CardApprovalLimit,CardApprovalFieldKeys,
+CardApprovalOutcome}.cs` (new), `CardFile.cs`, `CardFileFormat.cs`, `CardFileWriter.cs`,
+`CardFileParser.cs`, `CardStore.cs` (all edited); `src/Callboard/Cli/{BlockApproveResult.cs}` (new),
+`CommandParser.cs`, `CommandDispatcher.cs`, `CliJsonContext.cs` (edited);
+`tests/Callboard.Tests/CommandDispatcherBlockApproveTests.cs` (new),
+`CardFileRoundTripTests.cs`, `CardCommentImmutabilityTests.cs`, `CommandDispatcherBlockTransitionTests.cs`
+(edited), `ReviewedStateProducerTests.cs` (removed, per its own inversion instruction).
+
+→ @reviewer
+
+**[architect]** Block A worker reported. Tripwire clean — `HEAD` still `afaad73`, nothing committed,
+no box ticked. Verified before handoff: `ReviewedStateProducerTests.cs` is **deleted**, and that is
+legitimate — its own doc comment made it a must-be-inverted deferral instructing 8.2 to *replace* it.
+`CommandDispatcherBlockApproveTests` declares itself that inversion and asserts the exact
+`reviewed_state` round-trips, so the obligation is discharged rather than dropped. Flagging it here so
+the deletion is not read as coverage loss.
+
+→ @reviewer. Review scope is the uncommitted working tree against `afaad73`. Three things beyond the
+usual pass:
+
+1. **Challenge reading 2 in the brief if you disagree** — 8.1 implemented as a verdict-*surface*
+   refusal (no approve-with-findings variant) rather than a scan of finding cards. That was my call on
+   the ground that §6 gave findings no open/resolved lifecycle to scan. It is the reading most likely
+   to be wrong.
+2. **Three pre-existing tests were modified and one deleted.** Changes to existing tests are where
+   coverage quietly drops — check each edit narrows nothing it should not.
+3. **The new `callboard:claim`/`callboard:limit` line kinds and their escape table.** New wire format
+   is the highest-risk surface in this block: §7's compounding frontmatter-duplication bug came from
+   exactly this class of drift. Check the writer and parser read one shared key declaration.
+
+**[reviewer]** Block A (8.1–8.3) audited — uncommitted working tree against `afaad73`.
+
+**Gates reconfirmed independently** (not taken on the worker's word):
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 676/676 passing.
+
+**1. Reading 2 — not challenged.** `findings/spec.md` confirms §6 finding cards carry only
+`live`/`degraded`/`unreadable` staleness, no open/resolved lifecycle — there is genuinely no field to
+scan. `proposal.md`'s OQ-7 ("approve with nits — Deleted; approve is binary") settles intent, and
+`review-certification`'s own "Nits carry a disposition" requirement is a distinct §8.4–8.7 concept
+(block B, not yet built) from §6 "findings". Implementing 8.1 as a verdict-surface refusal — `block
+approve` has no flag to attach anything, so the CLI structurally cannot offer approve-with-findings —
+correctly discharges the scenario without inventing a scan §6 doesn't support. Agree with the call.
+
+**2. Pre-existing test edits — none narrow coverage.**
+- `CardCommentImmutabilityTests.cs:117-133` — adds `IsApprovingRole`/`RecordApproval`/
+  `RecordApprovalUnderExistingLock` to the "never touches Comments" inventory with accurate
+  justifications; pure addition.
+- `CommandDispatcherBlockTransitionTests.cs:64-69` — swaps the transition name under test from
+  `approve` (now refused earlier, at parse, for a different reason: `approve-via-transition-refused`)
+  to `land` (still genuinely undefined from `drafting`), so the original assertion
+  (`undefined-transition` from an out-of-band name) keeps proving what it always proved. The
+  `approve`-specific refusal is independently covered by
+  `BlockTransition_Approve_Refuses_AndLeavesTheCardByteIdentical` in the new test class. No loss.
+- `ReviewedStateProducerTests.cs` deletion — confirmed already by the architect's handoff post, and
+  independently: `CommandDispatcherBlockApprove_LegalApproval_Succeeds_RecordsExactReviewedStateClaimsAndLimits`
+  asserts the *exact* `--state` string (including an uncommitted-working-tree-shaped value) round-trips
+  through both the JSON envelope and a fresh `CardStore.ReadCard` of the written file — stronger than
+  the deleted test's own "a producer exists" assertion. Legitimate inversion, not a coverage drop.
+
+**3. Wire format — writer and parser correctly share `CardApprovalFieldKeys`, and round-trip is
+proven idempotent, but with one gap and one nit:**
+- `CardApprovalFieldKeys` (`CardApprovalClaim.cs`/`CardApprovalFieldKeys.cs`) is the single shared
+  declaration; `CardFileWriter.BuildClaimFields`/`BuildLimitFields` emit from its constants
+  (`CardFileWriter.cs:452-478`) and `CardFileParser`'s `KnownClaimKeys`/`KnownLimitKeys`
+  (`CardFileParser.cs:94-95`) are built from the same declaration. This is the shape §7's guard asked
+  for.
+- Escaping is symmetric: `EscapeCertificationTextValue`/`UnescapeCertificationTextValue`
+  (`CardFileFormat.cs:202-221`) reduce to the shared `EscapeUsing`/`UnescapeUsing` primitives every
+  other wire value already uses, so backslash/space/newline/CR round-trip correctly by construction,
+  not by a hand-verified special case. `CardFileRoundTripTests.RoundTrips_ClaimAndLimitTextContaining
+  SpacesBackslashesAndNewlines` exercises exactly this.
+- Unknown-field forward-compatibility is wired the same way as handovers/transitions
+  (`UnknownFields` captured verbatim, re-emitted verbatim), but **unlike `RoundTrips_
+  HandoverWithAnUnrecognisedField_PreservesItVerbatim` and `RoundTrips_TransitionWithAnUnrecognised
+  Field_PreservesItVerbatim`, there is no equivalent `RoundTrips_ClaimWithAnUnrecognisedField_
+  PreservesItVerbatim` (or the limit equivalent) proving a claim/limit line carrying a hand-added
+  field survives a parse→write→parse cycle without duplicating.** That is precisely the shape of the
+  §7 bug this block's own brief names as the standing hazard, and every other line kind in this file
+  already carries this exact regression test. `RoundTrips_BodyContainingTextThatLooksLikeAClaimDelimiter`
+  proves body text isn't misparsed as a claim, which is a different property. I manually traced the
+  writer/parser code paths and they are correct (both read `CardApprovalFieldKeys`), so I am not
+  asserting a live bug — but the regression test that would catch a *future* drift here, in the exact
+  shape that shipped green over 544 tests last time, is missing. **Fix-before-land**: add the
+  claim/limit analog of the handover/transition unrecognised-field round-trip test.
+- Nit: `CardFileParser.BuildCardApprovalClaim`/`BuildCardApprovalLimit`
+  (`CardFileParser.cs:1354-1406`) look up fields by string literals `"id"`/`"round"`/`"text"` rather
+  than `CardApprovalFieldKeys.Id`/`.Round`/`.Text`, even though the `Known*Keys` sets one function
+  above are built from those same constants. Today the literals happen to equal the constants' values
+  so this works, and a mismatch would fail loud (missing-field parse error) rather than silently
+  duplicate — a materially smaller risk than §7's bug — but `RegisterCardFieldKeys`'s own `Build*`
+  functions (the cited precedent for this guard) use the constants throughout, not just in the known-set
+  declaration. Nit, not a blocker.
+
+**Standing hazards checked:**
+- No subprocess: `grep -n "Process" ` over the diff finds nothing besides doc-comment prose.
+  Confirmed against `--state`'s own doc comment (verified against nothing).
+- Refusal fails open: role check runs first, ahead of `File.Exists` (matches the `CompactRules`
+  ruling); `approve` is reachable only through `block approve`, and `block transition ... approve` is
+  refused at parse time before any card is touched — traced and agree there is no second path to
+  `approved`.
+- Atomicity/lock discipline: `RecordApproval`/`RecordApprovalUnderExistingLock` reuse the existing
+  `WithLock`/`AtomicWrite` primitives verbatim — no new write shape introduced, so no new
+  atomicity/lock-leak risk.
+- Append-only: claims/limits/transition are appended (`[.. card.Claims, .. claims]` etc.), never
+  rewritten; existing comments untouched.
+- Index/AOT: no SQLite/index code touched by this block; `[JsonSerializable]` added to
+  `CliJsonContext` for both new result types, no reflection-based serialization introduced.
+
+**Verdict: Approve with nits.** The missing unrecognised-field round-trip test for claim/limit lines
+(finding 3) is the one item I'd want addressed before this block is considered fully closed out, but
+it is a test-coverage gap against code I traced as correct, not a functional defect — worker's call
+whether to fold it into this block or carry it as a note for block B/C's own wire-format tests, since
+the shape (and the shared `CardApprovalFieldKeys`) will still be in place then. Everything else —
+reading 2, the pre-existing test edits, refusal-fails-open, atomicity, append-only, AOT/subprocess
+discipline — checks out. → @architect
+
+**[architect]** **Verdict recorded as `Request changes`, not `Approve with nits`.**
+
+The reviewer returned `Approve with nits` carrying one fix-before-land item. That verdict is the one
+this very block deletes from the product — `review-certification`, the requirement block A just
+implemented:
+
+> A review verdict SHALL be exactly one of `approve` or `request-changes`. The system SHALL NOT offer
+> a verdict combining approval with outstanding findings.
+
+An approval carrying an unclosed fix-before-land item is not an approval; the state it would certify
+is not the state that will land. So the block stays open and re-enters the inner loop.
+
+**This is worth recording rather than quietly re-labelling.** It is a live instance of the failure
+mode `callboard` exists to refuse, produced by the incumbent workflow *while building the refusal for
+it*, and it is the second time this change's own process has demonstrated its own requirements
+document (§5 block A produced two of three review rounds from the same fusion). The `reviewer` agent's
+prompt still permits a verdict vocabulary the tool will refuse — once §8 lands, that prompt is
+downstream of it. **Carried to §13** (13.4, documenting the commands the agents use in place of
+`DEVLOG.md`): the reviewer's verdict vocabulary must be narrowed to the binary at the same time.
+
+Both findings accepted; neither is disputed on the merits.
+
+- **fix-before-land** — no round-trip test for a `callboard:claim`/`callboard:limit` line carrying an
+  unrecognised field, where `handover` and `transition` both have one. The reviewer traced the code
+  correct; what is missing is the regression test that would catch future drift. Given §7's
+  compounding duplication bug was green over 544 tests, "traced correct today" is exactly the
+  reassurance that has already failed once here.
+- **nit → `fix-before-land`** (architect disposition, since 8.4's disposition machinery is block B and
+  does not yet exist to record it properly): `CardFileParser.BuildCardApprovalClaim`/
+  `BuildCardApprovalLimit` look up fields by string literal instead of the shared
+  `CardApprovalFieldKeys` constants. The whole point of that shared declaration is that there is one
+  place a key is spelled; a literal in the parser reintroduces the second spelling the guard exists to
+  prevent. It is two lines and it is in the guard the block cites — closing it now, not carrying it.
+
+No new task numbers; this is remediation within block A. → @worker
+
 ## NEXT
 
 **Resume point: 8.1.** §7 is closed; §8 has not been opened. Nothing is in flight — working tree
@@ -18570,3 +18915,58 @@ The register's *unconditional injection* requirement ("every brief carries the r
 response must be shortened, the register SHALL NOT be what is shortened") is **§10's**, not §8's —
 but §8's certification surface is the first thing that could quietly preclude it. Keep item B above
 in view.
+
+**[worker]** Block A findings closed (both fix-before-land).
+
+- **Item 1.** Added `RoundTrips_ClaimWithAnUnrecognisedField_PreservesItVerbatim` and
+  `RoundTrips_LimitWithAnUnrecognisedField_PreservesItVerbatim` to
+  `CardFileRoundTripTests.cs`, following the handover/transition tests' shape: parse a line
+  carrying one unrecognised field, assert it lands in `UnknownFields`, re-serialize, assert the
+  raw `key=value` survives verbatim. Both passed on the first run — the reviewer's trace of the
+  production code held, no parser/writer defect.
+- **Item 2.** `BuildCardApprovalClaim` and `BuildCardApprovalLimit` in `CardFileParser.cs` now read
+  `CardApprovalFieldKeys.Id`/`.Round`/`.Text` instead of the string literals `"id"`/`"round"`/`"text"`.
+
+No production behaviour changed by item 2 — same key strings, now sourced from the shared
+declaration instead of duplicated.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` →
+`GATES_EXIT:0`), 678 tests (was 676; +2).
+
+→ @reviewer
+
+**[reviewer]** Block A remediation audited — both findings closed.
+
+**Gates reconfirmed independently:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 678/678 passing (was 676).
+
+**Finding 1 — unrecognised-field round trip.** `RoundTrips_ClaimWithAnUnrecognisedField_
+PreservesItVerbatim` and `RoundTrips_LimitWithAnUnrecognisedField_PreservesItVerbatim`
+(`CardFileRoundTripTests.cs:711-744`) mirror the handover/transition tests
+(`CardFileRoundTripTests.cs:481-499`, `602-617`) field-for-field: parse a line carrying one
+unrecognised field (`confidence=high` / `scope=narrow`), assert `Assert.Single(...UnknownFields)`,
+re-serialize, assert the raw `key=value` survives in the output. Traced the shared machinery both
+new tests exercise: `ParseClaimFields`/`ParseLimitFields` route through the same
+`ParseKeyValueTokens(fieldsText, knownKeys, blockLabel)` handover/transition already use
+(`CardFileParser.cs:1110-1123`), against `KnownClaimKeys`/`KnownLimitKeys` built from
+`CardApprovalFieldKeys` (`CardFileParser.cs:96-97`); `BuildClaimFields`/`BuildLimitFields`
+(`CardFileWriter.cs:452-479`) re-emit `UnknownFields` the same single-pass-append way
+`BuildHandoverFields`/`BuildTransitionFields` do. Same mechanism, same test shape — not weaker than
+its precedent, and `Assert.Single` on `UnknownFields` is exactly the assertion that would catch the
+§7 duplication shape (a key known to the writer but not the parser reappearing on a second cycle).
+Both tests pass on a clean run, confirming the worker's report that the underlying code was already
+correct — the tests are the missing regression guard, not evidence of a live defect.
+
+**Finding 2 — literal-to-constant substitution.** `BuildCardApprovalClaim`/`BuildCardApprovalLimit`
+(`CardFileParser.cs:1358-1373`, `1388-1392`) now read `CardApprovalFieldKeys.Id`/`.Round`/`.Text`.
+Checked `CardApprovalFieldKeys.cs`: `Id = "id"`, `Round = "round"`, `Text = "text"` — identical to
+the literals they replace, no transposition, no other line in either function touched. Behaviourally
+inert, exactly as reported.
+
+**Scope check.** `git diff afaad73 --stat` shows the same file set as the original block A review
+plus the two-file remediation (`CardFileParser.cs`, `CardFileRoundTripTests.cs`) — no drive-by
+changes, nothing outside block A's `## 8.1–8.3` ground.
+
+Nothing outstanding on this block.
+
+**Verdict: Approve.** → @architect

@@ -649,6 +649,142 @@ public sealed class CardFileRoundTripTests
         AssertFailure(CardFileParser.Parse(raw));
     }
 
+    // §8 block A: claims/limits are their own append-only sequences, the same shape/reasoning
+    // Transitions/Verdicts already established — see CardApprovalClaim/CardApprovalLimit's own doc
+    // comments for why a claim carries an id and a limit does not.
+    [Fact]
+    public void RoundTrips_CardWithAClaimAndLimitSequence()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0300", CardKind.Block, "Certified", "approved", CardOwner.Reviewer, CardScope.Change, "8", Created, Updated);
+        var claimOne = new CardApprovalClaim("claim-1", 1, "the refusal fires on a blocking finding", []);
+        var claimTwo = new CardApprovalClaim("claim-2", 1, "the write is atomic under the card's lock", []);
+        var limit = new CardApprovalLimit(1, "does not certify the test suite as exhaustive", []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], Claims: [claimOne, claimTwo], Limits: [limit]);
+
+        var result = CardFileParser.Parse(CardFileWriter.Serialize(card));
+
+        var parsed = AssertSuccess(result);
+        Assert.Equal(2, parsed.Claims.Count);
+        Assert.Equal(claimOne, parsed.Claims[0]);
+        Assert.Equal(claimTwo, parsed.Claims[1]);
+        Assert.Equal(limit, Assert.Single(parsed.Limits));
+    }
+
+    [Fact]
+    public void RoundTrips_CardWithoutClaimsOrLimits_LeavesBothSequencesEmpty()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0301", CardKind.Block, "Not yet approved", "in-review", CardOwner.Worker, CardScope.Change, "8", Created, Updated);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+
+        var serialized = CardFileWriter.Serialize(card);
+        Assert.DoesNotContain("callboard:claim", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("callboard:limit", serialized, StringComparison.Ordinal);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(serialized));
+        Assert.Empty(parsed.Claims);
+        Assert.Empty(parsed.Limits);
+    }
+
+    // Claim/limit text is free-form prose — the same round-trip proof RoundTrips_CommentIdAndReplyToContainingSpacesAndBackslashes
+    // already gives id/reply-to, extended here to newlines/carriage-returns, which the header-style
+    // id/reply-to escaping does not need to handle but certification text does (CardFileFormat.
+    // EscapeCertificationTextValue's own doc comment).
+    [Fact]
+    public void RoundTrips_ClaimAndLimitTextContainingSpacesBackslashesAndNewlines()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0302", CardKind.Block, "Tricky text", "approved", CardOwner.Supervisor, CardScope.Change, "8", Created, Updated);
+        const string trickyText = "line one\\with a backslash and a space\nline two, with a comma";
+        var claim = new CardApprovalClaim("claim-9", 2, trickyText, []);
+        var limit = new CardApprovalLimit(2, trickyText, []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], Claims: [claim], Limits: [limit]);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
+
+        Assert.Equal(trickyText, Assert.Single(parsed.Claims).Text);
+        Assert.Equal(trickyText, Assert.Single(parsed.Limits).Text);
+    }
+
+    [Fact]
+    public void RoundTrips_ClaimWithAnUnrecognisedField_PreservesItVerbatim()
+    {
+        const string raw =
+            "---\nid: X-0300\nkind: block\ntitle: t\nstatus: approved\nowner: reviewer\nscope: change\nsection: 8\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "body\n" +
+            "<!-- callboard:claim id=claim-1 round=1 text=some\\stext confidence=high -->\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+
+        var claim = Assert.Single(parsed.Claims);
+        Assert.Equal(("confidence", "high"), Assert.Single(claim.UnknownFields));
+
+        var reserialized = CardFileWriter.Serialize(parsed);
+        Assert.Contains("confidence=high", reserialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RoundTrips_LimitWithAnUnrecognisedField_PreservesItVerbatim()
+    {
+        const string raw =
+            "---\nid: X-0301\nkind: block\ntitle: t\nstatus: approved\nowner: reviewer\nscope: change\nsection: 8\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "body\n" +
+            "<!-- callboard:limit round=1 text=some\\stext scope=narrow -->\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+
+        var limit = Assert.Single(parsed.Limits);
+        Assert.Equal(("scope", "narrow"), Assert.Single(limit.UnknownFields));
+
+        var reserialized = CardFileWriter.Serialize(parsed);
+        Assert.Contains("scope=narrow", reserialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RoundTrips_BodyContainingTextThatLooksLikeAClaimDelimiter_AndInjectsNoClaimEntry()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0303", CardKind.Block, "Delimiter-lookalike body", "drafting", CardOwner.Worker, CardScope.Change, "8", Created, Updated);
+
+        const string trickyBody =
+            "Some narrative.\n" +
+            "<!-- callboard:claim id=claim-1 round=1 text=not\\sreal -->\n" +
+            "and continues after, as plain narrative, not a real claim.";
+
+        var card = new CardFile(frontmatter, trickyBody, [], []);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
+
+        Assert.Equal(trickyBody, parsed.Body);
+        Assert.Empty(parsed.Claims);
+        Assert.Empty(parsed.Comments);
+    }
+
+    [Fact]
+    public void Parse_ClaimMissingRequiredIdField_Fails()
+    {
+        const string raw =
+            "---\nid: X-0008\nkind: block\ntitle: t\nstatus: approved\nowner: reviewer\nscope: change\nsection: 8\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            "<!-- callboard:claim round=1 text=some\\stext -->\n";
+
+        AssertFailure(CardFileParser.Parse(raw));
+    }
+
+    [Fact]
+    public void Parse_ClaimWithEmptyText_Fails()
+    {
+        const string raw =
+            "---\nid: X-0009\nkind: block\ntitle: t\nstatus: approved\nowner: reviewer\nscope: change\nsection: 8\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            "<!-- callboard:claim id=claim-1 round=1 text= -->\n";
+
+        AssertFailure(CardFileParser.Parse(raw));
+    }
+
     private static CardFile AssertSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(
             onSuccess: success => success.Card,

@@ -319,6 +319,28 @@ internal static class CardFileWriter
                 .Append('\n');
         }
 
+        // Claims after verdicts, then limits, before comments — the same fixed, deterministic
+        // layout convention as every other append-only sequence above (§8 block A,
+        // review-certification: "Certification enumerates its claims"). Mutually exclusive in
+        // practice with Verdicts (a card is either a block or a section, never both), so the
+        // ordering between the two never actually interleaves on one card — this is simply where
+        // the fixed convention places them.
+        foreach (var claim in card.Claims)
+        {
+            builder.Append(CardFileFormat.ClaimLinePrefix)
+                .Append(BuildClaimFields(claim))
+                .Append(CardFileFormat.ClaimLineSuffix)
+                .Append('\n');
+        }
+
+        foreach (var limit in card.Limits)
+        {
+            builder.Append(CardFileFormat.LimitLinePrefix)
+                .Append(BuildLimitFields(limit))
+                .Append(CardFileFormat.LimitLineSuffix)
+                .Append('\n');
+        }
+
         foreach (var comment in card.Comments)
         {
             builder.Append(CardFileFormat.CommentHeaderPrefix)
@@ -420,6 +442,35 @@ internal static class CardFileWriter
         fields.Append(" timestamp=").Append(FormatTimestamp(verdict.Timestamp));
 
         foreach (var (key, rawValue) in verdict.UnknownFields)
+        {
+            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+        }
+
+        return fields.ToString();
+    }
+
+    private static string BuildClaimFields(CardApprovalClaim claim)
+    {
+        var fields = new StringBuilder();
+        fields.Append(CardApprovalFieldKeys.Id).Append('=').Append(CardFileFormat.EscapeCommentHeaderValue(claim.Id));
+        fields.Append(' ').Append(CardApprovalFieldKeys.Round).Append('=').Append(claim.Round.ToString(CultureInfo.InvariantCulture));
+        fields.Append(' ').Append(CardApprovalFieldKeys.Text).Append('=').Append(CardFileFormat.EscapeCertificationTextValue(claim.Text));
+
+        foreach (var (key, rawValue) in claim.UnknownFields)
+        {
+            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+        }
+
+        return fields.ToString();
+    }
+
+    private static string BuildLimitFields(CardApprovalLimit limit)
+    {
+        var fields = new StringBuilder();
+        fields.Append(CardApprovalFieldKeys.Round).Append('=').Append(limit.Round.ToString(CultureInfo.InvariantCulture));
+        fields.Append(' ').Append(CardApprovalFieldKeys.Text).Append('=').Append(CardFileFormat.EscapeCertificationTextValue(limit.Text));
+
+        foreach (var (key, rawValue) in limit.UnknownFields)
         {
             fields.Append(' ').Append(key).Append('=').Append(rawValue);
         }

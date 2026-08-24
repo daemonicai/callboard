@@ -99,7 +99,7 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'block' requires a subcommand. Known subcommands: transition, gate, add-blocker, remove-blocker."));
+                    "'block' requires a subcommand. Known subcommands: transition, gate, add-blocker, remove-blocker, approve."));
             case "transition":
                 context.Arguments.TryTake();
                 return ParseBlockTransition(context);
@@ -114,10 +114,13 @@ internal static class CommandParser
                 context.Arguments.TryTake();
                 return ParseBlockedByMutation(context, static (filePath, blockingCardId, role, changeName, workingDirectory, timestamp) =>
                     new CommandDispatcher.ParsedCommand.BlockRemoveBlocker(filePath, blockingCardId, role, changeName, workingDirectory, timestamp));
+            case "approve":
+                context.Arguments.TryTake();
+                return ParseBlockApprove(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition, gate, add-blocker, remove-blocker."));
+                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition, gate, add-blocker, remove-blocker, approve."));
         }
     }
 
@@ -149,6 +152,20 @@ internal static class CommandParser
             return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                 "missing-argument",
                 "'block transition' requires a transition name."));
+        }
+
+        // §8 block A brief item 1 (Architect ruling): 'block approve' is the only door to
+        // 'approved' — an approval through this generic path would move a block to that state
+        // carrying no certification at all, exactly what review-certification exists to prevent.
+        // Argv-decidable (the transition name alone settles it, no card access needed), so refused
+        // here rather than left to the execute phase.
+        if (string.Equals(transitionName, "approve", StringComparison.Ordinal))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "approve-via-transition-refused",
+                "'approve' cannot be applied through 'block transition' — it would move the block to 'approved' " +
+                "with no certification recorded. Use 'block approve' instead, which stamps the certification in " +
+                "the same write as the transition."));
         }
 
         string? roleText = null;
@@ -282,6 +299,104 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(
             build(filePath, blockingCardId, flags.Role!, flags.ChangeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>block approve</c>'s <see cref="CommandDispatcher.ParsedCommand.BlockApprove"/> (§8
+    /// block A, review-certification: "Approve is binary and certifies one state" / "Certification
+    /// enumerates its claims"). Addressed by <c>--id</c>, resolved through <see cref="Cards.
+    /// CardIdentityResolver"/> at execute time (§7's settled ruling: <c>--id</c> binds) — no
+    /// positional file-path argument, unlike every §1–§6 verb. Everything argv-decidable is decided
+    /// here: <c>--role</c>'s wire-format validity, <c>--state</c> non-empty/whitespace
+    /// (review-certification: "An approval SHALL name that state explicitly" — an empty name names
+    /// nothing), each <c>--claims</c>/<c>--limits</c> item non-empty, and the "no claims and no
+    /// limits" refusal itself — the spec's own conjunction (§8 block A brief item 5): claims-only and
+    /// limits-only both pass. Role <em>permission</em> (reviewer/supervisor only,
+    /// review-certification: "Approval is role-bounded") is left to the execute phase, the same
+    /// split <c>rule compact</c>'s Architect-only restriction already uses (<see cref="Cards.
+    /// CardStore.CompactRules"/>) — it is a fact about who may perform this operation, not about the
+    /// shape of the argument.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseBlockApprove(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? roleText = null;
+        string? state = null;
+        string? claimsRaw = null;
+        string? limitsRaw = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => id = value,
+            ["--role"] = value => roleText = value,
+            ["--state"] = value => state = value,
+            ["--claims"] = value => claimsRaw = value,
+            ["--limits"] = value => limitsRaw = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block approve' requires '--id <card-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block approve' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (string.IsNullOrWhiteSpace(state))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "state-required",
+                "'block approve' requires '--state <text>' naming the exact state certified, including any " +
+                "uncommitted working-tree content it covers."));
+        }
+
+        var claims = CardFileFormat.SplitFrontmatterList(claimsRaw ?? string.Empty);
+        foreach (var claim in claims)
+        {
+            if (!CardApprovalClaim.IsValidText(claim))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "invalid-claim", $"'--claims' cannot contain an empty or whitespace-only item: '{claimsRaw}'."));
+            }
+        }
+
+        var limits = CardFileFormat.SplitFrontmatterList(limitsRaw ?? string.Empty);
+        foreach (var limit in limits)
+        {
+            if (!CardApprovalLimit.IsValidText(limit))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "invalid-limit", $"'--limits' cannot contain an empty or whitespace-only item: '{limitsRaw}'."));
+            }
+        }
+
+        if (claims.Count == 0 && limits.Count == 0)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "no-claims-or-limits",
+                "'block approve' requires at least one of '--claims <text>[,<text>...]' or '--limits " +
+                "<text>[,<text>...]' — certification text is read by a later reviewer who did not write it, so " +
+                "an approval enumerating nothing is refused."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.BlockApprove(
+            id, role, state, claims, limits, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

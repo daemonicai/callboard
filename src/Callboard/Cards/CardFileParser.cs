@@ -91,6 +91,13 @@ internal static class CardFileParser
         "by", "verdict", "range-from", "range-to", "timestamp",
     };
 
+    // The approval-claim-line and approval-limit-line fields this build recognises (§8 block A) —
+    // built from CardApprovalFieldKeys, the one declaration CardFileWriter's own emission also reads
+    // from, rather than a second hand-typed list (the wire-key drift guard carried from §7's close;
+    // see that type's own doc comment).
+    private static readonly HashSet<string> KnownClaimKeys = new(CardApprovalFieldKeys.Claim, StringComparer.Ordinal);
+    private static readonly HashSet<string> KnownLimitKeys = new(CardApprovalFieldKeys.Limit, StringComparer.Ordinal);
+
     internal static CardFileParseResult Parse(string rawText)
     {
         // CardFileWriter.Serialize always terminates its output with exactly one trailing '\n'
@@ -281,7 +288,7 @@ internal static class CardFileParser
         }
 
         var bodyLines = new List<string>();
-        while (cursor < lines.Length && !CardFileFormat.IsCommentHeader(lines[cursor]) && !CardFileFormat.IsHandoverLine(lines[cursor]) && !CardFileFormat.IsTransitionLine(lines[cursor]) && !CardFileFormat.IsVerdictLine(lines[cursor]))
+        while (cursor < lines.Length && !CardFileFormat.IsCommentHeader(lines[cursor]) && !CardFileFormat.IsHandoverLine(lines[cursor]) && !CardFileFormat.IsTransitionLine(lines[cursor]) && !CardFileFormat.IsVerdictLine(lines[cursor]) && !CardFileFormat.IsClaimLine(lines[cursor]) && !CardFileFormat.IsLimitLine(lines[cursor]))
         {
             bodyLines.Add(CardFileFormat.UnescapeContentLine(lines[cursor]));
             cursor++;
@@ -302,6 +309,8 @@ internal static class CardFileParser
         var handovers = new List<CardHandover>();
         var transitions = new List<CardBlockTransitionEntry>();
         var verdicts = new List<SectionVerdictEntry>();
+        var claims = new List<CardApprovalClaim>();
+        var limits = new List<CardApprovalLimit>();
         while (cursor < lines.Length)
         {
             var headerLine = lines[cursor];
@@ -381,9 +390,59 @@ internal static class CardFileParser
                 continue;
             }
 
+            if (CardFileFormat.IsClaimLine(headerLine))
+            {
+                var claimFieldsText = headerLine[CardFileFormat.ClaimLinePrefix.Length..^CardFileFormat.ClaimLineSuffix.Length];
+                var claimFieldsResult = ParseClaimFields(claimFieldsText);
+                if (claimFieldsResult.Failure is { } claimFieldsFailure)
+                {
+                    return Failure(claimFieldsFailure);
+                }
+
+                cursor++;
+
+                // claimFieldsResult.Failure is null here, so Fields/UnknownFields are guaranteed
+                // non-null by ParseClaimFields's own contract.
+                var claimResult = BuildCardApprovalClaim(claimFieldsResult.Fields!, claimFieldsResult.UnknownFields!);
+                if (claimResult.Failure is { } claimFailure)
+                {
+                    return Failure(claimFailure);
+                }
+
+                // claimResult.Failure is null here, so Claim is guaranteed non-null by
+                // BuildCardApprovalClaim's own contract.
+                claims.Add(claimResult.Claim!);
+                continue;
+            }
+
+            if (CardFileFormat.IsLimitLine(headerLine))
+            {
+                var limitFieldsText = headerLine[CardFileFormat.LimitLinePrefix.Length..^CardFileFormat.LimitLineSuffix.Length];
+                var limitFieldsResult = ParseLimitFields(limitFieldsText);
+                if (limitFieldsResult.Failure is { } limitFieldsFailure)
+                {
+                    return Failure(limitFieldsFailure);
+                }
+
+                cursor++;
+
+                // limitFieldsResult.Failure is null here, so Fields/UnknownFields are guaranteed
+                // non-null by ParseLimitFields's own contract.
+                var limitResult = BuildCardApprovalLimit(limitFieldsResult.Fields!, limitFieldsResult.UnknownFields!);
+                if (limitResult.Failure is { } limitFailure)
+                {
+                    return Failure(limitFailure);
+                }
+
+                // limitResult.Failure is null here, so Limit is guaranteed non-null by
+                // BuildCardApprovalLimit's own contract.
+                limits.Add(limitResult.Limit!);
+                continue;
+            }
+
             if (!CardFileFormat.IsCommentHeader(headerLine))
             {
-                return Failure($"expected a comment header, a handover line, a transition line, a verdict line, or end of file, found: '{headerLine}'");
+                return Failure($"expected a comment header, a handover line, a transition line, a verdict line, a claim line, a limit line, or end of file, found: '{headerLine}'");
             }
 
             if (!headerLine.EndsWith(CardFileFormat.CommentHeaderSuffix, StringComparison.Ordinal))
@@ -403,7 +462,7 @@ internal static class CardFileParser
             var commentBodyLines = new List<string>();
             while (cursor < lines.Length && !CardFileFormat.IsCommentFooter(lines[cursor]))
             {
-                if (CardFileFormat.IsCommentHeader(lines[cursor]) || CardFileFormat.IsHandoverLine(lines[cursor]) || CardFileFormat.IsTransitionLine(lines[cursor]) || CardFileFormat.IsVerdictLine(lines[cursor]))
+                if (CardFileFormat.IsCommentHeader(lines[cursor]) || CardFileFormat.IsHandoverLine(lines[cursor]) || CardFileFormat.IsTransitionLine(lines[cursor]) || CardFileFormat.IsVerdictLine(lines[cursor]) || CardFileFormat.IsClaimLine(lines[cursor]) || CardFileFormat.IsLimitLine(lines[cursor]))
                 {
                     return Failure($"missing comment footer before next block: '{lines[cursor]}'");
                 }
@@ -438,7 +497,7 @@ internal static class CardFileParser
 
         // frontmatterResult.Failure is null here, so Frontmatter is guaranteed non-null by BuildFrontmatter's own contract.
         return new CardFileParseResult.Success(
-            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts, findingFields, registerFields));
+            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts, findingFields, registerFields, claims, limits));
     }
 
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
@@ -1047,6 +1106,14 @@ internal static class CardFileParser
         ParseVerdictFields(string verdictFieldsText) =>
         ParseKeyValueTokens(verdictFieldsText, KnownVerdictKeys, "verdict line");
 
+    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
+        ParseClaimFields(string claimFieldsText) =>
+        ParseKeyValueTokens(claimFieldsText, KnownClaimKeys, "claim line");
+
+    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
+        ParseLimitFields(string limitFieldsText) =>
+        ParseKeyValueTokens(limitFieldsText, KnownLimitKeys, "limit line");
+
     /// <summary>
     /// The <c>key=value</c> token parsing comment headers and handover lines both use — one
     /// implementation so the two block kinds can never drift apart on how their header text is
@@ -1282,6 +1349,59 @@ internal static class CardFileParser
         }
 
         return (new SectionVerdictEntry(by, verdict, rangeFrom, rangeTo, timestamp, unknownFields), null);
+    }
+
+    private static (CardApprovalClaim? Claim, string? Failure) BuildCardApprovalClaim(
+        IReadOnlyDictionary<string, string> fields,
+        IReadOnlyList<(string Key, string RawValue)> unknownFields)
+    {
+        if (!fields.TryGetValue(CardApprovalFieldKeys.Id, out var rawId) || rawId.Length == 0)
+        {
+            return (null, "claim missing required field: id");
+        }
+
+        var id = CardFileFormat.UnescapeCommentHeaderValue(rawId);
+
+        if (!fields.TryGetValue(CardApprovalFieldKeys.Round, out var roundText) || !int.TryParse(roundText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var round))
+        {
+            return (null, $"claim '{id}' has invalid or missing 'round': '{roundText}'");
+        }
+
+        if (!fields.TryGetValue(CardApprovalFieldKeys.Text, out var rawText))
+        {
+            return (null, $"claim '{id}' missing required field: text");
+        }
+
+        var text = CardFileFormat.UnescapeCertificationTextValue(rawText);
+        if (!CardApprovalClaim.IsValidText(text))
+        {
+            return (null, $"claim '{id}' has an empty or whitespace-only 'text'");
+        }
+
+        return (new CardApprovalClaim(id, round, text, unknownFields), null);
+    }
+
+    private static (CardApprovalLimit? Limit, string? Failure) BuildCardApprovalLimit(
+        IReadOnlyDictionary<string, string> fields,
+        IReadOnlyList<(string Key, string RawValue)> unknownFields)
+    {
+        if (!fields.TryGetValue(CardApprovalFieldKeys.Round, out var roundText) || !int.TryParse(roundText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var round))
+        {
+            return (null, $"limit has invalid or missing 'round': '{roundText}'");
+        }
+
+        if (!fields.TryGetValue(CardApprovalFieldKeys.Text, out var rawText))
+        {
+            return (null, "limit missing required field: text");
+        }
+
+        var text = CardFileFormat.UnescapeCertificationTextValue(rawText);
+        if (!CardApprovalLimit.IsValidText(text))
+        {
+            return (null, "limit has an empty or whitespace-only 'text'");
+        }
+
+        return (new CardApprovalLimit(round, text, unknownFields), null);
     }
 
     private static bool TryParseTimestamp(string value, out DateTimeOffset timestamp) =>

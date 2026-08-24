@@ -76,9 +76,9 @@
 
 ## 8. Review and certification
 
-- [ ] 8.1 Implement the binary verdict, refusing any approval carrying unresolved blocking findings
-- [ ] 8.2 Record `reviewed_state` as the exact state certified, including uncommitted content
-- [ ] 8.3 Refuse an approval that enumerates no claims and no limits
+- [x] 8.1 Implement the binary verdict, refusing any approval carrying unresolved blocking findings
+- [x] 8.2 Record `reviewed_state` as the exact state certified, including uncommitted content
+- [x] 8.3 Refuse an approval that enumerates no claims and no limits
 - [ ] 8.4 Implement nits as addressed comments carrying a disposition
 - [ ] 8.5 Implement `fix-before-land` returning the block to `briefed` with an incremented round
 - [ ] 8.6 Implement `defer` promoting to an obligation and `decline` promoting to a decision

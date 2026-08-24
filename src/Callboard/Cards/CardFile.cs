@@ -75,6 +75,20 @@ namespace Callboard.Cards;
 /// <paramref name="FindingFields"/> already applies. The constructor parameter accepts
 /// <see langword="null"/> for the same reason <paramref name="Handovers"/>'s does.
 /// </param>
+/// <param name="Claims">
+/// A <c>block</c> card's append-only approval-claim sequence (review-certification: "Certification
+/// enumerates its claims", §8 block A) — one <see cref="CardApprovalClaim"/> per claim an
+/// approval enumerated, oldest first, for the same reason <paramref name="Transitions"/> is its own
+/// sequence rather than a scalar. Never non-empty for a card whose <see cref="CardFrontmatter.Kind"/>
+/// is not <see cref="CardKind.Block"/>. The constructor parameter accepts <see langword="null"/> for
+/// the same reason <paramref name="Handovers"/>'s does.
+/// </param>
+/// <param name="Limits">
+/// A <c>block</c> card's append-only approval-limit sequence — one <see cref="CardApprovalLimit"/>
+/// per limit an approval stated, oldest first, the same convention <paramref name="Claims"/> uses.
+/// The constructor parameter accepts <see langword="null"/> for the same reason
+/// <paramref name="Handovers"/>'s does.
+/// </param>
 internal sealed record CardFile(
     CardFrontmatter Frontmatter,
     string Body,
@@ -85,7 +99,9 @@ internal sealed record CardFile(
     IReadOnlyList<CardBlockTransitionEntry>? Transitions = null,
     SectionCardFields? SectionFields = null,
     FindingCardFields? FindingFields = null,
-    RegisterCardFields? RegisterFields = null)
+    RegisterCardFields? RegisterFields = null,
+    IReadOnlyList<CardApprovalClaim>? Claims = null,
+    IReadOnlyList<CardApprovalLimit>? Limits = null)
 {
     public IReadOnlyList<CardHandover> Handovers { get; init; } = Handovers ?? [];
 
@@ -98,4 +114,8 @@ internal sealed record CardFile(
     public FindingCardFields FindingFields { get; init; } = FindingFields ?? Cards.FindingCardFields.Empty;
 
     public RegisterCardFields RegisterFields { get; init; } = RegisterFields ?? Cards.RegisterCardFields.Empty;
+
+    public IReadOnlyList<CardApprovalClaim> Claims { get; init; } = Claims ?? [];
+
+    public IReadOnlyList<CardApprovalLimit> Limits { get; init; } = Limits ?? [];
 }
