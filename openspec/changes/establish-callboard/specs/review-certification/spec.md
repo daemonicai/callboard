@@ -67,10 +67,15 @@ discharge it. That judgement SHALL NOT be automated — the system SHALL NOT pro
 obligation on its own, because whether an observation needs fixing is exactly the decision the system
 cannot make and MUST NOT record as though it had been made.
 
-This bound is what makes the rule below enforceable rather than aspirational. A nit ceases to be live
-only by disposition, and a disposition is refused while the block cannot move; a nit raised against a
-terminal block could therefore never be dispositioned and never block anything, lapsing by exactly the
-neglect this requirement forbids.
+This bound is what makes the rule below enforceable rather than aspirational. What compels a disposition
+is not that the system demands one directly: it is that an undispositioned nit stops the block moving. A
+terminal block has no move left to stop, so a nit raised against one could still be dispositioned, but
+nothing would ever require it — lapsing by exactly the neglect this requirement forbids.
+
+Dispositioning SHALL therefore remain available in every state. A nit that reached a card by some route
+the system does not control — the record is a human-editable file — must still be dischargeable, and a
+disposition refused because the block cannot move would leave exactly the undischargeable nit this
+requirement exists to prevent.
 
 A nit SHALL cease to be live only through one of these three dispositions. It SHALL NOT lapse by
 neglect.
