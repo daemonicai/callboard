@@ -19550,6 +19550,43 @@ updated. `tasks.md` §8a grows to 8a.1–8a.16.
 
 `VALIDATE_EXIT:0`.
 
+**[architect]** **`round` stays stored, and gains the invariant it never had.** Product Owner ruling.
+
+The question that surfaced it: is there a counter of push-backs, or a log of state changes? Both, since
+§5 — `BlockCardFields.Round` is the counter, and `CardFile.Transitions` is the append-only log, each
+entry carrying the acting role, the transition's **name**, its from/to states and its timestamp.
+
+Worth noting what the naming discipline bought here. Because every new edge got its own name rather than
+reusing an existing one, the log does not merely say a block was pushed back five times — it says which
+five things happened and who did each. Had `fix-before-land` been allowed to reuse `changes-requested`
+(the cheap option at the time), that distinction would be **permanently** absent from the record, not
+recoverable later. Same for `finding-recurred` against `amendment-requested`, which share From/To exactly.
+
+**The hole.** `round` is now derivable — one plus the count of round-incrementing transitions — so it is
+a stored figure duplicating reconstructible state, with nothing checking the two agree. That is the
+failure this change has already legislated against twice: `work-lifecycle`'s own "Blocked is derived, not
+stored", and §10's 10.9 "refuse any attempt to store a hand-entered count" with 10.8's "every figure
+computed at request time". `round` predates four of the five transitions that now increment it; when §5
+wrote it, `changes-requested` was the only one and it was nearly trivially correct. Every edge added
+since is another place a write can bump the field without appending to the log, or the reverse.
+
+**Ruling: keep it stored.** It is genuinely load-bearing on the wire — `GateResult.Round` pins gate
+evidence to the round it was recorded in, which is what lets `GateStatusOf` tell "passed this round" from
+"passed a round ago and nothing has re-run it since". Deriving it everywhere would buy consistency at the
+cost of churn through evidence that has to stay a stored number anyway.
+
+**So the assumption becomes a checked invariant** rather than disappearing. New requirement, *Stored
+round agrees with the transition history*: the field equals one plus the round-incrementing transitions,
+both advance in **one** write, and a card where they disagree is **refused, not repaired**.
+
+The refuse-don't-repair part is the load-bearing half. Neither figure is privileged — a count ahead of
+the history and a history ahead of the count are *different* failures with different causes, and
+silently reconciling to either one destroys the evidence of whichever was actually right. This is the
+same instinct as §7's duplicate-id resolution refusing rather than picking, and it is the whole thesis of
+the tool: refuse where the incumbent could only record that something had gone wrong.
+
+`tasks.md` §8a gains 8a.17 (the refusal) and 8a.18 (the one-write test). `VALIDATE_EXIT:0`.
+
 ## NEXT
 **Resume point: 8.1.** §7 is closed; §8 has not been opened. Nothing is in flight — working tree
 clean, no uncommitted WIP, no part-built block.

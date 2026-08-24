@@ -213,6 +213,28 @@ SHALL be legible later.
   verdict is made
 - **THEN** the system permits it, and the authorisation and its reason are readable from the section
 
+### Requirement: Stored round agrees with the transition history
+
+A block card's `round` SHALL be stored, because gate evidence is pinned to the round it was recorded in
+and that pin must survive on the wire. It SHALL nonetheless equal one plus the number of
+round-incrementing transitions in that card's own history, and every transition that increments it SHALL
+advance the field and append to the history as one write.
+
+Where a card's stored `round` disagrees with its transition history, the system SHALL refuse to act on
+that card and SHALL NOT reconcile the two. Neither is privileged: a stored count ahead of the history
+and a history ahead of the count are different failures, and guessing which one is right would silently
+destroy the evidence of whichever was correct.
+
+#### Scenario: Round and history advance together
+
+- **WHEN** any round-incrementing transition is applied to a block
+- **THEN** the card's `round` and its transition history both advance in the same write
+
+#### Scenario: A disagreeing card is refused, not repaired
+
+- **WHEN** a block card's stored `round` does not equal one plus its round-incrementing transitions
+- **THEN** the system refuses to act on that card, names both figures, and alters neither
+
 ### Requirement: Sections are entities
 
 A section SHALL be a first-class entity carrying its own status, its `base` commit, and the supervisor

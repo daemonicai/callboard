@@ -108,6 +108,8 @@
 - [ ] 8a.14 Derive the verdict count from the record at request time, never storing it
 - [ ] 8a.15 Implement recording that authorisation, naming the section and the reason
 - [ ] 8a.16 Test that `landed` is unreachable except through the block's section closing
+- [ ] 8a.17 Refuse acting on a block whose stored `round` disagrees with its transition history, reconciling neither
+- [ ] 8a.18 Test that every round-incrementing transition advances the field and the history in one write
 
 ## 9. Process enforcement
 
