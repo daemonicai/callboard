@@ -1098,7 +1098,8 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'rule' requires a subcommand. Known subcommands: create, discharge, promote, author, compact."));
+                    "'rule' requires a subcommand. Known subcommands: create, discharge, promote, author, compact, " +
+                    "propose-compact, promote-constitution."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseRuleCreate(context);
@@ -1114,10 +1115,17 @@ internal static class CommandParser
             case "compact":
                 context.Arguments.TryTake();
                 return ParseRuleCompact(context);
+            case "propose-compact":
+                context.Arguments.TryTake();
+                return ParseRuleProposeCompact(context);
+            case "promote-constitution":
+                context.Arguments.TryTake();
+                return ParseRulePromoteConstitution(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'rule' subcommand: '{subcommand}'. Known subcommands: create, discharge, promote, author, compact."));
+                    $"no such 'rule' subcommand: '{subcommand}'. Known subcommands: create, discharge, promote, " +
+                    "author, compact, propose-compact, promote-constitution."));
         }
     }
 
@@ -1338,6 +1346,118 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleCompact(
             familyId, absorbedIds, changeName, role, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>rule propose-compact</c>'s <see cref="CommandDispatcher.ParsedCommand.
+    /// RuleProposeCompact"/> (§7 block G, 7.9). <c>--absorbs</c> reuses <see cref="ParseRuleCompact"/>'s
+    /// comma-list convention and its two argv-decidable checks (non-empty, no empty item) — the
+    /// backing set is still a list of rule ids even though nothing here will ever compact them.
+    /// Unlike <see cref="ParseRuleCompact"/> there is no <c>--id</c> (no family card exists yet) and
+    /// no <c>--change</c> (this proposes over the repository-scoped register, not one named change's
+    /// own rules). The candidate text is read from stdin the same way <see cref="ParseRuleAuthor"/>'s
+    /// body is — new proposed wording, not a path to something already on disk.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseRuleProposeCompact(CommandDispatcher.CommandContext context)
+    {
+        string? absorbsRaw = null;
+        string? roleText = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--absorbs"] = value => absorbsRaw = value,
+            ["--role"] = value => roleText = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (string.IsNullOrEmpty(absorbsRaw))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "empty-absorb-set",
+                "'rule propose-compact' requires '--absorbs <rule-id>[,<rule-id>...]' — a family with no members is not a family."));
+        }
+
+        var backingIds = CardFileFormat.SplitFrontmatterList(absorbsRaw);
+        foreach (var id in backingIds)
+        {
+            if (!BlockCardFields.IsValidListItem(id))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "invalid-absorbs", $"'--absorbs' cannot contain an empty item: '{absorbsRaw}'."));
+            }
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule propose-compact' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var candidateText = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleProposeCompact(
+            candidateText, backingIds, role, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>rule promote-constitution</c>'s <see cref="CommandDispatcher.ParsedCommand.
+    /// RulePromoteConstitution"/> (§7 block G, 7.12; extended in the reviewer-round-1 remediation).
+    /// <c>--id</c> is left as raw text here — resolving it against the record is <see cref="
+    /// CommandDispatcher.RunRulePromoteConstitution"/>'s job, since it needs the resolved card to
+    /// append the durable refusal comment to, not merely to quote the id in a message. No stdin:
+    /// there is no card body this verb ever writes to a new card — the comment it appends to the
+    /// existing rule is built entirely from <c>--id</c>/<c>--role</c>/the clock, in the handler.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseRulePromoteConstitution(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? roleText = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => id = value,
+            ["--role"] = value => roleText = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule promote-constitution' requires '--id <card-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule promote-constitution' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RulePromoteConstitution(
+            id, role, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

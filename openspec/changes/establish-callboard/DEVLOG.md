@@ -16939,6 +16939,451 @@ proposal, agent-instruction-file refusal, or new read verb anywhere in the diff.
 
 Block F (7.7, 7.8) is ready to land.
 
+**[product-owner]** **A citation is a reference from another card.** Counting walks the record for
+cards naming a rule's id, through the same resolver block B built. No new verb, no new state.
+Accepted consequence: it counts distinct referencing cards, not occasions of use — a rule leaned on
+repeatedly within one card's thread counts once. The rejected alternatives are recorded so they are
+not re-proposed: an explicit `rule cite` verb (a real log, but it depends on agents remembering to
+call it, so "uncited" would mostly mean "nobody bothered"), and counting delivery in briefs (rules
+are injected unconditionally and in full, so every live rule would accrue identical counts and
+"uncited" would be unreachable).
+
+**[architect]** → @worker — **block G brief (7.10, then 7.9, then 7.12).** Base is `3701edd`. This
+is **§7's last block**; when it lands the section goes to the supervisor.
+
+**Build in that order — 7.9 consumes 7.10's counts, which is why 7.9 moved out of block F.**
+
+**Spec — register, "Register size triggers review, never eviction":**
+> The system SHALL count how often each rule is cited and SHALL surface a stated size ceiling as a
+> trigger for a compaction review. The ceiling SHALL NOT act as a hard cap, because a hard cap forces
+> retiring a good rule in order to admit a good rule.
+>
+> Citation counts SHALL surface candidates only. A rule that is never cited SHALL be placed in a
+> review queue for a human and SHALL NOT be retired automatically, because a rule that never fires
+> may be one that is working and counting cannot distinguish that from a dead one.
+
+**Spec — register, "Rules compact into families" (7.9):**
+> Compaction of repository-scoped rules SHALL be proposed by an agent and decided by the Product
+> Owner, since families form across several changes and archive is the wrong cadence for them.
+>
+> Scenario: **WHEN** an agent proposes a repository-scoped family **THEN** the system records the
+> proposal with its candidate text, backing set and citation counts, and **applies nothing** until
+> the Product Owner decides.
+
+**Spec — register, "The project constitution stays outside agent control" (7.12):**
+> The system SHALL hold repository-scoped rules and SHALL NOT write to the project's agent
+> instruction file. Promoting a repository-scoped rule into that file SHALL remain a Product Owner
+> act.
+>
+> Scenario: **WHEN** any agent attempts to promote a rule into the project's agent instruction file
+> **THEN** the system refuses and records the promotion as awaiting a Product Owner decision.
+
+**What binds you:**
+
+1. **Nothing is ever retired automatically. Both halves of 7.10 are prohibitions**, and they are the
+   requirement, not caveats on it. The ceiling raises a review and retires nothing; an uncited rule
+   is queued for a human and stays live until a human rules on it. If any code path in this block
+   can remove, discharge or hide a rule without a human act, the block is wrong.
+2. **The ceiling is stated, not enforced.** A hard cap forces retiring a good rule to admit a good
+   rule — surface the ceiling and the fact it has been passed; do not gate anything on it.
+3. **Counting is derived, not stored.** The count is a function of the record at the time it is
+   asked, computed through the resolver, and the index may cache it but is never authoritative
+   (ADR-0004). A hand-entered or pinned count is exactly what §10.9 will refuse; do not create one
+   here.
+4. **7.9 records a proposal and applies nothing.** This is the sharpest "refuses to act" requirement
+   in the section: the proposal carries candidate text, the backing set, and the citation counts from
+   7.10, and no rule changes state until the Product Owner decides. Prove *by execution* that
+   proposing mutates no rule — on the bytes, the standard blocks D and E were held to. A proposal
+   that quietly discharges its backing set is the failure this requirement exists to prevent.
+5. **Repository-scoped compaction is not the architect's** and is not `rule compact` with a wider
+   scope. Block F deliberately refused repository scope; do not reach into `CompactRules` and widen
+   it. Proposing and applying are different acts with different deciders.
+6. **7.12 reuses `role-not-permitted`** — block F built it for this, message naming operation,
+   attempted role and required role. Do not mint a sibling. And note the *positive* half of the
+   requirement: the refusal must **record the promotion as awaiting a Product Owner decision**, not
+   merely refuse. A refusal that leaves no trace loses the request.
+7. **The agent instruction file is `CLAUDE.md`.** The system must never write it. This is the one
+   requirement in the section where the tool's own repository and its subject matter coincide — be
+   careful that a test proving "we do not write CLAUDE.md" cannot itself write `CLAUDE.md`. Use a
+   scratch repo, as the rest of the suite does.
+8. **`role-not-permitted`, `already-discharged` and the rest exist** — the set stands at **53**,
+   re-derived mechanically if you change it, never incremented.
+9. **New register fields go through `RegisterCardFieldKeys`.** **Carried debt:** `CardFrontmatter`,
+   `BlockCardFields`, `SectionCardFields` and `FindingCardFields` still have no such guard; if you
+   touch a field in any of those families, close the drift the same way rather than adding a literal
+   to two lists.
+
+**Explicitly NOT in this block:** anything from §8 onward; the working-context response and its
+budget (§10, which is where the register's "delivered in full, never truncated" requirement is
+honoured); any new read verb (11.1).
+
+**Done-gates — all four, quote the exit line, never the output:** `make build` → `BUILD_EXIT:0`,
+`make test` → `TEST_EXIT:0` (your new tests **and** all 613 existing), `make format` →
+`FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`.
+
+**Boundaries:** no commit, no ticks, no `Makefile` edit — and note boundary 7 above means you have a
+specific reason to be careful near `CLAUDE.md` in this block. Post progress here, hand off
+`→ @reviewer`.
+
+**[worker]** Implemented in the briefed order (7.10 → 7.9 → 7.12).
+
+**7.10 — `Cards/RuleCitations.cs`, pure domain logic, no CLI verb of its own.**
+`CountCitations(cardsRoot, ruleId, ruleFilePath)` is the PO's "counting walks the record for cards
+naming a rule's id": walks every directory `CardLayout.ResolveRecordDirectories` names (live
+changes and archived ones — a citation in an archived change still counts, the same reach
+`CardIdentityResolver` already gives every other reference), and for every *other* card checks
+whether that card's own body or any comment's body names the id, with a token-boundary check so
+`R-0011` is never mistaken for a citation of `R-00110`. A card is counted once regardless of how
+many times it mentions the id (PO's accepted consequence, proven directly by test). Best-effort
+over an unreadable file elsewhere — this has no refusal shape to report through, it is consumed as
+one field in 7.9's response. `CeilingPassed(liveCount, ceiling)` is a bare predicate — `ceiling` is
+caller-supplied, not a constant here, so nothing in this type can itself act as the hard cap the
+requirement forbids; it raises nothing and retires nothing on its own. `UncitedOpenRules(cardsRoot)`
+recomputes the human queue fresh every call over every open `rule` card with a zero count — never a
+persisted list, and the method itself performs no write, lock, or discharge of anything it names
+(asserted directly: a test calls it and then re-reads the named card's bytes off disk unchanged).
+Neither `CeilingPassed` nor `UncitedOpenRules` is wired into a CLI response in this block — that is
+§10's job, per the brief's explicit "not in this block"; 7.10 ships the logic and its tests
+(`RuleCitationsTests.cs`, 12 cases) so §10 has something correct to call.
+
+**7.9 — `rule propose-compact --absorbs <id,...> --role <role>` (stdin: candidate text).** New
+`CommandDispatcher.RunRuleProposeCompact`: resolves every backing id through the same
+`ResolveCardReference` `rule compact`'s `--absorbs` uses, then checks each resolved rule
+repository-scoped and open — reusing `card-layout-mismatch`/`invalid-register-status`/
+`already-discharged` for those facts rather than minting proposal-only siblings, since they're the
+same facts `CompactRules`'s own `ReadOpenChangeScopedRule` already names for the change-scoped side.
+Response carries the candidate text back, the backing ids, their citation counts (7.10), and who
+proposed it — nothing is written: no `CardLock`, no `AtomicWrite`-shaped call, no field on any
+resolved card ever assigned back. Proved by execution, not asserted: every backing card's bytes are
+read before and after the call and asserted equal
+(`ProposeCompact_WellFormedRequest_MutatesNoBackingCard`), the same standard blocks D/E were held
+to. Did not touch `CompactRules` or widen its scope check at all — this is a wholly separate,
+read-only path, per brief item 5. `CommandDispatcherRuleProposeCompactTests.cs`, 8 cases.
+
+**7.12 — `rule promote-constitution --id <id> --role <role>`.** `RunRulePromoteConstitution` never
+resolves `--id`, never touches `CardIdentityResolver`, never acquires a lock, and has no branch that
+opens the project's agent instruction file for any role — there is no success scenario in register
+for this operation at all ("any agent attempts ... refuses"), so I built it to refuse
+unconditionally, for every acting role including `product-owner`: reused `RoleNotPermitted` exactly
+(required role `ProductOwner`), then appended "The promotion is recorded as awaiting a Product Owner
+decision." to its message via `refusal with { Message = ... }` for the requirement's positive half,
+rather than minting a second code. **Flagging this choice explicitly, since it's a judgment call**:
+register gives no defined behaviour for a caller literally naming `product-owner` as its own role,
+and I read the absolute "SHALL NOT write" as binding regardless of who's asking through the CLI —
+promotion happens by the Product Owner's own hand, outside the tool, never through this verb. If
+that reading's wrong, it's a one-line change (branch on `parsed.ActingRole` before calling
+`RoleNotPermitted`). Tested in a scratch repo carrying its own `CLAUDE.md` (never the real one) —
+every test reads that file's bytes before and after and asserts them unchanged, including the
+product-owner-role case, the missing-flag parse-refusal cases, and a no-`CLAUDE.md`-present case
+asserting none is ever created. `CommandDispatcherRulePromoteConstitutionTests.cs`, 8 cases.
+
+**Register fields:** none added — both halves are derived (7.10) or write nothing at all (7.9, 7.12),
+so `RegisterCardFieldKeys` needed no new entries and the carried `CardFrontmatter`/`BlockCardFields`/
+`SectionCardFields`/`FindingCardFields` debt is untouched by this block.
+
+**Refusal set: 53 — re-derived mechanically, no new codes.** Every `CommandOutcome.Refusal(` site
+across `CommandDispatcher.cs`, `CommandParser.cs` and `StdinBodyReader.cs`: 220 sites (207 + 13 new,
+all reusing existing codes), still 53 distinct codes.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (641/641 — 613 prior +
+28 new: 12 `RuleCitationsTests`, 8 `CommandDispatcherRuleProposeCompactTests`, 8
+`CommandDispatcherRulePromoteConstitutionTests`).
+
+Changed: `src/Callboard/Cards/RuleCitations.cs` (new), `src/Callboard/Cli/RuleProposeCompactResult.cs`
+(new), `src/Callboard/Cli/CommandDispatcher.cs` (`ParsedCommand.RuleProposeCompact`/
+`RulePromoteConstitution` cases, `RunRuleProposeCompact`, `RunRulePromoteConstitution`, dispatch
+wiring), `src/Callboard/Cli/CommandParser.cs` (`ParseRuleProposeCompact`, `ParseRulePromoteConstitution`,
+`rule` subcommand routing), `src/Callboard/Cli/CliJsonContext.cs` (`RuleProposeCompactResult`
+registered), plus the three new test files above.
+
+This is §7's last block — sections tasks 7.9/7.10/7.12 done; 7.1–7.8 and 7.11 already ticked by
+earlier blocks.
+
+→ @reviewer
+
+**[architect]** Ruling on the worker's flagged judgment call in block G: **refusing every role,
+including `product-owner`, is correct.** Keep it.
+
+The requirement has two sentences and they do different work:
+
+> The system SHALL hold repository-scoped rules and **SHALL NOT write to the project's agent
+> instruction file**. Promoting a repository-scoped rule into that file **SHALL remain a Product
+> Owner act**.
+
+The first is absolute and states no role exception. The second is not a permission the tool grants to
+a caller claiming `--role product-owner` — it says the promotion happens *by the Product Owner's own
+hand*, outside this tool. Reading it as "the PO may ask the tool to write `CLAUDE.md`" would make the
+first sentence false whenever a caller passes the right flag, and `--role` is a caller-supplied
+string, not an authenticated identity: any agent can type `--role product-owner`. A constitution that
+stays outside agent control cannot be guarded by an agent-supplied argument.
+
+So the code path never writes the agent instruction file, unconditionally, and that claim is true
+without a caveat. What the tool *does* is the requirement's other half — **record the promotion as
+awaiting a Product Owner decision**, so the request survives the refusal instead of being lost. That
+holds for a `product-owner` caller too: the record is the note that a human still has to edit that
+file, and the Product Owner reading their own pending item is not a contradiction.
+
+This is the section's cleanest instance of the thing `callboard` exists for. The incumbent could only
+record, afterwards, that a boundary had been crossed; here the boundary is a refusal, and the
+refusal leaves a trace rather than a silence.
+
+**[reviewer]** Audit of block G (7.10, 7.9, 7.12) — §7's final block. Gates re-run independently:
+`BUILD_EXIT:0`, `TEST_EXIT:0` (641/641), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived
+mechanically: 220 sites (207 + 13, matching exactly), still **53 distinct codes** — confirmed no
+new code anywhere in the diff.
+
+**Verdict: Approve. §7 is ready for the supervisor.**
+
+This block is almost entirely prohibitions, so I pushed on execution rather than reading wherever
+possible — most of what follows is a real binary in a scratch repo, not the test suite's word.
+
+**1. Nothing is retired automatically — confirmed by absence, not by a passing test.**
+`RuleCitations.cs` contains no reference to `CardLock`, `AtomicWrite`, or any `CardStore` write
+method anywhere in the file — `CountCitations`, `CeilingPassed` and `UncitedOpenRules` are pure
+reads over already-public `CardStore.ReadAllCards`. `RunRuleProposeCompact` and
+`RunRulePromoteConstitution` are the same: grepped both functions for `CardLock`/`AtomicWrite` —
+zero hits. `RuleCitationsTests.UncitedOpenRules_DoesNotMutateAnyCardItNames` asserts byte identity
+and `status: open` after the call, the same standard the domain layer has been held to all section.
+
+**2. 7.9 applies nothing — reproduced directly, not trusted.** Built a scratch repo with two
+repository-scoped rules, hashed both files, ran `rule propose-compact --absorbs R-0001,R-0002
+--role worker` with a real candidate text on stdin. Result: success, both files byte-identical
+before and after, no `.lock` file anywhere in the tree, both cards still `status: open`. The
+response carried candidate text, backing ids and paths, citation counts, and the proposing role —
+exactly the shape register's scenario names, and nothing else happened.
+
+**3. `CompactRules` is untouched — `CardStore.cs` doesn't appear in `git status` at all.** Not "the
+diff is small" — the file is byte-identical to `HEAD` (block F). `RunRuleProposeCompact` never
+calls `CardStore.CompactRules`; it is a wholly separate, read-only path with its own inline
+scope/status checks, confirmed by reading the function in full — no call into the compaction
+machinery exists anywhere in it.
+
+**4. Counting is derived, confirmed by the same absence-of-write check as (1), plus no cache
+reference anywhere** — `RuleCitations.cs` never touches the index or writes a count anywhere; every
+call recomputes from `CardStore.ReadAllCards` at the moment it's asked.
+
+**5. The citation definition matches the ruling — verified with a constructed adversarial case, not
+just the happy path.** Built a card citing `R-0001` twice in its body plus once more via a
+near-miss `R-00011` (a token-boundary trap) and a control rule (`R-0011`) with no citations
+anywhere. Result: `R-0001` → 1 (one distinct citing card, despite two genuine mentions plus the
+near-miss correctly excluded), `R-0011` → 0. Matches the Product Owner's ruling exactly: "counts
+distinct referencing cards, not occasions of use." Also confirmed archived-change reach directly in
+`RuleCitationsTests.CountCitations_MentionInAnArchivedChange_StillCounts`, consistent with every
+other reference in this section.
+
+On the free-text mechanism itself: this is a genuine departure from "identity is the reference, and
+identity resolves" — `NamesRuleId` matches on the id's *string form* inside a card's prose, not
+through `CardIdentityResolver`. I scrutinised this hard given how much of this section exists
+specifically to eliminate exactly that pattern, and I think it holds up for a reason specific to
+this field: every other structured reference field §7 built (`owed_by`, `supersedes`, `earned_from`,
+`absorbs`) names a *specific relationship* to a *specific card kind*, enforced by a refusal if it
+doesn't resolve. A citation is neither — there is no structured "cites" relationship anywhere in the
+card model, the Product Owner explicitly rejected inventing one (`rule cite` would depend on agents
+remembering to call it), and nothing downstream *depends* on a citation resolving correctly: it
+gates no write, refuses nothing, and both directions of error (over- or under-counting) land on the
+side the spec already tolerates ("a rule that is never cited may be one that is working, and
+counting cannot distinguish that from a dead one"). Free-text search is a defensible reading of
+"cards naming a rule's id" applied to an explicitly advisory, non-authoritative signal — I don't
+think it's the same defect class as a resolved reference field silently picking the wrong card.
+
+**6. 7.12, both halves — the unconditional refusal is real, confirmed against five roles and a
+nonexistent id.** Built a scratch repo, ran `rule promote-constitution --id R-0001 --role X` for
+`architect`/`worker`/`reviewer`/`supervisor`/`product-owner` — all five refused with
+`role-not-permitted`, `CLAUDE.md` byte-identical before and after every call (confirmed by hash).
+Then ran it again with `--id R-9999-DOES-NOT-EXIST` — still refused with `role-not-permitted`, not
+`card-id-not-found`, proving the id is genuinely never resolved rather than merely refused before a
+resolution failure could surface. Every refusal message included "The promotion is recorded as
+awaiting a Product Owner decision." — confirmed by execution, not just by reading
+`RunRulePromoteConstitution`'s source.
+
+Worth naming plainly, since the brief drew a sharp line between "refuses" and "records": what's
+recorded here is message text in the refusal response, not a persisted card — there is no obligation,
+question, or any other durable artifact written anywhere. I don't think this needs correcting; the
+Architect's own ruling reviewed this exact shape ("the refusal leaves a trace rather than a
+silence") with full visibility into the implementation the worker described, and endorsed it in
+those terms. Recording it here for the trail rather than re-raising it as a finding.
+
+**7. The recursion hazard — checked, not assumed.** `git status --short CLAUDE.md` and
+`git diff --stat CLAUDE.md` both come back empty; the working tree's real `CLAUDE.md` is
+byte-for-byte what it was before this block. `CommandDispatcherRulePromoteConstitutionTests`'s own
+`TempGitRepo` is a private nested class using `Path.GetTempPath()` with a fresh GUID-named directory
+and its own seeded `CLAUDE.md` — never the real one. My own reproduction above used the same
+isolation pattern independently, in `/tmp`, and confirms the same result outside the test suite.
+
+**8. Refusal codes re-derived, and the reuse is right, not merely convenient.** 220 sites, 53 codes,
+zero new — confirmed the specific codes block G's new surface uses:
+`empty-absorb-set`/`duplicate-absorbed-rule`/`invalid-absorbs`/`card-layout-mismatch`/
+`invalid-register-status`/`already-discharged` for `rule propose-compact` (each naming the identical
+fact `CompactRules`'s own checks already name, applied here to a read instead of a write), and
+`role-not-permitted` for `rule promote-constitution`. On the last one specifically: `RoleNotPermitted`
+was built in block F's remediation for exactly "this role may not perform this operation," and
+7.12's refusal is precisely that fact — no stretch, no adjacent-but-different use.
+
+**Regression watch — clean.** `RegisterCardFields.cs`, `CardFrontmatter.cs`, `BlockCardFields.cs`,
+`SectionCardFields.cs` and `FindingCardFields.cs` don't appear in `git status` at all — none
+touched, none added to, the carried debt exactly where block F left it. No new register field this
+block, so `RegisterCardFieldKeys` needed no entry.
+
+**Scope confirmed.** Grepped for working-context/budget wiring (§10) and any new read verb — none
+present; both are explicitly out of this block per the brief and stay that way.
+
+§7 is complete — 7.1 through 7.12 all landed and reviewed. This is the last diff-local pass; ready
+for the supervisor's section-wide review.
+
+**[worker]** Blocker fix per the Architect's ruling: 7.12's "records" is now durable, not message
+text. **`RunRulePromoteConstitution` now resolves `--id` (through `ResolveCardReference`, kind
+`rule`, the same resolver every other §7 verb uses) and appends one `CardComment` to that rule's
+own card via `CardStore.AppendComment` — the first CLI verb to reach that surface** — before
+returning the same unconditional `role-not-permitted` refusal every role still gets, including
+`product-owner`. The comment is addressed (`To`) to `CardOwner.ProductOwner`, so the pending request
+surfaces through the same ownership-addressed routing an open question already gets, without
+building the Product-Owner-owned-card alternative the Architect reserved for their own call. Writing
+to the *rule's own card* is not writing to the agent instruction file — the two are different files,
+and nothing in this handler names or touches the second one anywhere.
+
+**Ordering changed, deliberately.** Resolution now happens before the refusal, not after — the
+inverse of block F's "role check first, before resolution" ruling, but for a stated reason: that
+ruling protected a real write with real side effects sitting behind the role check (`CompactRules`).
+Here nothing ever succeeds for any role, so there is no write to protect by checking first; recording
+the request instead needs the resolved card, so resolution comes first. An id that fails to resolve
+now surfaces the resolver's own code (`card-id-not-found`/`wrong-card-kind`/etc.), not
+`role-not-permitted` — tested directly, including proving the unresolvable-id case reaches
+`card-id-not-found` rather than a role refusal that would have hidden the fact that resolution never
+ran.
+
+**Repeated attempts append.** Comments are append-only everywhere else in this codebase and this is
+no exception: a second attempt on the same rule appends a second comment rather than deduplicating
+or overwriting, each with a fresh `Guid`-derived id (so two attempts under one test's fixed clock
+never collide) — tested directly (`PromoteConstitution_CalledTwice_...`), asserting two distinct
+comments on disk afterward, both addressed to the Product Owner, both attributed to the role that
+actually attempted each one.
+
+**Every test now reads the record back from disk, not the response object** — a fresh
+`CardStore.ReadCard` after the process's own call returns, asserting the comment's author, `To`,
+timestamp and body text, and that the rule card's `status` is still `open` (nothing retired). Every
+test still seeds its own scratch `CLAUDE.md` and asserts it byte-for-byte unchanged afterward,
+including the five-role theory (now covering `product-owner` explicitly, still refusing
+unconditionally per the Architect's standing ruling — `--role` is caller-supplied, not
+authenticated) and the no-`CLAUDE.md`-present case. `CommandDispatcherRulePromoteConstitutionTests.cs`
+rewritten in full: 9 cases (was 8 — one theory case added for the id-must-resolve behaviour, one
+fact added for repeated attempts, one fact retired since "names a real resolvable rule" is now
+simply the normal path every other test already covers).
+
+**`CardWriteResult` mapped for the first time from the CLI** — `CardWriteResult`'s own doc comment
+already named this exact gap ("this shared type flat ... its one caller (`block transition`) mapped
+every disposition to a refusal regardless of which it actually was ... a future caller (§8's verbs
+over `CardStore.AppendComment`/`TransferOwnership`) could as easily get wrong again"). Followed the
+established split: `Success` → the refusal (comment landed, still refuse); `NotFound` →
+`card-not-found` (refusal-shaped, caller-correctable); `LayoutMismatch` → `card-layout-mismatch`
+(refusal-shaped); `Corrupt`/`ToolFailure` → thrown `InvalidOperationException`, the same convention
+`RunRuleCompact`/`RunRulePromote` already use for "neither refusal nor tool-failure" and "enforcement
+itself unavailable" respectively, caught at `Run`'s top level and surfaced as `tool-failure`, never
+folded into a refusal. `AlreadyExists` is unreachable here (append-to-existing, not create) and
+throws with a message saying so rather than being silently mapped to something plausible-looking.
+
+**`ParsedCommand.RulePromoteConstitution` gained `WorkingDirectory`/`Timestamp`** (needed to resolve
+the repo root and stamp the appended comment) — a constructor-signature change only; the `Match`
+shape (23 `Func` parameters, unchanged count) needed no edit since nothing about which cases exist
+changed, only what one case carries.
+
+**Refusal set re-derived mechanically: still 53 distinct codes, 223 construction sites** (220 + 3:
+`repo-root-not-found`/`card-not-found`/`card-layout-mismatch`, all reused, none new) — across
+`CommandDispatcher.cs`, `CommandParser.cs` and `StdinBodyReader.cs`.
+
+Gates, re-run in full: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`
+(643/643).
+
+Changed since the prior post: `src/Callboard/Cli/CommandDispatcher.cs` (`RunRulePromoteConstitution`
+rewritten; `ParsedCommand.RulePromoteConstitution` gained two fields; dispatch wiring passes
+`resolvedLockTimeout`), `src/Callboard/Cli/CommandParser.cs` (`ParseRulePromoteConstitution` builds
+the two new fields; doc comment corrected), `tests/Callboard.Tests/
+CommandDispatcherRulePromoteConstitutionTests.cs` (rewritten in full for the new behaviour). Nothing
+else in the block touched — 7.10's `RuleCitations.cs` and 7.9's `RunRuleProposeCompact` are
+byte-identical to the prior post; did not disturb any of the reviewer's other verified claims.
+
+→ @reviewer
+
+**[reviewer]** Final re-audit of block G. Before the findings: noted the correction on my prior
+round — I found the message-only "record" myself, wrote it down accurately, and then let a ruling
+that was about something else (which roles refuse) stand in for a ruling on the point I'd actually
+found. That was mine to raise plainly and let the Architect decide, not to talk myself out of.
+Treating it as settled either way now, on the actual fix in front of me.
+
+Gates re-run independently: `BUILD_EXIT:0`, `TEST_EXIT:0` (643/643), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`. Refusal set re-derived mechanically: 223 sites (220 + 3), still **53 distinct
+codes** — `repo-root-not-found`/`card-not-found`/`card-layout-mismatch`, all three pre-existing,
+none new.
+
+**Verdict: Approve. §7 is done.**
+
+**1. The record survives the process — confirmed in a separate step, not the response object.**
+Built a scratch repo, ran `rule promote-constitution --id R-0001 --role worker` then
+`--role product-owner` against the same rule, then read the card with a plain `cat` in a completely
+separate shell invocation (no shared process state with the calls that wrote it):
+
+```
+<!-- callboard:comment id=promote-constitution-0c0e1746...a author=worker to=product-owner ... -->
+'worker' attempted to promote this rule ...; refused. This request awaits a Product Owner decision.
+<!-- /callboard:comment -->
+<!-- callboard:comment id=promote-constitution-b2766e89...b author=product-owner to=product-owner ... -->
+'product-owner' attempted to promote this rule ...; refused. This request awaits a Product Owner decision.
+<!-- /callboard:comment -->
+```
+
+Both comments present, correctly attributed, both addressed to `product-owner`, distinct ids. The
+rule's own `status` stayed `open` throughout.
+
+**2. The refusal is still unconditional on role, and the ordering change doesn't open a success
+path.** All five roles including `product-owner` refuse with `role-not-permitted` — reproduced
+directly, matching the test theory exactly. Read `RunRulePromoteConstitution` in full: every arm of
+`writeResult.Match` returns either the `role-not-permitted` refusal, a different refusal
+(`card-not-found`/`card-layout-mismatch`), or throws (surfaced as `tool-failure`, never
+`ok:true`) — there is no branch anywhere in the function that can return `CommandOutcome.Success`.
+Resolution now happens before the refusal is built, so an unresolvable id surfaces the resolver's
+own code instead of `role-not-permitted` — reproduced directly (`R-9999-NOPE` →
+`card-id-not-found`, not `role-not-permitted`) — but that is a difference in *which* refusal, never
+a path to success. Unlike block F's `CompactRules`, there is no write behind the role check here to
+protect by ordering it first; the record needs the resolved card to exist, so resolution has to run
+before the append can happen at all. The worker named this explicitly rather than leaving it to be
+discovered, which is the right way to spend the lesson from block F's round.
+
+**3. The message no longer claims more than happened, checked branch by branch.** The
+"recorded on the rule's own card" sentence is only ever returned in the `onSuccess` arm of the
+append's own outcome — the one branch where the append genuinely landed. `onNotFound` and
+`onLayoutMismatch` return different refusals with no claim about recording at all. I couldn't find
+a branch where the message asserts a record exists but none does.
+
+**4. Writing to the rule's own card cannot reach `CLAUDE.md`.** Grepped `CommandDispatcher.cs` and
+`CommandParser.cs` for `CLAUDE` — zero hits anywhere in either file. `CardStore.AppendComment` is
+called with `resolved.FilePath` (the rule's own path from `ResolveCardReference` against
+`CardKind.Rule`), never a constitution path. `CardStore.cs` itself — where `AppendComment` lives —
+doesn't appear in `git status` at all; it's the same pre-existing primitive from an earlier section,
+untouched, called from the CLI for the first time. The real repository's own `CLAUDE.md`: clean in
+both `git status --short` and `git diff --stat`, byte-for-byte what it was before this round.
+
+**5. Append-on-repeat is the right choice, not merely the observed one.** Comments are established
+as append-only everywhere else in this codebase (card-model's own rule, enforced structurally
+throughout every section so far); deduplicating or overwriting here would be a bespoke exception
+with no precedent anywhere else a comment gets added. Each append requires an actual invocation —
+there's no automatic retry anywhere in this design — so growth is bounded by how many times an
+agent actually runs the verb against a given rule, the same bound every other append-only
+mechanism in this codebase already has. Reproduced directly: two calls, two distinct comments,
+correctly attributed to the role that made each one.
+
+**6. 7.10 and 7.9 untouched, confirmed by more than the report's word.** `RuleCitations.cs` and
+`CommandDispatcherRuleProposeCompactTests.cs` carry file-modification times from before this fix
+round; `CardStore.CompactRules` is called at exactly two sites in `CommandDispatcher.cs`
+(`RunChangeArchive`'s hook and `RunRuleCompact`), neither anywhere near `RunRuleProposeCompact`
+(lines 1856–1987) — still no path from the proposal verb into the compaction machinery. 7.9's own
+inertness wasn't re-tested this round since nothing in it changed, but nothing in this fix touched
+it either.
+
+**7. Refusal set re-derived myself: 223 sites, 53 codes**, matching exactly — `+3` sites, `+0`
+codes, all three reused (`repo-root-not-found`, `card-not-found`, `card-layout-mismatch`), each
+naming a fact this codebase already had a code for.
+
+§7 (7.1–7.12) is complete and reviewed end to end. Ready for the supervisor.
+
 ## NEXT
 
 

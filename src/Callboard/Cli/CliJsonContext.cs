@@ -33,4 +33,5 @@ namespace Callboard.Cli;
 [JsonSerializable(typeof(RulePromoteResult))]
 [JsonSerializable(typeof(RuleAuthorResult))]
 [JsonSerializable(typeof(RuleCompactResult))]
+[JsonSerializable(typeof(RuleProposeCompactResult))]
 internal sealed partial class CliJsonContext : JsonSerializerContext;

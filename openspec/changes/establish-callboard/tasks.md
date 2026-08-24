@@ -69,10 +69,10 @@
 - [x] 7.6 Implement rule authoring from findings, recording `earned_from` and leaving the findings unchanged
 - [x] 7.7 Implement compaction into families by supersession, recording `absorbs` and keeping members retrievable
 - [x] 7.8 Implement architect-performed change-scoped compaction at archive
-- [ ] 7.9 Implement agent-proposed, Product-Owner-decided repository-scoped compaction that applies nothing on its own
-- [ ] 7.10 Implement citation counting, the soft ceiling as a review trigger, and the uncited-rule human queue
+- [x] 7.9 Implement agent-proposed, Product-Owner-decided repository-scoped compaction that applies nothing on its own
+- [x] 7.10 Implement citation counting, the soft ceiling as a review trigger, and the uncited-rule human queue
 - [x] 7.11 Refuse a hazard raised without a verification condition; discharge a hazard whose condition lapses
-- [ ] 7.12 Refuse any agent write to the project's agent instruction file, recording the promotion as awaiting a decision
+- [x] 7.12 Refuse any agent write to the project's agent instruction file, recording the promotion as awaiting a decision
 
 ## 8. Review and certification
 
