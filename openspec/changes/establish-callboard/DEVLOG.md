@@ -18995,8 +18995,514 @@ after is the exact thing this finding is about.
 
 Scope: this finding only. → @worker
 
-## NEXT
+**[architect]** Block B landed as `9fe9f5a`. 8.4–8.7 ticked; gates green under my own hand
+(`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 700 tests).
 
+**[architect]** **Block C brief — 8.8, 8.9, 8.10, 8.13.** `recertify`: re-asserting an existing claim
+set over an amended state, claim by claim, without a full re-audit.
+
+**Tasks**
+
+- 8.8 Implement `recertify` with individually assertable and refusable claims
+- 8.9 Implement per-claim refusal returning the block to `briefed` without re-stamping `reviewed_state`
+- 8.10 Enforce at most one recertification per approval
+- 8.13 Restrict approval and recertification to `reviewer` and `supervisor`
+
+**Binding spec — `review-certification`, "Recertification re-asserts an existing claim set" and
+"Recertification is bounded"** (read both in full; the second is split between this block and block D).
+
+> Each claim SHALL be individually assertable or refusable. The reviewer SHALL re-derive each claim
+> against the code; reading the difference between the certified and amended states SHALL NOT be
+> sufficient, because a difference confined to the expected sites has been observed to be green over a
+> real defect.
+>
+> A successful recertification SHALL re-stamp `reviewed_state` to the amended state. A refusal of any
+> claim SHALL be a first-class outcome that returns the block to `briefed` and increments `round`.
+
+> The system SHALL permit at most one recertification per approval. A further amendment after a
+> recertification SHALL require a new round.
+
+Scenarios: per-claim refusal returns the block (three claims, second refused → **all three outcomes
+recorded**, `reviewed_state` **not** re-stamped, block to `briefed`, `round` incremented); all claims
+re-asserted → re-stamp without incrementing `round`; second recertification refused.
+
+**Architect readings and calls — binding; challenge in-thread if you think one is wrong**
+
+1. **Claims already have stable identity — use it.** Block A's `callboard:claim` lines each carry an
+   id precisely so this block can address them individually. Do not invent a second addressing scheme,
+   and do not address a claim by its text or its ordinal position.
+2. **Every claim must receive an outcome; a recertification that silently omits one is refused.** The
+   spec's scenario records *all three* outcomes for three claims. A recertification naming two of
+   three leaves the third in exactly the undefined limbo the nit-disposition rule exists to prevent —
+   same disease, same cure. Refuse, naming the claims with no outcome.
+3. **The `recertification-refused` edge is `approved → briefed`**, `round += 1`, per the Product
+   Owner's ruling at `afaad73`. `BlockFlowTransitions` is a closed compile-checked table; `approved`
+   currently has exactly one edge (`land`) and gains a second. Reachable only through `recertify`,
+   refused from `block transition` the same way `approve` and `fix-before-land` already are.
+4. **On refusal, `reviewed_state` is left exactly as it was.** Not cleared, not blanked, not updated —
+   the previously certified state remains the last thing genuinely certified, and that is true. Assert
+   it byte-identical after a refused recertification.
+5. **A successful recertification does not increment `round`.** The spec is explicit. It re-stamps
+   `reviewed_state` and nothing else moves.
+6. **8.10's bound attaches to the approval, not to the card.** "At most one recertification **per
+   approval**" — a block approved, recertified, sent back to `briefed`, rebuilt, and approved again is
+   on a *new* approval and gets a fresh recertification. Do not implement this as a boolean on the
+   card that never resets. The natural reading: count recertifications recorded since the current
+   approval.
+7. **The tool cannot enforce "the reviewer SHALL re-derive each claim".** That sentence governs a
+   human, and no flag can distinguish a re-derived assertion from a rubber-stamped one. **Do not
+   pretend otherwise** — do not add a `--re-derived` flag or any affordance implying the tool checked.
+   Surface the obligation in the response text where the reviewer will read it, and state plainly in
+   the doc comment that this is unenforceable by construction. This project's whole thesis is refusing
+   what it can and being honest about what it cannot; a flag that records a promise is the failure
+   mode, not the feature.
+8. **8.13 ticks here.** Block A already role-bound `block approve` to `reviewer`/`supervisor`; do the
+   same for `recertify` and tick the task once both hold. `CardStore.IsApprovingRole` already exists —
+   reuse it rather than writing a second predicate.
+9. **Out of scope: the mechanical preconditions.** Gates re-run green, and the difference confined to
+   nit sites, are **8.11 and block D**. Do not implement them here and do not stub them. Block C's
+   `recertify` is permitted to proceed without them; block D adds refusals in front of it.
+
+**Standing constraints**
+
+- **No subprocess.** Still absolute. `--state` is caller-supplied text, verified against nothing.
+- **The two defects this section has already produced were both "green tests over a real defect"**, and
+  both were about a property computed from the wrong scope — the current call rather than the thread,
+  then a boundary no test could reach. Block C computes at least two such properties (every claim has
+  an outcome; how many recertifications since the current approval). **Compute them over the record,
+  test them across a real round boundary with the advancing clock `CommandDispatcherNitTests` now
+  uses, and show each new test fails against the un-fixed logic.**
+- **Validate everything before writing anything**, one global lock order, honest failure guarantee.
+- **Refusal-code granularity**: spec-named refusals get their own code; incidental missing flags get
+  `missing-argument`/`missing-flag-value`; refusals naming one fact differing by a parameter collapse
+  into one code whose message carries it. **Re-derive the set mechanically — never increment a
+  remembered number.**
+- **Attribution assertions root on a non-default role** (§7 item E).
+
+**Done-gates** — `make build`/`test`/`format`/`validate` (or `make gates`), each read by its exit line.
+A test per refusal rule, per the amended S5.
+
+→ @worker
+
+**[worker]** Block C (8.8, 8.9, 8.10, 8.13) implemented and self-tested.
+
+- **8.8** `block recertify --id <block-id> --role <role> --state <text> [--assert <claim-id>…]
+  [--refuse <claim-id>…] [--change <name>]` — claims addressed by their existing block-A id (ruling
+  1), never by text or position. `CardStore.RecordRecertification`/`RecordRecertificationUnderExistingLock`
+  refuse unless the card's current status is `approved`. **Every claim must receive an outcome**
+  (ruling 2): the current approval's claim set is `card.Claims` whose `Round` equals the card's
+  current `BlockFields.Round` (the same scoping `RecordApprovalUnderExistingLock` already stamps a
+  claim with, and it stays exactly the approval's set for as long as the card stays `approved`, since
+  nothing else touches `Round` while it does) — a caller-named id outside that set refuses
+  `unknown-claim-id`; a claim in that set named by neither flag refuses `missing-claim-outcome`,
+  naming exactly the claims left without an outcome. `--assert`/`--refuse` overlap is refused at
+  parse (`conflicting-claim-outcome`, argv-decidable).
+- **8.9** All-asserted → `Recertified`: re-stamps `reviewed_state` to `--state`, appends a
+  recertification-record comment, touches nothing else — status and `round` stay put. Any refused →
+  `ClaimsRefused`: a first-class success outcome (not a CLI refusal — the reviewer's judgment that a
+  claim no longer holds isn't a caller error), `reviewed_state` left byte-exact (ruling 4), status →
+  `briefed`, `round += 1`, one `CardBlockTransitionEntry` named `recertification-refused`
+  (`approved → briefed`) added to `BlockFlowTransitions` per the base post's ruling 3 — `approved` now
+  has `land` and `recertification-refused`, no third self-loop edge for a *successful* recertify (the
+  base post is explicit: singular addition). Reachable only via `block recertify`;
+  `block transition <id> recertification-refused` refused at parse
+  (`recertification-refused-via-transition-refused`), the same one-door shape `approve`/
+  `fix-before-land` already established.
+- **8.10** The bound attaches to the approval, not the card (ruling 6) — computed over the record,
+  never a boolean that never resets. A new structural comment field,
+  `CardComment.IsRecertification` (`CardCommentRecertificationFieldKeys`, its own shared wire-key
+  declaration per the §7 guard), marks the comment `RecordRecertification` appends each call. "Since
+  the current approval" = the timestamp of the most recent `CardBlockTransitionEntry` named
+  `approve`; comments at or after it are scanned via `CardCommentRouting.HasRecertification`
+  (`LiveUndispositionedNitIds`/`HasFixBeforeLandDisposition`'s sibling) — the exact round-boundary
+  idiom §8 block B's own remediation established. A second attempt against the same approval refuses
+  `recertification-already-performed`; a block recertified, refused back to `briefed`, rebuilt and
+  approved again — a *new* approval — gets a fresh recertification, and only that approval's own
+  (possibly entirely different) claim ids are consulted.
+- **8.13** `RecordRecertificationUnderExistingLock` reuses `CardStore.IsApprovingRole` (reviewer/
+  supervisor only) as its very first check, ahead of `File.Exists` — same ordering, same predicate
+  block A's `RecordApproval` already uses. No second predicate written.
+- **Ruling 7 (the unenforceable obligation)** — no `--re-derived` flag, no affordance implying the
+  tool checked. `CardRecertificationOutcome`'s own doc comment states plainly that "the reviewer
+  SHALL re-derive each claim" governs a human and cannot be checked here. Surfaced instead as a fixed
+  `notice` string on every `BlockRecertifyResult`, success or `ClaimsRefused`, in the response text
+  the reviewer actually reads.
+- **Ruling 9** — 8.11/block D's mechanical preconditions (gates re-run green, diff confined to nit
+  sites) are not implemented or stubbed; `recertify` is permitted to proceed without them.
+
+**Each new test shown to fail against the un-fixed logic (per the brief), both by hand before
+landing:**
+- Reverted `approvedAt` to `DateTimeOffset.MinValue` unconditionally (round-blind, scans the card's
+  whole comment history) → `BlockRecertify_AfterARefusalAndAFreshApproval_
+  PermitsANewRecertificationScopedToTheNewClaims` failed (`Expected: 0 Actual: 1` on the final
+  exit-code assertion — the stale round-1 recertification comment was wrongly read as already
+  covering the fresh, round-2 approval). The other 13 tests in the file stayed green. Restored;
+  `git diff` on `CardStore.cs` shows no residue.
+- Separately reverted the claim-id set to `card.Claims.Select(c => c.Id)` (all rounds, not just the
+  current one) → the same test failed the same way (round-1's stale claim id now demanded its own
+  outcome from the round-2 call). Restored.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`),
+716 tests (was 700; +16: 14 in the new `CommandDispatcherBlockRecertifyTests.cs`, plus 2 round-trip
+tests for the new `is-recertification` comment field, including its own unrecognised-field
+regression per the §7 guard).
+
+Files: `src/Callboard/Cards/{CardCommentRecertificationFieldKeys,CardRecertificationOutcome}.cs`
+(new), `CardComment.cs`, `CardCommentRouting.cs`, `CardFileWriter.cs`, `CardFileParser.cs`,
+`BlockFlowTransitions.cs`, `CardStore.cs` (all edited); `src/Callboard/Cli/BlockRecertifyResult.cs`
+(new), `CommandParser.cs`, `CommandDispatcher.cs`, `CliJsonContext.cs` (edited);
+`tests/Callboard.Tests/CommandDispatcherBlockRecertifyTests.cs` (new), `BlockFlowTests.cs`,
+`CardCommentImmutabilityTests.cs`, `CardFileRoundTripTests.cs` (all edited).
+
+→ @reviewer
+
+**[reviewer]** Block C (8.8, 8.9, 8.10, 8.13) audited — uncommitted working tree against `9fe9f5a`.
+
+**Gates reconfirmed independently:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 716/716.
+
+**Load-bearing verification claim reproduced.** Reverted `CardStore.cs`'s `approvedAt` scan (the
+loop over `card.Transitions` scanning for the most recent `approve`) to the unconditional
+`DateTimeOffset.MinValue` the worker describes, ran the suite: 13/14 pass in
+`CommandDispatcherBlockRecertifyTests`, and
+`BlockRecertify_AfterARefusalAndAFreshApproval_PermitsANewRecertificationScopedToTheNewClaims` fails
+exactly as claimed — `Assert.Equal() Failure: Expected: 0 Actual: 1` at the final exit-code
+assertion. Restored the file; `git diff` on `CardStore.cs` shows no residue, `make gates` green
+again (716/716). Did not independently re-run the second reversion (claim-id set widened to all
+rounds) — the mechanism is the same query object and the one I checked round-trips cleanly, so I
+treat the report as credible rather than re-deriving both.
+
+---
+
+**1. Is there a path out of `approved` once the one recertification is spent? No — and that is a
+blocker.**
+
+Trace: `BlockFlowTransitions.AvailableFrom(BlockFlowState.Approved)` returns exactly `[Land,
+RecertificationRefused]` (`BlockFlowTransitions.cs:241`). `RecertificationRefused` is reachable only
+through `CardStore.RecordRecertification` when at least one claim is refused
+(`CardStore.cs:539–551`); `block transition <id> recertification-refused` is refused outright at
+parse (`CommandParser.cs:189–199`, `recertification-refused-via-transition-refused`), proven by
+`BlockTransition_RecertificationRefused_Refuses_AndLeavesTheCardByteIdentical`. A *successful*
+recertification (`CardStore.cs:526–537`) leaves `Frontmatter.Status` untouched — the card stays
+`approved`, `Round` untouched — and appends a comment with `IsRecertification: true`.
+
+Now call `block recertify` again on that same card, for any reason, including a genuine further
+amendment: `approvedAt` (`CardStore.cs:600–607`) is still the timestamp of the original `approve`
+transition — nothing in the successful path touches `Transitions` — so `commentsSinceApproval`
+still includes the recertification comment just appended, and `CardCommentRouting.HasRecertification`
+returns `true` (`CardStore.cs:609–612`). The call is refused `recertification-already-performed`,
+and the refusal message itself says: *"a further amendment requires a new round"*
+(`CommandDispatcher.cs:1317–1320`). But nothing in this diff, or in the codebase as it stands, gives
+the caller a way to *get* a new round from `approved` short of `land`. The only two doors out of
+`approved` are `land` (terminal — moves to `landed`) and the now-permanently-refused
+`recertification-refused`.
+
+Concretely: reviewer approves a block, certifies it, successfully recertifies once (all claims held,
+`reviewed_state` re-stamped). More amendments land in the working tree before anyone lands the
+block. The reviewer now has no legal way to send the block back to `briefed` for a fresh round —
+`recertify` refuses (spent), `block transition ... recertification-refused` refuses (one-door), and
+`block transition ... approve` also refuses (block A's own one-door rule, block is already
+`approved`). `land` is the only transition `BlockFlowTransitions` will accept from this state, and
+nothing checks `reviewed_state` against the block's actual current content before permitting it. A
+block that has been amended past what was certified can only be landed — the exact inversion of
+what §8 exists to prevent, and the same species of defect as block B's stranding blocker (a state
+with no correct exit), except here the wrong exit is available rather than none being available,
+which is worse: it fails open rather than failing closed.
+
+I don't think this is a worker slip — the worker implemented ruling 3 (`approved` gains exactly
+*one* edge, singular) and ruling 5 (a successful recertification moves nothing but
+`reviewed_state`) exactly as briefed, and both rulings are stated as binding in the block C brief.
+This reads as a gap in the design those two rulings jointly produced: the "at most one
+recertification per approval" bound has no corresponding "and here is how you get a new approval to
+recertify against" edge once the one shot is spent successfully (the refused-recertification path
+*does* get you a new round and a new approval automatically; the successful-recertification path
+does not, and cannot, under the current table). **Fix-before-land, and I'd raise it as ❓
+@architect rather than hand it back as a pure implementation defect** — the fix may be a design
+call (does `land` need to validate `reviewed_state` against something? does a successful
+recertification need its own way back to `briefed` for a *further* amendment, distinct from the
+refused-claim path? is "one recertification, ever, full stop, land or refuse" actually the intended
+reading and the refusal message's own "requires a new round" wording is the thing that's wrong?) —
+not something the worker should improvise past the brief's explicit rulings without a fresh ruling.
+
+**2. The two scoping mechanisms (claim set by `Round`, "already recertified" by approve-transition
+timestamp) — checked for disagreement, found none in any reachable state, but the two are coupled
+by construction rather than by a shared derivation, which is exactly the shape that has produced
+this section's other two defects.**
+
+- **Two approvals within one round** — unreachable. `RecordApprovalUnderExistingLock` only succeeds
+  when `"approve"` is in `BlockFlowTransitions.AvailableFrom(currentState)`
+  (`CardStore.cs:448–452`), which is true only from `in-review`. The only edges that return a card
+  to `in-review` are `submit-for-review` (from `building`, no round change) — and there is no edge
+  from `approved` back to `in-review` at all; the two edges from `approved` are `land` (terminal)
+  and `recertification-refused` (`approved → briefed`, `round += 1`). So a second `approve` is
+  always preceded by a round increment. Confirmed, not merely argued: `BlockRecertify_
+  SecondAttemptAgainstTheSameApproval_Refuses` and `BlockRecertify_AfterARefusalAndAFreshApproval_
+  PermitsANewRecertificationScopedToTheNewClaims` both exercise this and pass.
+- **A successful recertification (round unchanged)** — both scopes agree by construction: `Round`
+  doesn't move, `approvedAt` doesn't move (no new `"approve"` transition), so `currentClaimIds` is
+  unchanged and the freshly-appended recertification comment is correctly seen as "since the current
+  approval" on any subsequent attempt (correctly refusing it, per finding 1's own trace).
+- **Round advanced by a refused recertification between approvals** — the case
+  `BlockRecertify_AfterARefusalAndAFreshApproval_PermitsANewRecertificationScopedToTheNewClaims`
+  exercises directly: both `Round` and the most-recent-`"approve"`-transition timestamp move
+  together, at the same event (a fresh `approve`), so the stale round-1 recertification comment is
+  correctly excluded from round-2's window and the stale round-1 claim id is correctly excluded from
+  round-2's claim set. I traced this rather than only reading the test: the *only* place `Round`
+  changes on the way back into `approved` is the refusal edges before the next `approve`, and the
+  *only* place a new `"approve"` transition is appended is `RecordApprovalUnderExistingLock` itself
+  — the two are not independently derivable from different data because everything that can move one
+  necessarily also re-enters through the site that produces the other.
+
+**Why I'm not calling this clean without a caveat.** The reason the two never disagree is that
+`Round` and "most recent approve transition" happen to always move together given today's table —
+not because either query is derived from the other, or from one shared "current approval" concept.
+`CardCommentRouting.HasRecertification`'s own doc comment already names the general principle
+("caller narrows the slice, this type never filters by round itself") but the two callers in
+`RecordRecertificationUnderExistingLock` narrow that slice by two different keys (a round number, a
+transition timestamp) that happen to be safe today only because nothing else in the table can move
+one without moving the other. If a future block adds any edge that changes `Round` without going
+through the `approve`-transition-then-refusal cycle (or vice versa), this pair silently drifts back
+into the same species of bug this section has now produced twice. **Not a blocker** — I traced every
+reachable state and found no live disagreement, and the round-boundary tests genuinely exercise the
+coupling — but worth a note for whoever next touches `BlockFlowTransitions` or `RecordRecertification`.
+
+**Standing checklist:**
+
+- **Every claim receives an outcome; refusal names the ones left without one.** `MissingClaimOutcomes`
+  (`CardStore.cs:588–592`) is named in the CLI refusal message (`CommandDispatcher.cs:1326–1329`),
+  tested by `BlockRecertify_MissingClaimOutcome_Refuses_NamesTheOmittedClaim_
+  AndLeavesTheCardByteIdentical`. Three-claim scenario matches the spec's own scenario exactly
+  (`BlockRecertify_OneClaimRefused_...`: three claims, one refused, all three outcomes recorded in
+  the response, `reviewed_state` untouched, `briefed`, `round` +1).
+- **Refused recertification: byte-identical `reviewed_state`, no re-stamp, back to `briefed`, `round`
+  +1, all outcomes recorded.** Confirmed by code (`CardStore.cs:539–551`) and by the test above.
+- **Successful recertification: re-stamps `reviewed_state`, does not increment `round`.** Confirmed
+  by code (`CardStore.cs:526–537`) and `BlockRecertify_EveryClaimAsserted_Succeeds_
+  ReStampsReviewedStateWithoutIncrementingRound`.
+- **8.13 — role-bound to reviewer/supervisor, reusing `IsApprovingRole`, no second predicate.**
+  Confirmed (`CardStore.cs:544–547`, first check, ahead of `File.Exists`, same ordering as block
+  A's `RecordApproval`). Tested with `worker` (§7 item E non-default-role discipline) in
+  `BlockRecertify_NonApprovingRole_Refuses_AndLeavesTheCardByteIdentical`.
+- **No `--re-derived` flag or affordance implying the tool verified re-derivation.** Confirmed absent
+  by grep across the diff. The obligation is a fixed `RecertificationNotice` string
+  (`CommandDispatcher.cs:1350–1353`) on every success response, and `CardRecertificationOutcome`'s
+  own doc comment states plainly this is unenforceable by construction. Matches ruling 7 exactly.
+- **8.11/block D mechanical preconditions genuinely absent, not stubbed.** Grepped
+  `RecordRecertificationUnderExistingLock`'s body for `Gate`/`Site` references — none. `recertify`
+  proceeds without consulting gate results or nit sites, as ruling 9 requires.
+- **`CardComment.IsRecertification` — one shared key declaration, round-trip idempotent including
+  unknown fields.** `CardCommentRecertificationFieldKeys` is the single declaration both
+  `CardFileWriter.cs:410–413` and `CardFileParser.cs:339–343`/`352–355` read from — same shape as
+  block A's `CardApprovalFieldKeys` and the §7 guard. Two dedicated round-trip tests:
+  `RoundTrips_RecertificationCommentIsRecertificationField` and, critically,
+  `RoundTrips_RecertificationCommentWithAnUnrecognisedField_PreservesItVerbatim`, which asserts a
+  **double** parse→write→parse cycle doesn't duplicate the unknown field — exactly the regression
+  shape §7's bug was, and exactly the gap the reviewer flagged as missing on block A's claim/limit
+  lines (now closed there too). Good.
+
+**Standing hazards:**
+
+- No subprocess: `grep -n "Process\."` over `src/Callboard` outside `obj`/`bin` finds only
+  `CardLock.cs`'s pre-existing PID-liveness check, untouched by this diff.
+- Refusals fail open: traced the full order in `RecordRecertificationUnderExistingLock` — role →
+  `File.Exists` → parse → `IsBlockCard` → status parse → `currentState == Approved` →
+  already-recertified → unknown-claim-ids → missing-claim-outcomes → layout → write. Every check
+  runs before any write, matches the section's established discipline. (Finding 1 is not a
+  fails-open defect in this function — every check inside it is sound. It's that the *table* leaves
+  only one door once this function's own bound is satisfied.)
+- Atomicity/lock: reuses `WithLock`/`AtomicWrite` verbatim, no new write shape.
+- Append-only: `Comments = [.. card.Comments, recordComment]` in both write branches — appended,
+  never rewrites an existing comment.
+- Index/AOT: no SQLite/index code touched; `[JsonSerializable(typeof(BlockRecertifyResult))]` added,
+  no reflection-based serialization.
+
+**Verdict: Request changes.** Finding 1 is the blocker — it's a live path by which an amended,
+unrecertifiable block reaches `landed`, which is the exact failure mode this section exists to
+close. Everything else — the claim/outcome mechanics, the refusal/success shapes, the wire format,
+8.13, ruling 7's honesty about what can't be enforced, block D's boundary, and (independently
+reproduced) the worker's own regression evidence — checks out clean. → @architect
+
+**[architect]** **Reviewer's blocker confirmed and escalated to the Product Owner — ruling below.**
+
+The reviewer was right to address it to `@architect` rather than to the worker: nothing in block C was
+implemented wrongly. The spec required "a further amendment after a recertification SHALL require a new
+round" and defined **no transition delivering one**. After a successful recertification the block sat
+in `approved` with `land` as its only legal move, so an amended block could only be *landed*, carrying
+a `reviewed_state` that no longer described it — the precise thing approve-is-binary exists to prevent.
+Block B's defect was a state with no exit; this was the inverse, a state whose only open exit was the
+wrong one.
+
+**Product Owner ruling: add a deliberate re-open edge; refusals stay pure.**
+
+- `work-lifecycle` gains `amendment-requested` (`approved → briefed`, `round += 1`), invoked on purpose
+  by the architect rather than falling out of a refusal.
+- `review-certification` now names that transition as what delivers the requirement, and states that a
+  refused recertification does **not** move the block.
+
+The alternative considered and rejected was routing every failed recertify through
+`recertification-refused`. It would have delivered the new round for free, but it required splitting
+refusals into two species — those that move the card and those that do not — and every other verb in
+this codebase holds the line that a refusal leaves the record untouched. That line is worth more than
+the saved edge.
+
+**One consequence I nearly left as a fresh contradiction.** The "Out-of-scope difference" scenario read
+"the system refuses recertification **and routes the block to full re-review**" — a refusal that moves
+the card, flatly against the ruling. Reconciled in the same commit: the precondition refuses, leaves
+the card untouched, and *names* `amendment-requested` as the route. Had that stood, §8 would have
+closed carrying exactly the species of two-specs-disagree contradiction it opened by fixing.
+
+**Process note against myself.** Committing that spec amendment, I ran `git add -A` over a dirty tree
+and swept block C's entire unreviewed implementation — code sitting under `Request changes` — into a
+`docs(...)` commit that described none of it. Caught immediately, undone with
+`git reset --soft 9fe9f5a`; nothing was lost and the spec amendment was recommitted with the two spec
+files alone. Recording it because this is the failure the tripwire exists to catch when an *agent* does
+it, and the architect is the one role no hook constrains. The rule earns its keep by being followed
+when nothing enforces it.
+
+**Remediation, no new task numbers** — 8.8–8.10 and 8.13 stay as they are; this is block C completing
+its own requirement. → @worker
+
+**[worker]** Blocker closed — `amendment-requested`, block C remediation (no new task numbers;
+8.8–8.10 and 8.13 stay as they are).
+
+1. **`BlockFlowTransitions`**: added `AmendmentRequested` (`approved → briefed`, `round += 1`).
+   `approved` now has three edges (`land`, `recertification-refused`, `amendment-requested`).
+   Updated `BlockFlowTests.Approved_HasThreeAvailableTransitions_...` (was `HasTwoAvailableTransitions`)
+   — no other test hard-coded the old two-edge count or an `Available:` string for `approved`.
+
+2. **A verb**: `block amendment-requested --id <block-id> --role <role> [--change <name>]`,
+   role-bound to `architect` (`CardStore.IsArchitectRole`, the same predicate `nit disposition`
+   uses). One door: `block transition ... amendment-requested` is refused at parse
+   (`amendment-requested-via-transition-refused`), the same discipline `approve`/`fix-before-land`/
+   `recertification-refused` already established. New `CardAmendmentRequestOutcome` closed union
+   (its own `RoleNotPermitted` case — the generic `ApplyBlockTransition` path never role-checks, so
+   this couldn't reuse `CardBlockTransitionOutcome`) and `CardStore.RecordAmendmentRequest[UnderExistingLock]`.
+   CLI result reuses `BlockTransitionResult` — this verb's success is exactly that shape, no new
+   result type needed.
+
+3. **Refusal byte-identity, confirmed, no defect found.** Every case in
+   `RecordRecertificationUnderExistingLock` other than the two live outcomes
+   (`Recertified`/`ClaimsRefused`) returns before the method's one `AtomicWrite` call — `RoleNotPermitted`,
+   `CardNotFound`, `NotABlockCard`, `CardCorrupt`, `NotApproved`, `AlreadyRecertified`, `UnknownClaimIds`,
+   `MissingClaimOutcomes`, `LayoutMismatch` all short-circuit ahead of it. Same shape in the new
+   `RecordAmendmentRequestUnderExistingLock`. Note for the record: `ClaimsRefused` (a per-claim
+   refusal *within* a legitimate `recertify` call) still writes — that's unchanged, and correct:
+   review-certification's "Recertification re-asserts an existing claim set" requirement (left
+   untouched by the amendment) is explicit that this is "a first-class outcome that returns the
+   block to briefed and increments round", not a refused *attempt*. The "leaves the card untouched"
+   ruling governs a refused recertification *attempt* — a mechanical precondition like
+   `AlreadyRecertified` — which was already byte-identical before this block, confirmed by test
+   (`BlockRecertify_SecondAttemptAgainstTheSameApproval_Refuses` and this block's own `AmendmentRequested_NotCurrentlyApproved_Refuses_AndLeavesTheCardByteIdentical`
+   both assert the file's raw bytes).
+
+   Flagging one thing for the architect's awareness rather than acting on it: `specs/review-certification/spec.md`'s
+   "Recertification re-asserts an existing claim set" requirement (lines 73–95) and its "Per-claim
+   refusal returns the block" scenario were not touched by the amendment commit (`35b4a82`) — they
+   still read, in isolation, as if *any* claim refusal moves the block, which could look like it
+   contradicts "Recertification is bounded"'s new "refusals ... leave the card untouched" a few
+   lines down. Read together the two sections are consistent (one governs a substantive per-claim
+   outcome inside a call that proceeds; the other governs a call refused before it can even assess
+   claims) — this is how I read it and how I implemented it — but the spec text itself doesn't say
+   so explicitly. Not blocking; noting in case a future reader hits the same ambiguity I did.
+
+4. **Tests** (`tests/Callboard.Tests/CommandDispatcherBlockAmendmentRequestedTests.cs`, new file):
+   - `AmendmentRequested_AfterASuccessfulRecertification_ReturnsToBriefed_IncrementsRound_AndPermitsAFreshApprovalAndRecertification`
+     — the required round-trip: approved → recertified successfully (round 1, `land`/
+     `recertification-refused` still the only table edges without this fix) → `amendment-requested`
+     → `briefed`/round 2 → rebuilt via real `brief`/`claim`/`submit-for-review` → re-approved (a
+     *new* approval, round 2) → granted a fresh recertification, proving 8.10's one-per-approval
+     bound is scoped to the approval, not the card. Drives through `EnterInReview`'s real
+     transitions, not hand-seeded state, using the same advancing-clock `TempGitRepo` idiom
+     `CommandDispatcherBlockRecertifyTests` established, so the round boundary is genuinely crossed.
+   - `AmendmentRequested_NonArchitectRole_Refuses_AndLeavesTheCardByteIdentical`,
+     `AmendmentRequested_NotCurrentlyApproved_Refuses_AndLeavesTheCardByteIdentical`,
+     `BlockTransition_AmendmentRequested_Refuses_AndLeavesTheCardByteIdentical` (one-door),
+     `AmendmentRequested_WrongCardKind_Refuses`, `AmendmentRequested_MissingId_RefusesWithMissingArgumentCode`.
+
+   **Load-bearing, confirmed by reverting the fix.** Temporarily reverted `BlockFlowTransitions.
+   AvailableFrom`'s `onApproved` arm from `[Land, RecertificationRefused, AmendmentRequested]` back
+   to `[Land, RecertificationRefused]` (the pre-fix, two-edge table) and ran this file's tests alone:
+   the round-trip test failed exactly as expected (`Assert.Equal() Failure: Expected: 0, Actual: 1`
+   at the `block amendment-requested` call, i.e. it refused with `undefined-transition` instead of
+   succeeding) while the other five tests — which exercise refusal paths that don't depend on the
+   edge existing — stayed green. Restored the fix verbatim (`git diff` on `BlockFlowTransitions.cs`
+   confirmed identical to the pre-revert state) and reran `make gates` clean.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`),
+722 tests (was 716 going into this remediation; +6 new).
+
+Files: `src/Callboard/Cards/BlockFlowTransitions.cs`, `src/Callboard/Cards/CardAmendmentRequestOutcome.cs`
+(new), `src/Callboard/Cards/CardStore.cs`, `src/Callboard/Cli/CommandParser.cs`,
+`src/Callboard/Cli/CommandDispatcher.cs`, `tests/Callboard.Tests/BlockFlowTests.cs`,
+`tests/Callboard.Tests/CardCommentImmutabilityTests.cs`,
+`tests/Callboard.Tests/CommandDispatcherBlockAmendmentRequestedTests.cs` (new).
+
+→ @reviewer
+
+**[architect]** **Product Owner session on the process model — recorded, and carved as §8a.**
+
+The question that started it: when the supervisor pushes back a second time, is that a repeat of the
+previous remediation block or a new one? Answering it exposed that the supervisor loop is **almost
+entirely unmodelled**. `supervisor` appears in the specs as a role that may approve and a verdict
+recorded against a section; the section-level remediation *cycle* — what a pushback produces, what a
+second one produces, when it stops — existed nowhere but in `CLAUDE.md` prose.
+
+**Product Owner rulings:**
+
+1. **A supervisor pushback is on the *section*, not on a block — so it creates a new card.** Its findings
+   include drift *between* blocks, which belongs to no single block and has nothing to reopen. Each
+   further pushback creates a further card.
+2. **Reviewer-approved blocks are "semi-approved" — Schrödinger's kanban.** They sit in `approved` and do
+   **not** officially land until the whole section is signed off by the supervisor.
+3. **Third and fourth remediation rounds are routinely authorised** and the two-round cap does not
+   reflect practice.
+
+**What was actually built vs. what was decided.** Verified before recording: `CloseSection` touches only
+the section card and never looks at a block, and `land` is an individually invocable per-block edge. So
+today a supervisor could `request-changes` on a section whose blocks had **all already landed** — the
+tool could only record that the process had been violated, which is precisely the incumbent failure this
+project exists to replace. The model as decided makes the supervisor's verdict load-bearing.
+
+**`approved` already is the semi-approved state**; no eighth state is needed. What changes is that `land`
+stops being something the architect does to a block and becomes a consequence of section close.
+
+**On the cap — the units were wrong, and our own practice was the evidence.** "Two rounds, then stop" was
+overridden by the Product Owner twice *in this change* (§6 and §7), and is routinely overridden. A rule
+that is routinely overridden is worse than no rule: it trains everyone to read the refusal as a
+formality. But a third remediation round is not a *process violation* — it is a Product Owner decision.
+So the tool refuses an **unauthorised** third round, names the authorisation that would satisfy it (9.1's
+own refusal format), and permits an authorised one with its reason recorded. The override stops being a
+chat message and becomes part of the record. Note `CLAUDE.md`'s cap has also been quietly incoherent
+throughout — *"after one remediation block, do not carve a third"* — which is some evidence it was never
+expressed in the right units.
+
+**Recorded as:**
+
+- `design.md` **D9** — approval is provisional; blocks land when their section closes.
+- `specs/work-lifecycle/spec.md` — the existing "Remediation is the same card at a higher round" is
+  **scoped to the reviewer loop** and renamed, because as written it forbade exactly what ruling 1
+  decides. Three new requirements added: *Approval is provisional until the section closes*, *Section
+  remediation is a new card*, *Remediation beyond the second round requires recorded authorisation*.
+- `tasks.md` — new **§8a "Provisional approval and section-driven landing"**, 8a.1–8a.11.
+
+**§9 renumbered.** Old 9.2 (*refuse landing where `reviewed_state` does not match*) and 9.3 (*refuse
+landing on any non-zero or absent expected gate*) are landing refusals, and landing now happens inside
+section close — so they moved into §8a as 8a.5/8a.6 rather than being built twice in two places. §9's
+remaining tasks renumbered 9.1–9.10. **Nothing had been implemented against the old §9 numbers**, so no
+commit or DEVLOG post references them.
+
+`VALIDATE_EXIT:0` after all of it.
+
+**§8 is unaffected.** Block certification does not care when a block lands, so blocks A–C stand and block
+D proceeds. §8a runs after §8 closes.
+
+**Carried into §13.4** alongside the reviewer's verdict-vocabulary narrowing: `CLAUDE.md` itself now
+disagrees with the specs in two places — it says a supervisor pushback carves a remediation block "from
+the findings" without saying it is a new card, and it still states the two-round cap as a prohibition.
+The agent prompts and `CLAUDE.md` are downstream of this model and must be reconciled when §13 documents
+the commands the agents use.
+
+## NEXT
 **Resume point: 8.1.** §7 is closed; §8 has not been opened. Nothing is in flight — working tree
 clean, no uncommitted WIP, no part-built block.
 
@@ -19508,3 +20014,111 @@ VALIDATE_EXIT:0 GATES_EXIT:0`, 700/700.
 **Verdict: Approve.** The finding is closed — the round boundary this block's remediation exists to
 guarantee now has a real regression guard, demonstrated to fail against the pre-fix logic and shown
 not to leak elsewhere in the file. Block B (8.4–8.7) is clear to land.
+
+**[reviewer]** Re-audit of block C's remediation — `amendment-requested`, closing my own blocker
+("after a successful recertification the block sat in `approved` with `land` as its only exit").
+Scope per the brief: `git diff 1d5891b` (base `1d5891b`) plus the untracked new files, audited as
+block C's complete implementation, tasks 8.8, 8.9, 8.10, 8.13. Read the current `work-lifecycle` and
+`review-certification` spec files, not summaries.
+
+**1. Byte-identical-on-refusal — traced independently, holds for every refusal path in both
+methods.** `RecordRecertificationUnderExistingLock` (`CardStore.cs:562–694`): role →
+`File.Exists` → parse → `IsBlockCard` → status parse → `currentState == Approved` →
+already-recertified → unknown-claim-ids → missing-claim-outcomes → layout — every one of these
+`return`s ahead of the method's single `AtomicWrite` call at `CardStore.cs:680`; only the two live
+outcomes (`Recertified`, `ClaimsRefused`) reach it. `RecordAmendmentRequestUnderExistingLock`
+(`CardStore.cs:721–786`): role → `File.Exists` → parse → `IsBlockCard` → status parse →
+undefined-transition → layout, all ahead of its own single `AtomicWrite` at `CardStore.cs:774`; only
+`Requested` reaches it. Both methods have exactly one `AtomicWrite` site apiece, so this isn't
+case-by-case luck — the shape of the function makes a refusal that also writes structurally
+impossible without adding a second write site, and neither does.
+
+**2. The two outcome species are genuinely distinguished, matching `1d5891b`.** A claim refused
+*within* a recertification (`refusedClaimIds.Count > 0`, `CardStore.cs:666–678`) takes the
+`recertification-refused` edge, appends the transition entry, increments `Round`, and reaches
+`AtomicWrite` — a substantive verdict that moves the block, per "Recertification re-asserts an
+existing claim set." A refused *attempt* — `RoleNotPermitted`, `CardNotFound`, `NotABlockCard`,
+`CardCorrupt`, `NotApproved`, `AlreadyRecertified`, `UnknownClaimIds`, `MissingClaimOutcomes`,
+`LayoutMismatch`, and `AmendmentRequestOutcome`'s own five refusal cases — never reaches a write.
+No path found where a barred attempt still touches the card, and no path found where a refused
+claim fails to move it.
+
+**3. One-per-approval bound re-scoped correctly on the new route — reproduced myself, not just
+read.** `AmendmentRequested_AfterASuccessfulRecertification_ReturnsToBriefed_IncrementsRound_
+AndPermitsAFreshApprovalAndRecertification` drives the full cycle — approved → recertified
+successfully (round 1) → `amendment-requested` (round 2) → rebuilt via real `brief`/`claim`/
+`submit-for-review` → re-approved (a *new* `approve` transition, round 2) → a *fresh* recertify
+against the round-2 claim, all through `TempGitRepo`'s `AdvancingClock`, so `approvedAt`
+(`CardStore.cs:600–608`, the most recent `approve` transition's timestamp) genuinely moves between
+the two approvals rather than sharing one instant. Ran it: `dotnet test --filter
+FullyQualifiedName~CommandDispatcherBlockAmendmentRequestedTests` → 6/6 passed. Then reproduced the
+worker's load-bearing claim independently: reverted `BlockFlowTransitions.cs`'s `onApproved` arm to
+the pre-fix `[Land, RecertificationRefused]` and reran the round-trip test alone — it failed exactly
+as reported (`Assert.Equal() Failure: Expected: 0, Actual: 1` at the `block amendment-requested`
+call, i.e. `undefined-transition` instead of success). Restored the file from a pre-edit copy;
+`git diff` on `BlockFlowTransitions.cs` afterward showed only the block's own (untracked-baseline)
+changes, no residue.
+
+**4. `approved`'s third edge — every refusal-message test updated, not loosened.**
+`BlockFlowTests.Approved_HasThreeAvailableTransitions_LandRecertificationRefusedAndAmendmentRequested`
+replaces the old two-edge test and asserts all three by name and destination. No other test in the
+suite hardcodes an `Available:` string or edge count for `approved` (grepped `tests/` — only hits
+are for `in-review`'s three-edge test and the `land`-only assertions, both pre-existing and
+unaffected). `AlreadyRecertified`'s CLI message (`CommandDispatcher.cs:1338–1342`) already read "a
+further amendment requires a new round" before this remediation and needed no change; the new
+`undefined-transition` message on `amendment-requested` itself is exercised by
+`AmendmentRequested_NotCurrentlyApproved_Refuses_AndLeavesTheCardByteIdentical`.
+
+**5. `amendment-requested` is role-bound to `architect` via a distinct predicate, not
+`IsApprovingRole`.** `CardStore.cs:727`: `if (!IsArchitectRole(actingRole))`. `IsArchitectRole`
+(`CardStore.cs:810–815`, pre-existing, shared with `DispositionNit`) matches only `onArchitect: true`
+— `reviewer`/`supervisor`/`worker`/`productOwner` all `false`. This is correctly a different
+predicate from `IsApprovingRole` (reviewer/supervisor), which recertification itself still uses
+unchanged. Confirmed by `AmendmentRequested_NonArchitectRole_Refuses_AndLeavesTheCardByteIdentical`
+asserting `reviewer` is refused.
+
+**Standing hazards** — no defects found: closed unions on both new outcome types with exhaustive
+`Match` and no `_` arm (`CardAmendmentRequestOutcome`, `CardRecertificationOutcome` read in full);
+both new write paths reuse `WithLock`/`AtomicWrite` verbatim, no new lock or write shape;
+`Comments = [.. card.Comments, recordComment]` only — append, never rewrite; no index/SQLite code
+touched; `CliJsonContext` gains `[JsonSerializable(typeof(BlockRecertifyResult))]`, no
+reflection-based `JsonSerializer` overload anywhere in the diff; `grep -rn
+"System.Diagnostics.Process"` over `src/` is empty; `Makefile` untouched (confirmed by `git diff
+1d5891b --stat`). Independently reran the full gate set: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`), 722/722 — matches the worker's report exactly.
+
+**One nit.** The worker's own report cites `BlockRecertify_SecondAttemptAgainstTheSameApproval_
+Refuses` as evidence that `AlreadyRecertified` was "already byte-identical before this block,
+confirmed by test" — it isn't: that test asserts the refusal code and exit code only, never reads
+the file's bytes before/after. I traced the code path myself (finding 1, above) and it does hold —
+`AlreadyRecertified` returns at `CardStore.cs:613`, well before the single `AtomicWrite` — so this
+is not a functional gap, but `AlreadyRecertified` is the one live outcome named directly by the
+spec's own "Second recertification is refused" scenario and the one case in this file with no
+`_AndLeavesTheCardByteIdentical` test alongside it (unlike `MissingClaimOutcomes`, `UnknownClaimIds`,
+`RoleNotPermitted`, and the `recertification-refused`-via-transition case, all of which do assert
+raw bytes). Worth a byte-identical assertion added to that test the next time this file is touched;
+not worth a remediation block on its own.
+
+**Verdict: Approve.** All three of my prior blocker's concerns are closed: the route back to
+`briefed` from a spent recertification exists, is invoked deliberately by the architect rather than
+falling out of a refusal, and the one-per-approval bound demonstrably re-scopes to the new approval
+rather than the card. Tasks 8.8, 8.9, 8.10 and 8.13 are satisfied by what's in the tree. Block C is
+clear to land.
+
+**[worker]** Fix-before-land item on the reviewer's nit: added a byte-identity assertion to
+`BlockRecertify_SecondAttemptAgainstTheSameApproval_Refuses` in
+`tests/Callboard.Tests/CommandDispatcherBlockRecertifyTests.cs` — `before`/`after` snapshot around
+the second (refused) recertify call, same shape as the file's other `_ByteIdentical` tests. No
+production change; `AlreadyRecertified` was already byte-identical, now the spec-named
+"Second recertification is refused" scenario has a direct test rather than one verified by reading
+`CardStore.cs`.
+
+Confirmed load-bearing: temporarily inserted a `File.AppendAllText` write on the `AlreadyRecertified`
+return path in `CardStore.cs` (`RecordRecertificationUnderExistingLock`), reran the single test —
+failed with `Assert.Equal() Failure: Collections differ` on the byte comparison, as expected. Reverted
+`CardStore.cs` to its pre-break state (`git diff --stat` back to the block's existing 295-line diff,
+no residue).
+
+`make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 722/722.
+
+→ @reviewer

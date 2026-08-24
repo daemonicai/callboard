@@ -90,20 +90,32 @@
 - [ ] 8.12 Test that green preconditions confer no claim until a reviewer asserts it
 - [ ] 8.13 Restrict approval and recertification to `reviewer` and `supervisor`
 
+## 8a. Provisional approval and section-driven landing
+
+- [ ] 8a.1 Scope reviewer remediation to the same card, distinct from section remediation
+- [ ] 8a.2 Refuse `land` as an individually invocable transition, naming section close as the only door
+- [ ] 8a.3 Implement section close landing every block in the section as one write, or landing none
+- [ ] 8a.4 Refuse section close where any block is not `approved`
+- [ ] 8a.5 Refuse section close where any block's `reviewed_state` does not match its current state
+- [ ] 8a.6 Refuse section close on any block carrying a non-zero or absent expected gate
+- [ ] 8a.7 Implement a supervisor `request-changes` creating a new remediation block card in the section
+- [ ] 8a.8 Retain every supervisor verdict against the section, never overwriting an earlier one
+- [ ] 8a.9 Refuse a third or subsequent remediation card absent a recorded Product Owner authorisation
+- [ ] 8a.10 Implement recording that authorisation, naming the section and the reason
+- [ ] 8a.11 Test that `landed` is unreachable except through the block's section closing
+
 ## 9. Process enforcement
 
 - [ ] 9.1 Implement the refusal reporting format: name the rule, state what would satisfy it, record role and timestamp
-- [ ] 9.2 Refuse landing where `reviewed_state` does not match the current state
-- [ ] 9.3 Refuse landing on any non-zero or absent expected gate
-- [ ] 9.4 Refuse approval from a role other than reviewer or supervisor
-- [ ] 9.5 Refuse leaving `in-review` with threads addressed to the acting role unresolved
-- [ ] 9.6 Refuse section close over open obligations owed by that section
-- [ ] 9.7 Refuse section close over open undeferred questions
-- [ ] 9.8 Refuse section close over unresolved addressed threads, and surface threads older than one round as a prompt
-- [ ] 9.9 Refuse marking a question answered without a decision reference or an inline answer
-- [ ] 9.10 Refuse advancing a card blocked by an open Product Owner question
-- [ ] 9.11 Refuse archive over open change-scoped obligations owed by no remaining section
-- [ ] 9.12 Add a test per refusal rule demonstrating it fires, per the amended S5
+- [ ] 9.2 Refuse approval from a role other than reviewer or supervisor
+- [ ] 9.3 Refuse leaving `in-review` with threads addressed to the acting role unresolved
+- [ ] 9.4 Refuse section close over open obligations owed by that section
+- [ ] 9.5 Refuse section close over open undeferred questions
+- [ ] 9.6 Refuse section close over unresolved addressed threads, and surface threads older than one round as a prompt
+- [ ] 9.7 Refuse marking a question answered without a decision reference or an inline answer
+- [ ] 9.8 Refuse advancing a card blocked by an open Product Owner question
+- [ ] 9.9 Refuse archive over open change-scoped obligations owed by no remaining section
+- [ ] 9.10 Add a test per refusal rule demonstrating it fires, per the amended S5
 
 ## 10. Working context and derived state
 

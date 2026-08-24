@@ -161,6 +161,34 @@ treats "no active change" as a failure rather than a silent pass — an empty ru
 
 `osx-arm64` is the only runtime identifier. Add others when CI or a second machine needs them.
 
+### D9 — Approval is provisional; blocks land when their section closes
+
+A block that clears its reviewer sits in `approved`, not `landed`. `approved` records that a reviewer
+certified the work; it does not record that the process accepted it, and only the supervisor's section
+verdict establishes that. Blocks therefore land as a consequence of their section closing — all of them,
+or none — rather than one at a time as each is committed.
+
+This makes the two review loops the same shape one level apart, and it makes the supervisor's verdict
+load-bearing rather than advisory: today a supervisor could request changes on a section whose blocks
+had all already landed, and the tool could only record that this had happened.
+
+**Section remediation is a new card, not a reopened block.** The supervisor's findings are raised against
+the section — including findings about the relationship *between* blocks, which belong to no single
+block and have nothing to reopen. Each further pushback creates a further card. This is deliberately not
+the reviewer loop's rule ("remediation is the same card at a higher round"), which is now scoped to the
+block-level loop it was written for.
+
+**The two-round cap becomes an authorisation, not a prohibition.** The prose rule ("two rounds, then
+stop") was overridden by the Product Owner twice while building this change, and is routinely overridden
+in practice. A rule that is routinely overridden is worse than no rule: it trains everyone to read the
+refusal as a formality. A third remediation round is not a process violation — it is a Product Owner
+decision — so the tool refuses an *unauthorised* third round, names the authorisation that would satisfy
+it, and permits an authorised one with the reason recorded. The override stops being a chat message and
+becomes part of the record.
+
+Implemented by section 8a. `land`'s individual transition is withdrawn under the same one-door discipline
+already applied to `approve`, `fix-before-land`, `recertification-refused` and `amendment-requested`.
+
 ## Risks / Trade-offs
 
 - **Shell quoting of multi-line card bodies** → all body input arrives on stdin; no workflow may require

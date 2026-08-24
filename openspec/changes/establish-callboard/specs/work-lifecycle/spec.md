@@ -42,10 +42,14 @@ Every transition SHALL record the acting role and the time it occurred.
 - **WHEN** a role attempts to move a `drafting` block directly to `approved`
 - **THEN** the system refuses and states the transitions available from `drafting`
 
-### Requirement: Remediation is the same card at a higher round
+### Requirement: Reviewer remediation is the same card at a higher round
 
-A block returned for changes SHALL return to `briefed` with its `round` incremented, on the same card.
-The system SHALL NOT create a new card for a remediation, and a remediation SHALL NOT tick any task.
+A block returned for changes **by its reviewer** SHALL return to `briefed` with its `round` incremented,
+on the same card. The system SHALL NOT create a new card for a reviewer remediation, and a remediation
+SHALL NOT tick any task.
+
+This governs the block-level review loop only. Section-level remediation, raised by a supervisor against
+a whole section, SHALL create a new card — see "Section remediation is a new card".
 
 One card's thread SHALL therefore constitute the complete audit trail of one unit of work across all
 its rounds.
@@ -100,6 +104,80 @@ what blocked it requires no state restoration.
 - **WHEN** a `building` block is blocked on an open question and that question is later answered
 - **THEN** the block reports as blocked while the question is open, reports as unblocked afterwards, and
   is in state `building` throughout
+
+### Requirement: Approval is provisional until the section closes
+
+A block reaching `approved` SHALL NOT be treated as landed. `approved` records that the block's reviewer
+certified it; it does not record that the process accepted it, which only a supervisor's section verdict
+establishes.
+
+`land` SHALL NOT be individually invocable. A block SHALL reach `landed` only as a consequence of its
+section closing, and closing a section SHALL land every block in that section as one operation or refuse
+and land none.
+
+Closing a section SHALL refuse where any block in it is not `approved`, where any block's
+`reviewed_state` does not match that block's current state, or where any block carries an expected gate
+whose recorded exit code is non-zero or absent.
+
+#### Scenario: An approved block is not yet landed
+
+- **WHEN** a block is approved by its reviewer and its section has not closed
+- **THEN** the block's status is `approved`, and no transition available to a caller moves it to `landed`
+
+#### Scenario: Section close lands its blocks together
+
+- **WHEN** a supervisor closes a section whose blocks are all `approved` with matching `reviewed_state`
+  and green expected gates
+- **THEN** every block in that section moves to `landed`, recording the acting role and the time
+
+#### Scenario: One unlandable block refuses the whole close
+
+- **WHEN** a section is closed while one of its blocks carries a gate recorded non-zero
+- **THEN** the system refuses, names that block and that gate, and no block in the section moves to
+  `landed`
+
+### Requirement: Section remediation is a new card
+
+A supervisor verdict of `request-changes` against a section SHALL be discharged by a new `block` card in
+that section, carrying the findings as its brief. It SHALL tick no task, and it SHALL NOT reopen any
+block the reviewer already approved — a supervisor's findings are raised against the section, including
+findings about the relationship between blocks that belong to no single block.
+
+Each further `request-changes` verdict against the same section SHALL create a further card. Every
+verdict SHALL be retained against the section entity; a later verdict SHALL NOT overwrite an earlier one.
+
+#### Scenario: Supervisor findings become a new block
+
+- **WHEN** a supervisor records `request-changes` against a section
+- **THEN** the system creates a new `block` card in that section carrying the findings, ticks no task,
+  and reopens no existing block
+
+#### Scenario: A second pushback creates a second card
+
+- **WHEN** a supervisor records `request-changes` against a section that already has one remediation card
+- **THEN** the system creates a second remediation card, and both verdicts remain recorded against the
+  section
+
+### Requirement: Remediation beyond the second round requires recorded authorisation
+
+A section SHALL admit two remediation cards without ceremony. A third or subsequent remediation card
+SHALL be refused unless the refusal is discharged by a recorded Product Owner authorisation naming the
+section and the reason.
+
+The authorisation SHALL be part of the record, not a permission granted out of band. A section that will
+not converge is a signal about the section breakdown or the spec, and the reason it was pushed further
+SHALL be legible later.
+
+#### Scenario: Unauthorised third remediation is refused
+
+- **WHEN** a third remediation card is created for a section with no recorded authorisation
+- **THEN** the system refuses and states that a recorded Product Owner authorisation would satisfy it
+
+#### Scenario: Authorised third remediation proceeds
+
+- **WHEN** a Product Owner authorisation for that section is recorded and a third remediation card is
+  created
+- **THEN** the system permits it, and the authorisation and its reason are readable from the section
 
 ### Requirement: Sections are entities
 
