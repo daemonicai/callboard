@@ -99,8 +99,13 @@ claim SHALL be a first-class outcome that returns the block to `briefed` and inc
 The system SHALL permit at most one recertification per approval. A further amendment after a
 recertification SHALL require a new round, obtained through the `amendment-requested` transition
 (`work-lifecycle`), by which the architect deliberately reopens the approved block and returns it to
-`briefed` with `round` incremented. A refused recertification SHALL NOT itself move the block; refusals
-of a recertification attempt leave the card untouched.
+`briefed` with `round` incremented.
+
+Two outcomes SHALL be distinguished and SHALL NOT be conflated. A **claim refused within a
+recertification** is a substantive verdict: it moves the block, as "Recertification re-asserts an
+existing claim set" requires. A **refused recertification attempt** — one barred by the bound above, by
+a mechanical precondition, by the acting role, or by a malformed request — is not a verdict at all: it
+SHALL leave the card byte-identical, recording nothing and moving nothing.
 
 Mechanical preconditions SHALL gate recertification and SHALL be able only to refuse it, never to
 satisfy it: every gate on the card SHALL have been re-run to a passing exit code, and the difference
