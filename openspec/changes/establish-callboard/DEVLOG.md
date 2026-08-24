@@ -19502,6 +19502,54 @@ the findings" without saying it is a new card, and it still states the two-round
 The agent prompts and `CLAUDE.md` are downstream of this model and must be reconciled when §13 documents
 the commands the agents use.
 
+**[architect]** **Product Owner refinement — section remediation routes by the finding, not by the
+verdict.** This corrects what I recorded an hour ago, which was wrong in two ways.
+
+The two scenarios at a supervisor review that includes a remediation:
+
+- **the finding is still not resolved** → push **that card** back: it returns to `briefed` with `round`
+  incremented, on the same card;
+- **the finding is resolved but a new one is identified** → carve another card, because nothing owns the
+  new finding.
+
+**What I had recorded was wrong.** I wrote *"Each further `request-changes` verdict against the same
+section SHALL create a further card"* — which makes a recurrence spawn a second card for a finding that
+already has one, scattering one finding's history across N cards. And I wrote that a supervisor *"SHALL
+NOT reopen any block the reviewer already approved"*, which forbids exactly the recurrence push, since a
+remediation card **is** a reviewer-approved block. Both corrected.
+
+**The refinement makes the model smaller, not bigger.** I had recorded the section loop as a *different*
+rule from the reviewer loop. It isn't. The single rule underneath both is: **a card is the unit of work
+for a finding; a finding that recurs stays with its card; a finding that is new needs one.** The reviewer
+loop is that rule where the finding is always already owned; the section loop is that rule where it may
+not be. `work-lifecycle`'s "remediation is the same card at a higher round" is general after all — I
+scoped it to the reviewer loop this morning on the strength of my own wrong reading, and it now reads as
+the general principle with the section loop as a case of it rather than an exception to it.
+
+A supervisor still never reopens a **task-implementing** block: a first-time finding is new by
+definition, and a recurrence targets the remediation card that was meant to close it. That is now a
+refusal (8a.11), not a convention.
+
+**New transition: `finding-recurred`** (`approved → briefed`, `round += 1`) — the only transition a
+supervisor drives directly. Distinct from `amendment-requested` despite the identical From/To, by the
+precedent now set four times over: the name is persisted in the card's history, and recording a
+supervisor's recurrence push as an architect's amendment would misreport what happened. `approved` now
+has four edges.
+
+**The cap's units changed again, and this time for a reason the refinement exposed.** I had it counting
+remediation *cards*. Under the refinement that bound is not total: a section can fail to converge by the
+same finding recurring round after round after round, creating **no new cards at all**, and sail past a
+card-counting cap untouched. It now counts the section's `request-changes` **verdicts** — which sees
+accumulating findings, a recurring finding, and both at once. Derived from the section's retained
+verdicts at request time, never stored (consistent with §10's "refuse any hand-entered count").
+
+**Recorded as:** `work-lifecycle` — "Section remediation is a new card" replaced by "Section remediation
+follows the finding, not the verdict"; the cap requirement recounted by verdicts with a scenario pinning
+the recurring-finding case; `finding-recurred` added to the flow diagram and prose. `design.md` D9
+updated. `tasks.md` §8a grows to 8a.1–8a.16.
+
+`VALIDATE_EXIT:0`.
+
 ## NEXT
 **Resume point: 8.1.** §7 is closed; §8 has not been opened. Nothing is in flight — working tree
 clean, no uncommitted WIP, no part-built block.

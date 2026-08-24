@@ -172,18 +172,27 @@ This makes the two review loops the same shape one level apart, and it makes the
 load-bearing rather than advisory: today a supervisor could request changes on a section whose blocks
 had all already landed, and the tool could only record that this had happened.
 
-**Section remediation is a new card, not a reopened block.** The supervisor's findings are raised against
-the section — including findings about the relationship *between* blocks, which belong to no single
-block and have nothing to reopen. Each further pushback creates a further card. This is deliberately not
-the reviewer loop's rule ("remediation is the same card at a higher round"), which is now scoped to the
-block-level loop it was written for.
+**Section remediation is routed by the finding, not by the verdict.** A finding raised for the first time
+has no card to own it, so it gets one — including findings about the relationship *between* blocks, which
+belong to no single block and have nothing to reopen. A finding the supervisor reports as *still*
+unresolved returns the card that already owns it, at a higher round, by the `finding-recurred`
+transition. One verdict may do both.
+
+That makes the reviewer loop's rule ("remediation is the same card at a higher round") genuinely general
+rather than something the section loop contradicts: a card is the unit of work for a finding, a finding
+that recurs stays with its card, and a finding that is new needs one. A supervisor never reopens a
+task-implementing block — a first-time finding is new by definition, and a recurrence targets the
+remediation card that was meant to close it.
 
 **The two-round cap becomes an authorisation, not a prohibition.** The prose rule ("two rounds, then
 stop") was overridden by the Product Owner twice while building this change, and is routinely overridden
 in practice. A rule that is routinely overridden is worse than no rule: it trains everyone to read the
 refusal as a formality. A third remediation round is not a process violation — it is a Product Owner
 decision — so the tool refuses an *unauthorised* third round, names the authorisation that would satisfy
-it, and permits an authorised one with the reason recorded. The override stops being a chat message and
+it, and permits an authorised one with the reason recorded. The bound counts the section's
+`request-changes` **verdicts**, not its remediation cards: a section can fail to converge by
+accumulating new findings, by one finding recurring round after round, or by both, and only the verdict
+count sees all three. The override stops being a chat message and
 becomes part of the record.
 
 Implemented by section 8a. `land`'s individual transition is withdrawn under the same one-door discipline

@@ -98,11 +98,16 @@
 - [ ] 8a.4 Refuse section close where any block is not `approved`
 - [ ] 8a.5 Refuse section close where any block's `reviewed_state` does not match its current state
 - [ ] 8a.6 Refuse section close on any block carrying a non-zero or absent expected gate
-- [ ] 8a.7 Implement a supervisor `request-changes` creating a new remediation block card in the section
-- [ ] 8a.8 Retain every supervisor verdict against the section, never overwriting an earlier one
-- [ ] 8a.9 Refuse a third or subsequent remediation card absent a recorded Product Owner authorisation
-- [ ] 8a.10 Implement recording that authorisation, naming the section and the reason
-- [ ] 8a.11 Test that `landed` is unreachable except through the block's section closing
+- [ ] 8a.7 Implement a first-time supervisor finding creating a new remediation block card, ticking nothing
+- [ ] 8a.8 Implement `finding-recurred` returning the owning card to `briefed` at a higher round
+- [ ] 8a.9 Refuse a recurrence that would create a second card for a finding a card already owns
+- [ ] 8a.10 Implement one verdict both returning a card for a recurrence and creating one for a new finding
+- [ ] 8a.11 Refuse `finding-recurred` targeting a task-implementing block
+- [ ] 8a.12 Retain every supervisor verdict against the section, never overwriting an earlier one
+- [ ] 8a.13 Refuse a third or subsequent `request-changes` verdict absent a recorded Product Owner authorisation
+- [ ] 8a.14 Derive the verdict count from the record at request time, never storing it
+- [ ] 8a.15 Implement recording that authorisation, naming the section and the reason
+- [ ] 8a.16 Test that `landed` is unreachable except through the block's section closing
 
 ## 9. Process enforcement
 

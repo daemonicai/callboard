@@ -17,13 +17,18 @@ drafting ──▶ briefed ──▶ building ──▶ in-review ──┬─�
                 ├──── changes-requested ◀─────────┤        │
                 ├──── fix-before-land ◀───────────┘        │
                 ├──── recertification-refused ◀────────────┤
-                └──── amendment-requested ◀────────────────┘
-                            (round += 1 on all four)
+                ├──── amendment-requested ◀────────────────┤
+                └──── finding-recurred ◀───────────────────┘
+                            (round += 1 on all five)
 ```
 
-`changes-requested` and `fix-before-land` both leave `in-review`; `recertification-refused` and
-`amendment-requested` both leave `approved`. They are distinct named transitions because the name is
-recorded in the card's history — see `review-certification` for what raises each.
+`changes-requested` and `fix-before-land` both leave `in-review`; `recertification-refused`,
+`amendment-requested` and `finding-recurred` all leave `approved`. They are distinct named transitions
+because the name is recorded in the card's history — see `review-certification` for what raises each.
+
+`finding-recurred` is a supervisor returning a remediation card whose finding it reports still
+unresolved; it is the only transition a supervisor drives directly, and it never targets a
+task-implementing block.
 
 `amendment-requested` is the architect deliberately reopening an approved block for a further
 amendment. It is the transition that delivers `review-certification`'s "a further amendment after a
@@ -49,7 +54,8 @@ on the same card. The system SHALL NOT create a new card for a reviewer remediat
 SHALL NOT tick any task.
 
 This governs the block-level review loop only. Section-level remediation, raised by a supervisor against
-a whole section, SHALL create a new card — see "Section remediation is a new card".
+a whole section, is routed by whether a card already owns the finding — see "Section remediation
+follows the finding, not the verdict".
 
 One card's thread SHALL therefore constitute the complete audit trail of one unit of work across all
 its rounds.
@@ -136,47 +142,75 @@ whose recorded exit code is non-zero or absent.
 - **THEN** the system refuses, names that block and that gate, and no block in the section moves to
   `landed`
 
-### Requirement: Section remediation is a new card
+### Requirement: Section remediation follows the finding, not the verdict
 
-A supervisor verdict of `request-changes` against a section SHALL be discharged by a new `block` card in
-that section, carrying the findings as its brief. It SHALL tick no task, and it SHALL NOT reopen any
-block the reviewer already approved — a supervisor's findings are raised against the section, including
-findings about the relationship between blocks that belong to no single block.
+A supervisor verdict of `request-changes` against a section SHALL be discharged per finding, and each
+finding SHALL be routed by whether a card already owns it.
 
-Each further `request-changes` verdict against the same section SHALL create a further card. Every
-verdict SHALL be retained against the section entity; a later verdict SHALL NOT overwrite an earlier one.
+A finding raised for the first time has no card to own it and SHALL create a new `block` card in that
+section, carrying the finding as its brief. It SHALL tick no task, and it SHALL NOT reopen a block that
+implements tasks — a supervisor's findings are raised against the section, including findings about the
+relationship between blocks, which belong to no single block.
 
-#### Scenario: Supervisor findings become a new block
+A finding the supervisor reports as still unresolved SHALL return the card that owns it to `briefed` with
+`round` incremented, by the `finding-recurred` transition, on that same card. A recurrence SHALL NOT
+create a second card for the same finding, so that one card's thread is the complete history of one
+finding across every round it took to close.
 
-- **WHEN** a supervisor records `request-changes` against a section
-- **THEN** the system creates a new `block` card in that section carrying the findings, ticks no task,
-  and reopens no existing block
+A single verdict MAY do both: return one card for a recurrence and create another for a new finding.
 
-#### Scenario: A second pushback creates a second card
+Every verdict SHALL be retained against the section entity; a later verdict SHALL NOT overwrite an
+earlier one.
 
-- **WHEN** a supervisor records `request-changes` against a section that already has one remediation card
-- **THEN** the system creates a second remediation card, and both verdicts remain recorded against the
-  section
+#### Scenario: A first-time finding becomes a new block
+
+- **WHEN** a supervisor records `request-changes` naming a finding no card owns
+- **THEN** the system creates a new `block` card in that section carrying the finding, ticks no task, and
+  reopens no task-implementing block
+
+#### Scenario: An unresolved finding returns its own card
+
+- **WHEN** a supervisor records `request-changes` reporting that a finding on an existing remediation
+  card is still unresolved
+- **THEN** that card returns to `briefed` with `round` incremented, and no second card is created for it
+
+#### Scenario: One verdict both returns and creates
+
+- **WHEN** a supervisor's verdict reports one finding still unresolved and identifies one new finding
+- **THEN** the owning card returns to `briefed` at a higher round and a new card is created for the new
+  finding
 
 ### Requirement: Remediation beyond the second round requires recorded authorisation
 
-A section SHALL admit two remediation cards without ceremony. A third or subsequent remediation card
-SHALL be refused unless the refusal is discharged by a recorded Product Owner authorisation naming the
-section and the reason.
+A section SHALL admit two `request-changes` verdicts without ceremony. A third or subsequent
+`request-changes` verdict against the same section SHALL be refused unless the refusal is discharged by a
+recorded Product Owner authorisation naming the section and the reason.
+
+The count SHALL be of the section's own retained verdicts, derived from the record at the time it is
+asked and never stored as a figure. Counting verdicts rather than remediation cards is what makes the
+bound total: a section may fail to converge by accumulating new findings, by the same finding recurring
+round after round, or by both at once, and only the verdict count sees all three.
 
 The authorisation SHALL be part of the record, not a permission granted out of band. A section that will
 not converge is a signal about the section breakdown or the spec, and the reason it was pushed further
 SHALL be legible later.
 
-#### Scenario: Unauthorised third remediation is refused
+#### Scenario: Unauthorised third verdict is refused
 
-- **WHEN** a third remediation card is created for a section with no recorded authorisation
+- **WHEN** a supervisor records a third `request-changes` verdict against a section with no recorded
+  authorisation
 - **THEN** the system refuses and states that a recorded Product Owner authorisation would satisfy it
 
-#### Scenario: Authorised third remediation proceeds
+#### Scenario: A recurring finding counts toward the bound
 
-- **WHEN** a Product Owner authorisation for that section is recorded and a third remediation card is
-  created
+- **WHEN** a section's three `request-changes` verdicts all report the same finding still unresolved,
+  creating no new card
+- **THEN** the third is refused on the same bound, because the count is of verdicts and not of cards
+
+#### Scenario: Authorised third verdict proceeds
+
+- **WHEN** a Product Owner authorisation for that section is recorded and a third `request-changes`
+  verdict is made
 - **THEN** the system permits it, and the authorisation and its reason are readable from the section
 
 ### Requirement: Sections are entities
