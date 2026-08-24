@@ -252,6 +252,116 @@ public sealed class CommandDispatcherRegisterTests
         Assert.Equal("open", result.GetProperty("status").GetString());
     }
 
+    // §7 second remediation reviewer nit: MapCardCreateOutcome's response `actingRole` is now a
+    // parameter, not a read-back of the written card's own `owner` — self-checking became
+    // caller-trusting. The reviewer demonstrated the gap by hardcoding a wrong role into
+    // RunRuleCreate's MapCardCreateOutcome call and watching the full suite pass anyway. This is
+    // the cross-check that closes it for the five kinds that share the helper: for each, the
+    // response's `actingRole` must equal `Frontmatter.Owner` read back from a *fresh*,
+    // independent `CardStore.ReadCard` — never from the response object itself, since the whole
+    // point is that those two are no longer structurally the same read. Every case below uses
+    // `--role worker`, deliberately not `architect` — the reviewer's own mutation hardcoded
+    // `CardOwner.Architect`, and every existing test in this file happens to use `architect`,
+    // which is exactly why that mutation passed unnoticed; a `worker`-rooted assertion fails
+    // immediately against that same mutation (verified below, then reverted — see the DEVLOG post
+    // for the discrimination proof).
+    //
+    // One mechanical `[Theory]` rather than five hand-written near-copies: the five verbs'
+    // argument shapes are not a fixed property list `RegisterCardFieldsKeyCoverageTests`-style
+    // reflection could enumerate (rule needs `--scope`; hazard needs `--condition`/`--cadence`;
+    // obligation needs `--change` plus a real section id to resolve `--owed-by` against; decision
+    // needs neither; section needs `--change`) — that is business logic, not a reflectable shape —
+    // so the data lives in one `MemberData` list instead: a sixth or seventh creation verb extends
+    // that list, not a sixth or seventh copy of this method.
+    [Theory]
+    [MemberData(nameof(CreationVerbCrossCheckCases))]
+    public void CreationVerb_ResponseActingRole_MatchesOwnerReadBackFromDisk(
+        string kindLabel, Func<TempGitRepo, (string[] Args, string FilePath)> buildRequest)
+    {
+        using var repo = new TempGitRepo();
+        var (args, filePath) = buildRequest(repo);
+
+        var output = new StringWriter();
+        var exitCode = RunInRepo(args, output, repo.Path, "Body.");
+
+        Assert.True(exitCode == CommandDispatcher.SuccessExitCode, $"expected '{kindLabel} create' to succeed; got exit code {exitCode}: {output}");
+        using var doc = JsonDocument.Parse(output.ToString());
+        var reportedActingRole = doc.RootElement.GetProperty("result").GetProperty("actingRole").GetString();
+        Assert.True("worker" == reportedActingRole, $"'{kindLabel} create' response actingRole was '{reportedActingRole}', expected 'worker'.");
+
+        var onDisk = AssertParseSuccess(CardStore.ReadCard(filePath));
+        Assert.True(
+            reportedActingRole == onDisk.Frontmatter.Owner.ToWireString(),
+            $"'{kindLabel} create' response actingRole ('{reportedActingRole}') disagreed with the card's own " +
+            $"owner on disk ('{onDisk.Frontmatter.Owner.ToWireString()}') — this is exactly the divergence the " +
+            "response and the record must never be free to have.");
+    }
+
+    public static IEnumerable<object[]> CreationVerbCrossCheckCases()
+    {
+        yield return new object[]
+        {
+            "rule",
+            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
+            {
+                var path = Path.Combine(repo.RegisterDirectory, "r-cross-check.md");
+                return (new[] { "rule", "create", path, "--title", "Cross-check", "--role", "worker", "--scope", "repository" }, path);
+            }),
+        };
+        yield return new object[]
+        {
+            "hazard",
+            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
+            {
+                var path = Path.Combine(repo.RegisterDirectory, "h-cross-check.md");
+                return (new[]
+                {
+                    "hazard", "create", path, "--title", "Cross-check", "--role", "worker",
+                    "--condition", "The staging key never rotates", "--cadence", "weekly",
+                }, path);
+            }),
+        };
+        yield return new object[]
+        {
+            "obligation",
+            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
+            {
+                var sectionPath = Path.Combine(repo.CardsDirectory, "s-cross-check-obligation.md");
+                var sectionOutput = new StringWriter();
+                RunInRepo(
+                    ["section", "create", sectionPath, "--title", "Cross-check section", "--role", "worker", "--change", ChangeName],
+                    sectionOutput, repo.Path, "Body.");
+                using var sectionDoc = JsonDocument.Parse(sectionOutput.ToString());
+                var sectionId = sectionDoc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
+
+                var path = Path.Combine(repo.CardsDirectory, "o-cross-check.md");
+                return (new[]
+                {
+                    "obligation", "create", path, "--title", "Cross-check", "--role", "worker",
+                    "--change", ChangeName, "--owed-by", sectionId,
+                }, path);
+            }),
+        };
+        yield return new object[]
+        {
+            "decision",
+            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
+            {
+                var path = Path.Combine(repo.DecisionsDirectory, "d-cross-check.md");
+                return (new[] { "decision", "create", path, "--title", "Cross-check", "--role", "worker" }, path);
+            }),
+        };
+        yield return new object[]
+        {
+            "section",
+            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
+            {
+                var path = Path.Combine(repo.CardsDirectory, "s-cross-check.md");
+                return (new[] { "section", "create", path, "--title", "Cross-check", "--role", "worker", "--change", ChangeName }, path);
+            }),
+        };
+    }
+
     [Fact]
     public void RuleDischarge_OnAnOpenRule_Succeeds()
     {
@@ -485,7 +595,7 @@ public sealed class CommandDispatcherRegisterTests
             onSuccess: success => success.Card,
             onFailure: failure => throw new Xunit.Sdk.XunitException($"expected parse success, got failure: {failure.Reason}"));
 
-    private sealed class TempGitRepo : IDisposable
+    public sealed class TempGitRepo : IDisposable
     {
         internal string Path { get; }
 

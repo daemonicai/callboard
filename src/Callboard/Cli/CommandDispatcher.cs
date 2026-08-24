@@ -418,9 +418,18 @@ internal static class CommandDispatcher
         /// Repository"/> (card-model: "<c>hazard</c> and <c>question</c> cards SHALL be
         /// repository-scoped") — no <c>--change</c>, the same shape <see cref="DecisionCreate"/>
         /// already has for its own always-fixed scope.
+        ///
+        /// <para>
+        /// <b><see cref="OwedByRole"/> (§7 second remediation).</b> Card-model's <c>owner</c> is
+        /// "the single role whose turn it is to act", and for a question that is the role who owes
+        /// the answer — not <see cref="ActingRole"/>, the role who raised it. The two are usually
+        /// different roles and this case carries both rather than assuming they match, the way the
+        /// shared <see cref="ParseCardCreate"/> shape does for the four register kinds and
+        /// <see cref="SectionCreate"/>, where owner-as-raiser is correct.
+        /// </para>
         /// </summary>
         internal sealed record QuestionCreate(
-            string FilePath, string Title, CardOwner ActingRole, string Body, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string FilePath, string Title, CardOwner ActingRole, CardOwner OwedByRole, string Body, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onQuestionCreate(this);
@@ -1281,7 +1290,7 @@ internal static class CommandDispatcher
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapCardCreateOutcome(outcome, filePath);
+        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
     }
 
     /// <summary>
@@ -1308,7 +1317,7 @@ internal static class CommandDispatcher
             registerFields: new RegisterCardFields(parsed.Condition, parsed.Cadence, null, null),
             parsed.Timestamp, lockTimeout, changeName: null);
 
-        return MapCardCreateOutcome(outcome, filePath);
+        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
     }
 
     /// <summary>
@@ -1344,7 +1353,7 @@ internal static class CommandDispatcher
             registerFields: new RegisterCardFields(null, null, null, null, OwedBy: parsed.OwedById),
             parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapCardCreateOutcome(outcome, filePath);
+        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
     }
 
     /// <summary><c>decision create</c> (§7 block A). Scope is always <see cref="CardScope.Capability"/>.</summary>
@@ -1364,7 +1373,7 @@ internal static class CommandDispatcher
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, changeName: null);
 
-        return MapCardCreateOutcome(outcome, filePath);
+        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
     }
 
     /// <summary>
@@ -1391,19 +1400,31 @@ internal static class CommandDispatcher
             SectionFlowState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapCardCreateOutcome(outcome, filePath);
+        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
     }
 
     /// <summary>
-    /// <c>question create</c> (§7 remediation, blocker 1). Scope is always <see cref="CardScope.
-    /// Repository"/> — <see cref="CardScopeRules.Validate"/> already refuses anything else for
-    /// <see cref="CardKind.Question"/>, so there is no <c>--change</c> here, the same shape
-    /// <see cref="RunDecisionCreate"/> has for its own always-fixed scope. The initial status is
-    /// the plain literal <c>"open"</c> — the same convention <see cref="CardStore.RecordFinding"/>
-    /// already uses for a kind with no <see cref="RegisterLifecycleState"/>/<see cref="
-    /// SectionFlowState"/> vocabulary of its own; §9 is where a question's actual status
-    /// vocabulary (open/answered/deferred) gets decided, not here — this call only ever writes the
-    /// one state a brand-new card needs.
+    /// <c>question create</c> (§7 remediation, blocker 1; owner fixed in the second remediation).
+    /// Scope is always <see cref="CardScope.Repository"/> — <see cref="CardScopeRules.Validate"/>
+    /// already refuses anything else for <see cref="CardKind.Question"/>, so there is no
+    /// <c>--change</c> here, the same shape <see cref="RunDecisionCreate"/> has for its own
+    /// always-fixed scope. The initial status is the plain literal <c>"open"</c> — the same
+    /// convention <see cref="CardStore.RecordFinding"/> already uses for a kind with no
+    /// <see cref="RegisterLifecycleState"/>/<see cref="SectionFlowState"/> vocabulary of its own;
+    /// §9 is where a question's actual status vocabulary (open/answered/deferred) gets decided, not
+    /// here — this call only ever writes the one state a brand-new card needs.
+    ///
+    /// <para>
+    /// <b><see cref="Cards.CardStore.CreateCard"/>'s <c>actingRole</c> parameter becomes the card's
+    /// <c>owner</c> (§7 second remediation) — so this passes <see cref="ParsedCommand.
+    /// QuestionCreate.OwedByRole"/> there, not <see cref="ParsedCommand.QuestionCreate.ActingRole"/>.
+    /// </b> The card is owned by whoever owes the answer, exactly what card-model's ownership
+    /// routing and register's "continues to surface to the role that owes its answer" both require.
+    /// <see cref="ParsedCommand.QuestionCreate.ActingRole"/> — the raiser — is not lost: it is
+    /// reported back through <see cref="MapCardCreateOutcome"/>'s own explicit <c>actingRole</c>
+    /// argument, passed below, rather than read off the written card the way it used to be, which
+    /// is what keeps the two facts from collapsing into one the way they did before this fix.
+    /// </para>
     /// </summary>
     private static CommandOutcome RunQuestionCreate(ParsedCommand.QuestionCreate parsed, TimeSpan lockTimeout)
     {
@@ -1418,18 +1439,25 @@ internal static class CommandDispatcher
         var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
             repoRoot, filePath, CardKind.Question, CardScope.Repository, parsed.Title,
-            "open", parsed.ActingRole, parsed.Body,
+            "open", parsed.OwedByRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, changeName: null);
 
-        return MapCardCreateOutcome(outcome, filePath);
+        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
     }
 
     /// <summary>
     /// Shared by every §7 block A creation verb — the one place a <see cref="CardCreateOutcome"/>
-    /// becomes a <see cref="CommandOutcome"/>, so the five verbs cannot drift on what a given
-    /// disposition means.
+    /// becomes a <see cref="CommandOutcome"/>, so the six verbs cannot drift on what a given
+    /// disposition means. <paramref name="actingRole"/> is the caller's own <c>--role</c> value,
+    /// reported verbatim as <see cref="CardCreateResult.ActingRole"/> (§7 second remediation) —
+    /// previously read back off <c>created.Card.Frontmatter.Owner</c>, which happened to equal the
+    /// acting role for every kind this method served until <see cref="ParsedCommand.QuestionCreate"/>
+    /// gave <c>owner</c> a different value (<see cref="ParsedCommand.QuestionCreate.OwedByRole"/>).
+    /// Passing it explicitly keeps this method's output byte-identical for the five kinds where the
+    /// two facts still coincide, and correct for the one where they no longer do — see
+    /// <see cref="RunQuestionCreate"/>.
     /// </summary>
-    private static CommandOutcome MapCardCreateOutcome(CardCreateOutcome outcome, string filePath) =>
+    private static CommandOutcome MapCardCreateOutcome(CardCreateOutcome outcome, string filePath, CardOwner actingRole) =>
         outcome.Match<CommandOutcome>(
             onCreated: created => new CommandOutcome.Success(new CardCreateResult
             {
@@ -1442,7 +1470,7 @@ internal static class CommandDispatcher
                 Condition = created.Card.RegisterFields.Condition,
                 Cadence = created.Card.RegisterFields.Cadence,
                 OwedBy = created.Card.RegisterFields.OwedBy,
-                ActingRole = created.Card.Frontmatter.Owner.ToWireString(),
+                ActingRole = actingRole.ToWireString(),
                 Timestamp = created.Card.Frontmatter.Created,
             }),
             onScopeRefused: refused => new CommandOutcome.Refusal("scope-refused", refused.Reason),

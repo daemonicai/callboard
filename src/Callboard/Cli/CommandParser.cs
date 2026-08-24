@@ -1836,12 +1836,84 @@ internal static class CommandParser
     /// <summary>
     /// Builds <c>question create</c>'s <see cref="CommandDispatcher.ParsedCommand.QuestionCreate"/>.
     /// Scope is always <see cref="CardScope.Repository"/>, the same reason <see cref="
-    /// ParseDecisionCreate"/> does not accept <c>--change</c> either.
+    /// ParseDecisionCreate"/> does not accept <c>--change</c> either. <b>No longer routed through
+    /// the shared <see cref="ParseCardCreate"/></b> (§7 second remediation) — that helper's shape
+    /// has room for exactly one role, <c>--role</c>, and assumes it is also the card's owner, which
+    /// is correct for the four register kinds and <c>section</c> but wrong for a question: card-model
+    /// makes <c>owner</c> the routing mechanism ("the single role whose turn it is to act"), and for
+    /// a question that is the role who <em>owes the answer</em>, not the role who raised it.
+    /// <c>--owed-by &lt;role&gt;</c> (required, own parsing here — the same shape <see cref="
+    /// ParseObligationCreate"/> already gives its own differently-typed <c>--owed-by</c>) names the
+    /// owner explicitly; <c>--role</c> keeps meaning the acting role everywhere, unchanged.
     /// </summary>
-    private static CommandDispatcher.ParseResult ParseQuestionCreate(CommandDispatcher.CommandContext context) =>
-        ParseCardCreate(context, "'question create'", requireChange: false, build:
-            (filePath, title, role, body, _, workingDirectory, timestamp) =>
-                new CommandDispatcher.ParsedCommand.QuestionCreate(filePath, title, role, body, workingDirectory, timestamp));
+    private static CommandDispatcher.ParseResult ParseQuestionCreate(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'question create' requires a card file path."));
+        }
+
+        string? title = null;
+        string? roleText = null;
+        string? owedByText = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--title"] = value => title = value,
+            ["--role"] = value => roleText = value,
+            ["--owed-by"] = value => owedByText = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (title is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'question create' requires '--title <text>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'question create' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var actingRole))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (string.IsNullOrEmpty(owedByText))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'question create' requires '--owed-by <role>' — the role that owes the answer, which " +
+                "becomes the card's owner. It is not guessed from '--role', because the raiser and the " +
+                "answerer are usually different roles."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(owedByText, out var owedByRole))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised '--owed-by' role: '{owedByText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.QuestionCreate(
+            filePath, title, actingRole, owedByRole, body, context.WorkingDirectory, context.Clock()));
+    }
 
     /// <summary>
     /// Builds <c>decision supersede</c>'s <see cref="CommandDispatcher.ParsedCommand.DecisionSupersede"/>

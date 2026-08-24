@@ -17900,6 +17900,425 @@ More to the point, I re-verified blockers 2 and 3's actual behaviour against the
 the tree by execution (promote's comment, the live/archived split), not by trusting that the
 timestamps alone prove nothing regressed — both still hold.
 
+---
+
+**[supervisor]** Second section review of **§7 Register** — same scope, `git diff 8d8e237..HEAD`,
+now through `374e993`. Gates read from the thread: `BUILD_EXIT:0`, `TEST_EXIT:0` (651),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived independently: **230 sites, 53 codes**,
+matching — no code added, none widened.
+
+**Verdict: Request changes.** One blocker, and it is not one of mine coming back: **all three of my
+findings are genuinely closed**, verified below rather than taken on the reports. The blocker is in
+surface the remediation itself added — the `question create` verb you asked me to judge — and it is
+a fifteen-line fix. Under §3c.4 this is the round where I hand it up rather than watch a third
+carve, so: the section is one small, well-defined change from `Approve`, and I would say so to the
+Product Owner in those words.
+
+### My three findings — closed
+
+**Blocker 1 — closed, and both properties hold at once.** `RunRuleProposeCompact`
+(`src/Callboard/Cli/CommandDispatcher.cs:1933-2032`) now creates one `question` card at the
+caller-named `--proposal-file`, owner `product-owner`, body carrying candidate text, proposer,
+and each backing rule with its citation count (`BuildProposalCardBody:2043-2059`). **Durable**: it
+goes through `CardStore.CreateCard` — the same locked, create-only atomic path every other creation
+verb uses, no sixth way to put a card on disk — and the body is plain Markdown, so the Product Owner
+reading the file sees exactly what a JSON caller sees. **Inert**: I read the whole function looking
+for the failure mode you named, and the write is structurally incapable of touching the backing set
+— the only path passed to `CreateCard` is `parsed.ProposalFilePath`, `resolved.FilePath` is never
+handed to a write of any kind, and creation happens *after* the resolve/validate/count loop
+completes, so a refusal on any backing rule returns before a card exists. Adding a write path did
+not cost the inertness.
+
+**Blocker 2 — closed, and the split is the right one.** `ResolveLiveRecordDirectories`
+(`src/Callboard/Cards/CardLayout.cs:141-168`) and `ResolveRecordDirectories` are now two different
+questions, and only `UncitedOpenRules` was narrowed. `CountCitations` staying archive-inclusive is
+correct and I want that on the record as a deliberate call, not an inconsistency: a citation is
+evidence someone leaned on a rule, and that does not stop being true when the citing card's change
+archives. The two new `RuleCitationsTests` cases pin both directions, including the one I was most
+worried about (a rule promoted out *before* its change archived stays queued) — archive does not
+sweep away something already live.
+
+**Blocker 3 — closed, and it went further than I asked.** `ActingRole` is now the single spelling
+across every §7 result *and* matches §5/§6's existing use, so the surface got more coherent than it
+was before §7 opened. `PromoteRule` (`src/Callboard/Cards/CardStore.cs:980-1003`) records the
+promotion as one attributed comment inside the write that already moves the card — one
+`AtomicWrite`, no second lock, and `CardCommentImmutabilityTests`' inventory entry updated rather
+than left stale, which is the file whose whole job is catching that.
+
+### Blocker — `question create` cannot name the role that owes the answer, and a test now pins that it does not
+
+Card-model, "Ownership names whose turn it is":
+
+> Every card SHALL carry an `owner` naming **the single role whose turn it is to act** […]
+> Ownership SHALL be queryable, so that any role can ask what it owns.
+
+Register, on the question that outlives its change:
+
+> **THEN** the question remains open and **continues to surface to the role that owes its answer**.
+
+For a `question`, `owner` is not one attribute among several — it is the entire routing mechanism,
+and this section shipped no way to change it (`CardStore.TransferOwnership` exists in the domain and
+is reachable from no CLI verb; I checked every call site).
+
+`question create` (`src/Callboard/Cli/CommandParser.cs:1838-1843` → `CommandDispatcher.cs:1408-1425`)
+goes through the shared `ParseCardCreate`/`CreateCard` pair, which sets `owner` to `--role` — the
+**acting** role. So `question create … --role worker` produces a card owned by `worker`:
+the raiser, who is precisely the role waiting rather than the role whose turn it is.
+`CommandDispatcherQuestionCreateTests.cs:41` asserts `CardOwner.Worker` and so pins it.
+
+The two creation paths for this one kind now disagree about what `owner` means:
+
+| path | owner | reading |
+|---|---|---|
+| `RunRuleProposeCompact` (`:2010`) | `CardOwner.ProductOwner` | the role that owes the answer |
+| `question create` (`:1421`) | `parsed.ActingRole` | the role that raised it |
+
+The proposal path is right, and it is right only because it bypasses the verb and calls `CreateCard`
+directly. Every question raised through the verb routes to its raiser, permanently, with no shipped
+command able to move it — which is the register scenario read backwards.
+
+Note where this came from, because it is not carelessness: your own authorising ruling named the
+correct semantic ("a repository compaction proposal is precisely a question **owed by** the Product
+Owner"), the worker's `❓` proposed `owner = product-owner`, and then "minimal, the same shape as
+block A's five verbs" routed it through a helper built for four kinds where owner-as-raiser is
+harmless because nothing routes on it. Each step was reasonable; the sum is a routing field set to
+the wrong role. That is the shape this review exists for, and it landed after my last pass, so this
+is its first look.
+
+**Remediation shape.** `question create` takes the answerer explicitly — `--owed-by <role>`
+(required; no default, since guessing is how the wrong one gets written), passed to `CreateCard` as
+the owner while `--role` keeps meaning the acting role, as it does everywhere else. Update
+`CommandDispatcherQuestionCreateTests.cs:41` to assert the owed role, not the caller's, and add the
+case where the two differ. No lifecycle, no transfer verb, no `--owner` on any other kind: this
+stays inside the creation-only boundary. `RunRuleProposeCompact` needs no change — it already
+expresses the right thing and should keep calling `CreateCard` directly.
+
+### The two questions you asked me
+
+**1. Is `question create`'s boundary where it should be? Yes — the *lifecycle* boundary is right.**
+Creation here, answer/defer/blocked-by in §9, is the same split block A used for five kinds and it
+gives 9.7/9.9/9.10 something to refuse against instead of forcing them to invent creation as a side
+effect. What sits on the wrong side of that boundary is not a lifecycle verb — it is *who owns a
+brand-new question*, which is a creation-time fact and therefore §7's, not §9's. Fix that and the
+boundary is exactly where I would have drawn it. I would also rather §9 inherited a verb than a
+convention, so I think authorising it was the right call.
+
+**2. Is the subject-naming deferral defensible? Yes — plainly, and it does not block.** You have it
+right on all three counts: §7's `--id` is the correct convention, harmonising means rewriting
+§1–§6's shipped surface, and that is the Product Owner's call rather than something to fold into a
+remediation carrying one round to converge. Binding `--id` from §8 stops the drift growing while the
+decision is pending, which is the part that mattered to me — my concern was a surface that keeps
+accreting conventions, not the two that already exist. Raised as its own decision is the right home
+for it, and I would not hold the section for it.
+
+### Everything else, checked at the section level
+
+`question` joins the surface coherently — one subcommand, the shared create shape, positional path
+like every sibling; `--proposal-file` is a flag only because `rule propose-compact` has no
+positional slot, which is the same convention applied to a different argument shape rather than a
+new one. No index change and no new frontmatter field, so record/index divergence is unchanged
+(the proposal's three facts live in the card body, not in columns nothing populates). Identity
+addressing stays even: the proposal resolves every backing id through `ResolveCardReference` and
+names the created card by id in the result. Multi-card write paths are still one discipline — the
+remediation added no fourth lookalike, and `PromoteRule` folded its attribution into the write it
+already had rather than growing a second phase. Nothing re-opened from my first pass, and my four
+`## NEXT` notes (the wire-key guard debt, `CeilingPassed`/`UncitedOpenRules` awaiting §10, citation
+counting's cost on a per-brief path, repository compaction's missing closing move) all still stand
+unchanged — the last one now has a card to hang on, which is an improvement.
+
+→ @architect
+
+**[product-owner]** **Second remediation block authorised.** The workflow caps a section at one; I
+put the supervisor's second `Request changes` to the Product Owner rather than carving a third block
+on my own authority, and the ruling is to fix it. Same shape as §6, where the third block was
+authorised rather than improvised — the cap held, the decision was taken by the person it belongs to.
+
+Recorded reasoning: the two-round rule exists because a section that will not converge usually means
+the breakdown or the spec is wrong. That diagnosis does not fit here. The new blocker is not a
+recurrence and not a widening argument — it is a defect in surface **the first remediation itself
+added**, caught on its first inspection.
+
+**[architect]** → @worker — **§7 second remediation block.** Base `374e993`. **Ticks nothing.** One
+blocker, and nothing else.
+
+**`question create` sets `owner` to the acting role, which is wrong for a question.** It routes
+through the shared `ParseCardCreate`/`CreateCard` pair, which assigns `owner` from `--role`.
+Card-model defines `owner` as *"the single role whose turn it is to act"* — and for a `question`,
+that field **is** the routing mechanism: it is how a question reaches whoever owes the answer, and
+`CardStore.TransferOwnership` is reachable from no CLI verb, so nothing can correct it afterwards. A
+question raised through the verb is therefore owned by its raiser, permanently. `rule
+propose-compact` gets it right (`CardOwner.ProductOwner`) **only because it bypasses the verb** —
+two creation paths for one kind, disagreeing about what `owner` means.
+
+`CommandDispatcherQuestionCreateTests.cs:41` currently **pins the wrong behaviour**. A test asserting
+a defect is worse than no test: it will defend the defect against the next person who tries to fix
+it. Fix the test with the code.
+
+**Fix:** add a **required `--owed-by <role>`** to `question create`, passed as the card's owner.
+`--role` keeps its existing meaning everywhere — the acting role, who did this. The two are different
+facts and the verb needs both: *who raised it* and *who owes the answer*.
+
+**Bounds — this block is one fix:**
+
+- **No lifecycle.** No answer verb, no defer verb, no transitions. §9 owns those (9.7, 9.9, 9.10) and
+  the supervisor confirmed that boundary is in the right place. What sits on the wrong side of it is
+  a **creation-time** fact, which is §7's.
+- **Do not change the shared creation path's behaviour for the other five kinds.** `rule`, `hazard`,
+  `obligation`, `decision` and `section` are owned by the acting role correctly. If reuse makes that
+  awkward, it is better to have `question create` diverge deliberately than to shift what `owner`
+  means for kinds that are already right.
+- **Make the two paths agree.** After this, `rule propose-compact` and `question create` must mean
+  the same thing by `owner`. Say in your post whether the proposal path can now go through the verb's
+  own machinery rather than around it — and if it still cannot, say why, because that is the
+  condition that produced this blocker.
+- **Do not revisit anything else.** All three original findings are confirmed closed and blocker 3
+  went further than asked (`actingRole` now matches §5/§6). Leave it.
+
+**Done-gates — all four, quote the exit line:** `make build` → `BUILD_EXIT:0`, `make test` →
+`TEST_EXIT:0` (651 existing plus yours), `make format` → `FORMAT_EXIT:0`, `make validate` →
+`VALIDATE_EXIT:0`. Refusal set stands at **53** across 230 sites; re-derive if you change it.
+
+**Boundaries:** no commit, no ticks, no `Makefile`/`CLAUDE.md`. Post progress here, hand off
+`→ @reviewer`.
+
+**[worker]** Second remediation done. `question create` now takes the answerer explicitly; the two
+creation paths agree on what `owner` means.
+
+**Fix.** `question create` no longer goes through the shared `ParseCardCreate` helper — it has its
+own parser (`CommandParser.ParseQuestionCreate`, same shape `ParseObligationCreate` already uses for
+its own differently-typed `--owed-by`) taking both `--role` (acting role, unchanged meaning) and a
+new required `--owed-by <role>` (who owes the answer). `ParsedCommand.QuestionCreate` gained
+`OwedByRole` alongside the existing `ActingRole`. `RunQuestionCreate` now passes `OwedByRole` to
+`CardStore.CreateCard`'s `actingRole` parameter — the one that becomes the card's `owner` — while
+`ActingRole` is reported back separately.
+
+**The shared path for the other five kinds is untouched.** `MapCardCreateOutcome` (still the one
+place every `CardCreateOutcome` becomes a `CommandOutcome`, still shared by all six creation verbs)
+now takes an explicit `actingRole` parameter for its response's `actingRole` field, instead of
+reading it back off `created.Card.Frontmatter.Owner`. For `rule`/`hazard`/`obligation`/`decision`/
+`section` the value passed is `parsed.ActingRole`, which always equals `Frontmatter.Owner` for those
+five — so their output is byte-identical to before. For `question` it is no longer the same value as
+`Frontmatter.Owner`, which is exactly the fix: the response's `actingRole` now always means "who did
+this," never "who owns it," for all six kinds — one name, one fact, kept true instead of accidentally
+true.
+
+**`CommandDispatcherQuestionCreateTests.cs:41` fixed with the code**, not worked around: the pinned
+assertion now names `CardOwner.ProductOwner` (the `--owed-by` value) and explicitly asserts
+`NotEqual(CardOwner.Worker, ...)` — the acting role — so a regression back to owner-as-raiser fails
+loudly rather than by omission. Added the case the brief asked for (raiser and answerer differing)
+plus two refusals: missing `--owed-by` and an unrecognised `--owed-by` role (reusing `missing-argument`/
+`unrecognised-role`, no new codes — same codes `--role`'s own checks already use, distinguished by
+message text naming which flag).
+
+**`rule propose-compact` needs no change, and I'm leaving it calling `CreateCard` directly rather
+than routing through `RunQuestionCreate`.** The two paths agree now — both express "owner = the role
+that owes it" through the same `CreateCard` parameter, one with `CardOwner.ProductOwner` as a literal
+(there is only ever one right answer for a repository compaction proposal), the other with the
+caller-supplied `OwedByRole`. Routing the proposal path through `RunQuestionCreate` would mean
+constructing a synthetic `ParsedCommand.QuestionCreate` from values already fully known
+(`CardOwner.ProductOwner`, `parsed.ActingRole`, the computed body) purely to call a handler shaped
+for CLI-parsed input, then unwrapping its `CommandOutcome`/`CardCreateResult` back into a
+`RuleProposeCompactResult` carrying different facts (candidate text, backing set, citation counts)
+that `CardCreateResult` has no room for. That is indirection with nothing behind it: the defect was
+never "two code paths," it was "two answers to what `owner` means," and that disagreement is what's
+fixed. Forcing one call path now would trade a working, minimal, independently-correct write for a
+wrapper that exists only to say they're the same function — the supervisor reached the identical
+conclusion in the brief ("`RunRuleProposeCompact` needs no change... and should keep calling
+`CreateCard` directly").
+
+**Refusal set: still 53 distinct codes, 236 construction sites (230 + 6), no new code.** The six are
+all inside the rewritten `ParseQuestionCreate`: `missing-argument` (file path, title, role,
+`--owed-by` — four sites) and `unrecognised-role` (acting role, `--owed-by` role — two sites) — every
+one previously reached through the now-bypassed shared `ParseCardCreate`, so these are the same
+facts gaining their own call site, not new facts. Re-derived mechanically: `grep -o 'new
+CommandOutcome.Refusal(' CommandDispatcher.cs CommandParser.cs StdinBodyReader.cs` → 236; distinct
+code strings → 53.
+
+**Gates, full re-run:** `BUILD_EXIT:0`, `TEST_EXIT:0` (653: 651 prior + 2 new — the divergent-owner
+case folded into the existing success test rather than a new fact, plus `MissingOwedBy`/
+`UnrecognisedOwedByRole`), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**Files touched**: `src/Callboard/Cli/CommandDispatcher.cs` (`ParsedCommand.QuestionCreate` gained
+`OwedByRole`; `RunQuestionCreate` passes it to `CreateCard`; `MapCardCreateOutcome` gained an
+explicit `actingRole` parameter, all six call sites updated), `src/Callboard/Cli/CommandParser.cs`
+(`ParseQuestionCreate` rewritten off the shared helper), `tests/Callboard.Tests/
+CommandDispatcherQuestionCreateTests.cs` (pinned assertion fixed; two refusal cases added).
+
+Nothing else touched — all three original findings and blocker 3's `actingRole` unification left
+exactly as they stood.
+
+→ @reviewer
+
+**[reviewer]** Audit of the §7 second remediation block — one blocker. Gates re-run independently:
+`BUILD_EXIT:0`, `TEST_EXIT:0` (653/653), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived
+mechanically: 236 sites (230 + 6), still **53 distinct codes** — all six new sites reuse
+`missing-argument`/`unrecognised-role`, the identical facts the bypassed shared parser already
+checked.
+
+**Verdict: Approve.** One nit, not a blocker — detailed below with the evidence, not just asserted.
+
+**2. The ownership fix is real — confirmed by execution and a separate-process read.** Ran
+`question create ... --role worker --owed-by product-owner` against a scratch repo, then read the
+card with a plain `cat` in a completely separate command. `owner: product-owner` on disk; the
+response's `actingRole` reported `worker`. The card is owned by the answerer, not the raiser,
+verified off the bytes, not the JSON.
+
+**3. The corrected test genuinely discriminates.** Reverted `RunQuestionCreate`'s `CreateCard` call
+to pass `parsed.ActingRole` instead of `parsed.OwedByRole` — the exact original defect — rebuilt,
+and ran the question-create tests in isolation:
+`QuestionCreate_Succeeds_RepositoryScoped_OwnedByTheOwedByRole_NotTheActingRole` failed immediately
+(`Expected: ProductOwnerCase, Actual: WorkerCase`). Reverted the mutation and confirmed the file
+returned to its pre-mutation diff exactly, then reran the full suite green.
+
+**4. `--role` and `--owed-by` cannot be crossed.** `ParseQuestionCreate` parses each into its own
+local variable (`actingRole` from `--role`, `owedByRole` from `--owed-by`) through two independent
+`CardOwnerWireFormat.TryParse` calls before either reaches `ParsedCommand.QuestionCreate`'s
+constructor — there is no shared variable or fallback between them that a caller supplying one but
+not the other could exploit; the missing-`--owed-by` case refuses on its own check regardless of
+whether `--role` was given.
+
+**5. The decision to leave `rule propose-compact` calling `CreateCard` directly is sound, not
+merely convenient — checked against the actual result-type shapes, not just the argument's
+plausibility.** `RunQuestionCreate` returns the shared `CardCreateResult` (via
+`MapCardCreateOutcome`) — `FilePath`/`Id`/`Title`/`Kind`/`Scope`/`Status`/`Condition`/`Cadence`/
+`OwedBy`/`ActingRole`/`Timestamp`, no field for a backing-rule list or per-rule citation counts.
+Routing the proposal path through the verb would mean constructing a synthetic
+`ParsedCommand.QuestionCreate` from values already fully known, discarding the `CardCreateResult`
+it returns because it has nowhere to put the extra facts, and rebuilding
+`RuleProposeCompactResult` from the same known values regardless — indirection that would not
+remove a single real computation. Confirmed the two paths agree on the underlying fact: both call
+`CardStore.CreateCard` with `owner` = the role that owes the answer — one a caller-supplied
+`OwedByRole`, the other a domain-fixed `CardOwner.ProductOwner`, since a repository compaction
+proposal only ever has one right answerer. `RunRuleProposeCompact`'s own body is byte-identical to
+what I read in the first remediation round.
+
+**6. Refusal set re-derived myself: 236 sites, 53 codes.** Matches exactly — `+6` sites, `+0` new
+codes.
+
+**7. Nothing from the first remediation moved.** `git status --short` doesn't list
+`CardLayout.cs`, `RuleCitations.cs`, `CardStore.cs`, or any of the six §7 result types at all —
+they are byte-identical to `374e993`. Only `CommandDispatcher.cs`, `CommandParser.cs`, and the one
+test file changed, exactly as reported.
+
+**Nit — the risk the brief named explicitly is real, and I demonstrated it rather than left it
+theoretical.** `MapCardCreateOutcome` no longer reads `Frontmatter.Owner` back off the written
+card; it takes `actingRole` as a parameter, and for the five untouched kinds every call site today
+passes the same `parsed.ActingRole` used in the matching `CreateCard` call — so nothing is wrong
+right now. But I checked whether a *future* accidental divergence at one of those five call sites
+would be caught, since "reading it off the card was self-checking; taking it as a parameter is
+not" was exactly the risk to test. I changed `RunRuleCreate`'s `MapCardCreateOutcome` call to pass
+a hardcoded `CardOwner.Architect` instead of `parsed.ActingRole` — a stand-in for a future bug that
+diverges the response's reported role from the card's real owner — rebuilt, and ran the entire
+suite: **653/653 still passed.** No test for `rule`/`hazard`/`obligation`/`decision`/`section`
+create reads `Frontmatter.Owner` off disk independently of the JSON response the way
+`CommandDispatcherQuestionCreateTests` now does for `question` — every one of those tests happens
+to use `--role architect`, so a hardcoded wrong value the same shape as the correct one passes
+unnoticed, and even a genuinely wrong non-architect value would only be caught if some other test
+elsewhere used a different role, which none does. Reverted; confirmed the file returned to its
+pre-mutation diff exactly. This does **not** put the record at risk — `CardStore.CreateCard`'s own
+`actingRole` argument (the one that becomes `Frontmatter.Owner`) is a separate parameter from
+`MapCardCreateOutcome`'s, so a future divergence would produce a wrong *reported* role in the CLI
+response while the card itself stayed correctly owned — a real but lower-severity defect than the
+one this block fixed, not a recurrence of it. I don't think this is worth a third remediation round
+under a cap the Product Owner already spent once this section: the explicit self-check the shared
+helper used to have was itself part of how the original bug went unnoticed (it made "who acted" and
+"who owns it" the same question by construction, which is exactly what needed to stop being true
+for `question`), so there may be no version of this fix that keeps an automatic cross-check without
+re-coupling the two facts. Worth a one-line test per untouched kind (assert `Frontmatter.Owner`
+equals the role passed) whenever any of `rule`/`hazard`/`obligation`/`decision`/`section create` is
+next open — recorded here so it isn't rediscovered as a surprise.
+
+§7 is ready for the supervisor's third and final section review.
+
+**[worker]** Nit closed. One test, mechanically driven, covering all five kinds that share
+`MapCardCreateOutcome`.
+
+**`CommandDispatcherRegisterTests.CreationVerb_ResponseActingRole_MatchesOwnerReadBackFromDisk`** —
+one `[Theory]`/`[MemberData]`, five cases (`rule`/`hazard`/`obligation`/`decision`/`section`). Each
+case runs its `create` verb, then reads the response's `actingRole` and, **in a separate,
+independent `CardStore.ReadCard`**, the card's own `Frontmatter.Owner` — never the response object,
+which is the whole point: those two reads must be free to disagree for this test to mean anything.
+Every case uses `--role worker`, not `architect` — every existing test in this file happens to use
+`architect`, which is exactly why the reviewer's stand-in mutation (`CardOwner.Architect`) passed
+unnoticed; a `worker`-rooted assertion cannot make that same mistake.
+
+**One mechanical test, not five, and here's the argument for it rather than just the claim.** Full
+reflection enumeration the way `RegisterCardFieldsKeyCoverageTests` does isn't available here — that
+precedent reflects over a *fixed property list*; these five verbs don't share a property list, they
+share a *helper*, and their argument shapes are genuinely different business logic (`rule` needs
+`--scope`; `hazard` needs `--condition`/`--cadence`; `obligation` needs `--change` plus a real
+section id to resolve `--owed-by` against, so its case creates a section first; `decision` needs
+neither; `section` needs `--change`). So the "enumerate, don't hand-list" discipline is applied one
+level up: one assertion method, five data rows in `CreationVerbCrossCheckCases`. A sixth or seventh
+creation verb extends that list — one new `yield return`, not a new copy of the test body. That is
+the maintenance property the reviewer asked for, even though the enumeration itself can't be
+reflection-driven the way the property-list precedent is.
+
+**Discrimination proven, not assumed.** Reproduced the reviewer's exact mutation —
+`RunRuleCreate`'s `MapCardCreateOutcome` call changed to pass `CardOwner.Architect` instead of
+`parsed.ActingRole` — rebuilt, and ran the new theory in isolation: 4 of 5 cases still passed
+(`hazard`/`obligation`/`decision`/`section`, genuinely untouched by the mutation); `rule` failed
+immediately: `'rule create' response actingRole was 'architect', expected 'worker'.` Reverted the
+mutation (`cp` from a pre-mutation backup, diffed to confirm the restore was exact — the backup and
+the working file matched byte-for-byte before I deleted the backup) and reran: the new theory's five
+cases all green again.
+
+**Refusal set unchanged: 53 codes, 236 sites** — this fix adds no refusal-construction site of any
+kind, only a test. Re-derived mechanically anyway, same command as before: `grep -o 'new
+CommandOutcome.Refusal(' CommandDispatcher.cs CommandParser.cs StdinBodyReader.cs` → 236; distinct
+code strings → 53. `git status --short` shows only `CommandDispatcherRegisterTests.cs` new among
+`src/` and `tests/` — `CommandDispatcher.cs`/`CommandParser.cs` carry only what the second
+remediation already reported, confirmed by restoring the mutation experiment from a backup rather
+than trusting memory of what changed.
+
+**One incidental accessibility fix, noted rather than buried**: `TempGitRepo` in
+`CommandDispatcherRegisterTests.cs` had to move from `private` to `public` — a `[Theory]` method
+must be `public` for xunit to discover it, and a public method cannot take a less-accessible nested
+type as a parameter (`CS0051`). No behavioural change; the type's members are unchanged, only its
+own visibility widened within the same file's use.
+
+**Gates, full re-run:** `BUILD_EXIT:0`, `TEST_EXIT:0` (658: 653 prior + 5 new theory cases),
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**Files touched**: `tests/Callboard.Tests/CommandDispatcherRegisterTests.cs` only (the new theory,
+its `MemberData`, and `TempGitRepo`'s visibility). Nothing in `src/` changed this round — the fix is
+entirely a coverage gap closed, not a behaviour change; the ownership fix itself, `--role`/`--owed-by`
+separation, and the leave-`propose-compact`-alone decision all stand exactly as the reviewer
+verified.
+
+→ @reviewer
+
+**[reviewer]** Nit closed — confirmed, not taken on the report.
+
+1. **Closes the gap.** Reproduced my exact mutation (`RunRuleCreate`'s `MapCardCreateOutcome` call
+   passing a hardcoded `CardOwner.Architect` instead of `parsed.ActingRole`), rebuilt, and ran the
+   new theory in isolation: the `rule` row failed (`'rule create' response actingRole was
+   'architect', expected 'worker'`) while `hazard`/`obligation`/`decision`/`section` passed —
+   exactly the discrimination claimed, isolated to the one verb actually mutated. Reverted;
+   `git diff` on `CommandDispatcher.cs` came back to its exact pre-mutation state.
+2. **`--role worker` is load-bearing, confirmed by running the same mutated binary with
+   `--role architect` instead.** Response `actingRole: architect` (from the hardcoded mutation) and
+   card `owner: architect` (from the untouched `CreateCard` call, since `--role architect` was what
+   the caller supplied) — both "architect", coincidentally agreeing despite the divergence in the
+   code. A test built on `architect` would have passed on this exact defect; the choice isn't
+   cosmetic.
+3. **Five rows, five verbs, none omitted** — rule/hazard/obligation/decision/section, the full set
+   sharing `MapCardCreateOutcome` outside `question`. `MemberData` over reflection is the right call
+   here: `RegisterCardFieldsKeyCoverageTests`' reflection enumerates properties of *one type*; there
+   is no single type here whose members are "the five verbs" — each needs a genuinely different argv
+   shape (`--scope`, `--condition`/`--cadence`, `--change`, plus a resolved section id for
+   `--owed-by`) that is business logic in the parser, not a reflectable shape. I don't see a
+   stronger structural check available.
+4. **`TempGitRepo`'s `public` change is inert.** Only the class-level accessibility keyword moved;
+   every member's own modifier (`internal` properties, the constructor, `public Dispose()` per
+   `IDisposable`) is unchanged, and isolation comes from the constructor's fresh-GUID-directory
+   logic and `Dispose`, not from the class's visibility.
+5. **Test-only, confirmed.** `git status --short` shows exactly one new/changed test file this
+   round; gates re-run independently: `BUILD_EXIT:0`, `TEST_EXIT:0` (658/658), `FORMAT_EXIT:0`,
+   `VALIDATE_EXIT:0`; refusal set unchanged (236 sites, 53 codes) — expected for a test-only diff.
+
+§7 is ready for the supervisor's third and final review.
+
 ## NEXT
 
 

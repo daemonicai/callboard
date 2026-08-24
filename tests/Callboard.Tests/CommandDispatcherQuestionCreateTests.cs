@@ -16,15 +16,17 @@ public sealed class CommandDispatcherQuestionCreateTests
 {
     private static readonly DateTimeOffset FixedNow = new(2026, 8, 24, 11, 0, 0, TimeSpan.Zero);
 
+    // §7 second remediation: owner is the role that owes the answer (--owed-by), never the
+    // acting role — the defect this test used to pin the other way.
     [Fact]
-    public void QuestionCreate_Succeeds_RepositoryScoped_OwnedByTheActingRole()
+    public void QuestionCreate_Succeeds_RepositoryScoped_OwnedByTheOwedByRole_NotTheActingRole()
     {
         using var repo = new TempGitRepo();
         var path = Path.Combine(repo.RegisterDirectory, "q-0001.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--title", "Should these rules become one family?", "--role", "worker"],
+            ["question", "create", path, "--title", "Should these rules become one family?", "--role", "worker", "--owed-by", "product-owner"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -32,13 +34,17 @@ public sealed class CommandDispatcherQuestionCreateTests
         var result = doc.RootElement.GetProperty("result");
         Assert.Equal("question", result.GetProperty("kind").GetString());
         Assert.Equal("repository", result.GetProperty("scope").GetString());
+
+        // The response's actingRole still reports the raiser — the fact its name says — even
+        // though the card itself is owned by someone else entirely.
         Assert.Equal("worker", result.GetProperty("actingRole").GetString());
         Assert.True(File.Exists(path));
 
         var card = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(CardKind.Question, card.Frontmatter.Kind);
         Assert.Equal(CardScope.Repository, card.Frontmatter.Scope);
-        Assert.Equal(CardOwner.Worker, card.Frontmatter.Owner);
+        Assert.Equal(CardOwner.ProductOwner, card.Frontmatter.Owner);
+        Assert.NotEqual(CardOwner.Worker, card.Frontmatter.Owner);
         Assert.Equal("Body.", card.Body);
     }
 
@@ -50,13 +56,49 @@ public sealed class CommandDispatcherQuestionCreateTests
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--role", "worker"],
+            ["question", "create", path, "--role", "worker", "--owed-by", "product-owner"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void QuestionCreate_MissingOwedBy_Refuses_WithoutWritingAnything()
+    {
+        using var repo = new TempGitRepo();
+        var path = Path.Combine(repo.RegisterDirectory, "q-0004.md");
+
+        var output = new StringWriter();
+        var exitCode = RunInRepo(
+            ["question", "create", path, "--title", "Should these rules become one family?", "--role", "worker"],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void QuestionCreate_UnrecognisedOwedByRole_Refuses()
+    {
+        using var repo = new TempGitRepo();
+        var path = Path.Combine(repo.RegisterDirectory, "q-0005.md");
+
+        var output = new StringWriter();
+        var exitCode = RunInRepo(
+            ["question", "create", path, "--title", "Should these rules become one family?", "--role", "worker", "--owed-by", "nobody"],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("unrecognised-role", refusal.GetProperty("code").GetString());
         Assert.False(File.Exists(path));
     }
 
@@ -96,11 +138,11 @@ public sealed class CommandDispatcherQuestionCreateTests
         var firstOutput = new StringWriter();
         Assert.Equal(
             CommandDispatcher.SuccessExitCode,
-            RunInRepo(["question", "create", path, "--title", "First", "--role", "worker"], firstOutput, repo.Path, "Body."));
+            RunInRepo(["question", "create", path, "--title", "First", "--role", "worker", "--owed-by", "product-owner"], firstOutput, repo.Path, "Body."));
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--title", "Second", "--role", "worker"],
+            ["question", "create", path, "--title", "Second", "--role", "worker", "--owed-by", "product-owner"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
