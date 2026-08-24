@@ -67,6 +67,68 @@ public sealed class CommandDispatcherRuleAuthorTests
         Assert.Equal(findingTwoMtimeBefore, File.GetLastWriteTimeUtc(findingTwoPath));
     }
 
+    // The reviewer's nit on the approved block: earned_from resolving into an *archived* change is
+    // structurally guaranteed by CardIdentityResolver (block B already proved it searches
+    // changes/archive/), but nothing drove that case through the actual rule author surface a
+    // caller uses. A mix — one live finding, one archived — is the more honest case: it proves the
+    // resolution loop does not special-case "the first id resolves live" and stop looking wider for
+    // the rest. The archived finding is produced by the real `change archive` path (block D), not a
+    // hand-placed file, so this exercises the arrangement production actually creates.
+    [Fact]
+    public void RuleAuthor_EarnedFromNamesAFindingInAnArchivedChange_Succeeds_AndTheArchivedFindingIsUnchanged()
+    {
+        using var repo = new TempGitRepo();
+
+        var liveSectionId = CreateSection(repo, ChangeName);
+        var liveFindingId = CreateFinding(repo, "f-0006", liveSectionId, ChangeName);
+        var liveFindingPath = Path.Combine(repo.CardsDirectory, "f-0006.md");
+
+        const string ArchivedChangeName = "archived-change";
+        var archivedLiveDirectory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ArchivedChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(archivedLiveDirectory);
+        var archivedSectionId = CreateSection(repo, ArchivedChangeName, directory: archivedLiveDirectory);
+        var archivedFindingId = CreateFinding(repo, "f-0007", archivedSectionId, ArchivedChangeName, directory: archivedLiveDirectory);
+
+        var archiveOutput = new StringWriter();
+        var archiveExitCode = RunInRepo(
+            ["change", "archive", ArchivedChangeName, "--role", "architect"], archiveOutput, repo.Path, string.Empty);
+        Assert.Equal(CommandDispatcher.SuccessExitCode, archiveExitCode);
+        Assert.False(Directory.Exists(archivedLiveDirectory), "the change directory must have moved under changes/archive/.");
+
+        var archivedFindingPath = Path.Combine(
+            repo.Path, CardLayout.ArchivedChangeDirectory(ArchivedChangeName).Replace('/', Path.DirectorySeparatorChar), "f-0007.md");
+        Assert.True(File.Exists(archivedFindingPath), "the archived finding must be resolvable at its post-archive path.");
+        var archivedFindingBytesBefore = File.ReadAllBytes(archivedFindingPath);
+        var archivedFindingMtimeBefore = File.GetLastWriteTimeUtc(archivedFindingPath);
+
+        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0006.md");
+        var output = new StringWriter();
+        var exitCode = RunInRepo(
+            [
+                "rule", "author", rulePath, "--title", "Earned across the archive boundary", "--role", "architect",
+                "--scope", "repository", "--earned-from", $"{liveFindingId},{archivedFindingId}",
+            ],
+            output, repo.Path, "One live finding, one already archived.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        var earnedFrom = result.GetProperty("earnedFrom").EnumerateArray().Select(static e => e.GetString()).ToList();
+        Assert.Equal([liveFindingId, archivedFindingId], earnedFrom);
+
+        var cardOnDisk = AssertParseSuccess(CardStore.ReadCard(rulePath));
+        Assert.True(cardOnDisk.RegisterFields.EarnedFrom.SequenceEqual([liveFindingId, archivedFindingId], StringComparer.Ordinal));
+
+        // The archived finding is unchanged — bytes and mtime, block D's own standard. If
+        // resolution had stopped searching once changes/archive/ was reached (or never descended
+        // into it at all), this whole attempt would have refused with card-id-not-found before ever
+        // reaching this assertion — the SuccessExitCode check above is what actually discriminates
+        // that failure mode; this just confirms the file itself paid no price for being findable.
+        Assert.Equal(archivedFindingBytesBefore, File.ReadAllBytes(archivedFindingPath));
+        Assert.Equal(archivedFindingMtimeBefore, File.GetLastWriteTimeUtc(archivedFindingPath));
+        Assert.True(File.Exists(liveFindingPath));
+    }
+
     [Fact]
     public void RuleAuthor_NoEarnedFromFlag_Refuses_AtParseTime()
     {

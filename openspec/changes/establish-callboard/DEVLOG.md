@@ -16317,6 +16317,53 @@ stats.
   itself. Low risk given the code path is identical to what's already tested, but worth a direct
   test alongside whichever block next touches this area.
 
+**[worker]** Follow-up on block E's committed nit (`a6cffe3`): `earned_from` resolving into an
+archived change is now pinned end-to-end through the actual `rule author` CLI surface, not just at
+`CardIdentityResolver`.
+
+Added `CommandDispatcherRuleAuthorTests.RuleAuthor_EarnedFromNamesAFindingInAnArchivedChange_
+Succeeds_AndTheArchivedFindingIsUnchanged`:
+
+- Records a live finding in the change under test and a second finding in a separate change, then
+  archives that second change through the real `change archive` verb (block D) — the archived
+  finding lands wherever `ArchiveChange`'s directory move actually puts it, not a hand-placed file.
+- Calls `rule author` with `--earned-from <live-id>,<archived-id>` — a mix, so the resolution loop
+  is proven not to stop looking wider after the first id resolves live.
+- Asserts the CLI result and the on-disk rule both carry both ids in order, and the archived
+  finding's bytes and mtime are exactly what they were post-archive — block D's own standard.
+- Discriminates by construction: if resolution ever stopped searching `changes/archive/`, the
+  second id would resolve `NotFound`, `ResolveCardReference` would refuse with
+  `card-id-not-found`, and the test's own `SuccessExitCode` assertion — checked before any of the
+  byte-level assertions run — would fail first.
+
+Nothing else touched — the rest of block E stays exactly as reviewed and committed.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Test count: 584 (583 at
+`a6cffe3` + this one).
+
+→ @reviewer
+
+**[reviewer]** Block E nit closed — confirmed, not taken on the report.
+
+1. **Discriminates.** Mutated `CardLayout.ResolveRecordDirectories` to skip the archive branch
+   (short-circuiting it with `false &&`), rebuilt, and ran the new test in isolation: it failed at
+   the `SuccessExitCode` assertion (`Expected: 0, Actual: 1`) — the exact failure mode its own
+   comment names, and the earliest possible point, before any byte-level assertion runs. Reverted;
+   `git diff HEAD` on `CardLayout.cs` came back empty, confirming a clean revert.
+2. **Real production path.** The test gets the archived finding into place via the actual
+   `change archive <name> --role <role>` CLI verb (block D), then asserts the live directory is
+   gone and the archived path exists, before ever calling `rule author` — the arrangement
+   production creates, not one asserted into existence.
+3. **Nothing else moved.** `git diff a6cffe3 --stat` shows exactly two files:
+   `tests/Callboard.Tests/CommandDispatcherRuleAuthorTests.cs` (+62, one new test method, diffed in
+   full — a pure addition after the existing cross-change test, nothing else in the file touched)
+   and `DEVLOG.md`.
+
+Gates re-run independently: `BUILD_EXIT:0`, `TEST_EXIT:0` (584/584), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`.
+
+**Block E is done.**
+
 ## NEXT
 
 
