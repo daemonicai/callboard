@@ -270,7 +270,7 @@ public sealed class CommandDispatcherRegisterTests
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var result = doc.RootElement.GetProperty("result");
-        Assert.Equal("architect", result.GetProperty("dischargedBy").GetString());
+        Assert.Equal("architect", result.GetProperty("actingRole").GetString());
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("discharged", read.Frontmatter.Status);
@@ -363,7 +363,7 @@ public sealed class CommandDispatcherRegisterTests
         var result = doc.RootElement.GetProperty("result");
         Assert.Equal(supersedingId, result.GetProperty("supersedingId").GetString());
         Assert.Equal(supersededId, result.GetProperty("supersededId").GetString());
-        Assert.Equal("product-owner", result.GetProperty("dischargedBy").GetString());
+        Assert.Equal("product-owner", result.GetProperty("actingRole").GetString());
     }
 
     [Fact]

@@ -173,6 +173,40 @@ public sealed class RuleCitationsTests : IDisposable
         Assert.DoesNotContain(dischargedPath, uncitedPaths);
     }
 
+    // §7 remediation, blocker 2: resolvable is not the same question as live. A change-scoped rule
+    // left `open` when its change archives is still resolvable (CountCitations reaches it — proven
+    // above) but is not part of the live register, so it must not enter this queue — the queue
+    // would otherwise grow, permanently, with every archived change that never promoted its rules.
+    [Fact]
+    public void UncitedOpenRules_ChangeScopedOpenRuleInAnArchivedChange_IsNotQueued()
+    {
+        var archivedDirectory = Path.Combine(
+            _root, CardLayout.ArchiveDirectory.Replace('/', Path.DirectorySeparatorChar), "2026-01-01-old-change");
+        Directory.CreateDirectory(archivedDirectory);
+        var archivedRulePath = Path.Combine(archivedDirectory, "r-0019.md");
+        WriteRuleCardAt(archivedRulePath, "R-0019", CardScope.Change, RegisterLifecycleState.Open, "Never promoted, archived open.");
+
+        var uncited = RuleCitations.UncitedOpenRules(_root);
+
+        Assert.DoesNotContain(archivedRulePath, uncited.Select(static entry => entry.FilePath));
+    }
+
+    // The other half of the same distinction: a rule promoted to repository scope before its
+    // change archived is still live and still belongs in the queue — archiving a change must not
+    // sweep away a rule that has already left it.
+    [Fact]
+    public void UncitedOpenRules_RepositoryScopedRulePromotedBeforeArchive_IsStillQueued()
+    {
+        var promotedPath = WriteRepositoryRule("r-0020", "R-0020", "Promoted out before its change archived.");
+        var archivedDirectory = Path.Combine(
+            _root, CardLayout.ArchiveDirectory.Replace('/', Path.DirectorySeparatorChar), "2026-01-01-old-change");
+        Directory.CreateDirectory(archivedDirectory);
+
+        var uncited = RuleCitations.UncitedOpenRules(_root);
+
+        Assert.Contains(promotedPath, uncited.Select(static entry => entry.FilePath));
+    }
+
     // "SHALL NOT be retired automatically" — proven by execution: the queue computation itself
     // never discharges, never writes, never touches the file it names.
     [Fact]

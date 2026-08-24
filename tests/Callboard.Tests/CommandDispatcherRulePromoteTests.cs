@@ -36,9 +36,17 @@ public sealed class CommandDispatcherRulePromoteTests
         var newPath = result.GetProperty("newFilePath").GetString()!;
         Assert.Equal(Path.Combine(repo.RegisterDirectory, "r-0001.md"), newPath);
         Assert.Equal("repository", result.GetProperty("scope").GetString());
+        Assert.Equal("architect", result.GetProperty("actingRole").GetString());
 
         Assert.False(File.Exists(oldPath));
         Assert.True(File.Exists(newPath));
+
+        // §7 remediation, blocker 3: promotion now records who performed it on the card's own
+        // comment thread — the one register mutation the record previously could not attribute.
+        var promoted = AssertParseSuccess(CardStore.ReadCard(newPath));
+        var promotionComment = Assert.Single(promoted.Comments);
+        Assert.Equal(CardOwner.Architect, promotionComment.Author);
+        Assert.Equal(FixedNow, promotionComment.Timestamp);
     }
 
     [Fact]
@@ -109,6 +117,11 @@ public sealed class CommandDispatcherRulePromoteTests
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>
         CommandDispatcher.Run(
             args, output, new StringReader(body), TextWriter.Null, isInputRedirected: true, workingDirectory: workingDirectory, clock: static () => FixedNow);
+
+    private static CardFile AssertParseSuccess(CardFileParseResult result) =>
+        result.Match<CardFile>(
+            onSuccess: success => success.Card,
+            onFailure: failure => throw new Xunit.Sdk.XunitException($"expected parse success, got failure: {failure.Reason}"));
 
     private sealed class TempGitRepo : IDisposable
     {

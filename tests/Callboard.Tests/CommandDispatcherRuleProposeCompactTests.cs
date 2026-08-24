@@ -25,10 +25,11 @@ public sealed class CommandDispatcherRuleProposeCompactTests
         var secondId = CreateRepositoryRule(repo, "r-0002", "Second member");
         // A third card, elsewhere in the record, cites the first member once.
         CreateRepositoryRule(repo, "r-0003", "Cites the first", body: $"This leans on {firstId}.");
+        var proposalPath = Path.Combine(repo.RegisterDirectory, "q-0001.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", $"{firstId},{secondId}", "--role", "worker"],
+            ["rule", "propose-compact", "--absorbs", $"{firstId},{secondId}", "--role", "worker", "--proposal-file", proposalPath],
             output, repo.Path, "Generalised candidate text.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -39,7 +40,24 @@ public sealed class CommandDispatcherRuleProposeCompactTests
         Assert.Equal([firstId, secondId], backing);
         var citationCounts = result.GetProperty("citationCounts").EnumerateArray().Select(static e => e.GetInt32()).ToList();
         Assert.Equal([1, 0], citationCounts);
-        Assert.Equal("worker", result.GetProperty("proposedBy").GetString());
+        Assert.Equal("worker", result.GetProperty("actingRole").GetString());
+        Assert.Equal(proposalPath, result.GetProperty("proposalFilePath").GetString());
+        var proposalId = result.GetProperty("proposalId").GetString();
+        Assert.NotNull(proposalId);
+
+        // §7 remediation, blocker 1: the proposal is durable — a fresh read, in a separate call,
+        // still finds it, carrying the candidate text, the backing set and the citation counts,
+        // owned by the Product Owner so it routes there by the same ownership routing every other
+        // card uses.
+        var proposalCard = AssertParseSuccess(CardStore.ReadCard(proposalPath));
+        Assert.Equal(CardKind.Question, proposalCard.Frontmatter.Kind);
+        Assert.Equal(CardScope.Repository, proposalCard.Frontmatter.Scope);
+        Assert.Equal(CardOwner.ProductOwner, proposalCard.Frontmatter.Owner);
+        Assert.Equal(proposalId, proposalCard.Frontmatter.Id);
+        Assert.Contains("Generalised candidate text.", proposalCard.Body);
+        Assert.Contains(firstId, proposalCard.Body);
+        Assert.Contains(secondId, proposalCard.Body);
+        Assert.Contains("worker", proposalCard.Body);
     }
 
     // The sharpest claim in this block, proven by execution — on the bytes, not the response.
@@ -53,10 +71,11 @@ public sealed class CommandDispatcherRuleProposeCompactTests
         var secondPath = Path.Combine(repo.RegisterDirectory, "r-0005.md");
         var firstBefore = File.ReadAllBytes(firstPath);
         var secondBefore = File.ReadAllBytes(secondPath);
+        var proposalPath = Path.Combine(repo.RegisterDirectory, "q-0002.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", $"{firstId},{secondId}", "--role", "architect"],
+            ["rule", "propose-compact", "--absorbs", $"{firstId},{secondId}", "--role", "architect", "--proposal-file", proposalPath],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -93,7 +112,7 @@ public sealed class CommandDispatcherRuleProposeCompactTests
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", "R-0001,R-0001", "--role", "worker"],
+            ["rule", "propose-compact", "--absorbs", "R-0001,R-0001", "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-dup.md")],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -109,7 +128,7 @@ public sealed class CommandDispatcherRuleProposeCompactTests
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", "R-9999", "--role", "worker"],
+            ["rule", "propose-compact", "--absorbs", "R-9999", "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-missing.md")],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -135,7 +154,7 @@ public sealed class CommandDispatcherRuleProposeCompactTests
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", changeScopedId, "--role", "worker"],
+            ["rule", "propose-compact", "--absorbs", changeScopedId, "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-change-scoped.md")],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -159,7 +178,7 @@ public sealed class CommandDispatcherRuleProposeCompactTests
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", dischargedId, "--role", "worker"],
+            ["rule", "propose-compact", "--absorbs", dischargedId, "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-discharged.md")],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -183,7 +202,7 @@ public sealed class CommandDispatcherRuleProposeCompactTests
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", sectionId, "--role", "worker"],
+            ["rule", "propose-compact", "--absorbs", sectionId, "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-section.md")],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);

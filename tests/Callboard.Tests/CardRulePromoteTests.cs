@@ -84,7 +84,16 @@ public sealed class CardRulePromoteTests : IDisposable
         Assert.Equal(beforeRead.Frontmatter.Section, afterRead.Frontmatter.Section);
         Assert.Equal(beforeRead.Frontmatter.Created, afterRead.Frontmatter.Created);
         Assert.Equal(beforeRead.Body, afterRead.Body);
-        Assert.Equal(beforeRead.Comments, afterRead.Comments);
+
+        // §7 remediation, blocker 3: every prior comment survives, in order, and exactly one
+        // attributed comment recording the promotion is appended after them — the only way this
+        // write records who promoted the card, since promotion touches neither DischargedBy (the
+        // rule stays open) nor any other existing attribution field.
+        Assert.Equal(beforeRead.Comments.Count + 1, afterRead.Comments.Count);
+        Assert.Equal(beforeRead.Comments, afterRead.Comments.Take(beforeRead.Comments.Count).ToList());
+        var promotionComment = afterRead.Comments[^1];
+        Assert.Equal(CardOwner.Architect, promotionComment.Author);
+        Assert.Equal(PromotedAt, promotionComment.Timestamp);
 
         // RegisterCardFields itself is not asserted with one Assert.Equal: ImmutableArray<T>'s own
         // Equals compares the underlying array by reference, not by content, so two independently-

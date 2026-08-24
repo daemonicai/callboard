@@ -848,8 +848,11 @@ internal static class CardStore
     /// the card's own <c>id</c>, <c>body</c>, and every frontmatter field this method does not
     /// explicitly name survive verbatim, because the only "creation" of new content here is a
     /// single <c>with</c> expression that changes exactly <c>Scope</c> and <c>Updated</c> before
-    /// the same <see cref="CardFile"/> is re-serialised. Comments are never touched — nothing this
-    /// method calls can write to <see cref="CardFile.Comments"/>.
+    /// the same <see cref="CardFile"/> is re-serialised. <b>Every existing comment is preserved,
+    /// in order</b> (§7 remediation, blocker 3) — one attributed comment recording the acting role
+    /// and the time is appended after them, the only way this method's write records who promoted
+    /// the card, since promotion touches neither <see cref="RegisterCardFields.DischargedBy"/> (the
+    /// rule stays open) nor any other existing attribution field.
     /// </para>
     ///
     /// <para>
@@ -889,13 +892,13 @@ internal static class CardStore
         WithLock(
             filePath,
             lockTimeout,
-            heldLock => PromoteRuleUnderExistingLock(heldLock, cardsRoot, timestamp),
+            heldLock => PromoteRuleUnderExistingLock(heldLock, cardsRoot, actingRole, timestamp),
             onTimedOut: timedOut => new CardRulePromoteOutcome.ToolFailure(timedOut.Message));
 
     /// <summary>The read-decide-move-write step of <see cref="PromoteRule"/>. Same structural lock
     /// precondition as every other <c>*UnderExistingLock</c> method on this type.</summary>
     private static CardRulePromoteOutcome PromoteRuleUnderExistingLock(
-        CardLock heldLock, string cardsRoot, DateTimeOffset timestamp)
+        CardLock heldLock, string cardsRoot, CardOwner actingRole, DateTimeOffset timestamp)
     {
         ArgumentNullException.ThrowIfNull(heldLock);
         var originalFilePath = heldLock.CardPath;
@@ -974,9 +977,30 @@ internal static class CardStore
                     return new CardRulePromoteOutcome.LayoutMismatch(layoutFailure!.Reason);
                 }
 
+                // §7 remediation, blocker 3: promotion is the one register mutation whose record
+                // could not previously say who performed it — every sibling write records the
+                // acting role and the time (DischargedBy/DischargedAt, the comment 7.12 appends),
+                // and this one wrote neither. An appended comment, not a new RegisterCardFields
+                // entry: promotion does not discharge the rule (it stays open) and does not
+                // supersede anything, so neither existing attribution field fits the fact, and a
+                // new frontmatter field would be the "naming more than you must" the brief warns
+                // against — this is the one write already happening, so no second lock or second
+                // AtomicWrite is needed to record it.
+                var promotionComment = new CardComment(
+                    Id: $"promote-{Guid.NewGuid():N}",
+                    Author: actingRole,
+                    Timestamp: timestamp,
+                    Body: $"'{actingRole.ToWireString()}' promoted this rule from change to repository scope at " +
+                        timestamp.ToString("O", System.Globalization.CultureInfo.InvariantCulture) + ".",
+                    ReplyTo: null,
+                    To: null,
+                    Resolves: null,
+                    UnknownHeaderFields: []);
+
                 var updated = card with
                 {
                     Frontmatter = card.Frontmatter with { Scope = CardScope.Repository, Updated = timestamp },
+                    Comments = [.. card.Comments, promotionComment],
                 };
 
                 var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));

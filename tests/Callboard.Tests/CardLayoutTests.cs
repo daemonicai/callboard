@@ -65,4 +65,33 @@ public sealed class CardLayoutTests
     [InlineData("")]
     public void RequireSafePathSegment_RejectsTraversalSeparatorsAndEmpty(string value) =>
         Assert.Throws<ArgumentException>(() => CardLayout.RequireSafePathSegment(value, "id"));
+
+    // §7 remediation, blocker 2: resolvable (ResolveRecordDirectories, which reaches the archive)
+    // is not the same question as live (ResolveLiveRecordDirectories, which does not) — pinned
+    // directly at the layout level, the single place both RuleCitations.UncitedOpenRules and any
+    // later caller must go through rather than each drawing this line for itself.
+    [Fact]
+    public void ResolveLiveRecordDirectories_ExcludesArchivedChanges_ButResolveRecordDirectories_IncludesThem()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "callboard-card-layout-tests-" + Guid.NewGuid().ToString("N"));
+        var liveChangeDirectory = Path.Combine(root, CardLayout.ChangesDirectory("live-change").Replace('/', Path.DirectorySeparatorChar));
+        var archivedChangeDirectory = Path.Combine(root, CardLayout.ArchivedChangeDirectory("old-change").Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(liveChangeDirectory);
+        Directory.CreateDirectory(archivedChangeDirectory);
+
+        try
+        {
+            var live = CardLayout.ResolveLiveRecordDirectories(root);
+            Assert.Contains(Path.TrimEndingDirectorySeparator(liveChangeDirectory), live.Select(Path.TrimEndingDirectorySeparator));
+            Assert.DoesNotContain(Path.TrimEndingDirectorySeparator(archivedChangeDirectory), live.Select(Path.TrimEndingDirectorySeparator));
+
+            var all = CardLayout.ResolveRecordDirectories(root);
+            Assert.Contains(Path.TrimEndingDirectorySeparator(liveChangeDirectory), all.Select(Path.TrimEndingDirectorySeparator));
+            Assert.Contains(Path.TrimEndingDirectorySeparator(archivedChangeDirectory), all.Select(Path.TrimEndingDirectorySeparator));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }

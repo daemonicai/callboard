@@ -39,10 +39,11 @@ internal static class CommandParser
         "hazard" => ParseHazard(context),
         "obligation" => ParseObligation(context),
         "decision" => ParseDecision(context),
+        "question" => ParseQuestion(context),
         "change" => ParseChange(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, change.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change.")),
     };
 
     /// <summary>
@@ -1356,17 +1357,22 @@ internal static class CommandParser
     /// Unlike <see cref="ParseRuleCompact"/> there is no <c>--id</c> (no family card exists yet) and
     /// no <c>--change</c> (this proposes over the repository-scoped register, not one named change's
     /// own rules). The candidate text is read from stdin the same way <see cref="ParseRuleAuthor"/>'s
-    /// body is — new proposed wording, not a path to something already on disk.
+    /// body is — new proposed wording, not a path to something already on disk. <c>--proposal-file</c>
+    /// (§7 remediation, blocker 1) is required for the same reason every card-creation verb requires
+    /// a path: this call now creates one <c>question</c> card recording the proposal, and the caller
+    /// names where, the same convention <see cref="ParseQuestionCreate"/> itself follows.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseRuleProposeCompact(CommandDispatcher.CommandContext context)
     {
         string? absorbsRaw = null;
         string? roleText = null;
+        string? proposalFilePath = null;
 
         var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
             ["--absorbs"] = value => absorbsRaw = value,
             ["--role"] = value => roleText = value,
+            ["--proposal-file"] = value => proposalFilePath = value,
         });
         if (flagRefusal is not null)
         {
@@ -1402,6 +1408,14 @@ internal static class CommandParser
                 "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
         }
 
+        if (string.IsNullOrEmpty(proposalFilePath))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'rule propose-compact' requires '--proposal-file <path>' — the file the recorded " +
+                "proposal (a 'question' card owned by the Product Owner) is written to."));
+        }
+
         var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
         if (stdinRefusal is not null)
         {
@@ -1411,7 +1425,7 @@ internal static class CommandParser
         var candidateText = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleProposeCompact(
-            candidateText, backingIds, role, context.WorkingDirectory, context.Clock()));
+            candidateText, backingIds, proposalFilePath, role, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>
@@ -1796,6 +1810,38 @@ internal static class CommandParser
         ParseCardCreate(context, "'decision create'", requireChange: false, build:
             (filePath, title, role, body, _, workingDirectory, timestamp) =>
                 new CommandDispatcher.ParsedCommand.DecisionCreate(filePath, title, role, body, workingDirectory, timestamp));
+
+    /// <summary>
+    /// <c>question</c> (§7 remediation, blocker 1). <b>Creation only</b> — see <see cref="
+    /// CommandDispatcher.ParsedCommand.QuestionCreate"/>'s own doc comment for what §9 still owns.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseQuestion(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'question' requires a subcommand. Known subcommands: create."));
+            case "create":
+                context.Arguments.TryTake();
+                return ParseQuestionCreate(context);
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'question' subcommand: '{subcommand}'. Known subcommands: create."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>question create</c>'s <see cref="CommandDispatcher.ParsedCommand.QuestionCreate"/>.
+    /// Scope is always <see cref="CardScope.Repository"/>, the same reason <see cref="
+    /// ParseDecisionCreate"/> does not accept <c>--change</c> either.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseQuestionCreate(CommandDispatcher.CommandContext context) =>
+        ParseCardCreate(context, "'question create'", requireChange: false, build:
+            (filePath, title, role, body, _, workingDirectory, timestamp) =>
+                new CommandDispatcher.ParsedCommand.QuestionCreate(filePath, title, role, body, workingDirectory, timestamp));
 
     /// <summary>
     /// Builds <c>decision supersede</c>'s <see cref="CommandDispatcher.ParsedCommand.DecisionSupersede"/>

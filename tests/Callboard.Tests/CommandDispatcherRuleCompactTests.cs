@@ -41,7 +41,7 @@ public sealed class CommandDispatcherRuleCompactTests
         Assert.Equal(familyId, result.GetProperty("familyId").GetString());
         var absorbs = result.GetProperty("absorbs").EnumerateArray().Select(static e => e.GetString()).ToList();
         Assert.Equal([firstId, secondId], absorbs);
-        Assert.Equal("architect", result.GetProperty("dischargedBy").GetString());
+        Assert.Equal("architect", result.GetProperty("actingRole").GetString());
 
         var familyPath = result.GetProperty("familyFilePath").GetString()!;
         var familyOnDisk = AssertParseSuccess(CardStore.ReadCard(familyPath));

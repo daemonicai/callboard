@@ -12,7 +12,9 @@ namespace Callboard.Cli;
 /// follows for a single card's discharge. <see cref="CompactedFamilyId"/>/<see cref="
 /// CompactedRuleIds"/> report §7 block F's archive-time compaction hook — both <see langword="null"/>
 /// for the ordinary case (a change with nothing to compact, or none requested), both set when
-/// <c>--compact-family</c>/<c>--absorbs</c> were given.
+/// <c>--compact-family</c>/<c>--absorbs</c> were given. <see cref="ActingRole"/> was previously
+/// spelled <c>ArchivedBy</c> — renamed to the one spelling §7's result types settle on for the
+/// acting role (§7 remediation, blocker 3); the value is unchanged.
 /// </summary>
 internal sealed class ChangeArchiveResult : ICommandResult
 {
@@ -31,8 +33,8 @@ internal sealed class ChangeArchiveResult : ICommandResult
     [JsonPropertyName("compactedRuleIds")]
     public IReadOnlyList<string>? CompactedRuleIds { get; init; }
 
-    [JsonPropertyName("archivedBy")]
-    public required string ArchivedBy { get; init; }
+    [JsonPropertyName("actingRole")]
+    public required string ActingRole { get; init; }
 
     [JsonPropertyName("archivedAt")]
     public required DateTimeOffset ArchivedAt { get; init; }

@@ -182,17 +182,18 @@ internal static class CommandDispatcher
         Func<ObligationCreate, TResult> onObligationCreate,
         Func<DecisionCreate, TResult> onDecisionCreate,
         Func<SectionCreate, TResult> onSectionCreate,
+        Func<QuestionCreate, TResult> onQuestionCreate,
         Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution);
 
         internal sealed record Version : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onVersion(this);
         }
 
         internal sealed record IndexRebuild(string WorkingDirectory) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onIndexRebuild(this);
         }
 
@@ -217,7 +218,7 @@ internal static class CommandDispatcher
         internal sealed record BlockTransition(
             string FilePath, string TransitionName, CardOwner ActingRole, string? BaseCommit, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onBlockTransition(this);
         }
 
@@ -230,7 +231,7 @@ internal static class CommandDispatcher
         internal sealed record BlockGate(
             string FilePath, string Label, int ExitCode, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onBlockGate(this);
         }
 
@@ -242,14 +243,14 @@ internal static class CommandDispatcher
         internal sealed record BlockAddBlocker(
             string FilePath, string BlockingCardId, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onBlockAddBlocker(this);
         }
 
         internal sealed record BlockRemoveBlocker(
             string FilePath, string BlockingCardId, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onBlockRemoveBlocker(this);
         }
 
@@ -259,14 +260,14 @@ internal static class CommandDispatcher
         internal sealed record SectionVerdict(
             string FilePath, Callboard.Cards.SectionVerdict Verdict, string RangeFrom, string RangeTo, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onSectionVerdict(this);
         }
 
         internal sealed record SectionClose(
             string FilePath, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onSectionClose(this);
         }
 
@@ -280,7 +281,7 @@ internal static class CommandDispatcher
         /// </summary>
         internal sealed record SectionStatus(string FilePath, string WorkingDirectory) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onSectionStatus(this);
         }
 
@@ -316,7 +317,7 @@ internal static class CommandDispatcher
             string WorkingDirectory,
             DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onFindingRecord(this);
         }
 
@@ -332,7 +333,7 @@ internal static class CommandDispatcher
         /// </summary>
         internal sealed record FindingStatus(string FilePath, string WorkingDirectory) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onFindingStatus(this);
         }
 
@@ -346,7 +347,7 @@ internal static class CommandDispatcher
         internal sealed record RuleCreate(
             string FilePath, string Title, CardOwner ActingRole, CardScope Scope, string Body, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onRuleCreate(this);
         }
 
@@ -360,7 +361,7 @@ internal static class CommandDispatcher
         internal sealed record HazardCreate(
             string FilePath, string Title, CardOwner ActingRole, string Body, string Condition, string Cadence, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onHazardCreate(this);
         }
 
@@ -376,7 +377,7 @@ internal static class CommandDispatcher
         internal sealed record ObligationCreate(
             string FilePath, string Title, CardOwner ActingRole, string Body, string ChangeName, string OwedById, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onObligationCreate(this);
         }
 
@@ -388,7 +389,7 @@ internal static class CommandDispatcher
         internal sealed record DecisionCreate(
             string FilePath, string Title, CardOwner ActingRole, string Body, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onDecisionCreate(this);
         }
 
@@ -400,8 +401,29 @@ internal static class CommandDispatcher
         internal sealed record SectionCreate(
             string FilePath, string Title, CardOwner ActingRole, string Body, string ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onSectionCreate(this);
+        }
+
+        /// <summary>
+        /// <c>question create</c> (§7 remediation, blocker 1: register defines <c>question</c> as
+        /// repository-scoped, "continues to surface to the role that owes its answer", outliving
+        /// the change that raised it — the shape a repository compaction proposal needs to be
+        /// durable, attributed and routable to the Product Owner). <b>Creation only</b>, the same
+        /// boundary block A drew for its five kinds: no answer verb, no defer verb, and no status
+        /// transition beyond the one a brand-new card needs — §9 owns a question's own lifecycle
+        /// (9.7's open-undeferred-question refusal, 9.9's answer-without-decision-reference refusal,
+        /// 9.10's blocked-by-an-open-question refusal), and this case gives it something to refuse
+        /// against without deciding any of that here. Scope is always <see cref="CardScope.
+        /// Repository"/> (card-model: "<c>hazard</c> and <c>question</c> cards SHALL be
+        /// repository-scoped") — no <c>--change</c>, the same shape <see cref="DecisionCreate"/>
+        /// already has for its own always-fixed scope.
+        /// </summary>
+        internal sealed record QuestionCreate(
+            string FilePath, string Title, CardOwner ActingRole, string Body, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+                onQuestionCreate(this);
         }
 
         /// <summary>
@@ -414,7 +436,7 @@ internal static class CommandDispatcher
         internal sealed record RegisterDischarge(
             CardKind Kind, string FilePath, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onRegisterDischarge(this);
         }
 
@@ -430,7 +452,7 @@ internal static class CommandDispatcher
         internal sealed record DecisionSupersede(
             string SupersedingId, string SupersededId, CardOwner ActingRole, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onDecisionSupersede(this);
         }
 
@@ -449,7 +471,7 @@ internal static class CommandDispatcher
             string ChangeName, CardOwner ActingRole, string? CompactFamilyId, IReadOnlyList<string>? CompactAbsorbedIds,
             string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onChangeArchive(this);
         }
 
@@ -466,7 +488,7 @@ internal static class CommandDispatcher
         internal sealed record RulePromote(
             string Id, CardOwner ActingRole, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onRulePromote(this);
         }
 
@@ -484,7 +506,7 @@ internal static class CommandDispatcher
         internal sealed record RuleAuthor(
             string FilePath, string Title, CardOwner ActingRole, CardScope Scope, string Body, string? ChangeName, IReadOnlyList<string> EarnedFrom, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onRuleAuthor(this);
         }
 
@@ -503,7 +525,7 @@ internal static class CommandDispatcher
         internal sealed record RuleCompact(
             string FamilyId, IReadOnlyList<string> AbsorbedIds, string ChangeName, CardOwner ActingRole, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onRuleCompact(this);
         }
 
@@ -511,19 +533,30 @@ internal static class CommandDispatcher
         /// <c>rule propose-compact</c> (§7 block G, 7.9, register: "Compaction of repository-scoped
         /// rules SHALL be proposed by an agent and decided by the Product Owner ... records the
         /// proposal with its candidate text, backing set and citation counts, and applies nothing
-        /// until the Product Owner decides"). Deliberately carries no family id and writes no card —
+        /// until the Product Owner decides"). Carries no family id and writes to no existing rule —
         /// unlike <see cref="RuleCompact"/>, there is no family card yet, only a candidate: read
         /// from stdin the same way <see cref="RuleAuthor"/>'s body is, since it is new proposed text,
         /// not a reference to something already on disk. <see cref="BackingIds"/> reuses <see cref="
         /// RuleCompact.AbsorbedIds"/>'s comma-list convention and vocabulary (the rules the family
         /// would absorb, if this proposal is ever decided) — the Product Owner's own decision act,
-        /// and any resulting write, is out of this block's scope (§7 block G brief item 5:
-        /// "proposing and applying are different acts with different deciders").
+        /// and any resulting write to the backing rules, is out of this block's scope (§7 block G
+        /// brief item 5: "proposing and applying are different acts with different deciders").
+        ///
+        /// <para>
+        /// <b>§7 remediation, blocker 1: this now creates one <c>question</c> card, owned by the
+        /// Product Owner, recording the candidate text, the backing set and the citation counts —
+        /// the durable record register's own "records the proposal" requires.</b> <see cref="
+        /// ProposalFilePath"/> is that card's caller-supplied path, the same "the caller always
+        /// names a new card's file" convention every other creation verb in this codebase follows
+        /// (block A's five verbs, and <see cref="QuestionCreate"/> itself) — this is the one place
+        /// that convention could have been broken (the tool inventing a path for a card the caller
+        /// never asked to create directly) and deliberately was not.
+        /// </para>
         /// </summary>
         internal sealed record RuleProposeCompact(
-            string CandidateText, IReadOnlyList<string> BackingIds, CardOwner ActingRole, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string CandidateText, IReadOnlyList<string> BackingIds, string ProposalFilePath, CardOwner ActingRole, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onRuleProposeCompact(this);
         }
 
@@ -541,7 +574,7 @@ internal static class CommandDispatcher
         /// </summary>
         internal sealed record RulePromoteConstitution(string Id, CardOwner ActingRole, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
-            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
+            internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution) =>
                 onRulePromoteConstitution(this);
         }
     }
@@ -597,13 +630,14 @@ internal static class CommandDispatcher
                     onObligationCreate: parsed => RunObligationCreate(parsed, resolvedLockTimeout),
                     onDecisionCreate: parsed => RunDecisionCreate(parsed, resolvedLockTimeout),
                     onSectionCreate: parsed => RunSectionCreate(parsed, resolvedLockTimeout),
+                    onQuestionCreate: parsed => RunQuestionCreate(parsed, resolvedLockTimeout),
                     onRegisterDischarge: parsed => RunRegisterDischarge(parsed, resolvedLockTimeout),
                     onDecisionSupersede: parsed => RunDecisionSupersede(parsed, resolvedLockTimeout),
                     onChangeArchive: parsed => RunChangeArchive(parsed, resolvedLockTimeout),
                     onRulePromote: parsed => RunRulePromote(parsed, resolvedLockTimeout),
                     onRuleAuthor: parsed => RunRuleAuthor(parsed, resolvedLockTimeout),
                     onRuleCompact: parsed => RunRuleCompact(parsed, resolvedLockTimeout),
-                    onRuleProposeCompact: static parsed => RunRuleProposeCompact(parsed),
+                    onRuleProposeCompact: parsed => RunRuleProposeCompact(parsed, resolvedLockTimeout),
                     onRulePromoteConstitution: parsed => RunRulePromoteConstitution(parsed, resolvedLockTimeout)),
                 onRefused: refused => refused.Refusal);
 
@@ -1361,6 +1395,36 @@ internal static class CommandDispatcher
     }
 
     /// <summary>
+    /// <c>question create</c> (§7 remediation, blocker 1). Scope is always <see cref="CardScope.
+    /// Repository"/> — <see cref="CardScopeRules.Validate"/> already refuses anything else for
+    /// <see cref="CardKind.Question"/>, so there is no <c>--change</c> here, the same shape
+    /// <see cref="RunDecisionCreate"/> has for its own always-fixed scope. The initial status is
+    /// the plain literal <c>"open"</c> — the same convention <see cref="CardStore.RecordFinding"/>
+    /// already uses for a kind with no <see cref="RegisterLifecycleState"/>/<see cref="
+    /// SectionFlowState"/> vocabulary of its own; §9 is where a question's actual status
+    /// vocabulary (open/answered/deferred) gets decided, not here — this call only ever writes the
+    /// one state a brand-new card needs.
+    /// </summary>
+    private static CommandOutcome RunQuestionCreate(ParsedCommand.QuestionCreate parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        var outcome = CardStore.CreateCard(
+            repoRoot, filePath, CardKind.Question, CardScope.Repository, parsed.Title,
+            "open", parsed.ActingRole, parsed.Body,
+            registerFields: null, parsed.Timestamp, lockTimeout, changeName: null);
+
+        return MapCardCreateOutcome(outcome, filePath);
+    }
+
+    /// <summary>
     /// Shared by every §7 block A creation verb — the one place a <see cref="CardCreateOutcome"/>
     /// becomes a <see cref="CommandOutcome"/>, so the five verbs cannot drift on what a given
     /// disposition means.
@@ -1412,7 +1476,7 @@ internal static class CommandDispatcher
                 FilePath = filePath,
                 Id = discharged.Card.Frontmatter.Id,
                 Kind = discharged.Card.Frontmatter.Kind.ToWireString(),
-                DischargedBy = (discharged.Card.RegisterFields.DischargedBy ?? parsed.ActingRole).ToWireString(),
+                ActingRole = (discharged.Card.RegisterFields.DischargedBy ?? parsed.ActingRole).ToWireString(),
                 DischargedAt = discharged.Card.RegisterFields.DischargedAt ?? parsed.Timestamp,
             }),
             onAlreadyDischarged: already => new CommandOutcome.Refusal(
@@ -1522,7 +1586,7 @@ internal static class CommandDispatcher
                 SettledObligationIds = archived.SettledObligationIds,
                 CompactedFamilyId = compactedFamilyId,
                 CompactedRuleIds = compactedRuleIds,
-                ArchivedBy = parsed.ActingRole.ToWireString(),
+                ActingRole = parsed.ActingRole.ToWireString(),
                 ArchivedAt = parsed.Timestamp,
             }),
             onChangeNotFound: notFound => new CommandOutcome.Refusal(
@@ -1593,7 +1657,7 @@ internal static class CommandDispatcher
                 SupersedingFilePath = superseding.FilePath!,
                 SupersededId = result.SupersededCard.Frontmatter.Id,
                 SupersededFilePath = superseded.FilePath!,
-                DischargedBy = (result.SupersededCard.RegisterFields.DischargedBy ?? parsed.ActingRole).ToWireString(),
+                ActingRole = (result.SupersededCard.RegisterFields.DischargedBy ?? parsed.ActingRole).ToWireString(),
                 DischargedAt = result.SupersededCard.RegisterFields.DischargedAt ?? parsed.Timestamp,
             }),
             onSelfSupersession: selfSupersession => new CommandOutcome.Refusal(
@@ -1656,6 +1720,7 @@ internal static class CommandDispatcher
                 OldFilePath = promoted.OldFilePath,
                 NewFilePath = promoted.NewFilePath,
                 Scope = promoted.Card.Frontmatter.Scope.ToWireString(),
+                ActingRole = parsed.ActingRole.ToWireString(),
                 PromotedAt = promoted.Card.Frontmatter.Updated,
             }),
             onAlreadyRepositoryScoped: already => new CommandOutcome.Refusal(
@@ -1826,7 +1891,7 @@ internal static class CommandDispatcher
             FamilyFilePath = family.FilePath!,
             Absorbs = compacted.FamilyCard.RegisterFields.Absorbs,
             AbsorbedFilePaths = absorbedFilePaths,
-            DischargedBy = parsed.ActingRole.ToWireString(),
+            ActingRole = parsed.ActingRole.ToWireString(),
             CompactedAt = parsed.Timestamp,
         });
     }
@@ -1845,15 +1910,27 @@ internal static class CommandDispatcher
     /// than minting proposal-only siblings.
     ///
     /// <para>
-    /// <b>Nothing here writes.</b> No <see cref="Cards.CardLock"/> is acquired, no <see cref="Cards.
-    /// CardStore.AtomicWrite"/>-shaped call is ever reached, and no field on any resolved <see cref="
-    /// Cards.CardFile"/> is ever assigned back — the candidate text and backing ids flow straight
-    /// from <paramref name="parsed"/> into <see cref="RuleProposeCompactResult"/>, and every rule
-    /// this method reads is read once, for its scope and status and to compute its <see cref="Cards.
-    /// RuleCitations.CountCitations"/>, and never touched again.
+    /// <b>Nothing here writes to any resolved rule.</b> No <see cref="Cards.CardLock"/> naming a
+    /// backing rule is ever acquired, no <see cref="Cards.CardStore.AtomicWrite"/>-shaped call ever
+    /// touches one, and no field on any resolved <see cref="Cards.CardFile"/> is ever assigned back
+    /// — every rule this method reads is read once, for its scope and status and to compute its
+    /// <see cref="Cards.RuleCitations.CountCitations"/>, and never touched again.
+    /// <see cref="CommandDispatcherRuleProposeCompactTests"/>'s own tests prove this on the bytes.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>§7 remediation, blocker 1: the one thing this method now does write is a brand-new
+    /// <c>question</c> card, owned by the Product Owner.</b> Register's own words are "records the
+    /// proposal" — a result object that vanishes with the process is not a record, and 7.12 already
+    /// established the fix's shape for the sibling verb this section's own reviewer found the same
+    /// defect in. The card's body carries the candidate text, the backing set and the citation
+    /// counts read above — see <see cref="BuildProposalCardBody"/>. Creating it uses the identical
+    /// <see cref="Cards.CardStore.CreateCard"/> path <see cref="RunQuestionCreate"/> does, at the
+    /// caller-supplied <see cref="ParsedCommand.RuleProposeCompact.ProposalFilePath"/> — no new way
+    /// to put a card on disk, and still nothing written to any backing rule.
     /// </para>
     /// </summary>
-    private static CommandOutcome RunRuleProposeCompact(ParsedCommand.RuleProposeCompact parsed)
+    private static CommandOutcome RunRuleProposeCompact(ParsedCommand.RuleProposeCompact parsed, TimeSpan lockTimeout)
     {
         if (parsed.BackingIds.Count == 0)
         {
@@ -1927,15 +2004,58 @@ internal static class CommandDispatcher
             citationCounts.Add(RuleCitations.CountCitations(repoRoot, card.Frontmatter.Id, resolved.FilePath!));
         }
 
-        return new CommandOutcome.Success(new RuleProposeCompactResult
+        var proposalFilePath = ResolveFilePath(parsed.WorkingDirectory, parsed.ProposalFilePath);
+        var proposalBody = BuildProposalCardBody(parsed, backingFilePaths, citationCounts);
+        var createOutcome = CardStore.CreateCard(
+            repoRoot, proposalFilePath, CardKind.Question, CardScope.Repository,
+            "Repository rule compaction proposal", "open", CardOwner.ProductOwner, proposalBody,
+            registerFields: null, parsed.Timestamp, lockTimeout, changeName: null);
+
+        return createOutcome.Match<CommandOutcome>(
+            onCreated: created => new CommandOutcome.Success(new RuleProposeCompactResult
+            {
+                CandidateText = parsed.CandidateText,
+                Backing = parsed.BackingIds,
+                BackingFilePaths = backingFilePaths,
+                CitationCounts = citationCounts,
+                ProposalId = created.Card.Frontmatter.Id,
+                ProposalFilePath = proposalFilePath,
+                ActingRole = parsed.ActingRole.ToWireString(),
+                ProposedAt = parsed.Timestamp,
+            }),
+            onScopeRefused: refused => new CommandOutcome.Refusal("scope-refused", refused.Reason),
+            onAlreadyExists: already => new CommandOutcome.Refusal(
+                "card-already-exists", $"a card already exists at '{already.FilePath}'."),
+            onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
+    }
+
+    /// <summary>
+    /// The recorded proposal's body (§7 remediation, blocker 1) — candidate text, then who proposed
+    /// it and when, then the backing set with each rule's citation count as counted at request
+    /// time. Plain Markdown, not a structured field: <see cref="CardKind.Question"/> carries no
+    /// <see cref="Cards.RegisterCardFields"/> of its own (that type is the four register kinds'),
+    /// and card-model's "legible without the tool" promise means the Product Owner reading this
+    /// file directly must see exactly the same three facts a JSON caller reads off <see cref="
+    /// RuleProposeCompactResult"/> — this is the one copy of them that outlives the process.
+    /// </summary>
+    private static string BuildProposalCardBody(
+        ParsedCommand.RuleProposeCompact parsed, IReadOnlyList<string> backingFilePaths, IReadOnlyList<int> citationCounts)
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.Append(parsed.CandidateText.TrimEnd('\n')).Append("\n\n---\n\n");
+        builder.Append("Proposed by '").Append(parsed.ActingRole.ToWireString()).Append("' at ")
+            .Append(parsed.Timestamp.ToString("O", System.Globalization.CultureInfo.InvariantCulture)).Append(".\n\n");
+        builder.Append("Backing rules:\n");
+        for (var i = 0; i < parsed.BackingIds.Count; i++)
         {
-            CandidateText = parsed.CandidateText,
-            Backing = parsed.BackingIds,
-            BackingFilePaths = backingFilePaths,
-            CitationCounts = citationCounts,
-            ProposedBy = parsed.ActingRole.ToWireString(),
-            ProposedAt = parsed.Timestamp,
-        });
+            var citationWord = citationCounts[i] == 1 ? "citation" : "citations";
+            builder.Append("- ").Append(parsed.BackingIds[i]).Append(" (").Append(citationCounts[i])
+                .Append(' ').Append(citationWord).Append(", ").Append(backingFilePaths[i]).Append(")\n");
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>

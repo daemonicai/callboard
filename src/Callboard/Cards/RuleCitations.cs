@@ -130,17 +130,23 @@ internal static class RuleCitations
     /// Register: "A rule that is never cited SHALL be placed in a review queue for a human and
     /// SHALL NOT be retired automatically." The queue is this call's return value, computed fresh
     /// every time — never a persisted list a write path could forget to clear — over every
-    /// <c>rule</c> card in the record whose <c>status</c> is <see cref="RegisterLifecycleState.
-    /// Open"/> and whose <see cref="CountCitations"/> is zero. A discharged rule is never queued:
-    /// it has already left the live set by some other, human-driven act, and this queue only ever
-    /// names rules still standing. Nothing in this method discharges, hides, or otherwise touches
-    /// any card it names — it only names them.
+    /// <c>rule</c> card whose <c>status</c> is <see cref="RegisterLifecycleState.Open"/> and whose
+    /// <see cref="CountCitations"/> is zero, walking only <see cref="CardLayout.
+    /// ResolveLiveRecordDirectories"/> — never <see cref="CardLayout.ResolveRecordDirectories"/>'s
+    /// archived changes (§7 remediation, blocker 2: <c>ResolveRecordDirectories</c> deliberately
+    /// reaches into the archive for identity resolution and citation reach, but a never-promoted
+    /// change-scoped rule left <c>open</c> when its change archived is not part of the live
+    /// register, and counting it here would grow this queue and <see cref="CeilingPassed"/>'s input
+    /// monotonically with every archived change, forever). A discharged rule is never queued: it
+    /// has already left the live set by some other, human-driven act, and this queue only ever
+    /// names rules still standing <em>and still live</em>. Nothing in this method discharges,
+    /// hides, or otherwise touches any card it names — it only names them.
     /// </summary>
     internal static IReadOnlyList<(string FilePath, CardFile Card)> UncitedOpenRules(string cardsRoot)
     {
         var uncited = new List<(string FilePath, CardFile Card)>();
 
-        foreach (var directory in CardLayout.ResolveRecordDirectories(cardsRoot))
+        foreach (var directory in CardLayout.ResolveLiveRecordDirectories(cardsRoot))
         {
             if (!Directory.Exists(directory))
             {

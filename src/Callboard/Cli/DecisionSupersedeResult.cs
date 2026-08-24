@@ -7,7 +7,8 @@ namespace Callboard.Cli;
 /// The <c>decision supersede</c> command's success result (§7 block C, register: "A decision MAY
 /// name the decision it supersedes and the decision that supersedes it") — both halves of the
 /// two-card write, so a caller can see the successor and the discharged predecessor in one
-/// envelope rather than having to separately re-resolve either id.
+/// envelope rather than having to separately re-resolve either id. <see cref="ActingRole"/> is the
+/// one spelling §7's result types settle on for the acting role (§7 remediation, blocker 3).
 /// </summary>
 internal sealed class DecisionSupersedeResult : ICommandResult
 {
@@ -23,8 +24,8 @@ internal sealed class DecisionSupersedeResult : ICommandResult
     [JsonPropertyName("supersededFilePath")]
     public required string SupersededFilePath { get; init; }
 
-    [JsonPropertyName("dischargedBy")]
-    public required string DischargedBy { get; init; }
+    [JsonPropertyName("actingRole")]
+    public required string ActingRole { get; init; }
 
     [JsonPropertyName("dischargedAt")]
     public required DateTimeOffset DischargedAt { get; init; }

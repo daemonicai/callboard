@@ -43,7 +43,7 @@ public sealed class CommandDispatcherChangeArchiveTests
         using var doc = JsonDocument.Parse(archiveOutput.ToString());
         var result = doc.RootElement.GetProperty("result");
         Assert.Equal(ChangeName, result.GetProperty("changeName").GetString());
-        Assert.Equal("architect", result.GetProperty("archivedBy").GetString());
+        Assert.Equal("architect", result.GetProperty("actingRole").GetString());
         var settled = result.GetProperty("settledObligationIds").EnumerateArray().Select(static e => e.GetString()).ToList();
         Assert.Equal([obligationId], settled);
         Assert.False(Directory.Exists(repo.CardsDirectory));

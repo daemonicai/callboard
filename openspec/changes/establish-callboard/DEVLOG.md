@@ -17384,6 +17384,522 @@ naming a fact this codebase already had a code for.
 
 §7 (7.1–7.12) is complete and reviewed end to end. Ready for the supervisor.
 
+---
+
+**[supervisor]** Section review of **§7 Register** — scope `git diff 8d8e237..HEAD` (7 blocks,
+`a59e1a5`…`4911464`, 56 files, +13,028). Gates read from the thread, not re-run: every block posts
+`BUILD_EXIT:0`/`TEST_EXIT:0`/`FORMAT_EXIT:0`/`VALIDATE_EXIT:0`, 643 tests at HEAD. Every `N.M` box is
+ticked and every block carries a reviewer `Approve`.
+
+**Verdict: Request changes.** Three findings, all of them products of the seven blocks *together*;
+none is visible in a single block's diff. The section's craft is high — the multi-card write
+discipline is genuinely one discipline (`RecordFinding` → `SupersedeDecision` → `CompactRules`, each
+stating its own failure guarantee and its lock order, with `PromoteRule`'s two-phase gap named and
+self-healing on retry), the write protocol holds at every new site, nothing reads the index, and
+`callboard/` is still readable without the tool. What did not hold is the section's own late-formed
+standards being applied backwards over the blocks that predate them.
+
+---
+
+### Blocker 1 — 7.9's "records the proposal" is not a record. The section ruled on this and applied the ruling to one verb only.
+
+Register, "Repository compaction is proposed, not applied":
+
+> **THEN** the system **records** the proposal with its candidate text, backing set and citation
+> counts, and applies nothing until the Product Owner decides.
+
+`RunRuleProposeCompact` (`src/Callboard/Cli/CommandDispatcher.cs:1856-1936`) resolves the backing
+set, checks each rule repository-scoped and open, computes citation counts — and then returns them
+in a `RuleProposeCompactResult` (`:1930`) and exits. No lock, no `AtomicWrite`, no comment, no card.
+The proposal exists for the lifetime of the process and then does not exist. The Product Owner
+cannot decide on it; an agent has to remember to paste it somewhere, which is precisely the
+incumbent failure mode this tool exists to remove.
+
+**This is not a judgment call the section left open — it is a call the section already made and then
+did not carry across.** 7.12's requirement uses the identical verb ("refuses and **records** the
+promotion as awaiting a Product Owner decision"). The reviewer found the message-only reading, wrote
+it down accurately, and talked itself out of raising it; the Architect ruled it a blocker, and
+`RunRulePromoteConstitution` now appends a durable, attributed, `to=product-owner` comment to the
+rule's own card via `CardStore.AppendComment` (block G blocker fix, `4911464`). 7.9 shipped in the
+**same block**, one round earlier, with the same word read the other way — and the fix round
+explicitly left it untouched ("7.9's `RunRuleProposeCompact` is byte-identical to the prior post").
+
+Note what makes this hard to see from inside a block: the two verbs were audited in *different
+rounds of the same block*, and the round that established the standard was scoped to the other verb.
+
+Recording a proposal does not "apply" it — the mechanism 7.12 now uses is available and costs
+nothing here.
+
+### Blocker 2 — nothing in this section can say which rules are live, and the one implementation that tries counts archived rules as live.
+
+`RuleCitations.UncitedOpenRules` (`src/Callboard/Cards/RuleCitations.cs:139-175`) is §7's only
+answer to "which rules are standing". It walks `CardLayout.ResolveRecordDirectories`
+(`src/Callboard/Cards/CardLayout.cs:135-139` — archived changes included, deliberately, for
+resolution and citation reach) and filters on `IsRuleCard` plus `status: open`, nothing else. Its
+own doc comment claims it "only ever names rules still standing".
+
+Cross the blocks and it does not:
+
+- Block A/§4: a `rule` may be `change`-scoped (`CardScopeRules.ValidateRule`), and a change-scoped
+  card's file lives in `callboard/changes/<name>/`.
+- Block D: `ArchiveChange` settles **open obligations and nothing else** — correctly, that is what
+  register's own scenario names — and then moves the directory.
+- Therefore every change-scoped rule that was never promoted enters `callboard/changes/archive/…`
+  still `status: open`, and stays that way for the life of the repository.
+- Block G: liveness is `status: open`, anywhere in the record.
+
+So the human review queue accumulates, permanently, every rule of every change ever archived; the
+ceiling predicate (`CeilingPassed`, `:127`) is fed a count that only ever grows; and — the part that
+matters most — §10 inherits this as the definition of "live" for the one requirement that says the
+register is **never** what gets shortened. Dead rules injected into every brief forever is not a
+§10 bug; it is this definition, written here.
+
+No test reaches it: every `UncitedOpenRules` case in `tests/Callboard.Tests/RuleCitationsTests.cs:159-190`
+writes repository-scoped rules into `register/`. Neither `change`-scope nor the archive is exercised.
+
+On the question you asked directly — **has §7 left unconditional injection achievable?** Yes,
+structurally: hazards and questions are repository-only (`CardScopeRules:19,22`), so archive never
+touches them and the "question outlives its change" scenario holds by construction rather than by a
+carry-forward, which is exactly what the requirement wanted. The one thing standing between §10 and
+that requirement is this predicate, and it is cheaper to fix here than to discover there.
+
+### Blocker 3 — the section's JSON results do not read as one surface.
+
+Eight new result types, and the same three facts are spelled differently in each:
+
+| verb | acting role | timestamp | subject |
+|---|---|---|---|
+| `*/create` | `ActingRole` | `Timestamp` | `Id` + `FilePath` |
+| `*/discharge` | `DischargedBy` | `DischargedAt` | `Id` + `FilePath` |
+| `decision supersede` | `DischargedBy` | `DischargedAt` | `SupersedingId`/`SupersededId` |
+| `rule compact` | `DischargedBy` | `CompactedAt` | `FamilyId` + `FamilyFilePath` |
+| `change archive` | `ArchivedBy` | `ArchivedAt` | `ChangeName` |
+| `rule propose-compact` | `ProposedBy` | `ProposedAt` | `Backing` |
+| `rule promote` | **absent** | `PromotedAt` | `Id` + `OldFilePath`/`NewFilePath` |
+
+Two of these are wrong rather than merely inconsistent:
+
+1. **`RuleCompactResult.DischargedBy` (`src/Callboard/Cli/RuleCompactResult.cs:28`) is a misnomer.**
+   Nothing named in that result is discharged by it — the field carries the acting role, and the
+   card that *is* discharged is each absorbed rule. A consumer reading `family_id` and
+   `discharged_by` on the same object will read it as the family being discharged.
+2. **`RulePromoteResult` (`src/Callboard/Cli/RulePromoteResult.cs:15-27`) reports no acting role at
+   all,** and `PromoteRule` writes no attribution to the card either — only `Scope` and `Updated`
+   (`src/Callboard/Cards/CardStore.cs:977-980`). Promotion is therefore the one §7 state change the
+   record cannot attribute to anyone. Every sibling operation in the section attributes itself:
+   discharge writes `discharged_by`, compaction writes `discharged_by` on each member, 7.12 appends
+   an attributed comment. This is the degraded-mode promise thinning by one card at a time — the
+   file still parses, but "who promoted this rule out of its change?" is answerable only from git.
+
+---
+
+### Suggested remediation shape (one block, ticks nothing)
+
+1. **Make 7.9's proposal durable**, by the mechanism 7.12 already established: resolve the backing
+   set (already done), and record the proposal as an attributed, `to=product-owner` artefact —
+   `CardStore.AppendComment` on each backing rule, or a single card, Architect's call. It must
+   survive the process, carry the candidate text, the backing ids and the citation counts as
+   recorded, and still write nothing to any rule's `status`, `absorbs` or `superseded_by`. Keep the
+   existing byte-identity test proving the backing set is unchanged; add one that re-reads the
+   record in a fresh call and finds the proposal.
+2. **Settle what "live" means for a rule, in one place.** Either archive-aware liveness in
+   `RuleCitations` (a change-scoped rule under `callboard/changes/archive/` is not live), or a
+   single named predicate both `UncitedOpenRules` and §10 must go through. Tests: a change-scoped
+   open rule in an archived change is not queued and does not count toward the ceiling; a
+   repository-scoped rule promoted out of that change before archive still is. If the Architect
+   prefers the other reading — that an archived change's rules stay live until a human discharges
+   them — say so in the thread and pin it with a test, because §10 will otherwise decide it by
+   accident.
+3. **Normalise the result shapes**: `ActingRole` (or one chosen spelling) on every §7 result
+   including `RulePromoteResult`; rename `RuleCompactResult.DischargedBy`; and decide whether
+   promotion attributes itself on the card as well as in the response.
+
+### ❓ @architect — a decision, not a defect
+
+**Three conventions now name the subject of a register mutation**, and no block was wrong on its
+own:
+
+- `rule|hazard|obligation|decision discharge <path>` — positional **file path**
+  (`CommandParser.cs:453`, block A, predates the resolver)
+- `decision supersede <id> --supersedes <id>` — positional **id** (`:1809`, block C, "the first §7
+  verb built that way from the start")
+- `rule promote|compact|promote-constitution --id <id>` — **`--id` flag** (`:1139`, blocks E/F/G)
+
+The Product Owner ruled that identity is the reference and free-text labels stop being an addressing
+mechanism; block C read that as reaching the CLI, blocks E/F/G agreed but chose a different spelling,
+and block A was never revisited. An agent driving this surface has to remember which of three shapes
+each verb takes. Worth settling before §8 adds verbs against it — and note the functional edge:
+`discharge <path>` is the only register mutation whose argument stops working when a card moves,
+which is the property Option C was rejected for.
+
+### Architectural notes for `## NEXT` (not this block)
+
+1. **The wire-key guard debt — I agree leaving it was right, with a deadline.** `RegisterCardFields`
+   has `RegisterCardFieldKeys.All` plus a reflective coverage test after that drift silently
+   duplicated frontmatter lines without bound. `CardFrontmatter`, `BlockCardFields`,
+   `SectionCardFields` and `FindingCardFields` have hand-listed literals in `CardFileParser.cs:25-53`
+   and again in the writer. §7 added no field to any of them, so the debt did not grow here and
+   fixing it would have been scope §7 should not take. But the failure mode is *silent record
+   corruption*, one of the four ADR-0003 promises, and it is guarded for one of five field types.
+   It should land **before** the next section that adds a field to block, section or finding cards —
+   not as general cleanup later.
+2. **`CeilingPassed` and `UncitedOpenRules` have no production caller.** Sanctioned by the block G
+   brief and correctly deferred to §10 — but until §10 lands they are code that ships and never
+   runs. Record it as an obligation on §10 rather than leaving it for the next supervisor to
+   rediscover as dead scaffolding.
+3. **Citation counting is O(rules × cards) full parses** — `UncitedOpenRules` calls `CountCitations`
+   per rule and each walks the whole record. Fine for a compaction review; not fine on a per-brief
+   path. §10 must not put it behind the working-context response.
+4. **Repository-scoped compaction can be proposed but never applied by any verb** — `rule compact`
+   requires `--change` and change-scoped members. That is consistent with the spec ("applies
+   nothing"), but the loop has no closing move recorded anywhere; §11 should say how a Product
+   Owner's decision reaches the record.
+5. **`not-a-register-card` (`CommandDispatcher.cs:1425`) is the `WrongCardKind` shape.** It names a
+   kind mismatch and differs from `wrong-card-kind` only in that the expected side is a set of four
+   kinds rather than one. The collapse ruling was applied to every other kind mismatch in the
+   section; this is the one that predates it. Too small to spend a round on — fold it in whenever
+   `RunRegisterDischarge` is next open. Otherwise the code set is genuinely consistent: I re-derived
+   it independently and the two granularity rulings hold everywhere I checked, including the single
+   `role-not-permitted` covering both `CompactRules`' architect check and 7.12.
+
+On the rest of what a section-level pass looks for: no dead scaffolding from a superseded block, no
+duplicated abstraction (block B's resolver is the single reference-following path and blocks C/E/F/G
+all route through `ResolveCardReference`; `IndexPopulator` was refactored onto
+`CardLayout.ResolveRecordDirectories` rather than keeping its own copy), no second surface, no
+reflection or dynamic code in `src/`, index still derived and read by nothing, every new write path
+through `WithLock`/`AtomicWrite`, and `Makefile` coverage unchanged because the section added no
+project or stack. The one free-text match left in the section — `RuleCitations.NamesRuleId` — I
+scrutinised for the same reason the reviewer did and reach the same conclusion: it is an advisory
+signal that gates no write and refuses nothing, and the Product Owner rejected the structured
+alternative explicitly.
+
+→ @architect
+
+**[architect]** Supervisor requests changes on §7: three blockers. Carving one remediation block.
+Answering the `❓` first, because it shapes what the block does *not* do.
+
+**Ruling on subject-naming convention — decided, but not remediated here.** Three conventions name a
+mutation's subject: positional path (`discharge`), positional id (`decision supersede`), `--id` flag
+(`rule promote`/`compact`/`promote-constitution`). The supervisor is right that this is drift.
+
+> **Binding from §8 onward: a verb names its subject by card id, as `--id`.** Identity addressing is
+> the section's own ruling; a path is a second way to name a card, which is what block B ended.
+
+I am **not** harmonising the existing verbs in this remediation, and the reason matters: §1–§6's
+verbs (`block transition`, `section close`, `finding status`, …) all take a **positional path**, so
+§7's verbs are not drifting from a house style — **they are the ones that introduced `--id`, and
+they were right to.** Harmonising properly means changing every path-taking verb in the tool, which
+is a change to §1–§6's shipped surface and squarely a Product Owner call, not something to smuggle
+into a §7 remediation. **Raised to the Product Owner as its own decision; recorded here so it is not
+rediscovered.** A remediation block that tried it would also be the one thing likeliest to fail to
+converge, and the workflow gives me one round.
+
+---
+
+**[architect]** → @worker — **§7 remediation block.** Base `4911464`. **Ticks nothing** — every §7
+box is already ticked; this thread is the record. Three blockers, in order.
+
+**1. `rule propose-compact` must actually record the proposal.**
+Register: *"the system **records** the proposal with its candidate text, backing set and citation
+counts, and applies nothing until the Product Owner decides."* Today it computes all three, returns
+them in a result object, and exits — the proposal dies with the process. **This is the identical
+defect corrected for 7.12 one round earlier, on the identical spec verb**; my fix instruction was
+scoped to `promote-constitution` and left this one untouched. My error, not yours.
+
+The requirement is: **durable, attributed, routable to the Product Owner, and applying nothing.**
+Mechanism is yours to choose and argue — but note 7.12's precedent (an attributed comment addressed
+to `product-owner`) does not transfer cleanly, because a proposal has no single subject card: it has
+candidate text that exists nowhere yet and a backing set of N rules. Writing the same proposal onto
+all N is duplication, and duplication of a thing the Product Owner must later act on once.
+
+My lean: **a card the Product Owner owns**, so it reaches them by ownership routing the way anything
+else does. If that means adding creation surface for a kind block A did not cover, **stop and post
+`❓ @architect` before building it** — new card-creation surface in a remediation block is my call.
+Whatever you build: **applying nothing is still the hard requirement** — prove on the bytes that no
+rule in the backing set is touched, exactly as the current tests do.
+
+**2. `UncitedOpenRules` counts archived rules as live.**
+`RuleCitations.cs:139-175` filters `IsRuleCard` + `status: open` across
+`CardLayout.ResolveRecordDirectories`, which includes `callboard/changes/archive/`. Block D settles
+obligations at archive and correctly leaves rules alone, so **every never-promoted change-scoped rule
+sits in the archive `open` forever and counts as live.** The uncited-review queue and the ceiling
+therefore grow monotonically with every archived change, and §10 inherits this as the definition of
+"live" for the one response that must never be shortened.
+
+**Hold the distinction the fix turns on: resolvable ≠ live.** Block B deliberately made *resolution*
+search the archive, because card-model requires identity to resolve after archive — do not touch
+that. **Liveness** is a different question and must exclude archived changes. Test with
+change-scoped rules **in the archive**; every current test in `RuleCitationsTests.cs:159-190` uses
+repository-scoped rules in `register/`, which is why this survived.
+
+**3. Attribution across the section's results.**
+- The acting role is spelled `ActingRole`, `DischargedBy`, `ArchivedBy` and `ProposedBy` across §7's
+  result types, and is **absent from `rule promote`**. Settle on one name for one fact and apply it
+  across §7's result types.
+- `RuleCompactResult.DischargedBy` (`src/Callboard/Cli/RuleCompactResult.cs:28`) carries the acting
+  role while its name asserts a fact about a *different card*. Fix the name, not the value.
+- `PromoteRule` (`src/Callboard/Cards/CardStore.cs:977-980`) **writes no attribution to the card**,
+  making scope promotion the one §7 state change the record cannot attribute. Card-model requires
+  state changes to record the acting role and the time; record it. Note block E proved promotion
+  preserves every field it does not name — do not break that by naming more than you must.
+
+**Do not** change any verb's argument shape — see the ruling above; that is deliberately out of scope.
+
+**Done-gates — all four, quote the exit line:** `make build` → `BUILD_EXIT:0`, `make test` →
+`TEST_EXIT:0` (643 existing plus yours), `make format` → `FORMAT_EXIT:0`, `make validate` →
+`VALIDATE_EXIT:0`. Refusal set stands at **53** across 223 sites; re-derive if you change it.
+
+**Boundaries:** no commit, no ticks, no `Makefile`/`CLAUDE.md`. Post progress here, hand off
+`→ @reviewer`.
+
+**[worker]** Blockers 2 and 3 done. Blocker 1 needs a ruling before I build it — asking first.
+
+**Blocker 2 — fixed.** `CardLayout` gains `ResolveLiveRecordDirectories` (register, decisions, live
+changes only) alongside the existing `ResolveRecordDirectories`, which now delegates to it and then
+appends the archive — same directory set as before, just refactored so "live" has one statement.
+`RuleCitations.UncitedOpenRules` now walks `ResolveLiveRecordDirectories`; `CountCitations` is
+untouched and still walks the full `ResolveRecordDirectories`, so a citation from an archived change
+still counts and identity still resolves there — resolvable and live are now two different calls,
+not one conflated one. Tests: `CardLayoutTests` pins the two methods disagreeing on an archived
+change directly; `RuleCitationsTests` adds a change-scoped open rule sitting in an archived change
+(not queued) and a repository-scoped rule promoted before its change archived (still queued, so
+archiving does not accidentally sweep away something already live).
+
+**Blocker 3 — fixed.** Every §7 result type now spells the acting role `actingRole`:
+`CardRegisterDischargeResult`, `DecisionSupersedeResult`, `RuleCompactResult` (the misnomer —
+`DischargedBy` renamed, value unchanged, doc comment now says why it was wrong), `ChangeArchiveResult`
+and `RuleProposeCompactResult` renamed from their four different spellings; `RulePromoteResult` gains
+the field it never had. `CardStore.PromoteRule` now records who promoted a rule: one attributed
+`CardComment` (author = acting role, timestamp = the call's timestamp) appended to the card in the
+same write that already moves and re-scopes it — no second lock, no new `RegisterCardFields` entry,
+because promotion doesn't discharge (rule stays open) or supersede anything, so neither existing
+attribution field fits, and a new frontmatter field would be naming more than the brief allows.
+`CardRulePromoteTests`'s structural-preservation test now asserts every prior comment survives in
+order plus exactly one new one, instead of `Comments` being untouched; `CommandDispatcherRulePromoteTests`
+asserts the new `actingRole` field and the appended comment's author/timestamp at the CLI boundary.
+
+**Blocker 1 — not built. Stopping per the brief's own instruction.** "A card the Product Owner owns"
+needs a kind with creation surface, and I checked all eight: `rule`/`hazard`/`obligation`/`decision`
+have `create` verbs (block A); `section` has one (block A/E); `block`/`finding` are created by other
+means already wired. `question` has **none** — `CardKind.Question` is fully modelled (scope rules,
+file writer, parser, wire format, identity prefix `Q`) but no CLI verb has ever constructed one; grep
+confirms zero production references beyond the closed union's own plumbing.
+
+`question` is also the only kind whose spec meaning fits: register defines it as exactly this shape —
+repository-scoped, "continues to surface to the role that owes its answer", outlives its change. But
+building `question create` now pre-empts §9, which already assumes question cards exist and design
+their answer/defer lifecycle (`9.7` open-undeferred-questions refusal, `9.9` answer-without-decision-
+reference refusal, `9.10` blocked-by-an-open-question refusal, `10.10` escalation by question
+ownership) — deciding that lifecycle's shape here, under a two-blocker remediation with one round to
+converge, is the wrong place to make it.
+
+The other two "already covered" register kinds don't fit without stretching a field past what it
+documents: `obligation.owed_by` is required and must resolve to a **section** card (register: "An
+obligation SHALL name the section expected to discharge it") — a repository compaction proposal has
+no natural section. `decision` records a choice already made, not one pending — the inverse of what
+this needs.
+
+❓ @architect — build `question create` now (I'd scope it minimally: title, candidate text as body,
+owner = product-owner, no answer/defer machinery — leaving §9 to add that), or a different mechanism
+entirely? Everything else in the block is done and gated green; this is the one open item.
+
+**Gates (blockers 2 and 3 only — blocker 1 not attempted):** `make build` → `BUILD_EXIT:0`,
+`make test` → `TEST_EXIT:0` (646: 643 existing + 3 new), `make format` → `FORMAT_EXIT:0`,
+`make validate` → `VALIDATE_EXIT:0`. No refusal code added, changed or removed — set stands at 53
+across 223 sites.
+
+Not handing off to `@reviewer` yet — the block isn't finished while blocker 1 is open.
+
+**[architect]** Answering the worker's `❓` on blocker 1. **Authorised: add a minimal `question
+create`, and record the proposal as a `question` card the Product Owner owns.** You were right to
+stop and right about the kind.
+
+**Why `question` is correct and not a stretch.** Register defines the shape itself — repository-scoped,
+"continues to surface to the role that owes its answer", outliving the change that raised it. A
+repository-scoped compaction proposal is precisely a question owed by the Product Owner: *should
+these rules become this family?* `obligation` names a section expected to discharge it and `decision`
+is capability-scoped; both would need a required field bent away from its documented meaning, which
+is how a record starts lying.
+
+**Why this does not pre-empt §9, checked rather than assumed.** §9's question tasks are 9.7 (refuse
+section close over open undeferred questions), 9.9 (refuse marking a question answered without a
+decision reference or inline answer) and 9.10 (refuse advancing a card blocked by an open Product
+Owner question). **Every one is a refusal about a question's lifecycle; none is creation.** A
+creation verb gives §9 something to refuse against — it does not decide how answering or deferring
+works. Block A set this exact precedent: it created five kinds and left their lifecycle rules to the
+sections that own them.
+
+**Keep it minimal, and that is a constraint, not encouragement:**
+
+- **Creation only.** Identity from the counter, scope validated through `CardScopeRules`, directory
+  from `CardLayout`, written through the existing locked atomic path — the same shape as block A's
+  five verbs, adding no sixth way to put a card on disk.
+- **No answer verb, no defer verb, no status transitions beyond what a new card needs.** Those are
+  §9's, and building them here would be the pre-emption you were right to worry about.
+- **Say in your post what you deliberately left for §9**, so the next worker inherits the boundary
+  rather than rediscovering it.
+
+**Then blocker 1 proper.** `rule propose-compact` creates that question card recording the candidate
+text, the backing set and their citation counts, owned by `product-owner`. **Applying nothing remains
+the hard requirement** — prove on the bytes that no rule in the backing set is touched, exactly as
+the current tests do. The proposal being durable is what the spec asked for; the proposal being inert
+is what it asked for twice.
+
+Blockers 2 and 3 as you built them stand — do not revisit them.
+
+**[worker]** Blocker 1 built. `question create` added, minimal per the ruling; `rule propose-compact`
+now creates a durable `question` card owned by `product-owner`.
+
+**`question create`** — new `CommandDispatcher.ParsedCommand.QuestionCreate` case,
+`CommandParser.ParseQuestion`/`ParseQuestionCreate` (reusing the shared `ParseCardCreate` helper
+exactly as `decision create` does — `requireChange: false`, no `--scope`, scope fixed to
+`repository`), `CommandDispatcher.RunQuestionCreate` (reuses `MapCardCreateOutcome`, same as every
+block A verb). Creation only, as instructed:
+- No answer verb, no defer verb, no status transition beyond the one a brand-new card needs —
+  initial status is the plain literal `"open"`, the same convention `RecordFinding` already uses
+  for a kind with no dedicated status vocabulary.
+- **Left for §9, explicitly**: what "answered" means, whether it requires a decision reference or an
+  inline answer (9.9), what "deferred" means and how section-close treats an open undeferred
+  question (9.7), and how "blocked by an open Product Owner question" is detected and refused (9.10).
+  This block gives §9 a card to refuse against; it decides none of that.
+
+**`rule propose-compact`** now writes. After the unchanged resolve/validate/count loop over the
+backing set, it calls `CardStore.CreateCard` — the identical path `RunQuestionCreate` uses, no new
+way to put a card on disk — with `Kind = Question`, `Scope = Repository`, `Owner = ProductOwner`,
+and a body built by `BuildProposalCardBody`: the candidate text, then who proposed it and when, then
+each backing rule with its citation count, in plain Markdown (`question` carries no
+`RegisterCardFields`, and the Product Owner reading the file directly needs to see the same three
+facts a JSON caller gets). **The verb's argument shape did change**: added `--proposal-file <path>`,
+required, the same "the caller always names a new card's file" convention every other creation verb
+in this codebase follows without exception — I checked, including the finding-raise path, and found
+no precedent anywhere for the tool inventing a card's file path itself. Adding this flag was the
+smaller, more consistent change against that precedent than the alternative (`CreateCard` guessing a
+path from a not-yet-allocated id). Not the subject-naming convention the earlier ruling put out of
+scope — a new required flag on one verb, not a change to how any existing verb names its subject.
+
+**Applying nothing, still proven on the bytes.** `ProposeCompact_WellFormedRequest_MutatesNoBackingCard`
+is unchanged in what it proves (both backing rules byte-identical, `open`, no `superseded_by`) and
+still passes — the only new write in this call targets a brand-new file, never one already on disk.
+`ProposeCompact_TwoOpenRepositoryRules_Succeeds_...` now also reads the created card back in a
+*separate* call and asserts kind/scope/owner/id and that the body carries the candidate text, both
+backing ids and the acting role — durability proven the same way 7.12's fix was, not just trusted
+from the response.
+
+**`RuleProposeCompactResult`** gains `proposalId`/`proposalFilePath` (the created card's identity) —
+`candidateText`/`backing`/`backingFilePaths`/`citationCounts`/`actingRole`/`proposedAt` unchanged.
+
+**Refusal set: 53 distinct codes, 230 construction sites (223 + 7), no new code.** The 7: `question`'s
+`missing-subcommand`/`unknown-subcommand`, `RunQuestionCreate`'s `repo-root-not-found`,
+`ParseRuleProposeCompact`'s `missing-argument` for `--proposal-file`, and `RunRuleProposeCompact`'s
+new `scope-refused`/`card-already-exists`/`card-layout-mismatch` sites on the creation outcome — all
+seven reuse codes that already existed for the identical facts elsewhere; re-derived mechanically
+(`grep -o 'new CommandOutcome.Refusal(' CommandDispatcher.cs CommandParser.cs StdinBodyReader.cs`
+→ 230; distinct code strings → 53).
+
+New tests: `CommandDispatcherQuestionCreateTests.cs` (5 — happy path, missing title, missing/unknown
+subcommand, already-exists). `CommandDispatcherRuleProposeCompactTests.cs`'s existing 8 all updated
+for `--proposal-file` and the two success tests extended as above (net +0 new fact methods there,
+existing ones deepened).
+
+**Gates, full re-run:** `BUILD_EXIT:0`, `TEST_EXIT:0` (651: 646 prior + 5 new), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`.
+
+**Files touched beyond blockers 2/3**: `src/Callboard/Cli/CommandDispatcher.cs` (new `QuestionCreate`
+case + `RunQuestionCreate`; `RuleProposeCompact` case gained `ProposalFilePath`; `RunRuleProposeCompact`
+rewritten to write, gained `lockTimeout`, `BuildProposalCardBody` added), `src/Callboard/Cli/
+CommandParser.cs` (`"question"` routed at the top switch; `ParseQuestion`/`ParseQuestionCreate`;
+`ParseRuleProposeCompact` gained `--proposal-file`), `src/Callboard/Cli/RuleProposeCompactResult.cs`
+(`proposalId`/`proposalFilePath`), `tests/Callboard.Tests/CommandDispatcherQuestionCreateTests.cs`
+(new), `tests/Callboard.Tests/CommandDispatcherRuleProposeCompactTests.cs` (updated).
+
+Blockers 2 and 3 untouched since the last post. All three blockers now addressed.
+
+→ @reviewer
+
+**[reviewer]** Audit of the §7 remediation block — three supervisor blockers. Gates re-run
+independently: `BUILD_EXIT:0`, `TEST_EXIT:0` (651/651), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal
+set re-derived mechanically: 230 sites (223 + 7), still **53 distinct codes** — all seven new sites
+reuse existing codes.
+
+**Verdict: Approve.** Ready to go back to the supervisor.
+
+**1. The proposal is durable and inert — both confirmed independently, in separate steps.** Built a
+scratch repo, ran `rule propose-compact --absorbs R-0001,R-0002 --role worker --proposal-file
+callboard/register/q-0001.md` with real stdin, then read the resulting card with a plain `cat` in a
+completely separate shell command (no shared state with the write). The question card exists:
+`kind: question`, `owner: product-owner`, `scope: repository`, body carrying the candidate text,
+who proposed it and when, and each backing rule with its citation count — exactly the three facts
+the scenario names. Both backing rules hashed before and after: byte-identical. No `.lock` file left
+anywhere. `RunRuleProposeCompact`'s only write call is `CardStore.CreateCard` targeting the
+caller-supplied `--proposal-file` path — grepped the function for `CompactRules` and for any write
+targeting `resolved.FilePath` (a backing rule's own path): zero hits either way. The requirement's
+two "applies nothing"s both hold, and the second write path didn't cost the first.
+
+**2. The live/archived split holds in both directions, and `CountCitations` staying
+archive-inclusive is right, not an inconsistency.** `ResolveLiveRecordDirectories` (register,
+decisions, live changes) and `ResolveRecordDirectories` (that plus every archived change) are two
+genuinely different questions now, not one conflated one — confirmed by reading both bodies and by
+`CardLayoutTests.ResolveLiveRecordDirectories_ExcludesArchivedChanges_ButResolveRecordDirectories_
+IncludesThem`, which asserts the disagreement directly on the same fixture. `RuleCitationsTests`
+covers both directions I was asked to check: a change-scoped open rule sitting in an archived change
+is not queued (`UncitedOpenRules_ChangeScopedOpenRuleInAnArchivedChange_IsNotQueued`), and a
+repository-scoped rule promoted out before its change archived stays queued
+(`UncitedOpenRules_RepositoryScopedRulePromotedBeforeArchive_IsStillQueued`) — archiving a change
+must not sweep away something already live, and it doesn't. `CountCitations` staying
+archive-inclusive is the right call: a citation is evidence someone relied on the rule, and that
+fact doesn't stop being true because the citing card's own change later archived — conflating
+"citable" with "live" would be the same category error the blocker was raised over, just in the
+other field.
+
+**3. `ResolveRecordDirectories`'s delegation narrowed exactly one caller, deliberately, and no
+other.** Grepped every call site: `CardIdentityResolver` and `IndexPopulator` both still call
+`ResolveRecordDirectories` (the archive-inclusive one), unchanged — resolution and index population
+see exactly what they saw before. `RuleCitations.CountCitations` also still calls the full method.
+Only `UncitedOpenRules` was switched to `ResolveLiveRecordDirectories`, which is the one caller the
+blocker was actually about.
+
+**4. `PromoteRule` writes the attribution comment in the same write, and the structural-preservation
+property still holds.** Read the whole `with` expression: `Frontmatter = card.Frontmatter with {
+Scope = ..., Updated = ... }` — unchanged from block E — plus one new line, `Comments = [..
+card.Comments, promotionComment]`. One `AtomicWrite` call in the function, not two. Reproduced
+directly: promoted a change-scoped rule via the real binary, read the result back — every prior
+field intact, one new attributed comment appended after any existing ones, `actingRole` present in
+the response. `CardRulePromoteTests`'s structural test now checks every `RegisterCardFields` member
+individually (not a single `Assert.Equal`, since `ImmutableArray<T>`'s generated equality compares
+by reference) plus the full comment list, order preserved, exactly one new entry appended.
+`CardCommentImmutabilityTests`'s own inventory entry for `PromoteRuleUnderExistingLock` was updated
+to say what it now does — "appends, never edits or drops an existing comment" — rather than left
+stale, which matters here specifically since this is the file whose entire job is to catch exactly
+this kind of regression.
+
+**5. `question create` is genuinely creation-only.** `question`'s subcommand switch has exactly one
+case, `create`; no `answer`, no `defer`, no status-transition verb anywhere in the diff.
+`RunQuestionCreate` calls the same `CardStore.CreateCard`/`MapCardCreateOutcome` pair every block A
+verb uses — no sixth way to put a card on disk. Status is the plain literal `"open"`, matching
+`RecordFinding`'s own precedent for a kind with no dedicated status vocabulary. The worker's own
+account of what's left for §9 (what "answered" means, defer semantics, blocked-by-an-open-question
+detection) matches what I can independently confirm is *not* here: no reference to any of those
+concepts anywhere in the diff.
+
+**6. `--proposal-file` is a reasonable fit for this verb's actual shape, not an outlier.**
+`rule propose-compact` has no positional argument at all — `--absorbs` is the verb's subject and
+it's list-shaped, so there's no existing positional slot a new required file path could occupy or
+collide with. Checked block A's five creation verbs: every one has the caller name the new card's
+file, whether positional (`rule create <path>`) or, here, necessarily a flag given the verb's shape.
+This is the same convention applied to a verb with a different argument shape, not a departure from
+it.
+
+**7. Refusal set re-derived myself: 230 sites, 53 codes.** Matches exactly — `+7` sites, `+0` new
+codes.
+
+**8. Blockers 2 and 3 didn't move during blocker 1's work.** File modification times show
+`CardLayout.cs`, `RuleCitations.cs`, `CardStore.cs` and every result type touched for blockers 2/3
+predate the blocker-1 files (`CommandDispatcher.cs`'s `RunQuestionCreate`/`RunRuleProposeCompact`
+work, `CommandParser.cs`, the new test files) by roughly fifteen minutes of wall-clock editing time.
+More to the point, I re-verified blockers 2 and 3's actual behaviour against the *current* state of
+the tree by execution (promote's comment, the live/archived split), not by trusting that the
+timestamps alone prove nothing regressed — both still hold.
+
 ## NEXT
 
 

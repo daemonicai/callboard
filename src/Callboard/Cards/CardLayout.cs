@@ -104,8 +104,44 @@ internal static class CardLayout
     /// and descended into separately via <see cref="ArchiveDirectory"/> — an id resolution that
     /// only checked live changes would make card-model's "identity SHALL remain valid and
     /// resolvable after the change that raised it is archived" false the moment a change archived.
+    ///
+    /// <para>
+    /// <b>Resolvable is not the same question as live (§7 remediation, blocker 2).</b> This method
+    /// answers "where can an id still be found" and deliberately reaches into the archive — that is
+    /// what lets a citation in an archived change still count and what lets a promoted rule's prior
+    /// identity keep resolving. Whether a card found there counts as part of the *live* register is
+    /// a different question, answered by <see cref="ResolveLiveRecordDirectories"/>, not this one.
+    /// </para>
     /// </summary>
     internal static IReadOnlyList<string> ResolveRecordDirectories(string cardsRoot)
+    {
+        var directories = new List<string>(ResolveLiveRecordDirectories(cardsRoot));
+
+        var archiveRoot = ArchiveRootPath(cardsRoot);
+        if (Directory.Exists(archiveRoot))
+        {
+            directories.AddRange(
+                Directory.EnumerateDirectories(archiveRoot).OrderBy(static path => path, StringComparer.Ordinal));
+        }
+
+        return directories;
+    }
+
+    /// <summary>
+    /// The subset of <see cref="ResolveRecordDirectories"/> that has not been archived:
+    /// <see cref="RegisterDirectory"/>, <see cref="DecisionsDirectory"/> and one per live change —
+    /// never a directory under <see cref="ArchiveDirectory"/> (§7 remediation, blocker 2). This is
+    /// what "live" means for a card: register and decisions are never archived at all, and a
+    /// change-scoped card stops being live the moment <c>change archive</c> moves its change's
+    /// directory under <see cref="ArchiveDirectory"/>, exactly the directory move that makes archive
+    /// "a directory-level filter with nothing in transit". <see cref="Cards.RuleCitations.
+    /// UncitedOpenRules"/> is the first caller — a never-promoted change-scoped rule left <c>open</c>
+    /// in an archived change is resolvable (walking <see cref="ResolveRecordDirectories"/> still
+    /// finds it, and a citation of its id from anywhere, archived or not, still counts) but is not
+    /// live, so it does not belong in a human review queue that only exists to look at the standing
+    /// register.
+    /// </summary>
+    internal static IReadOnlyList<string> ResolveLiveRecordDirectories(string cardsRoot)
     {
         var directories = new List<string>
         {
@@ -114,10 +150,7 @@ internal static class CardLayout
         };
 
         var changesRoot = CombineWithLayout(cardsRoot, ChangesRootDirectory);
-
-        // Trimmed to match Directory.EnumerateDirectories' own results below, which never carry a
-        // trailing separator, while CombineWithLayout's input (a CardLayout constant) always does.
-        var archiveRoot = Path.TrimEndingDirectorySeparator(CombineWithLayout(cardsRoot, ArchiveDirectory));
+        var archiveRoot = ArchiveRootPath(cardsRoot);
 
         if (Directory.Exists(changesRoot))
         {
@@ -132,14 +165,13 @@ internal static class CardLayout
             }
         }
 
-        if (Directory.Exists(archiveRoot))
-        {
-            directories.AddRange(
-                Directory.EnumerateDirectories(archiveRoot).OrderBy(static path => path, StringComparer.Ordinal));
-        }
-
         return directories;
     }
+
+    // Trimmed to match Directory.EnumerateDirectories' own results, which never carry a trailing
+    // separator, while CombineWithLayout's input (a CardLayout constant) always does.
+    private static string ArchiveRootPath(string cardsRoot) =>
+        Path.TrimEndingDirectorySeparator(CombineWithLayout(cardsRoot, ArchiveDirectory));
 
     private static string CombineWithLayout(string cardsRoot, string layoutDirectory) =>
         Path.Combine(cardsRoot, layoutDirectory.Replace('/', Path.DirectorySeparatorChar));
