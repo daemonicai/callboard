@@ -343,6 +343,50 @@ public sealed class CardFileRoundTripTests
         Assert.Equal(comment, reparsedComment);
     }
 
+    // §8 block B: the four nit-only comment-header fields (is-nit/required/sites/disposition)
+    // round-trip, and the pre-existing unrecognised-header-field test above already proves an
+    // unknown key on a comment survives — this proves the four new known keys themselves are read
+    // and re-emitted symmetrically, not filed as unknown by a writer/parser mismatch (the shape
+    // §7's compounding duplication bug took, guarded against here by CardCommentNitFieldKeys being
+    // the one shared declaration both sides read).
+    [Fact]
+    public void RoundTrips_NitCommentWithSitesRequiredAndDisposition_PreservesAllFields()
+    {
+        const string raw =
+            "---\n" +
+            "id: X-0400\nkind: block\ntitle: t\nstatus: in-review\nowner: worker\nscope: change\nsection: 8\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
+            "---\n" +
+            "body\n" +
+            "<!-- callboard:comment id=nit-1 author=reviewer to=architect timestamp=2026-08-19T09:00:00+00:00 " +
+            "is-nit=true required=true sites=src/A.cs,src/B.cs -->\n" +
+            "This is dead code.\n" +
+            "<!-- /callboard:comment -->\n" +
+            "<!-- callboard:comment id=disp-1 author=architect resolves=nit-1 timestamp=2026-08-19T09:05:00+00:00 " +
+            "disposition=fix-before-land -->\n" +
+            "Fixing before it lands.\n" +
+            "<!-- /callboard:comment -->\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+        Assert.Equal(2, parsed.Comments.Count);
+
+        var nit = parsed.Comments[0];
+        Assert.True(nit.IsNit);
+        Assert.True(nit.Required);
+        Assert.Equal(["src/A.cs", "src/B.cs"], nit.Sites);
+        Assert.Null(nit.Disposition);
+
+        var disposition = parsed.Comments[1];
+        Assert.False(disposition.IsNit);
+        Assert.False(disposition.Required);
+        Assert.Empty(disposition.Sites);
+        Assert.Equal(NitDisposition.FixBeforeLand, disposition.Disposition);
+        Assert.Equal("nit-1", disposition.Resolves);
+
+        var reparsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(parsed)));
+        Assert.Equal(parsed.Comments, reparsed.Comments);
+    }
+
     [Fact]
     public void RoundTrips_CommentIdAndReplyToContainingSpacesAndBackslashes()
     {

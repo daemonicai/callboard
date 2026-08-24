@@ -168,6 +168,7 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             onUndefinedTransition: static u => throw new Xunit.Sdk.XunitException($"expected Applied, got UndefinedTransition from {u.CurrentState.ToWireString()}"),
             onBaseNotRecorded: static _ => throw new Xunit.Sdk.XunitException("expected Applied, got BaseNotRecorded"),
             onBaseImmutable: static b => throw new Xunit.Sdk.XunitException($"expected Applied, got BaseImmutable(recorded: {b.Recorded}, attempted: {b.Attempted})"),
+            onUndispositionedNits: static u => throw new Xunit.Sdk.XunitException($"expected Applied, got UndispositionedNits({string.Join(", ", u.NitIds)})"),
             onNotABlockCard: static n => throw new Xunit.Sdk.XunitException($"expected Applied, got NotABlockCard({n.Kind.ToWireString()})"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Applied, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Applied, got LayoutMismatch: {layoutMismatch.Reason}"),

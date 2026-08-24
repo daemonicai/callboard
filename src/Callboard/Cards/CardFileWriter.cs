@@ -392,6 +392,26 @@ internal static class CardFileWriter
 
         fields.Append(" timestamp=").Append(FormatTimestamp(comment.Timestamp));
 
+        if (comment.IsNit)
+        {
+            fields.Append(' ').Append(CardCommentNitFieldKeys.IsNit).Append("=true");
+        }
+
+        if (comment.Required)
+        {
+            fields.Append(' ').Append(CardCommentNitFieldKeys.Required).Append("=true");
+        }
+
+        if (comment.Sites.Count > 0)
+        {
+            fields.Append(' ').Append(CardCommentNitFieldKeys.Sites).Append('=').Append(CardFileFormat.JoinSiteList(comment.Sites));
+        }
+
+        if (comment.Disposition is { } disposition)
+        {
+            fields.Append(' ').Append(CardCommentNitFieldKeys.Disposition).Append('=').Append(disposition.ToWireString());
+        }
+
         foreach (var (key, rawValue) in comment.UnknownHeaderFields)
         {
             fields.Append(' ').Append(key).Append('=').Append(rawValue);

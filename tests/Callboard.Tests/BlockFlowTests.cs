@@ -40,17 +40,20 @@ public sealed class BlockFlowTests
     }
 
     [Fact]
-    public void InReview_HasTwoAvailableTransitions_ApproveAndChangesRequested()
+    public void InReview_HasThreeAvailableTransitions_ApproveChangesRequestedAndFixBeforeLand()
     {
         var available = BlockFlowTransitions.AvailableFrom(BlockFlowState.InReview);
 
-        Assert.Equal(2, available.Count);
+        Assert.Equal(3, available.Count);
 
         var approve = Assert.Single(available, t => t.Name == "approve");
         Assert.Same(BlockFlowState.Approved, approve.To);
 
         var changesRequested = Assert.Single(available, t => t.Name == "changes-requested");
         Assert.Same(BlockFlowState.Briefed, changesRequested.To);
+
+        var fixBeforeLand = Assert.Single(available, t => t.Name == "fix-before-land");
+        Assert.Same(BlockFlowState.Briefed, fixBeforeLand.To);
     }
 
     [Fact]

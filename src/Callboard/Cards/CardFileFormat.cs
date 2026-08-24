@@ -220,6 +220,74 @@ internal static class CardFileFormat
     /// <summary>Reverses <see cref="EscapeCertificationTextValue"/>.</summary>
     internal static string UnescapeCertificationTextValue(string value) => UnescapeUsing(value, CertificationTextEscapeTable);
 
+    private static readonly IReadOnlyDictionary<char, char> SiteListItemEscapeTable =
+        new Dictionary<char, char> { ['s'] = ' ', [','] = ',', ['n'] = '\n', ['r'] = '\r' };
+
+    private static readonly IReadOnlyDictionary<char, string> SiteListItemEscapeForwardTable =
+        new Dictionary<char, string> { ['\\'] = "\\\\", [' '] = "\\s", [','] = "\\,", ['\n'] = "\\n", ['\r'] = "\\r" };
+
+    /// <summary>
+    /// Escapes one item of a nit's comma-joined <c>sites</c> comment-header value (§8 block B) —
+    /// the same space-escaping <see cref="EscapeCommentHeaderValue"/> applies (the header is
+    /// <c>key=value</c> tokens joined by a single space), plus the list separator itself (a path
+    /// containing a literal comma must not be misread as two sites) and newline/carriage-return
+    /// escaping, the same combination <see cref="EscapeCertificationTextValue"/> already applies for
+    /// its own reasons.
+    /// </summary>
+    internal static string EscapeSiteListItem(string value) => EscapeUsing(value, SiteListItemEscapeForwardTable);
+
+    /// <summary>Reverses <see cref="EscapeSiteListItem"/>.</summary>
+    internal static string UnescapeSiteListItem(string value) => UnescapeUsing(value, SiteListItemEscapeTable);
+
+    /// <summary>
+    /// Joins already-unescaped sites into the one comment-header token <see cref="SplitSiteList"/>
+    /// reverses — the same shape <see cref="JoinFrontmatterList"/> gives frontmatter's own
+    /// comma-joined lists, applied to a header value instead. An empty list joins to
+    /// <see cref="string.Empty"/>, and the caller omits the <c>sites</c> key entirely in that case
+    /// (the same "field present, nothing recorded" convention would otherwise be ambiguous with
+    /// "key absent" on a single-line header — omitting the key sidesteps the question rather than
+    /// answering it the way <see cref="CardFrontmatter.Section"/> does for frontmatter).
+    /// </summary>
+    internal static string JoinSiteList(IReadOnlyList<string> items) =>
+        string.Join(",", items.Select(EscapeSiteListItem));
+
+    /// <summary>
+    /// Splits a raw comma-joined <c>sites</c> header value back into its unescaped items, scanning
+    /// for an unescaped comma — the same algorithm <see cref="SplitFrontmatterList"/> uses for
+    /// frontmatter's own lists, adapted to <see cref="SiteListItemEscapeTable"/>.
+    /// </summary>
+    internal static IReadOnlyList<string> SplitSiteList(string raw)
+    {
+        if (raw.Length == 0)
+        {
+            return [];
+        }
+
+        var items = new List<string>();
+        var current = new System.Text.StringBuilder();
+        for (var i = 0; i < raw.Length; i++)
+        {
+            if (raw[i] == '\\' && i + 1 < raw.Length)
+            {
+                current.Append(raw[i]).Append(raw[i + 1]);
+                i++;
+                continue;
+            }
+
+            if (raw[i] == ',')
+            {
+                items.Add(UnescapeSiteListItem(current.ToString()));
+                current.Clear();
+                continue;
+            }
+
+            current.Append(raw[i]);
+        }
+
+        items.Add(UnescapeSiteListItem(current.ToString()));
+        return items;
+    }
+
     private static readonly IReadOnlyDictionary<char, char> FrontmatterListItemEscapeTable =
         new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r', [','] = ',' };
 

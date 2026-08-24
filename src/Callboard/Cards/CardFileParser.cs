@@ -66,12 +66,13 @@ internal static class CardFileParser
     // alongside the known line on every parse-then-write cycle, duplicating it without bound.
     private static readonly HashSet<string> RegisterOnlyFrontmatterKeys = new(RegisterCardFieldKeys.All, StringComparer.Ordinal);
 
-    // The six comment-header fields this build recognises. Same rule, same reason, applied to the
-    // per-comment header instead of the frontmatter block.
-    private static readonly HashSet<string> KnownCommentHeaderKeys = new(StringComparer.Ordinal)
-    {
-        "id", "author", "reply-to", "to", "resolves", "timestamp",
-    };
+    // The six comment-header fields this build recognises, plus the four §8 block B nit-only ones
+    // (CardCommentNitFieldKeys.All — the one shared declaration this set and CardFileWriter's own
+    // emission both read from, the wire-key drift guard carried from §7's close). Same rule, same
+    // reason, applied to the per-comment header instead of the frontmatter block.
+    private static readonly HashSet<string> KnownCommentHeaderKeys = new(
+        new[] { "id", "author", "reply-to", "to", "resolves", "timestamp" }.Concat(CardCommentNitFieldKeys.All),
+        StringComparer.Ordinal);
 
     // The three handover-line fields this build recognises (card-model 4.5). Same rule again.
     private static readonly HashSet<string> KnownHandoverKeys = new(StringComparer.Ordinal)
@@ -1200,7 +1201,24 @@ internal static class CardFileParser
             ? CardFileFormat.UnescapeCommentHeaderValue(resolvesText)
             : null;
 
-        return (new CardComment(id, author, timestamp, body, replyTo, to, resolves, unknownFields), null);
+        var isNit = fields.TryGetValue(CardCommentNitFieldKeys.IsNit, out var isNitText) && string.Equals(isNitText, "true", StringComparison.Ordinal);
+        var required = fields.TryGetValue(CardCommentNitFieldKeys.Required, out var requiredText) && string.Equals(requiredText, "true", StringComparison.Ordinal);
+        var sites = fields.TryGetValue(CardCommentNitFieldKeys.Sites, out var sitesText)
+            ? CardFileFormat.SplitSiteList(sitesText)
+            : (IReadOnlyList<string>?)null;
+
+        NitDisposition? disposition = null;
+        if (fields.TryGetValue(CardCommentNitFieldKeys.Disposition, out var dispositionText))
+        {
+            if (!NitDispositionWireFormat.TryParse(dispositionText, out var parsedDisposition))
+            {
+                return (null, $"comment '{id}' has unrecognised disposition: '{dispositionText}'. Recognised dispositions: {NitDispositionWireFormat.RecognisedValues}.");
+            }
+
+            disposition = parsedDisposition;
+        }
+
+        return (new CardComment(id, author, timestamp, body, replyTo, to, resolves, unknownFields, isNit, required, sites, disposition), null);
     }
 
     private static (CardHandover? Handover, string? Failure) BuildHandover(

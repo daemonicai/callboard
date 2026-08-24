@@ -41,9 +41,10 @@ internal static class CommandParser
         "decision" => ParseDecision(context),
         "question" => ParseQuestion(context),
         "change" => ParseChange(context),
+        "nit" => ParseNit(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit.")),
     };
 
     /// <summary>
@@ -166,6 +167,20 @@ internal static class CommandParser
                 "'approve' cannot be applied through 'block transition' — it would move the block to 'approved' " +
                 "with no certification recorded. Use 'block approve' instead, which stamps the certification in " +
                 "the same write as the transition."));
+        }
+
+        // §8 block B (Architect ruling, same reasoning as 'approve' above): 'fix-before-land' is
+        // raised only as the side effect of dispositioning a nit — a bare transition through this
+        // path would move a block to 'briefed' with no nit actually dispositioned as
+        // 'fix-before-land', exactly the neglect review-certification's "SHALL NOT lapse by
+        // neglect" exists to prevent. Argv-decidable, so refused here rather than left to execute.
+        if (string.Equals(transitionName, "fix-before-land", StringComparison.Ordinal))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "fix-before-land-via-transition-refused",
+                "'fix-before-land' cannot be applied through 'block transition' — it is only raised as the " +
+                "side effect of dispositioning a nit. Use 'nit disposition --disposition fix-before-land' " +
+                "instead."));
         }
 
         string? roleText = null;
@@ -412,10 +427,22 @@ internal static class CommandParser
     /// now build a <paramref name="setters"/> map over this one loop instead.
     /// </summary>
     private static CommandOutcome.Refusal? ConsumeKnownFlags(
-        CommandDispatcher.CommandContext context, IReadOnlyDictionary<string, Action<string>> setters)
+        CommandDispatcher.CommandContext context, IReadOnlyDictionary<string, Action<string>> setters, IReadOnlyDictionary<string, Action>? booleanSetters = null)
     {
         while (context.Arguments.Peek() is { } flag)
         {
+            // §8 block B: nit raise's '--required' is presence-only, taking no value — the one
+            // shape none of §1–§7's flags needed. Checked ahead of `setters` in the same loop
+            // (not a separate pass before/after it) so a boolean flag can appear anywhere among a
+            // verb's other flags, the same "any order" freedom ConsumeKnownFlags already gives
+            // every value-taking flag.
+            if (booleanSetters is not null && booleanSetters.TryGetValue(flag, out var booleanSetter))
+            {
+                context.Arguments.TryTake();
+                booleanSetter();
+                continue;
+            }
+
             if (!setters.TryGetValue(flag, out var setter))
             {
                 break;
@@ -2081,5 +2108,213 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.DecisionSupersede(
             supersedingId, supersededId, role, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// <c>nit</c>'s only job is routing to a subcommand: <c>raise</c> and <c>disposition</c> (§8
+    /// block B). Same peek-don't-take shape as <see cref="ParseIndex"/>, same reason.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseNit(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'nit' requires a subcommand. Known subcommands: raise, disposition."));
+            case "raise":
+                context.Arguments.TryTake();
+                return ParseNitRaise(context);
+            case "disposition":
+                context.Arguments.TryTake();
+                return ParseNitDisposition(context);
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'nit' subcommand: '{subcommand}'. Known subcommands: raise, disposition."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>nit raise</c>'s <see cref="CommandDispatcher.ParsedCommand.NitRaise"/> (§8 block B,
+    /// review-certification: "A nit SHALL be raised as an addressed comment, not as a card"). Named
+    /// by <c>--id</c> — the block card it is raised against — the same identity-addressing
+    /// convention <c>block approve</c> already established (§7's settled ruling). <c>--site</c> is
+    /// repeatable (Architect ruling, §8 block B brief item 2: "record sites now … even though
+    /// nothing in this block reads them back"); <see cref="ConsumeKnownFlags"/>'s own loop already
+    /// supports a flag appearing more than once, so no second flag-parsing shape is needed for it.
+    /// Body on redirected stdin per ADR-0001/D1 — the nit's own text, addressed to the architect.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseNitRaise(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? roleText = null;
+        string? changeName = null;
+        var required = false;
+        var sites = new List<string>();
+
+        // One flag loop, not two (an earlier shape split '--change' into a second
+        // ConsumeKnownFlags call — wrong, because that call's own loop stops at the first token
+        // its own map does not recognise, so a '--change' placed before '--required'/'--site' in
+        // argv would strand them unconsumed for the funnel's unrecognised-argument refusal to
+        // trip on, even though they are perfectly legal flags this verb accepts).
+        var flagRefusal = ConsumeKnownFlags(
+            context,
+            new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+            {
+                ["--id"] = value => id = value,
+                ["--role"] = value => roleText = value,
+                ["--site"] = value => sites.Add(value),
+                ["--change"] = value => changeName = value,
+            },
+            new Dictionary<string, Action>(StringComparer.Ordinal)
+            {
+                ["--required"] = () => required = true,
+            });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'nit raise' requires '--id <block-card-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'nit raise' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.NitRaise(
+            id, role, required, sites, body, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>nit disposition</c>'s <see cref="CommandDispatcher.ParsedCommand.NitDisposition"/>
+    /// (§8 block B, review-certification: "Nits carry a disposition"). Named by <c>--id</c> — the
+    /// nit's own id, resolved through <see cref="Cards.NitResolver"/> at execute time, not
+    /// <see cref="Cards.CardIdentityResolver"/> (a nit is a comment, not a card — see that type's
+    /// own doc comment). <c>--raise &lt;path&gt;</c>/<c>--title &lt;text&gt;</c> are required only
+    /// for <c>defer</c>/<c>decline</c> (argv-decidable: <c>--disposition</c>'s own value settles
+    /// which, checked here rather than left to execute) — the raised card's own body is the same
+    /// stdin body every disposition reads (review-certification: "load-bearing for <c>decline</c>").
+    /// Role <em>permission</em> (architect-only) is left to the execute phase, the same split
+    /// <c>block approve</c>'s own role check uses.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseNitDisposition(CommandDispatcher.CommandContext context)
+    {
+        string? nitId = null;
+        string? roleText = null;
+        string? dispositionText = null;
+        string? raiseFilePath = null;
+        string? raiseTitle = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => nitId = value,
+            ["--role"] = value => roleText = value,
+            ["--disposition"] = value => dispositionText = value,
+            ["--raise"] = value => raiseFilePath = value,
+            ["--title"] = value => raiseTitle = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (nitId is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'nit disposition' requires '--id <nit-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'nit disposition' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (dispositionText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'nit disposition' requires '--disposition fix-before-land|defer|decline'."));
+        }
+
+        if (!NitDispositionWireFormat.TryParse(dispositionText, out var disposition))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-disposition",
+                $"unrecognised disposition: '{dispositionText}'. Recognised dispositions: {NitDispositionWireFormat.RecognisedValues}."));
+        }
+
+        var raiseKind = disposition == NitDisposition.Defer ? CardKind.Obligation
+            : disposition == NitDisposition.Decline ? CardKind.Decision
+            : (CardKind?)null;
+
+        NitDispositionRaiseRequest? raiseRequest = null;
+        if (raiseKind is not null)
+        {
+            if (raiseFilePath is null)
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-argument",
+                    $"'nit disposition --disposition {dispositionText}' requires '--raise <card-file-path>'."));
+            }
+
+            if (raiseTitle is null)
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-argument",
+                    $"'nit disposition --disposition {dispositionText}' requires '--title <text>'."));
+            }
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        // The raise request's own construction happens here, once (never repeated per disposition
+        // case), even though raiseKind/raiseFilePath/raiseTitle are only ever non-null together
+        // (checked above) — the constructor's own kind restriction is a second, independent
+        // statement of the same invariant, not the only one, the same "verify rather than merely
+        // rely on the one call site" discipline FindingBlindSpotRaiseRequest's own doc comment
+        // describes.
+        if (raiseKind is not null)
+        {
+            raiseRequest = new NitDispositionRaiseRequest(raiseKind, raiseFilePath!, raiseTitle!, body);
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.NitDisposition(
+            nitId, role, disposition, body, raiseRequest, changeName, context.WorkingDirectory, context.Clock()));
     }
 }

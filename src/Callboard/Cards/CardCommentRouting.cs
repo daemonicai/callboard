@@ -79,4 +79,80 @@ internal static class CardCommentRouting
     /// </summary>
     internal static bool BelongsInQueue(CardOwner owner, IReadOnlyList<CardComment> comments, CardOwner role) =>
         owner == role || HasLiveThreadAddressedTo(comments, role);
+
+    /// <summary>
+    /// True when the nit at <paramref name="index"/> has received a disposition (review-certification:
+    /// "Nits carry a disposition", §8 block B) — some comment later in the same append order both
+    /// <see cref="CardComment.Resolves"/> it and itself carries a <see cref="CardComment.Disposition"/>.
+    /// Requiring both, rather than reusing bare <see cref="IsResolved"/>, is deliberate: a nit is a
+    /// closed union of exactly three outcomes (spec: "A nit SHALL cease to be live only through one
+    /// of these three dispositions"), not merely "some later comment happened to reply to it" — an
+    /// ordinary reply that also names <see cref="CardComment.Resolves"/> for some other reason must
+    /// not silently count as a disposition. <see cref="CardComment.IsNit"/> at <paramref name="index"/>
+    /// is not itself checked here — a caller asking this question about a non-nit comment gets a
+    /// vacuous but harmless answer (no later comment both resolves it and carries a disposition,
+    /// since nothing in this codebase ever sets <see cref="CardComment.Disposition"/> on a comment
+    /// resolving a non-nit) rather than a defensive throw, matching <see cref="IsResolved"/>'s own
+    /// unconditional shape.
+    /// </summary>
+    internal static bool IsNitDispositioned(IReadOnlyList<CardComment> comments, int index)
+    {
+        var targetId = comments[index].Id;
+        for (var i = index + 1; i < comments.Count; i++)
+        {
+            if (comments[i].Resolves == targetId && comments[i].Disposition is not null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Every nit in <paramref name="comments"/> that is still live — raised (<see cref="CardComment.
+    /// IsNit"/>) and not yet dispositioned (<see cref="IsNitDispositioned"/>) — in append order. This
+    /// is what review-certification's "Undispositioned nits block the verdict" scenario reads: the
+    /// refusal it names states exactly this set, never a bare count (§8 block B brief: "The refusal
+    /// names the undispositioned nits").
+    /// </summary>
+    internal static IReadOnlyList<string> LiveUndispositionedNitIds(IReadOnlyList<CardComment> comments)
+    {
+        var ids = new List<string>();
+        for (var i = 0; i < comments.Count; i++)
+        {
+            if (comments[i].IsNit && !IsNitDispositioned(comments, i))
+            {
+                ids.Add(comments[i].Id);
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>
+    /// True when any comment in <paramref name="comments"/> carries a
+    /// <see cref="NitDisposition.FixBeforeLand"/> disposition. <see cref="LiveUndispositionedNitIds"/>'s
+    /// sibling for review-certification's fix-before-land edge (§8 block B remediation): whether
+    /// the edge applies turns on whether <em>the round</em>, taken as a whole, carries a
+    /// fix-before-land nit — not on whether the call that happens to empty the live set is itself
+    /// the fix-before-land one. A property of the whole slice handed to it, computed fresh each
+    /// time, never stored on one comment — the same idiom this type's own class doc comment
+    /// records and <see cref="LiveUndispositionedNitIds"/> already follows. The caller narrows
+    /// <paramref name="comments"/> to the round in question (comments have no round of their own)
+    /// before calling this, the same way a caller narrows any other input to a query in this type
+    /// rather than this type filtering by round itself.
+    /// </summary>
+    internal static bool HasFixBeforeLandDisposition(IReadOnlyList<CardComment> comments)
+    {
+        for (var i = 0; i < comments.Count; i++)
+        {
+            if (comments[i].Disposition == NitDisposition.FixBeforeLand)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

@@ -292,6 +292,20 @@ internal static class CardStore
                     return new CardBlockTransitionOutcome.UndefinedTransition(currentState, available);
                 }
 
+                // review-certification: "Undispositioned nits block the verdict" (§8 block B) —
+                // every transition that leaves in-review is bound, not just changes-requested;
+                // approve carries its own copy of this check (CardApprovalOutcome.
+                // UndispositionedNits) since it never reaches this table (approve-via-transition-
+                // refused), and fix-before-land never reaches this method at all (refused at parse).
+                if (transition.From == BlockFlowState.InReview)
+                {
+                    var liveNitIds = CardCommentRouting.LiveUndispositionedNitIds(card.Comments);
+                    if (liveNitIds.Count > 0)
+                    {
+                        return new CardBlockTransitionOutcome.UndispositionedNits(liveNitIds);
+                    }
+                }
+
                 var recordedBase = card.BlockFields.Base;
                 if (recordedBase is not null && baseCommit is not null && !string.Equals(recordedBase, baseCommit, StringComparison.Ordinal))
                 {
@@ -441,6 +455,16 @@ internal static class CardStore
                     return new CardApprovalOutcome.UndefinedTransition(currentState, available);
                 }
 
+                // review-certification: "Undispositioned nits block the verdict" (§8 block B) — an
+                // approve is one of the transitions that moves a block out of in-review, so it is
+                // bound by the same requirement ApplyBlockTransitionUnderExistingLock's own
+                // changes-requested arm checks below.
+                var liveNitIds = CardCommentRouting.LiveUndispositionedNitIds(card.Comments);
+                if (liveNitIds.Count > 0)
+                {
+                    return new CardApprovalOutcome.UndispositionedNits(liveNitIds);
+                }
+
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
                 if (anchored is null)
                 {
@@ -481,6 +505,380 @@ internal static class CardStore
             },
             onFailure: failure =>
                 new CardApprovalOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// review-certification: "Every nit SHALL receive a disposition chosen by the architect" — the
+    /// Architect's reading of that sentence as role-bounding the verb (§8 block B brief item 6, the
+    /// reading most open to challenge).
+    /// </summary>
+    internal static bool IsArchitectRole(CardOwner role) => role.Match(
+        onArchitect: static () => true,
+        onWorker: static () => false,
+        onReviewer: static () => false,
+        onSupervisor: static () => false,
+        onProductOwner: static () => false);
+
+    /// <summary>
+    /// Records a disposition on the nit comment at <paramref name="nitFilePath"/>/<paramref
+    /// name="nitId"/> (review-certification: "Nits carry a disposition", §8 block B): appends a
+    /// disposition <see cref="CardComment"/> naming the nit it resolves — never a mutation of the
+    /// nit comment itself, the append-only idiom <see cref="CardComment.Resolves"/>'s own doc
+    /// comment already establishes for exactly this shape (Architect ruling, §8 block B brief item
+    /// 1). For <see cref="NitDisposition.Defer"/>/<see cref="NitDisposition.Decline"/>,
+    /// <paramref name="raiseRequest"/> is required and a second card (an <c>obligation</c> or a
+    /// <c>decision</c>) is written alongside the disposition comment, in the same call.
+    ///
+    /// <para>
+    /// <b><c>fix-before-land</c> applies its flow edge exactly once per round, and applies it
+    /// whenever the round carries a fix-before-land nit (§8 block B remediation).</b> The edge is
+    /// two-sided: at most once per round (three nits dispositioned <c>fix-before-land</c> in one
+    /// sitting are one return to <c>briefed</c>, not three — once the first such disposition has
+    /// already moved the card to <see cref="BlockFlowState.Briefed"/>, the edge is no longer
+    /// available from the card's current state, and this method does not "helpfully" re-apply it),
+    /// and at least once when any fix-before-land nit was dispositioned this round — even when the
+    /// disposition that leaves no nit undispositioned is itself a <c>defer</c> or a <c>decline</c>.
+    /// Whether the edge applies turns on the round as a whole (<see cref="CardCommentRouting.
+    /// HasFixBeforeLandDisposition"/>, scoped to comments since the round began), not on whether
+    /// <em>this call's</em> disposition happens to be <c>fix-before-land</c>. The disposition itself
+    /// is <em>always</em> recorded regardless (review-certification: "SHALL NOT lapse by neglect" —
+    /// a nit is not left undispositioned merely because the board already moved on) — see
+    /// <see cref="CardNitDispositionOutcome.Dispositioned.Transitioned"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Lock order: the block card first, then the raised card (§8 block B brief, "single lock
+    /// order").</b> Unlike <see cref="RecordFinding"/>'s acquire-probe-release-retry dance (needed
+    /// because two concurrent <c>finding record</c> calls can each spell the identical <em>pair</em>
+    /// of pre-existing files in a different order), a fixed order is sound here without that
+    /// machinery: <paramref name="raiseRequest"/>'s path is always freshly allocated by this call
+    /// (<see cref="AllocateIdentity"/>) and never shared with any other invocation, so no two calls
+    /// to this method can ever contend over the same <em>pair</em> of paths in reverse order — the
+    /// only resource two calls can ever share is the block card itself, and a fixed order over a
+    /// singly-shared resource cannot cycle. The raised card is written first, so a failure on the
+    /// second write (the block card) has something to roll back — the same ordering
+    /// <see cref="RecordFinding"/> uses for its own two-card write, for the same reason.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Failure guarantee, stated honestly, not claimed as atomic.</b> If the raised card's write
+    /// succeeds and the block card's own write then fails, <see cref="RollbackRaisedNitCard"/>
+    /// deletes the raised card <em>only if its content still matches exactly what this call wrote</em>
+    /// (compare-then-delete, never delete-by-path — the same discipline <see cref="RecordFinding"/>'s
+    /// own rollback applies). Both cards' locks are held for this call's whole duration, so no
+    /// concurrent writer can have legitimately taken over the raised card's path in between; the
+    /// guard costs nothing regardless. If the rollback delete itself cannot complete (a filesystem
+    /// error), the caller already has a failure to report and this is not the place to escalate a
+    /// cleanup problem into a second, different one — the orphaned raised card is a residue of that
+    /// rare double failure, not silently hidden as success.
+    /// </para>
+    /// </summary>
+    internal static CardNitDispositionOutcome DispositionNit(
+        string cardsRoot,
+        string nitFilePath,
+        string nitId,
+        NitDisposition disposition,
+        string body,
+        CardOwner actingRole,
+        DateTimeOffset timestamp,
+        TimeSpan lockTimeout,
+        string? changeName,
+        NitDispositionRaiseRequest? raiseRequest)
+    {
+        if (!IsArchitectRole(actingRole))
+        {
+            return new CardNitDispositionOutcome.RoleNotPermitted(actingRole);
+        }
+
+        string? raisedId = null;
+        if (raiseRequest is not null)
+        {
+            var (allocatedId, allocationFailure) = AllocateIdentity(cardsRoot, raiseRequest.Kind, lockTimeout);
+            if (allocationFailure is not null)
+            {
+                return new CardNitDispositionOutcome.ToolFailure(allocationFailure);
+            }
+
+            raisedId = allocatedId;
+
+            // The raised card's directory has to exist before its lock file (created beside the
+            // target) can be — the same reason WriteCard/RecordFinding create it ahead of any lock
+            // acquisition.
+            var raisedDirectory = Path.GetDirectoryName(raiseRequest.FilePath);
+            if (string.IsNullOrEmpty(raisedDirectory))
+            {
+                return new CardNitDispositionOutcome.RaisedCardLayoutMismatch($"'{raiseRequest.FilePath}' has no containing directory to write into.");
+            }
+
+            Directory.CreateDirectory(raisedDirectory);
+        }
+
+        var blockLockResult = CardLock.Acquire(nitFilePath, lockTimeout);
+        return blockLockResult.Match<CardNitDispositionOutcome>(
+            onAcquired: blockAcquired =>
+            {
+                using (blockAcquired.Lock)
+                {
+                    if (raiseRequest is null)
+                    {
+                        return DispositionNitUnderLocks(blockAcquired.Lock, cardsRoot, nitId, disposition, body, actingRole, timestamp, changeName, raiseRequest: null, raisedId: null);
+                    }
+
+                    var raisedLockResult = CardLock.Acquire(raiseRequest.FilePath, lockTimeout);
+                    return raisedLockResult.Match<CardNitDispositionOutcome>(
+                        onAcquired: raisedAcquired =>
+                        {
+                            using (raisedAcquired.Lock)
+                            {
+                                return DispositionNitUnderLocks(blockAcquired.Lock, cardsRoot, nitId, disposition, body, actingRole, timestamp, changeName, raiseRequest, raisedId);
+                            }
+                        },
+                        onTimedOut: timedOut => new CardNitDispositionOutcome.ToolFailure(timedOut.Message));
+                }
+            },
+            onTimedOut: timedOut => new CardNitDispositionOutcome.ToolFailure(timedOut.Message));
+    }
+
+    /// <summary>
+    /// The locked step of <see cref="DispositionNit"/> — the block card's lock (and, for
+    /// <c>defer</c>/<c>decline</c>, the raised card's lock) are already held by the time this runs.
+    /// </summary>
+    private static CardNitDispositionOutcome DispositionNitUnderLocks(
+        CardLock blockLock,
+        string cardsRoot,
+        string nitId,
+        NitDisposition disposition,
+        string body,
+        CardOwner actingRole,
+        DateTimeOffset timestamp,
+        string? changeName,
+        NitDispositionRaiseRequest? raiseRequest,
+        string? raisedId)
+    {
+        var nitFilePath = blockLock.CardPath;
+        if (!File.Exists(nitFilePath))
+        {
+            return new CardNitDispositionOutcome.CardNotFound(nitFilePath);
+        }
+
+        var current = ReadCard(nitFilePath);
+        return current.Match<CardNitDispositionOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsBlockCard(card))
+                {
+                    return new CardNitDispositionOutcome.NotABlockCard(card.Frontmatter.Kind);
+                }
+
+                var nitIndex = -1;
+                for (var i = 0; i < card.Comments.Count; i++)
+                {
+                    if (card.Comments[i].IsNit && string.Equals(card.Comments[i].Id, nitId, StringComparison.Ordinal))
+                    {
+                        nitIndex = i;
+                        break;
+                    }
+                }
+
+                if (nitIndex < 0)
+                {
+                    return new CardNitDispositionOutcome.NitNotFound(nitId);
+                }
+
+                if (CardCommentRouting.IsNitDispositioned(card.Comments, nitIndex))
+                {
+                    return new CardNitDispositionOutcome.AlreadyDispositioned(nitId);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, nitFilePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardNitDispositionOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                string? raisedContent = null;
+                CardFile? raisedCardFile = null;
+                if (raiseRequest is not null)
+                {
+                    var raisedScope = raiseRequest.Kind == CardKind.Obligation ? CardScope.Change : CardScope.Capability;
+                    var raisedAnchored = AnchoredCardPath.TryCreate(cardsRoot, raiseRequest.FilePath, raisedScope, changeName, out var raisedLayoutFailure);
+                    if (raisedAnchored is null)
+                    {
+                        return new CardNitDispositionOutcome.RaisedCardLayoutMismatch(raisedLayoutFailure!.Reason);
+                    }
+
+                    if (File.Exists(raiseRequest.FilePath))
+                    {
+                        return new CardNitDispositionOutcome.RaisedCardAlreadyExists(raiseRequest.FilePath);
+                    }
+
+                    var raisedFrontmatter = new CardFrontmatter(
+                        raisedId!, raiseRequest.Kind, raiseRequest.Title, "open", actingRole, raisedScope, card.Frontmatter.Section, timestamp, timestamp);
+
+                    // An obligation raised from a declined-or-deferred nit is owed to the same
+                    // section the block itself belongs to — the same "give it a real owed_by, not a
+                    // free-text label" ruling RecordFinding's own blind-spot obligation already
+                    // applies (§7 block C). A decision carries no owed_by at all.
+                    var raisedRegisterFields = raiseRequest.Kind == CardKind.Obligation
+                        ? new RegisterCardFields(null, null, null, null, OwedBy: card.Frontmatter.Section)
+                        : RegisterCardFields.Empty;
+
+                    var raisedBody = $"{raiseRequest.Body}\n\n(Raised from nit {nitId} on block {card.Frontmatter.Id}.)";
+                    raisedCardFile = new CardFile(raisedFrontmatter, raisedBody, [], [], RegisterFields: raisedRegisterFields);
+                    var serializedRaisedCard = CardFileWriter.Serialize(raisedCardFile);
+
+                    var raisedWriteResult = AtomicWrite(raisedAnchored, serializedRaisedCard);
+                    var raisedFailure = raisedWriteResult.Match<CardNitDispositionOutcome?>(
+                        onSuccess: static _ => null,
+                        onNotFound: static notFound => new CardNitDispositionOutcome.ToolFailure(
+                            $"unexpected 'not found' writing a brand-new card at '{notFound.FilePath}'."),
+                        onAlreadyExists: static alreadyExists => new CardNitDispositionOutcome.RaisedCardAlreadyExists(alreadyExists.FilePath),
+                        onLayoutMismatch: static layoutMismatch => new CardNitDispositionOutcome.RaisedCardLayoutMismatch(layoutMismatch.Reason),
+                        onCorrupt: static corrupt => new CardNitDispositionOutcome.ToolFailure(
+                            $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
+                        onToolFailure: static toolFailure => new CardNitDispositionOutcome.ToolFailure(toolFailure.Reason));
+                    if (raisedFailure is not null)
+                    {
+                        return raisedFailure;
+                    }
+
+                    raisedContent = serializedRaisedCard;
+                }
+
+                var dispositionComment = new CardComment(
+                    Id: $"disposition-{Guid.NewGuid():N}", Author: actingRole, Timestamp: timestamp, Body: body,
+                    ReplyTo: nitId, To: null, Resolves: nitId, UnknownHeaderFields: [], Disposition: disposition);
+
+                var updatedFrontmatter = card.Frontmatter with { Updated = timestamp };
+                var updatedBlockFields = card.BlockFields;
+                var updatedTransitions = card.Transitions;
+                var transitioned = false;
+
+                // §8 block B remediation (the original HAZARD fix over-narrowed): applies the
+                // fix-before-land edge only while the card is still in-review — a disposition after
+                // the round has already left in-review just records its own disposition, below,
+                // regardless. This also folds in §8.7's own "every exit from in-review is bound":
+                // if this disposition would leave a different nit still undispositioned, the edge
+                // is withheld the same way — the transition, not the disposition, is what waits.
+                //
+                // The edge does NOT turn on whether *this call's* disposition is fix-before-land —
+                // requiring both "this call is fix-before-land" and "nothing is left undispositioned"
+                // stranded a card whenever the nit that emptied the live set was itself deferred or
+                // declined, even though an earlier nit this round was already dispositioned
+                // fix-before-land (the exact scenario the original brief item 4 only tested in the
+                // opposite order). The question the edge asks is whether *the round, taken as a
+                // whole* carries a fix-before-land nit — CardCommentRouting.
+                // HasFixBeforeLandDisposition, LiveUndispositionedNitIds's own sibling.
+                //
+                // "The round" has to be scoped, not the card's whole history: comments are
+                // append-only, so a fix-before-land disposition that already triggered the edge in
+                // an earlier round remains in the thread forever and must not re-trigger it here.
+                // The round's start is the most recent transition that (re-)entered in-review
+                // ("submit-for-review" is its only door, BlockFlowTransitions) — comments at or
+                // after that point are this round's; DateTimeOffset.MinValue when no such
+                // transition is recorded yet (a card seeded directly into in-review, as tests do)
+                // correctly folds in the whole thread, since there is only the one round.
+                if (BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState)
+                    && currentState == BlockFlowState.InReview)
+                {
+                    var commentsAfterThisDisposition = (IReadOnlyList<CardComment>)[.. card.Comments, dispositionComment];
+                    var stillLiveNitIds = CardCommentRouting.LiveUndispositionedNitIds(commentsAfterThisDisposition);
+                    if (stillLiveNitIds.Count == 0)
+                    {
+                        var roundStart = DateTimeOffset.MinValue;
+                        for (var i = card.Transitions.Count - 1; i >= 0; i--)
+                        {
+                            if (card.Transitions[i].To == BlockFlowState.InReview)
+                            {
+                                roundStart = card.Transitions[i].Timestamp;
+                                break;
+                            }
+                        }
+
+                        var thisRoundComments = commentsAfterThisDisposition.Where(c => c.Timestamp >= roundStart).ToList();
+                        if (CardCommentRouting.HasFixBeforeLandDisposition(thisRoundComments))
+                        {
+                            var transition = BlockFlowTransitions.AvailableFrom(currentState)
+                                .First(candidate => string.Equals(candidate.Name, "fix-before-land", StringComparison.Ordinal));
+                            updatedFrontmatter = updatedFrontmatter with { Status = transition.To.ToWireString() };
+                            updatedBlockFields = updatedBlockFields with { Round = (updatedBlockFields.Round ?? 0) + 1 };
+                            updatedTransitions = [.. updatedTransitions, new CardBlockTransitionEntry(actingRole, transition.Name, transition.From, transition.To, timestamp, [])];
+                            transitioned = true;
+                        }
+                    }
+                }
+
+                var updatedCard = card with
+                {
+                    Frontmatter = updatedFrontmatter,
+                    BlockFields = updatedBlockFields,
+                    Transitions = updatedTransitions,
+                    Comments = [.. card.Comments, dispositionComment],
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updatedCard));
+                return writeResult.Match<CardNitDispositionOutcome>(
+                    onSuccess: _ => new CardNitDispositionOutcome.Dispositioned(updatedCard, dispositionComment, raisedCardFile, transitioned),
+                    onNotFound: notFound =>
+                    {
+                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        return new CardNitDispositionOutcome.CardNotFound(notFound.FilePath);
+                    },
+                    onAlreadyExists: alreadyExists =>
+                    {
+                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        return new CardNitDispositionOutcome.LayoutMismatch(
+                            $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite.");
+                    },
+                    onLayoutMismatch: layoutMismatch =>
+                    {
+                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        return new CardNitDispositionOutcome.LayoutMismatch(layoutMismatch.Reason);
+                    },
+                    onCorrupt: corrupt =>
+                    {
+                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        return new CardNitDispositionOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason);
+                    },
+                    onToolFailure: toolFailure =>
+                    {
+                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        return new CardNitDispositionOutcome.ToolFailure(toolFailure.Reason);
+                    });
+            },
+            onFailure: failure =>
+                new CardNitDispositionOutcome.CardCorrupt(nitFilePath, failure.Reason));
+    }
+
+    /// <summary>All-or-nothing's other half: deletes the raised card <see cref="DispositionNitUnderLocks"/>
+    /// has already written, once the block card's own write, tried afterward, fails for any reason.
+    /// Compare-then-delete, not delete-by-path — see <see cref="DispositionNit"/>'s own doc comment,
+    /// and <see cref="RollbackRaisedCard"/>, the same shape applied to <see cref="RecordFinding"/>'s
+    /// raised card.</summary>
+    private static void RollbackRaisedNitCard(NitDispositionRaiseRequest? raiseRequest, string? raisedContent)
+    {
+        if (raiseRequest is null || raisedContent is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!File.Exists(raiseRequest.FilePath))
+            {
+                return;
+            }
+
+            var currentContent = File.ReadAllText(raiseRequest.FilePath, Utf8NoBom);
+            if (string.Equals(currentContent, raisedContent, StringComparison.Ordinal))
+            {
+                File.Delete(raiseRequest.FilePath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     /// <summary>
