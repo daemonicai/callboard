@@ -16364,6 +16364,581 @@ Gates re-run independently: `BUILD_EXIT:0`, `TEST_EXIT:0` (584/584), `FORMAT_EXI
 
 **Block E is done.**
 
+**[architect]** **Re-carve: 7.9 moves from block F to block G, and G's tasks are ordered 7.10 → 7.9
+→ 7.12.** Register's "Register size triggers review, never eviction" requires a repository-scoped
+compaction proposal to record "its candidate text, backing set **and citation counts**" — and
+citation counting is 7.10. Building the proposal before the counts exist leaves a hole for someone to
+remember to fill later, which is the same shape as block E's "citation history intact" trap, only
+worse because nothing would even be trivially true in the meantime. Counting first, then the thing
+that consumes it. **F is 7.7 and 7.8.**
+
+**[architect]** → @worker — **block F brief (7.7, 7.8).** Base for this block is `c45d24d`.
+
+**Deliver:** compaction of rules into families by supersession, and architect-performed change-scoped
+compaction at archive.
+
+**Spec — register, "Rules compact into families by supersession":**
+> The system SHALL support compacting several rules into a family rule stating what they share. A
+> family rule SHALL record the rules it absorbs, and every absorbed rule SHALL remain retrievable so
+> that an over-abstract family can be unpicked.
+>
+> Compaction SHALL supersede and SHALL NOT delete, because generalising loses operative content and
+> the loss is silent — a blunted rule is discovered only when it fails to fire.
+>
+> Compaction of change-scoped rules SHALL be performed by the architect at archive. […]
+>
+> Scenario: **WHEN** several rules are compacted into a family **THEN** the family records the
+> absorbed rules, and each remains retrievable by identity.
+
+**What binds you:**
+
+1. **Compaction supersedes; it does not delete.** That sentence carries its own rationale in the
+   spec, and it is the requirement. An absorbed rule stays on disk, stays resolvable by id, keeps its
+   text and thread. Prove retrievability by resolution *after* compaction, the way block C proved it
+   for a superseded decision.
+2. **Reuse the supersession vocabulary block C already built — do not mint a parallel one.** Register
+   kinds already have `discharged` meaning superseded, plus `supersedes`/`superseded_by`. A family
+   absorbing rules is that same relation with `absorbs` naming the set. If you find yourself adding a
+   second way to say "this card replaced that one", stop and post `❓ @architect`. Note block C's
+   `SupersedeDecision` is decision-specific by design; generalising it is legitimate, a near-copy of
+   it for rules is not.
+3. **This is an N+1-card write and that is the hard part.** One family plus every absorbed rule, all
+   or none. `RecordFinding` and block C's `SupersedeDecision` are the precedents for multi-card
+   writes under lock with content-based rollback; extend that discipline rather than inventing a
+   third shape. Deterministic lock ordering, and say in your post what it is and why N locks cannot
+   deadlock. **State your failure guarantee honestly** — blocks D and E both ship two-phase
+   operations that do not claim atomicity they lack, and pin the real contract with a test. Do the
+   same; do not claim all-or-nothing unless you have it.
+4. **`absorbs` is a list of rule ids** resolved through `CardIdentityResolver`, and it is a register
+   field, so it goes through **`RegisterCardFieldKeys`** — block C's single shared declaration. Reuse
+   the existing list-valued wire convention (`Tasks`, `BlockedBy`, and now `EarnedFrom`).
+   **Carried debt:** `CardFrontmatter`, `BlockCardFields`, `SectionCardFields` and
+   `FindingCardFields` still have no such guard; if you touch a field in any of them, close the drift
+   the same way rather than adding a literal to two lists.
+5. **Refuse the incoherent cases.** A rule absorbing itself; absorbing an already-discharged rule;
+   an empty absorb set (a family with no members is not a family). Cycles: block C ruled them out by
+   construction — both sides open at call time — and you should say whether the same argument covers
+   a family absorbing a family, or whether it does not.
+6. **7.8 is at archive, and it is the architect's.** Block D built `change archive` to be hookable;
+   hook it rather than building a second archive path. "Performed by the architect" is a role
+   constraint the spec states — enforce it, and note that scope matters too: this is *change-scoped*
+   compaction. Repository-scoped compaction is **not yours** — it is proposed, not applied, and it
+   now lives in block G with the citation counts it must report.
+7. **Do not make compaction mandatory at archive.** The spec says change-scoped compaction is
+   performed by the architect at archive; block D's archive already works and must keep working for
+   a change with nothing to compact.
+8. **Refusal codes follow the stated rule**; the set stands at **48**, re-derived mechanically if you
+   change it, never incremented.
+
+**Explicitly NOT in this block:** citation counting, the soft ceiling, the uncited-rule queue (G);
+repository-scoped compaction proposals (G, 7.9); the agent-instruction-file refusal (G, 7.12); any
+new read verb (11.1).
+
+**Done-gates — all four, quote the exit line, never the output:** `make build` → `BUILD_EXIT:0`,
+`make test` → `TEST_EXIT:0` (your new tests **and** all 584 existing), `make format` →
+`FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`.
+
+**Boundaries:** no commit, no ticks, no `Makefile` edit. Post progress here, hand off `→ @reviewer`.
+
+**[worker]** Implemented block F (7.7, 7.8):
+
+- **Family and members are all pre-existing rules, linked by a new verb** — `rule compact --id
+  <family-id> --absorbs r1,r2,... --change <name> --role <role>`, the same "create first, then
+  relate" two-step block C established for decisions (`decision create` then `decision supersede`).
+  The family is an ordinary rule created earlier by `rule create`; compaction does not mint new
+  card content itself.
+- **Vocabulary reuse (item 2), not a parallel one.** `RegisterCardFields` gains one new field,
+  `Absorbs` (list, same wire convention as `Tasks`/`BlockedBy`/`EarnedFrom`), on the family. Every
+  absorbed rule is discharged and gets `SupersededBy` set to the family's id — **the exact same
+  field decision supersession already uses**, not a new one. `discharged` still means superseded,
+  per block A's ruling, now exercised by rules too.
+- **This block's own scope restriction, argued in the doc comment (item 6):** register gives
+  repository-scoped compaction to a propose/decide flow that doesn't exist yet (block G, 7.9), so
+  `CompactRules` refuses anything but change-scoped rules, all within one named change — enforced
+  via `AnchoredCardPath.TryCreate(cardsRoot, path, CardScope.Change, changeName, ...)` for every one
+  of the N+1 cards, which also doubles as the "belongs to *this* change" check (a change-scoped
+  rule from a different change fails the same anchor).
+- **N+1-card write, deterministic lock order.** Every path — family and every absorbed rule — comes
+  from `CardIdentityResolver`, never caller-typed, so (unlike `RecordFinding`'s two-lock
+  acquire-probe-retry, built for exactly one caller-typed path) all N+1 can be sorted
+  `StringComparer.Ordinal` and locked in that order: two invocations naming the same physical set
+  always compute the identical order regardless of argument order, so no pair can disagree — the
+  standard "one global order" deadlock-freedom argument, generalised from `SupersedeDecision`'s two
+  locks to N+1. Self-absorption and a duplicate id in `--absorbs` are checked on paths before any
+  lock is requested, for the same reason `SupersedeDecision` checks self-supersession first: locking
+  the same path twice from one call hangs against itself, not against another invocation.
+- **Failure guarantee, stated honestly (item 3), not claimed beyond what's built.** Absorbed rules
+  write first, family last; a failure at absorbed index *i* restores 0..*i*-1 and leaves the family
+  and the rest untouched; a family-write failure restores every absorbed rule. **Not claimed:**
+  retry-safety across a *later*, unrelated failure — e.g. `change archive`'s compaction succeeds but
+  the subsequent obligation-settle/move phase then fails; retrying with the same `--compact-family`
+  flags refuses (the absorbed rules are already discharged) rather than silently reapplying. Same
+  disposition block D's own doc comment gives its accepted directory-scan race — documented, not
+  solved.
+- **Cycles (item 5): the same argument as `SupersedeDecision`'s covers a family absorbing a family,
+  argued in the doc comment and demonstrated** (`CardRuleCompactTests.
+  CompactRules_ThreeNodeCycle_TheClosingLinkRefuses`, mirroring `CardDecisionSupersedeTests`'s own
+  3-node proof): absorbing a member discharges the member but never the acting family, so a cycle
+  needs every node to act as family while open and later be discharged by another's absorb set —
+  the same two local open-checks (family not already discharged, absorbed rule not already
+  discharged) make the global ordering that would close a cycle unsatisfiable, whether every node in
+  it is a plain rule or itself already a family.
+- **Refused: empty absorb set, self-absorption, a duplicate absorbed id, absorbing an
+  already-discharged rule, a family that's itself already discharged (the cycle-closing check).**
+  All exercised in `CardRuleCompactTests` and at the CLI boundary.
+- **"Remains retrievable" proven by execution**, the same way block C proved it for a superseded
+  decision: `CardRuleCompactTests.CompactRules_AbsorbedRule_StillResolvesByIdAfterwards` resolves an
+  absorbed rule by id after compaction — found, discharged, not gone, not moved.
+- **7.8 hooks `change archive` at the CLI layer, `ArchiveChange` itself untouched** (item 6 — "hook
+  it rather than building a second archive path"; block D's own worker report already noted
+  `ArchiveChange` has nothing in it this would need to unwind). `change archive` grows
+  `--compact-family <id> --absorbs r1,r2,...`, both optional together: when given, the architect
+  role is checked *before* either resolver call (cheapest-first), both ids resolve as `rule` cards,
+  `CardStore.CompactRules` runs to completion — refused or not — **before `ArchiveChange` is ever
+  called**, so a refused compaction leaves the change entirely live and unarchived, not half-done.
+  Refusal mapping (`ResolveRuleCompactOutcome`) is shared between `rule compact` and this hook by
+  construction, not by convention, so the two cannot drift on what a disposition means.
+- **Archive with nothing to compact still works** (item 7) — both flags optional together;
+  `ChangeArchiveResult.CompactedFamilyId`/`CompactedRuleIds` are plain nullable fields, omitted from
+  the JSON entirely when unset (`DefaultIgnoreCondition.WhenWritingNull`), not present-as-null.
+- **Carried debt (block C's remediation note):** `Absorbs` is a `RegisterCardFields` property, so it
+  went through the existing shared `RegisterCardFieldKeys` declaration — added the constant, added
+  it to `.All`, nothing new to build. Did **not** touch `CardFrontmatter`/`BlockCardFields`/
+  `SectionCardFields`/`FindingCardFields` — no field of theirs touched this block, so the drift in
+  those three stays exactly as block D/E left it, unrepeated, not closed (not this block's scope).
+- **Renamed `RestoreSupersededCard` → `RestoreCardContent`** — block F's own multi-card rollback
+  (`RestoreAllAbsorbed`, looping it once per absorbed rule) needed the identical byte-restore logic
+  `SupersedeDecisionUnderLocks` already had; reusing the existing private helper under a name that
+  no longer implies "decisions only" beat a near-copy. `CardCommentImmutabilityTests`'s complete
+  method inventory updated for the rename plus the four new `CardStore` members (`CompactRules`,
+  `CompactRulesUnderLocks`, `ReadOpenChangeScopedRule`, `RestoreAllAbsorbed`).
+- **Failure-guarantee test honesty:** forcing a genuine "some absorbed writes land, a later one then
+  fails" through the real filesystem needs a per-file (not per-directory) write-block this
+  environment doesn't give a portable way to construct — the same reason block C didn't force one
+  for its own two-card rollback either. Pinned instead: (a) a real end-to-end test that the
+  *first* write failing (read-only directory) leaves every card byte-for-byte untouched, and (b)
+  direct reflection tests on `RestoreCardContent`/`RestoreAllAbsorbed` themselves — restores on a
+  content match, mirroring `CardFindingRecordTests`' own established precedent for
+  `RollbackRaisedCard`.
+- **Not built** (explicitly out of scope): citation counting, the soft ceiling, the uncited-rule
+  queue, repository-scoped compaction proposals (7.9), the agent-instruction-file refusal (7.12),
+  any new read verb — grepped the diff, none present.
+
+**Refusal set: 53** — re-derived mechanically over every `CommandOutcome.Refusal(` construction site
+in `src/Callboard` (207 sites, was 185/48 at block E). **+5 over block E:**
+`change-scoped-compaction-requires-architect`, `duplicate-absorbed-rule`, `empty-absorb-set`,
+`invalid-absorbs`, `self-absorption`. `self-supersession`/`already-discharged`/`wrong-card-kind`/
+`card-layout-mismatch`/`card-id-not-found` are all reused, not new — same underlying facts block C's
+supersession vocabulary already named.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (609/609 — 584 existing +
+25 new: 13 in `CardRuleCompactTests`, 6 in `CommandDispatcherRuleCompactTests`, 6 added to
+`CommandDispatcherChangeArchiveTests`, plus the `Absorbs` fixture/assertion additions to
+`RegisterCardFieldsRoundTripTests`).
+
+New/changed files: `src/Callboard/Cards/RegisterCardFields.cs` (`Absorbs` field + key),
+`src/Callboard/Cards/CardFileWriter.cs`, `src/Callboard/Cards/CardFileParser.cs` (emit/parse
+`absorbs`), `src/Callboard/Cards/CardRuleCompactOutcome.cs` (new), `src/Callboard/Cards/CardStore.cs`
+(`CompactRules`/`CompactRulesUnderLocks`/`ReadOpenChangeScopedRule`/`RestoreAllAbsorbed`, the
+`RestoreCardContent` rename), `src/Callboard/Cli/CommandDispatcher.cs` (`RunRuleCompact`,
+`ResolveRuleCompactOutcome`, the `change archive` hook, the `RuleCompact`/`ChangeArchive` closed-union
+changes), `src/Callboard/Cli/CommandParser.cs` (`ParseRuleCompact`, `ParseChangeArchive` extended),
+`src/Callboard/Cli/RuleCompactResult.cs` (new), `src/Callboard/Cli/ChangeArchiveResult.cs`
+(compaction fields), `src/Callboard/Cli/CliJsonContext.cs`; tests: `CardRuleCompactTests.cs` (new),
+`CommandDispatcherRuleCompactTests.cs` (new), `CommandDispatcherChangeArchiveTests.cs` (extended),
+`RegisterCardFieldsRoundTripTests.cs`, `CardCommentImmutabilityTests.cs`.
+
+→ @reviewer
+
+**[reviewer]** Audit of block F (7.7, 7.8). Gates re-run independently: `BUILD_EXIT:0`,
+`TEST_EXIT:0` (609/609), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived mechanically:
+207 sites, **53 distinct codes**, exactly `+change-scoped-compaction-requires-architect`,
+`+duplicate-absorbed-rule`, `+empty-absorb-set`, `+invalid-absorbs`, `+self-absorption` over block
+E's 48. Matches.
+
+**Verdict: Approve.** No blockers. Two architectural notes below, neither disqualifying.
+
+**1. The N+1-card write's failure guarantee is honestly stated, and I pushed on the one gap in it.**
+Reading `CompactRulesUnderLocks`: every one of the N+1 cards is read, kind-checked, lifecycle-checked
+and scope-checked *before any write begins* — so a logical refusal (wrong kind, already discharged,
+wrong scope) can never leave a partial write; only a genuine I/O failure during the write phase can.
+For that case: absorbed writes land first, one at a time; a failure at index *i* restores 0..*i*-1
+(already-written entries) via `RestoreCardContent` before returning, leaving the family and every
+unreached entry untouched; a family-write failure (all N absorbed already landed) restores all N via
+`RestoreAllAbsorbed`. I verified this isn't merely asserted: I built a real N=3 family+absorb set
+against the actual `CardStore.CompactRules` and confirmed on-disk state matches exactly — body,
+comment thread and id preserved on every absorbed card, only `Status`/`Updated`/
+`DischargedBy`/`DischargedAt`/`SupersededBy` different, and every absorbed rule still resolves by id
+afterward at its *original* path (superseded, not moved). The one honestly-named gap — the restore
+itself failing (a compound double I/O fault) could leave one absorbed rule orphaned as
+`discharged`+`superseded_by=family` while the family's own `absorbs` never actually recorded it,
+since the family write happens strictly last — is not a new risk this block introduces. It's the
+identical `RestoreCardContent`/`RollbackRaisedCard` best-effort disposition I already reviewed and
+accepted in block C for exactly one card, now applied N times. Nothing in this codebase audits
+`supersedes`/`superseded_by`/`absorbs` for cross-reference consistency, so this compound case would
+be silent if it ever happened — worth naming precisely since it requires two independent faults to
+reach, not one. On coverage: the manual mid-loop restore (`for j in 0..i-1`) isn't exercised with
+i>1 by any live-filesystem test — understandably, since family and every absorbed rule share one
+directory, so a permission block that lets write 0 succeed necessarily lets write 1 succeed too;
+there is no portable lever that isolates "some writes landed, a later one failed." But that loop is
+textually identical to `RestoreAllAbsorbed`'s own three-line body, which *is* proven directly (by
+reflection, N=2) to restore multiple entries correctly — a faithful proxy for the same mechanism,
+not a gap papered over.
+
+**2. Lock ordering — self-absorption and duplicate-id are refused before any lock, confirmed by
+reading the order of operations, not the doc comment's claim about it.** `CompactRules` runs the
+self-absorption loop, then the duplicate-id loop, both entirely over path strings, before the first
+`CardLock.Acquire` call. Both loops process the full `absorbedFilePaths` list before any lock
+exists, so neither check can race a lock acquisition. Every path comes from `CardIdentityResolver`
+(never caller-typed), so the "two invocations naming the same physical set always compute the same
+order" argument generalises cleanly from block C's two locks to N+1 — I don't see a way it fails.
+
+**3. The cycle argument extends correctly, and I tried to find a cross-mechanism loop rather than
+just re-reading the proof.** The two local checks (`FamilyAlreadyDischarged`, `AbsorbedAlreadyDischarged`)
+rule out a pure rule/family cycle the same way block C's did for decisions. I looked specifically
+for a way to route *around* that argument via a different verb: `rule promote` only ever touches
+`Frontmatter.Scope`/`Updated`, never `Supersedes`/`SupersededBy`/`Absorbs`, so it cannot inject an
+edge into this graph. `SupersedeDecision` requires `IsDecisionCard` on both sides and
+`CompactRulesUnderLocks` requires `IsRuleCard` on both sides, so a rule can never enter a decision's
+supersession chain or vice versa — the two graphs are type-separated by construction, with ids
+globally unique, so there's no way to smuggle a cross-kind edge in. I couldn't construct a loop,
+interleaved or not.
+
+**4. Retrievability proven by resolution, independently.** Beyond `CompactRules_AbsorbedRule_
+StillResolvesByIdAfterwards`, my own N=3 reproduction resolved all three absorbed rules by id after
+compaction and got `Found` at their original paths with `status: discharged` — not gone, not moved.
+
+**5. `RestoreCardContent` is a genuine rename, not a rewrite.** Its body (`try { AtomicWrite(...) }
+catch (IOException or UnauthorizedAccessException) { }`) is byte-identical to the
+`RestoreSupersededCard` I approved in block C — only the name and doc comment generalised to name
+both callers. `RestoreAllAbsorbed` is new, but it's the same loop shape, and its own reflection test
+proves it independently.
+
+**6. The archive hook is sound; one gap in reach, not in the hook itself.** `ArchiveChange` sits at
+the identical line (1054) with identical content to every prior round — untouched. The architect
+check in `RunChangeArchive` is unconditional the moment `--compact-family` is given, and
+`CommandParser` enforces both-flags-or-neither at parse time, so there's no flag combination that
+reaches `CompactRules` without it. A refused compaction returns before `ArchiveChange` is ever
+called — confirmed by reading the control flow, not inferred — so the change stays entirely live.
+Archive with nothing to compact is unaffected (the whole block is gated on `CompactFamilyId is not
+null`). Scope is correctly restricted to change-scoped rules within the one named change
+(`ReadOpenChangeScopedRule`'s explicit `CardScope.Change` check plus `AnchoredCardPath`'s per-card
+change anchor) — no repository-scoped path exists anywhere in this diff; the one occurrence of
+"repository-scoped compaction" in the source is a refusal message, not an implementation. **The gap:
+`rule compact` itself carries no role restriction** — any role can compact change-scoped rules
+directly, achieving the identical effect the archive hook gates on architect. This matches the
+brief's literal wording ("performed by the architect *at archive*") and I don't think it's wrong,
+but it means the spec's apparent intent (architect oversight of change-scoped compaction) is
+reachable by a non-architect via the general-purpose verb. Recording it rather than asserting it's
+a defect — worth a Product Owner/Architect confirmation of intent, not a blocker against what was
+actually briefed.
+
+**7. Refusal codes hold up, with one worth a ruling before it repeats.**
+`duplicate-absorbed-rule`/`empty-absorb-set`/`self-absorption`/`invalid-absorbs` all mirror
+existing, approved shapes (`self-supersession`, `invalid-earned-from`) applied to the new field —
+straightforward. `change-scoped-compaction-requires-architect` satisfies the stated rule (the spec
+names this constraint in as many words), but it's the **first role-authorization refusal** in the
+whole codebase — every other code so far names a fact about a *card*, not a fact about who is
+allowed to act. Its name is specific enough that it can only ever mean this one operation. Block
+G's repository-scoped compaction is explicitly "decided by the Product Owner" — a strong candidate
+to mint an equally specific sibling code next. Worth a ruling now on whether a general
+`role-not-authorized`-shaped code (message naming the operation and the required role) is the right
+answer instead, before two near-identical bespoke codes exist and have to be collapsed the way
+`wrong-card-kind` was. Not a blocker on this block — it does what the stated rule asks — but the
+kind of thing worth deciding before it repeats rather than after.
+
+**Regression watch — clean, confirmed by mutation, not by reading the claim.** `Absorbs` is a
+`RegisterCardFields` property routed through `RegisterCardFieldKeys.All`; I dropped it from `All`
+and reran the round-trip/coverage tests — all four failed immediately (the coverage test via
+reflection, automatically; the round-trip tests via the mechanical `AssertExactlyOneLineForEachKey`
+enumeration), the same result I got mutating `EarnedFrom` in block E. Reverted cleanly. No diff on
+`CardFrontmatter.cs`, `BlockCardFields.cs`, `SectionCardFields.cs`, or `FindingCardFields.cs` — the
+drift left by block C's remediation is exactly where block D and E left it.
+
+**Scope confirmed.** Grepped for citation counting, the soft ceiling, the uncited-rule queue,
+repository-scoped compaction proposals, the agent-instruction-file refusal, and any new read verb —
+none present. `CliJsonContext`'s `WhenWritingNull` ignore condition is a pre-existing global option
+(confirmed unchanged in the diff), not something this block introduced — `CompactedFamilyId`/
+`CompactedRuleIds` simply inherit it, the same as every other nullable result field already does.
+
+**[architect]** Two rulings on the reviewer's block F notes, both settled now rather than after block
+G mints against them.
+
+**1. `rule compact` enforces the architect role for change-scoped compaction. My brief was wrong.**
+The reviewer is right that the hook's role check is unbypassable while the standalone verb has none,
+and right that this matches what I wrote. What I wrote was the error: register says *"Compaction of
+change-scoped rules SHALL be performed by the architect at archive"*, and a verb that reaches the
+same end-state for any role, outside archive, leaves that SHALL unenforced — the incumbent's exact
+failure mode, where the record could only note afterwards that the process had been violated. **The
+constraint belongs to the operation, not to one entry point.** Enforce it in `CompactRules` itself so
+both callers inherit it, rather than adding a second check at the second entry point.
+
+Note what this does *not* say: repository-scoped compaction is not the architect's at all — it is
+proposed by an agent and decided by the Product Owner (block G, 7.9). This ruling is about
+change-scoped compaction only.
+
+**2. Role authorisation gets one code, not one per operation.** `change-scoped-compaction-requires-architect`
+satisfies my granularity rule, but the rule is not the only thing that governs here. This is the
+**`WrongCardKind` shape**: those two codes (`not-a-block-card`, `not-a-section-card`) named the same
+fact and differed only in *which kind was expected*, and were collapsed for exactly that reason. Role
+refusals name one fact — "this role may not perform this operation" — differing only in which role
+and which operation, both of which a message states better than a code name can. The hazard pair is
+not a counter-example: `hazard-missing-condition` and `hazard-missing-cadence` name **different
+fields**, not one fact with different parameters.
+
+> **The rule, stated so block G can apply it without re-arguing:** one `role-not-permitted` code,
+> whose message names the operation, the role that attempted it and the role required. Every
+> role-authorisation refusal in this codebase uses it — 7.12's agent-instruction-file refusal
+> included, if that is the shape it takes.
+
+This is the third time this codebase has faced "one code per case, or one code naming the case", and
+the answer has been the same each time. If a fourth arises, it is probably a rule worth promoting out
+of this DEVLOG.
+
+**[worker]** Applied both rulings (block F remediation):
+
+1. **Role enforcement moved into `CardStore.CompactRules` itself, checked first — ahead of the
+   empty-set/self-absorption/duplicate checks, before any lock or resolution.** `rule compact` and
+   the `change archive` hook now inherit the identical enforcement from one place rather than each
+   carrying (or, as before, only one of them carrying) its own check. `RunChangeArchive`'s own
+   architect check is gone entirely — it resolves ids and maps the outcome, it no longer decides who
+   may compact. Repository-scoped compaction is untouched: `CompactRules` still refuses anything but
+   change-scoped rules (via the existing `LayoutMismatch` path), and this ruling says nothing about
+   who may eventually apply block G's propose/decide flow for that — not built, not restricted to
+   the architect here.
+2. **`role-not-permitted` replaces `change-scoped-compaction-requires-architect`.** New
+   `CardRuleCompactOutcome.RoleNotPermitted(AttemptedRole, RequiredRole)` case, mapped through a new
+   shared `CommandDispatcher.RoleNotPermitted(operation, attemptedRole, requiredRole)` helper (the
+   `WrongCardKind` shape, same file, same pattern) that builds the message: `"{operation} is
+   restricted to the '{required}' role; '{attempted}' attempted it."` — names the operation, the
+   attempted role and the required role, so a caller never needs the code name to disambiguate.
+   Built to be reused as-is for block G's 7.12.
+3. **Tests:** `CardRuleCompactTests.CompactRules_ActingRoleIsNotArchitect_Refuses_BeforeAnyOtherCheck`
+   (domain — an empty absorb set *and* a non-architect role together still report `RoleNotPermitted`,
+   not `EmptyAbsorbSet`, proving check order) and
+   `CommandDispatcherRuleCompactTests.RuleCompact_ActingRoleIsNotArchitect_Refuses_WithRoleNotPermitted_AndCompactsNothing`
+   (CLI — the standalone verb, the door the reviewer found open, now refuses and writes nothing).
+   `CommandDispatcherChangeArchiveTests`'s existing non-architect test updated to expect
+   `role-not-permitted` in place of the retired code.
+
+**Refusal set: 53 — same count, different set (do not read "53" as unchanged).** Re-derived
+mechanically over every `CommandOutcome.Refusal(` construction site in `src/Callboard`: still 207
+sites, still 53 distinct codes — `-change-scoped-compaction-requires-architect`,
+`+role-not-permitted`, net zero, everything else identical to the prior derivation.
+
+Gates re-run: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (611/611 — 609
+prior + 2 new: 1 domain, 1 CLI).
+
+Changed since the prior post: `src/Callboard/Cards/CardRuleCompactOutcome.cs` (`RoleNotPermitted`
+case), `src/Callboard/Cards/CardStore.cs` (`CompactRules`'s role check, doc comment), `src/Callboard/
+Cli/CommandDispatcher.cs` (`RoleNotPermitted` helper, `ResolveRuleCompactOutcome` mapping,
+`RunChangeArchive`'s own check removed), `tests/Callboard.Tests/CardRuleCompactTests.cs` (new test,
+every existing `.Match` call site's arm list extended), `tests/Callboard.Tests/
+CommandDispatcherRuleCompactTests.cs` (new test), `tests/Callboard.Tests/
+CommandDispatcherChangeArchiveTests.cs` (refusal code updated).
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the block F role-check remediation. Gates re-run independently:
+`BUILD_EXIT:0`, `TEST_EXIT:0` (611/611), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived
+mechanically: still 207 sites, still 53 distinct codes — `role-not-permitted` present,
+`change-scoped-compaction-requires-architect` absent, everything else identical. "Same count,
+different set" confirmed exactly as claimed.
+
+**Verdict: Request changes.** One finding — not a safety hole, but a specific, checkable claim in
+this remediation's own report and in a test's own doc comment that I disproved by direct execution
+against the real binary, which this project's own established discipline treats as exactly the kind
+of thing worth blocking on rather than rounding up.
+
+**The ordering claim does not hold end-to-end for either entry point, though it holds inside
+`CompactRules` itself.** I built the CLI binary and ran both surfaces directly rather than trusting
+the domain-level test (which calls `CardStore.CompactRules` directly and therefore cannot observe
+what either CLI entry point does before reaching it):
+
+1. **`rule compact` (the door I originally found open):**
+   ```
+   $ callboard rule compact --id R-0001 --change my-change --role worker
+   {"refusal":{"code":"empty-absorb-set", ...}}
+   ```
+   Role `worker` with an empty `--absorbs` gets `empty-absorb-set`, not `role-not-permitted`.
+   `RunRuleCompact` (`CommandDispatcher.cs:1716-1742`) still runs its own pre-existing
+   empty-absorb-set/self-absorption/duplicate-absorbed-rule checks on the raw argv — inherited
+   unchanged from the original block F implementation — entirely before `repoRoot` resolution or
+   any call into `CompactRules`, where the role check now lives. A non-architect who also mistypes
+   their `--absorbs` flag never reaches the role check at all.
+
+2. **`change archive --compact-family/--absorbs`:**
+   ```
+   $ callboard change archive my-change --role worker --compact-family R-9999 --absorbs R-0001
+   {"refusal":{"code":"card-id-not-found", ...}}
+   ```
+   Role `worker` naming a family id that doesn't resolve gets `card-id-not-found`, not
+   `role-not-permitted`. `RunChangeArchive` resolves `--compact-family` and every `--absorbs` id via
+   `ResolveCardReference` *before* ever calling `CardStore.CompactRules` (`CommandDispatcher.cs:
+   1438-1463`) — resolution is read-only, but its *result* reaches the caller. With valid ids and
+   role `worker`, the same command correctly returns `role-not-permitted` — so the check fires, just
+   after resolution, not before it as claimed.
+
+   This second case is the sharper problem: `CommandDispatcherChangeArchiveTests.
+   ChangeArchive_CompactionRequestedByNonArchitect_Refuses_WithoutArchivingOrCompacting`'s own doc
+   comment states *"enforced before either resolver call, so a non-architect role never even learns
+   whether the named ids resolve"* — a specific, testable claim I disproved directly. The test
+   itself only exercises *valid* ids, so it never exercises the branch where the claim is false; a
+   test whose own stated purpose isn't what it actually verifies is the exact "a test can pin the
+   wrong direction" shape this project has named as a recurring failure mode.
+
+**What this is not:** a safety hole. In every branch I tested, across both entry points, the
+outcome is a pure refusal — no lock is taken, no card is written, no partial state results, whatever
+the returned code. The architect ruling's core requirement — one place decides whether a role may
+compact, so the two callers cannot drift from each other on *what* they enforce — is genuinely met:
+there is exactly one `RoleNotPermitted` case, minted from exactly one call site inside `CompactRules`,
+mapped through the one shared `ResolveRuleCompactOutcome`. What is not met is the *stronger* claim
+this round's report makes about *when*, globally, a non-architect learns they are refused — that
+claim is accurate only relative to `CompactRules`'s own internal checks (empty-set/self-absorption/
+duplicate, proven first by the domain test and by
+`RuleCompact_ActingRoleIsNotArchitect_Refuses_WithRoleNotPermitted_AndCompactsNothing`'s valid-input
+CLI case), not relative to work either CLI caller does before ever reaching it.
+
+**What I'd ask for:** either correct the claim and the test's doc comment to state the true,
+narrower guarantee (role is enforced once, centrally, but a caller may learn other facts about a
+malformed request first) — the honest, minimal fix — or close the gap so a non-architect really
+does learn "not permitted" before any id resolution or argv-shape check runs, for both entry
+points. I'd lean toward the second, since the ruling's own stated reasoning ("a verb that reaches
+the same end-state for any role... leaves that SHALL unenforced") reads as caring about a
+non-architect never getting *close* to the operation, not just never completing it — and letting a
+non-architect learn whether a specific rule id exists via `--compact-family`/`--absorbs` before
+being told they can't act on it at all is a small but real instance of exactly that. Either way,
+this is the Architect's call to make, not mine to pick for the worker.
+
+**Everything else confirmed:**
+
+- **Repository-scoped compaction untouched, not newly restricted.** `ReadOpenChangeScopedRule`
+  (`CardStore.cs:1799-1844`) is byte-identical to the version I approved last round — the scope
+  refusal (`LayoutMismatch`) fires independently of the role check, for any role including
+  architect. Confirmed by re-reading in full, not diffing stats.
+- **The `role-not-permitted` message carries enough.** `RoleNotPermitted(operation, attemptedRole,
+  requiredRole)` (`CommandDispatcher.cs:1864-1867`) produces `"{operation} is restricted to the
+  '{required}' role; '{attempted}' attempted it."` — confirmed by execution: `"compacting
+  change-scoped rules is restricted to the 'architect' role; 'worker' attempted it."` Names the
+  operation, both roles, no code-name lookup needed. Ready for block G's 7.12 to reuse verbatim, per
+  the ruling.
+- **Nothing else moved.** File modification times isolate exactly six touched files —
+  `CardStore.cs`, `CardRuleCompactOutcome.cs`, `CommandDispatcher.cs`, `CardRuleCompactTests.cs`,
+  `CommandDispatcherRuleCompactTests.cs`, `CommandDispatcherChangeArchiveTests.cs` — matching the
+  worker's own list exactly. `ArchiveChange`, `SupersedeDecision` and `PromoteRule` sit at the same
+  line numbers as every prior round (887, 1054, 1239) — nothing shifted before them, meaning the
+  N+1-card write, the archive move, and the two-phase promotion I've already audited across three
+  rounds are untouched by this remediation.
+- **Refusal set re-derived independently**, matching "53, same count, different set" exactly — one
+  code out, one in, nothing else moved.
+
+**[worker]** Applied the Architect's ruling (fix the comment and the coverage, not the ordering):
+
+1. **Rewrote the false claim.** `CommandDispatcherChangeArchiveTests`'s doc comment no longer says
+   the role check runs "before either resolver call" — it now states what is actually guaranteed:
+   one enforcement point inside `CardStore.CompactRules`, inherited by both entry points, every path
+   through it a pure refusal (no write, no lock, no partial state) — and says plainly that argv-shape
+   checks in `RunRuleCompact` and id-resolution in `RunChangeArchive` may both refuse first, on their
+   own codes, before a non-architect ever reaches the role check.
+2. **Covered both branches the reviewer's real-binary run exposed, by name:**
+   - `ChangeArchive_CompactionRequestedByNonArchitect_WithAnUnresolvableAbsorbedId_Refuses_
+     WithCardIdNotFound_NotRoleNotPermitted` — `--compact-family` resolves, `--absorbs` names an id
+     that doesn't; a `worker` role gets `card-id-not-found`, not `role-not-permitted`, change left
+     entirely live. Matches the reviewer's own reproduction exactly.
+   - `RuleCompact_ActingRoleIsNotArchitect_WithAnEmptyAbsorbSet_Refuses_WithEmptyAbsorbSet_
+     NotRoleNotPermitted` — `--absorbs` omitted; a `worker` role gets `empty-absorb-set`, not
+     `role-not-permitted`. Matches the reviewer's `rule compact` reproduction.
+   - The two pre-existing "well-formed request, non-architect" tests (one per verb) renamed
+     (`_WithAWellFormedRequest_`/`_WithResolvableIds_`) and their own doc comments cross-reference
+     the new branch, so a reader hitting either test sees both halves of the fact rather than only
+     the one that happens to pass.
+3. **Checked my own remediation-round post for the same overstatement (item 3).** It doesn't carry
+   it: "checked first — ahead of the empty-set/self-absorption/duplicate checks, before any lock or
+   resolution" is scoped to ordering *inside* `CompactRules` among its own internal checks (which is
+   true and is what the domain test proves) — it never claimed anything about what either CLI
+   handler does *before* calling `CompactRules`. No correction posted; there is nothing to correct.
+
+**Refusal set: still 53, same set** — this round touched no `CommandOutcome.Refusal(` construction
+site. Re-derived mechanically to confirm: 207 sites, 53 distinct codes, unchanged from the prior
+derivation.
+
+Gates re-run: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (613/613 — 611
+prior + 2 new: 1 in `CommandDispatcherChangeArchiveTests`, 1 in `CommandDispatcherRuleCompactTests`).
+
+Changed: `tests/Callboard.Tests/CommandDispatcherChangeArchiveTests.cs` (doc comment rewritten, new
+test, existing test renamed), `tests/Callboard.Tests/CommandDispatcherRuleCompactTests.cs` (new test,
+existing test renamed + cross-referenced). No production code touched this round — the reviewer's
+ruling was that the code and the enforcement shape are correct as they stand.
+
+→ @reviewer
+
+**[reviewer]** Final re-audit of block F. Gates re-run independently: `BUILD_EXIT:0`,
+`TEST_EXIT:0` (613/613), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Refusal set re-derived mechanically:
+still 207 sites, still 53 distinct codes, `role-not-permitted` present — confirmed unchanged, not
+merely trusted.
+
+**Verdict: Approve. Block F is done.**
+
+**1. The new comment is true — re-probed against the real binary, both branches, both entry
+points.** I rebuilt a fresh scratch repo and ran all four combinations directly:
+
+- `rule compact --id R-0001 --change my-change --role worker` (empty absorb) →
+  `empty-absorb-set`.
+- `change archive my-change --role worker --compact-family R-0001 --absorbs R-9999` (unresolvable
+  member) → `card-id-not-found`.
+- `rule compact --id R-0001 --absorbs R-0002 --change my-change --role worker` (well-formed) →
+  `role-not-permitted`.
+- `change archive my-change --role worker --compact-family R-0001 --absorbs R-0002` (well-formed)
+  → `role-not-permitted`.
+
+Every one matches the rewritten comment's claim exactly: one enforcement point inside
+`CompactRules`, inherited by both callers, reached (and firing correctly) once a request is
+well-formed enough to get there; argv-shape and resolution checks ahead of it may refuse first, on
+their own codes, otherwise. Checked the stronger tail too — no `.lock` file was left anywhere in
+the scratch tree afterward, and both rule cards still read `status: open`, across all four calls. No
+write, no lock, no partial state, in every branch. The corrected comment doesn't overstate in the
+other direction either — it doesn't claim role-not-permitted never fires early, only that it isn't
+guaranteed to.
+
+**2. The two new tests assert what genuinely comes back, not an idealised version.**
+`ChangeArchive_CompactionRequestedByNonArchitect_WithAnUnresolvableAbsorbedId_Refuses_
+WithCardIdNotFound_NotRoleNotPermitted` and `RuleCompact_ActingRoleIsNotArchitect_
+WithAnEmptyAbsorbSet_Refuses_WithEmptyAbsorbSet_NotRoleNotPermitted` — both ran green in isolation,
+and both assert the exact codes my own reproduction returned (`card-id-not-found`,
+`empty-absorb-set`), not `role-not-permitted`. The renamed siblings
+(`_WithResolvableIds_`/`_WithAWellFormedRequest_`) still cover the case where the role check
+genuinely does fire, and their doc comments now cross-reference the new tests by name — a reader
+hitting one sees both halves rather than mistaking either for the whole story.
+
+**3. No production code moved — confirmed by content, not just the worker's claim.**
+`CardStore.cs`'s `PromoteRule`/`ArchiveChange`/`SupersedeDecision`/`CompactRules`/
+`ReadOpenChangeScopedRule` all sit at the identical line numbers I recorded last round (887, 1054,
+1239, 1563, 1799). `CommandDispatcher.cs`'s `RoleNotPermitted` helper and `ResolveRuleCompactOutcome`
+mapping are unchanged. File modification times confirm only the two named test files moved this
+round; every production file's mtime predates this remediation entirely.
+
+**4. The worker's self-check holds up, and I checked it rather than accepted it.** Re-reading the
+exact sentence from the prior remediation round's report — "Role enforcement moved into
+`CardStore.CompactRules` itself, checked first — ahead of the empty-set/self-absorption/duplicate
+checks, before any lock or resolution" — its grammatical subject is `CompactRules` itself, and every
+check it says this is "ahead of" (empty-set, self-absorption, duplicate, lock) is a check that lives
+*inside* `CompactRules`. `CompactRules` performs no resolution of its own — resolution is entirely
+the caller's job — so read on its own terms, about the one function it describes, the sentence is
+true and is exactly what the domain-level test (`CompactRules_ActingRoleIsNotArchitect_Refuses_
+BeforeAnyOtherCheck`) proves. My own prior finding reserved "the sharper problem" language
+specifically for the *test's* doc comment, which named "either resolver call" explicitly and
+therefore made the broader, cross-boundary claim this sentence does not. I don't think this is the
+worker being generous to itself — it's a fair reading of an ambiguous-in-isolation sentence, checked
+against what it actually described.
+
+**Regression watch and scope, re-confirmed for the record:** repository-scoped compaction is still
+gated only by `ReadOpenChangeScopedRule`'s scope check, untouched and unaffected by the role
+enforcement; nothing in this round touched `CardFrontmatter`/`BlockCardFields`/`SectionCardFields`/
+`FindingCardFields`; no citation counting, soft ceiling, uncited-rule queue, repository-scoped
+proposal, agent-instruction-file refusal, or new read verb anywhere in the diff.
+
+Block F (7.7, 7.8) is ready to land.
+
 ## NEXT
 
 

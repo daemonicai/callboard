@@ -259,6 +259,11 @@ internal static class CardFileWriter
             {
                 builder.Append(RegisterCardFieldKeys.EarnedFrom).Append(": ").Append(CardFileFormat.JoinFrontmatterList(registerFields.EarnedFrom)).Append('\n');
             }
+
+            if (registerFields.Absorbs.Length > 0)
+            {
+                builder.Append(RegisterCardFieldKeys.Absorbs).Append(": ").Append(CardFileFormat.JoinFrontmatterList(registerFields.Absorbs)).Append('\n');
+            }
         }
 
         // Unknown fields (a §5/§6 field this build does not model, or a hand-added line) are

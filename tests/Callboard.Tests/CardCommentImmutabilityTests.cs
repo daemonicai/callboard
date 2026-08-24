@@ -108,6 +108,8 @@ public sealed class CardCommentImmutabilityTests
             "AtomicWrite",                          // the shared byte-writer every path above funnels through; it writes whatever CardFileWriter.Serialize(card) produces for the CardFile each of those paths built — none of them builds one with a truncated Comments list
             "CloseSection",                         // §5 block E: read-decide-write on Frontmatter.Status/SectionFields.ClosedBy/ClosedAt only; never touches Comments
             "CloseSectionUnderExistingLock",        // same, lock already held
+            "CompactRules",                         // §7 block F: dedupes/self-checks on paths, then acquires N+1 locks in ordinal path order and delegates to CompactRulesUnderLocks — never touches a CardFile itself
+            "CompactRulesUnderLocks",               // §7 block F: read-decide-write on Frontmatter.Status/RegisterFields.SupersededBy/DischargedBy/DischargedAt for every absorbed rule, and RegisterFields.Absorbs for the family only; never touches Comments on any of them
             "CreateCard",                           // §7 block A: allocates an identity, validates scope, writes one brand-new card via WriteCard — never touches an existing card's Comments, it only ever creates
             "DescribeUnexpectedDischargeOutcome",   // §7 block D: pure string formatter over a CardRegisterDischargeOutcome for ArchiveChange's tool-failure message; never touches a CardFile
             "DischargeRegisterCard",                // §7 block A: read-decide-write on Frontmatter.Status/RegisterFields.DischargedBy/DischargedAt only; never touches Comments
@@ -123,6 +125,7 @@ public sealed class CardCommentImmutabilityTests
             "PromoteRuleUnderExistingLock",         // §7 block E: File.Move's the card to callboard/register/, then read-decide-write on Frontmatter.Scope/Updated only via the ordinary AnchoredCardPath/AtomicWrite path; never touches Comments
             "ReadAllCards",                         // read-only
             "ReadCard",                             // read-only
+            "ReadOpenChangeScopedRule",             // §7 block F: read-only check (rule kind, open lifecycle state, change-scoped) shared by CompactRulesUnderLocks for both the family and every absorbed side; never touches a CardFile's Comments, and never writes
             "AcquireLocksAndRecord",                // §6 block B remediation: acquires one or two CardLocks in ordinal path order and runs the record step under them; never touches a CardFile
             "RecordFinding",                        // §6 block B: allocates identities, pre-creates directories, then delegates to AcquireLocksAndRecord/RecordFindingUnderLocks — never touches an existing card's Comments, it only ever creates brand-new cards with an empty comment list
             "RecordFindingUnderLocks",              // same: writes the raised card (if any) then the finding, both create-only via AtomicWrite, rolling the raised card back (by content, not by path) on the finding's own write failing — never an edit or drop of an existing comment
@@ -132,7 +135,8 @@ public sealed class CardCommentImmutabilityTests
             "RecordSectionVerdictUnderExistingLock", // same, lock already held
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"
             "RemoveBlockedByUnderExistingLock",     // same, lock already held
-            "RestoreSupersededCard",                // §7 block C: best-effort re-write of the superseded card's pre-mutation bytes when the superseding card's own write then fails — never touches an existing card's Comments, it restores exactly what it read
+            "RestoreAllAbsorbed",                   // §7 block F: loops RestoreCardContent over every absorbed rule already written in a CompactRulesUnderLocks call when the family's own write then fails; touches only what RestoreCardContent itself touches
+            "RestoreCardContent",                   // §7 block C/F (renamed from RestoreSupersededCard when block F's own multi-card write needed the identical restore): best-effort re-write of a card's pre-mutation bytes when a later write in the same multi-card operation fails — never touches an existing card's Comments, it restores exactly what it read
             "RollbackRaisedCard",                   // §6 block B: best-effort delete of a just-written, brand-new raised card when the finding's own write then fails — never touches an existing card at all
             "ScopeForRaisedCard",                   // §6 block B: pure function from CardKind to its fixed CardScope; never touches a CardFile
             "SupersedeDecision",                    // §7 block C: acquires both decisions' locks in a deterministic id-derived path order, then delegates to SupersedeDecisionUnderLocks — never touches a CardFile itself

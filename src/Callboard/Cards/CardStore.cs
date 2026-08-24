@@ -1409,43 +1409,46 @@ internal static class CardStore
             onSuccess: _ => new CardDecisionSupersedeOutcome.Superseded(updatedSupersedingCard, updatedSupersededCard),
             onNotFound: notFound =>
             {
-                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                RestoreCardContent(supersededAnchored, originalSupersededContent);
                 return new CardDecisionSupersedeOutcome.CardNotFound(notFound.FilePath);
             },
             onAlreadyExists: alreadyExists =>
             {
-                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                RestoreCardContent(supersededAnchored, originalSupersededContent);
                 return new CardDecisionSupersedeOutcome.LayoutMismatch(
                     $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite.");
             },
             onLayoutMismatch: layoutMismatch =>
             {
-                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                RestoreCardContent(supersededAnchored, originalSupersededContent);
                 return new CardDecisionSupersedeOutcome.LayoutMismatch(layoutMismatch.Reason);
             },
             onCorrupt: corrupt =>
             {
-                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                RestoreCardContent(supersededAnchored, originalSupersededContent);
                 return new CardDecisionSupersedeOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason);
             },
             onToolFailure: toolFailure =>
             {
-                RestoreSupersededCard(supersededAnchored, originalSupersededContent);
+                RestoreCardContent(supersededAnchored, originalSupersededContent);
                 return new CardDecisionSupersedeOutcome.ToolFailure(toolFailure.Reason);
             });
     }
 
-    /// <summary>All-or-nothing's other half for <see cref="SupersedeDecisionUnderLocks"/>: once
-    /// the superseding card's own write fails, restores the superseded card to the exact bytes it
-    /// held before this call touched it. Best-effort, same disposition as
+    /// <summary>All-or-nothing's other half for a multi-card write that has already written one or
+    /// more cards and then hit a later failure: restores <paramref name="anchored"/> to the exact
+    /// bytes it held before this call touched it. Named generically (not
+    /// <c>RestoreSupersededCard</c>) because two callers share it — <see cref="
+    /// SupersedeDecisionUnderLocks"/> (one card to restore) and <see cref="CompactRulesUnderLocks"/>
+    /// (up to N, one per already-written absorbed rule). Best-effort, same disposition as
     /// <see cref="RollbackRaisedCard"/> — if the restore itself cannot complete, the caller already
     /// has a failure to act on and this is not the place to escalate a cleanup problem into a
     /// second, different one.</summary>
-    private static void RestoreSupersededCard(AnchoredCardPath supersededAnchored, string originalSupersededContent)
+    private static void RestoreCardContent(AnchoredCardPath anchored, string originalContent)
     {
         try
         {
-            AtomicWrite(supersededAnchored, originalSupersededContent);
+            AtomicWrite(anchored, originalContent);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -1453,6 +1456,394 @@ internal static class CardStore
     }
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    /// <summary>
+    /// Compacts several rules into one family (§7 block F, register: "The system SHALL support
+    /// compacting several rules into a family rule stating what they share. A family rule SHALL
+    /// record the rules it absorbs, and every absorbed rule SHALL remain retrievable"). An
+    /// N+1-card write — the family plus every absorbed rule — following the shape <see cref="
+    /// SupersedeDecision"/> already established for a multi-card write under lock with
+    /// content-based rollback, generalised from two cards to N+1. <paramref name="familyFilePath"/>
+    /// and every entry of <paramref name="absorbedFilePaths"/> already exist and are resolved by
+    /// the caller through <see cref="CardIdentityResolver"/> (<c>rule compact --id --absorbs</c>,
+    /// or the <c>change archive --compact-family/--absorbs</c> hook), never a caller-typed path.
+    ///
+    /// <para>
+    /// <b>Only the architect may call this successfully (§7 block F remediation, Architect ruling:
+    /// "the constraint belongs to the operation, not to one entry point").</b> Register:
+    /// "Compaction of change-scoped rules SHALL be performed by the architect at archive" — checked
+    /// here, first, so every caller inherits identical enforcement rather than each call site
+    /// re-implementing its own check that could drift from the other's. <see cref="
+    /// Callboard.Cli.CommandDispatcher.RunChangeArchive"/>'s hook no longer checks the role itself
+    /// for exactly this reason: this is the one and only place that decision is made.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>This block restricts compaction to change-scoped rules, all within the same
+    /// <paramref name="changeName"/>.</b> Register: "Compaction of repository-scoped rules SHALL be
+    /// proposed by an agent and decided by the Product Owner" — that propose/decide flow is block
+    /// G's (7.9), not built here, so nothing in this build may let repository-scoped rules be
+    /// compacted directly. Every resolved card is checked <see cref="CardScope.Change"/> before any
+    /// write, and every resolved path is then anchored (<see cref="AnchoredCardPath.TryCreate"/>)
+    /// against <paramref name="changeName"/> — a repository-scoped rule refuses on the scope check,
+    /// a change-scoped rule belonging to a *different* change fails the anchor; both surface as
+    /// <see cref="CardRuleCompactOutcome.LayoutMismatch"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Deterministic lock order, safe for the same reason <see cref="SupersedeDecision"/>'s is.
+    /// </b> Every one of the N+1 paths — the family's and every absorbed rule's — is supplied by
+    /// the caller already resolved through <see cref="CardIdentityResolver"/>: the same directory
+    /// walk every time, over ids that never change once allocated. Two invocations naming the same
+    /// physical set of files, in whatever order the caller happened to list them, therefore always
+    /// resolve to the identical set of path strings — so sorting that set with <see cref="
+    /// StringComparer.Ordinal"/> and acquiring every lock in that order produces the identical
+    /// sequence regardless of which invocation is doing the sorting. No two invocations can ever
+    /// disagree about which lock to take next, so no cycle can form in the wait-for graph across
+    /// any pair of concurrent invocations — the standard "every process acquires resources in one
+    /// globally consistent total order" argument for deadlock-freedom, here with N+1 resources
+    /// instead of two.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Self-absorption and duplicate members are refused before any lock is requested</b> —
+    /// locking the same path twice within one call would not deadlock against a different
+    /// invocation, it would hang this one against itself, since the second <see cref="
+    /// CardLock.Acquire"/> would wait on a lock this same call already holds. Checked here by path
+    /// equality, ahead of the id-based recheck under lock in <see cref="CompactRulesUnderLocks"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Acyclic by construction — the same argument as <see cref="SupersedeDecision"/>'s, and it
+    /// covers a family absorbing a family too (§7 block F brief item 5, Architect's open
+    /// question).</b> <see cref="CompactRulesUnderLocks"/> refuses when the family is already
+    /// discharged (<see cref="CardRuleCompactOutcome.FamilyAlreadyDischarged"/>) or when an
+    /// absorbed rule is already discharged (<see cref="CardRuleCompactOutcome.
+    /// AbsorbedAlreadyDischarged"/>). Absorbing a member discharges that member but never the
+    /// acting family — the same asymmetry <see cref="SupersedeDecision"/>'s "superseding"/
+    /// "superseded" sides have. A cycle of any length n (family 1 absorbs a rule that is, or later
+    /// becomes, family 2, ..., family n absorbs family 1) requires every node to, at some point,
+    /// act as the absorbing family while still open, and later be discharged by being named in some
+    /// other node's absorb set. For the cycle to close, the last node's absorption of the first
+    /// node must be able to happen — but the first node can only have already acted as an absorbing
+    /// family (a precondition for the cycle to have a first link at all) while it was still open,
+    /// and the check above refuses the moment any node in the chain is discharged before it acts
+    /// again. Chasing the "must have been open when it acted, discharged only after" requirement
+    /// all the way around an n-node cycle produces a happens-before relation from each node's own
+    /// act to the previous node's discharge of it that wraps back on itself — impossible, whether
+    /// every node in the cycle is a plain rule, a family that has itself already absorbed others,
+    /// or a mix of both. No runtime graph walk is needed, for the identical reason it was not
+    /// needed for decisions: the two local open-checks are exactly what makes the global ordering
+    /// unsatisfiable.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Failure guarantee, stated honestly.</b> Absorbed rules are written first, one at a time,
+    /// in the order given; the family is written last. If an absorbed rule's write fails partway
+    /// through the list, every absorbed rule already written in this call is restored to its
+    /// pre-call bytes (<see cref="RestoreCardContent"/>) before the failure is returned, and the
+    /// family and any not-yet-reached absorbed rules are left untouched — a real all-or-nothing for
+    /// the whole set, not merely for one pair. If the family's own write then fails (every absorbed
+    /// rule already landed), every absorbed rule is restored the same way. <b>Not claimed:
+    /// retry-safety across a later, unrelated failure.</b> Unlike <see cref="ArchiveChange"/>'s
+    /// idempotent obligation settlement, a retry of an already-<em>succeeded</em> compaction (for
+    /// example, from <c>change archive --compact-family/--absorbs</c> when the archive move that
+    /// follows it fails) will refuse — the absorbed rules are already discharged — rather than
+    /// silently reapplying; recovering means omitting the compaction flags on retry, since
+    /// compaction already landed. Documented, not solved, the same disposition <see cref="
+    /// ArchiveChange"/>'s own doc comment gives its accepted directory-scan race.
+    /// </para>
+    /// </summary>
+    /// <param name="familyFilePath">The already-existing rule that becomes the family, naming what
+    /// it absorbs — resolved by id, not typed by the caller as a fresh path.</param>
+    /// <param name="absorbedFilePaths">The already-existing rules being absorbed, in the order they
+    /// will be recorded — resolved the same way. Never empty.</param>
+    /// <param name="changeName">The change every one of the N+1 rules must belong to (this block's
+    /// scope restriction — see this method's own doc comment).</param>
+    internal static CardRuleCompactOutcome CompactRules(
+        string cardsRoot, string familyFilePath, IReadOnlyList<string> absorbedFilePaths, string changeName,
+        CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout)
+    {
+        // Checked first, ahead of every other check — role-not-permitted is a fact about whether
+        // this call is allowed to happen at all, not about the shape of its arguments (Architect
+        // ruling: "the constraint belongs to the operation, not to one entry point").
+        var isArchitect = actingRole.Match(
+            onArchitect: static () => true,
+            onWorker: static () => false,
+            onReviewer: static () => false,
+            onSupervisor: static () => false,
+            onProductOwner: static () => false);
+        if (!isArchitect)
+        {
+            return new CardRuleCompactOutcome.RoleNotPermitted(actingRole, CardOwner.Architect);
+        }
+
+        if (absorbedFilePaths.Count == 0)
+        {
+            return new CardRuleCompactOutcome.EmptyAbsorbSet();
+        }
+
+        foreach (var absorbedFilePath in absorbedFilePaths)
+        {
+            if (string.Equals(familyFilePath, absorbedFilePath, StringComparison.Ordinal))
+            {
+                return new CardRuleCompactOutcome.SelfAbsorption(familyFilePath);
+            }
+        }
+
+        var seenPaths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var absorbedFilePath in absorbedFilePaths)
+        {
+            if (!seenPaths.Add(absorbedFilePath))
+            {
+                return new CardRuleCompactOutcome.DuplicateAbsorbedRule(absorbedFilePath);
+            }
+        }
+
+        var deadline = DateTimeOffset.UtcNow + lockTimeout;
+        var orderedPaths = new List<string>(absorbedFilePaths.Count + 1) { familyFilePath };
+        orderedPaths.AddRange(absorbedFilePaths);
+        orderedPaths.Sort(StringComparer.Ordinal);
+
+        var heldLocks = new List<CardLock>(orderedPaths.Count);
+        try
+        {
+            foreach (var path in orderedPaths)
+            {
+                var remaining = deadline - DateTimeOffset.UtcNow;
+                if (remaining < TimeSpan.Zero)
+                {
+                    remaining = TimeSpan.Zero;
+                }
+
+                var lockResult = CardLock.Acquire(path, remaining);
+                var acquireFailure = lockResult.Match<CardRuleCompactOutcome?>(
+                    onAcquired: acquired =>
+                    {
+                        heldLocks.Add(acquired.Lock);
+                        return null;
+                    },
+                    onTimedOut: timedOut => new CardRuleCompactOutcome.ToolFailure(timedOut.Message));
+                if (acquireFailure is not null)
+                {
+                    return acquireFailure;
+                }
+            }
+
+            return CompactRulesUnderLocks(cardsRoot, familyFilePath, absorbedFilePaths, changeName, actingRole, timestamp);
+        }
+        finally
+        {
+            for (var i = heldLocks.Count - 1; i >= 0; i--)
+            {
+                heldLocks[i].Dispose();
+            }
+        }
+    }
+
+    /// <summary>The locked step of <see cref="CompactRules"/> — every one of the N+1 locks is
+    /// already held by the time this runs. Re-reads every card fresh (rather than trusting whatever
+    /// resolution saw before any lock was acquired) so every check below answers against the
+    /// record's current state, not a stale snapshot.</summary>
+    private static CardRuleCompactOutcome CompactRulesUnderLocks(
+        string cardsRoot, string familyFilePath, IReadOnlyList<string> absorbedFilePaths, string changeName,
+        CardOwner actingRole, DateTimeOffset timestamp)
+    {
+        var (familyRefusal, familyCard) = ReadOpenChangeScopedRule(familyFilePath, changeName, isFamilySide: true);
+        if (familyRefusal is not null)
+        {
+            return familyRefusal;
+        }
+
+        var familyAnchored = AnchoredCardPath.TryCreate(cardsRoot, familyFilePath, CardScope.Change, changeName, out var familyLayoutFailure);
+        if (familyAnchored is null)
+        {
+            return new CardRuleCompactOutcome.LayoutMismatch(familyLayoutFailure!.Reason);
+        }
+
+        var absorbedCards = new CardFile[absorbedFilePaths.Count];
+        var absorbedAnchors = new AnchoredCardPath[absorbedFilePaths.Count];
+        var seenIds = new HashSet<string>(StringComparer.Ordinal) { familyCard!.Frontmatter.Id };
+
+        for (var i = 0; i < absorbedFilePaths.Count; i++)
+        {
+            var (absorbedRefusal, absorbedCard) = ReadOpenChangeScopedRule(absorbedFilePaths[i], changeName, isFamilySide: false);
+            if (absorbedRefusal is not null)
+            {
+                return absorbedRefusal;
+            }
+
+            if (!seenIds.Add(absorbedCard!.Frontmatter.Id))
+            {
+                return string.Equals(absorbedCard.Frontmatter.Id, familyCard.Frontmatter.Id, StringComparison.Ordinal)
+                    ? new CardRuleCompactOutcome.SelfAbsorption(absorbedCard.Frontmatter.Id)
+                    : new CardRuleCompactOutcome.DuplicateAbsorbedRule(absorbedCard.Frontmatter.Id);
+            }
+
+            var absorbedAnchored = AnchoredCardPath.TryCreate(cardsRoot, absorbedFilePaths[i], CardScope.Change, changeName, out var absorbedLayoutFailure);
+            if (absorbedAnchored is null)
+            {
+                return new CardRuleCompactOutcome.LayoutMismatch(absorbedLayoutFailure!.Reason);
+            }
+
+            absorbedCards[i] = absorbedCard;
+            absorbedAnchors[i] = absorbedAnchored;
+        }
+
+        // Absorbed rules are written first, one at a time — see this method's own (via
+        // CompactRules's doc comment) failure-guarantee statement: a failure on entry i rolls back
+        // entries 0..i-1, leaves i.. and the family untouched.
+        var originalContents = new string[absorbedCards.Length];
+        var updatedAbsorbedCards = new CardFile[absorbedCards.Length];
+        for (var i = 0; i < absorbedCards.Length; i++)
+        {
+            originalContents[i] = File.ReadAllText(absorbedFilePaths[i], Utf8NoBom);
+
+            var updatedAbsorbed = absorbedCards[i] with
+            {
+                Frontmatter = absorbedCards[i].Frontmatter with { Status = RegisterLifecycleState.Discharged.ToWireString(), Updated = timestamp },
+                RegisterFields = absorbedCards[i].RegisterFields with
+                {
+                    DischargedBy = actingRole,
+                    DischargedAt = timestamp,
+                    SupersededBy = familyCard.Frontmatter.Id,
+                },
+            };
+
+            var writeResult = AtomicWrite(absorbedAnchors[i], CardFileWriter.Serialize(updatedAbsorbed));
+            var writeFailure = writeResult.Match<CardRuleCompactOutcome?>(
+                onSuccess: static _ => null,
+                onNotFound: notFound => new CardRuleCompactOutcome.CardNotFound(notFound.FilePath),
+                onAlreadyExists: alreadyExists => new CardRuleCompactOutcome.LayoutMismatch(
+                    $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                onLayoutMismatch: layoutMismatch => new CardRuleCompactOutcome.LayoutMismatch(layoutMismatch.Reason),
+                onCorrupt: corrupt => new CardRuleCompactOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                onToolFailure: toolFailure => new CardRuleCompactOutcome.ToolFailure(toolFailure.Reason));
+
+            if (writeFailure is not null)
+            {
+                for (var j = 0; j < i; j++)
+                {
+                    RestoreCardContent(absorbedAnchors[j], originalContents[j]);
+                }
+
+                return writeFailure;
+            }
+
+            updatedAbsorbedCards[i] = updatedAbsorbed;
+        }
+
+        var updatedFamilyCard = familyCard with
+        {
+            Frontmatter = familyCard.Frontmatter with { Updated = timestamp },
+            RegisterFields = familyCard.RegisterFields with
+            {
+                Absorbs = updatedAbsorbedCards.Select(static c => c.Frontmatter.Id).ToImmutableArray(),
+            },
+        };
+
+        var familyWriteResult = AtomicWrite(familyAnchored, CardFileWriter.Serialize(updatedFamilyCard));
+        return familyWriteResult.Match<CardRuleCompactOutcome>(
+            onSuccess: _ => new CardRuleCompactOutcome.Compacted(updatedFamilyCard, updatedAbsorbedCards),
+            onNotFound: notFound =>
+            {
+                RestoreAllAbsorbed(absorbedAnchors, originalContents);
+                return new CardRuleCompactOutcome.CardNotFound(notFound.FilePath);
+            },
+            onAlreadyExists: alreadyExists =>
+            {
+                RestoreAllAbsorbed(absorbedAnchors, originalContents);
+                return new CardRuleCompactOutcome.LayoutMismatch(
+                    $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite.");
+            },
+            onLayoutMismatch: layoutMismatch =>
+            {
+                RestoreAllAbsorbed(absorbedAnchors, originalContents);
+                return new CardRuleCompactOutcome.LayoutMismatch(layoutMismatch.Reason);
+            },
+            onCorrupt: corrupt =>
+            {
+                RestoreAllAbsorbed(absorbedAnchors, originalContents);
+                return new CardRuleCompactOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason);
+            },
+            onToolFailure: toolFailure =>
+            {
+                RestoreAllAbsorbed(absorbedAnchors, originalContents);
+                return new CardRuleCompactOutcome.ToolFailure(toolFailure.Reason);
+            });
+    }
+
+    /// <summary>All-or-nothing's other half for <see cref="CompactRulesUnderLocks"/>'s own final
+    /// step: once the family's write fails, restores every absorbed rule already written in this
+    /// call back to its pre-call bytes, the same content-based restore <see cref="RestoreCardContent"/>
+    /// gives a single card.</summary>
+    private static void RestoreAllAbsorbed(IReadOnlyList<AnchoredCardPath> absorbedAnchors, IReadOnlyList<string> originalContents)
+    {
+        for (var i = 0; i < absorbedAnchors.Count; i++)
+        {
+            RestoreCardContent(absorbedAnchors[i], originalContents[i]);
+        }
+    }
+
+    /// <summary>Reads <paramref name="filePath"/> fresh and confirms it is an open, change-scoped
+    /// <c>rule</c> card — the checks <see cref="CompactRulesUnderLocks"/> applies identically to
+    /// the family side and every absorbed side, differing only in which refusal an already-
+    /// discharged card earns (<paramref name="isFamilySide"/> picks <see cref="
+    /// CardRuleCompactOutcome.FamilyAlreadyDischarged"/> vs. <see cref="CardRuleCompactOutcome.
+    /// AbsorbedAlreadyDischarged"/> — the same "acting side"/"target side" distinction <see cref="
+    /// SupersedeDecision"/> draws with two separate already-discharged cases). The scope check here
+    /// is this block's own restriction to change-scoped compaction (see <see cref="CompactRules"/>'s
+    /// doc comment) — a repository-scoped rule is refused before the anchor check even runs, since
+    /// <see cref="AnchoredCardPath.TryCreate"/> alone cannot distinguish "the wrong change" from
+    /// "not change-scoped at all".</summary>
+    private static (CardRuleCompactOutcome? Refusal, CardFile? Card) ReadOpenChangeScopedRule(
+        string filePath, string changeName, bool isFamilySide)
+    {
+        if (!File.Exists(filePath))
+        {
+            return (new CardRuleCompactOutcome.CardNotFound(filePath), null);
+        }
+
+        var read = ReadCard(filePath);
+        var card = read.Match<CardFile?>(onSuccess: static s => s.Card, onFailure: static _ => null);
+        if (card is null)
+        {
+            var reason = read.Match(onSuccess: static _ => string.Empty, onFailure: static f => f.Reason);
+            return (new CardRuleCompactOutcome.CardCorrupt(filePath, reason), null);
+        }
+
+        if (!IsRuleCard(card))
+        {
+            return (new CardRuleCompactOutcome.NotARuleCard(filePath, card.Frontmatter.Kind), null);
+        }
+
+        if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var state))
+        {
+            return (new CardRuleCompactOutcome.InvalidStatus(filePath, card.Frontmatter.Status), null);
+        }
+
+        if (state == RegisterLifecycleState.Discharged)
+        {
+            return isFamilySide
+                ? (new CardRuleCompactOutcome.FamilyAlreadyDischarged(filePath), null)
+                : (new CardRuleCompactOutcome.AbsorbedAlreadyDischarged(filePath), null);
+        }
+
+        var isChangeScoped = card.Frontmatter.Scope.Match(
+            onSection: static () => false,
+            onChange: static () => true,
+            onCapability: static () => false,
+            onRepository: static () => false);
+        if (!isChangeScoped)
+        {
+            return (new CardRuleCompactOutcome.LayoutMismatch(
+                $"'{filePath}' is '{card.Frontmatter.Scope.ToWireString()}'-scoped; compaction in this build only " +
+                $"applies to 'change'-scoped rules within '{changeName}' (repository-scoped compaction is proposed " +
+                "and decided by the Product Owner, not applied directly)."), null);
+        }
+
+        return (null, card);
+    }
 
     /// <summary>
     /// Records a clean finding (findings: "Clean findings are cards") and, when

@@ -498,6 +498,18 @@ internal static class CommandParser
     /// on the whole change directory <see cref="CardLayout.ChangesDirectory"/> names, never on one
     /// card, so there is no single file path to take the way every other verb's positional token
     /// is one. <c>--role</c> is required, the same as every other card-model write.
+    ///
+    /// <para>
+    /// <b><c>--compact-family</c>/<c>--absorbs</c> are §7 block F's hook</b> (register: "Compaction
+    /// of change-scoped rules SHALL be performed by the architect at archive") — the same card-id,
+    /// comma-separated-list shapes <c>rule compact</c>'s own <c>--id</c>/<c>--absorbs</c> use, not
+    /// a second flag vocabulary. Both are optional, but only together: naming one without the other
+    /// is a self-contradictory request (compact what into what?), refused here rather than left for
+    /// <see cref="Cards.CardStore.CompactRules"/> to discover with half its arguments missing.
+    /// Whether <c>--role</c> actually names the architect is <see cref="CommandDispatcher.
+    /// RunChangeArchive"/>'s check (it needs the parsed <see cref="CardOwner"/> value, not just its
+    /// text), not this method's.
+    /// </para>
     /// </summary>
     private static CommandDispatcher.ParseResult ParseChangeArchive(CommandDispatcher.CommandContext context)
     {
@@ -509,9 +521,13 @@ internal static class CommandParser
         }
 
         string? roleText = null;
+        string? compactFamilyId = null;
+        string? compactAbsorbsRaw = null;
         var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
             ["--role"] = value => roleText = value,
+            ["--compact-family"] = value => compactFamilyId = value,
+            ["--absorbs"] = value => compactAbsorbsRaw = value,
         });
         if (flagRefusal is not null)
         {
@@ -530,8 +546,38 @@ internal static class CommandParser
                 "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
         }
 
+        if ((compactFamilyId is null) != (compactAbsorbsRaw is null))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'change archive' requires '--compact-family' and '--absorbs' together, or neither."));
+        }
+
+        IReadOnlyList<string>? compactAbsorbedIds = null;
+        if (compactAbsorbsRaw is not null)
+        {
+            if (compactAbsorbsRaw.Length == 0)
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "empty-absorb-set",
+                    "'--absorbs' requires at least one rule id — a family with no members is not a family."));
+            }
+
+            var absorbedIds = CardFileFormat.SplitFrontmatterList(compactAbsorbsRaw);
+            foreach (var id in absorbedIds)
+            {
+                if (!BlockCardFields.IsValidListItem(id))
+                {
+                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                        "invalid-absorbs", $"'--absorbs' cannot contain an empty item: '{compactAbsorbsRaw}'."));
+                }
+            }
+
+            compactAbsorbedIds = absorbedIds;
+        }
+
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.ChangeArchive(
-            changeName, role, context.WorkingDirectory, context.Clock()));
+            changeName, role, compactFamilyId, compactAbsorbedIds, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>
@@ -1052,7 +1098,7 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'rule' requires a subcommand. Known subcommands: create, discharge, promote, author."));
+                    "'rule' requires a subcommand. Known subcommands: create, discharge, promote, author, compact."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseRuleCreate(context);
@@ -1065,10 +1111,13 @@ internal static class CommandParser
             case "author":
                 context.Arguments.TryTake();
                 return ParseRuleAuthor(context);
+            case "compact":
+                context.Arguments.TryTake();
+                return ParseRuleCompact(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'rule' subcommand: '{subcommand}'. Known subcommands: create, discharge, promote, author."));
+                    $"no such 'rule' subcommand: '{subcommand}'. Known subcommands: create, discharge, promote, author, compact."));
         }
     }
 
@@ -1214,6 +1263,81 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleAuthor(
             filePath, title, role, scope, body, changeName, earnedFrom, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>rule compact</c>'s <see cref="CommandDispatcher.ParsedCommand.RuleCompact"/> (§7
+    /// block F, register: "The system SHALL support compacting several rules into a family rule
+    /// stating what they share"). <c>--id</c> (the family) and <c>--absorbs</c> (a comma-separated
+    /// list of member rule ids, the same convention <c>--earned-from</c> already established) are
+    /// both card ids resolved at execute time through <see cref="CardIdentityResolver"/> — no
+    /// positional file-path argument, the same identity-addressing shape <c>rule promote</c> and
+    /// <c>decision supersede</c> already use. <c>--change</c> is required — this block restricts
+    /// compaction to one named change's own change-scoped rules (see <see cref="Cards.CardStore.
+    /// CompactRules"/>'s own doc comment for why).
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseRuleCompact(CommandDispatcher.CommandContext context)
+    {
+        string? familyId = null;
+        string? absorbsRaw = null;
+        string? changeName = null;
+        string? roleText = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => familyId = value,
+            ["--absorbs"] = value => absorbsRaw = value,
+            ["--change"] = value => changeName = value,
+            ["--role"] = value => roleText = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (familyId is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule compact' requires '--id <family-rule-id>'."));
+        }
+
+        if (string.IsNullOrEmpty(absorbsRaw))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "empty-absorb-set",
+                "'rule compact' requires '--absorbs <rule-id>[,<rule-id>...]' — a family with no members is not a family."));
+        }
+
+        var absorbedIds = CardFileFormat.SplitFrontmatterList(absorbsRaw);
+        foreach (var id in absorbedIds)
+        {
+            if (!BlockCardFields.IsValidListItem(id))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "invalid-absorbs", $"'--absorbs' cannot contain an empty item: '{absorbsRaw}'."));
+            }
+        }
+
+        if (changeName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule compact' requires '--change <name>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule compact' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleCompact(
+            familyId, absorbedIds, changeName, role, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

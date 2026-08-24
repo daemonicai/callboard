@@ -81,7 +81,8 @@ public sealed class RegisterCardFieldsRoundTripTests
             OwedBy: "S-0001",
             Supersedes: "D-0002",
             SupersededBy: "D-0003",
-            EarnedFrom: ["F-0010", "F-0011"]);
+            EarnedFrom: ["F-0010", "F-0011"],
+            Absorbs: ["R-0020", "R-0021"]);
         return new CardFile(frontmatter, "Body.", [], [], RegisterFields: registerFields);
     }
 
@@ -104,6 +105,7 @@ public sealed class RegisterCardFieldsRoundTripTests
         Assert.Equal(expected.Supersedes, actual.Supersedes);
         Assert.Equal(expected.SupersededBy, actual.SupersededBy);
         Assert.Equal(expected.EarnedFrom, actual.EarnedFrom);
+        Assert.Equal(expected.Absorbs, actual.Absorbs);
     }
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
