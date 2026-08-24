@@ -1106,10 +1106,13 @@ internal static class CommandDispatcher
     /// <summary>
     /// <c>nit raise</c> (§8 block B, review-certification: "A nit SHALL be raised as an addressed
     /// comment, not as a card"). Resolves <c>--id</c> (the block card) through <see cref="
-    /// ResolveCardReference"/>, then appends the nit as a <see cref="CardComment"/> via the plain
-    /// <see cref="CardStore.AppendComment"/> — no bespoke writer needed, since raising a nit adds
-    /// exactly one comment and nothing else. <see langword="private"/>: <see cref="CommandParser"/>
-    /// cannot name this method.
+    /// ResolveCardReference"/>, then appends the nit as a <see cref="CardComment"/> via
+    /// <see cref="CardStore.RaiseNit"/> — not the plain <see cref="CardStore.AppendComment"/> any
+    /// more (§8 remediation, review-certification: "A nit SHALL be raised only against a block that
+    /// is under review"): raising a nit needs its own state check <see cref="CardStore.
+    /// AppendComment"/> has no way to express, since that surface is shared with comments that
+    /// carry no such bound.
+    /// <see langword="private"/>: <see cref="CommandParser"/> cannot name this method.
     /// </summary>
     private static CommandOutcome RunNitRaise(ParsedCommand.NitRaise parsed, TimeSpan lockTimeout)
     {
@@ -1135,10 +1138,10 @@ internal static class CommandDispatcher
             ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: [],
             IsNit: true, Required: parsed.Required, Sites: parsed.Sites);
 
-        var outcome = CardStore.AppendComment(repoRoot, resolved.FilePath!, comment, lockTimeout, parsed.ChangeName);
+        var outcome = CardStore.RaiseNit(repoRoot, resolved.FilePath!, comment, lockTimeout, parsed.ChangeName);
 
         return outcome.Match<CommandOutcome>(
-            onSuccess: _ => new CommandOutcome.Success(new NitRaiseResult
+            onRaised: _ => new CommandOutcome.Success(new NitRaiseResult
             {
                 NitId = nitId,
                 FilePath = resolved.FilePath!,
@@ -1148,13 +1151,17 @@ internal static class CommandDispatcher
                 ActingRole = parsed.ActingRole.ToWireString(),
                 Timestamp = parsed.Timestamp,
             }),
-            onNotFound: notFound => new CommandOutcome.Refusal(
+            onNotABlockCard: notABlock => WrongCardKind(resolved.FilePath!, CardKind.Block, notABlock.Kind, "nits only apply to a block card"),
+            onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to raise a nit against."),
-            onAlreadyExists: alreadyExists => new CommandOutcome.Refusal(
-                "card-already-exists", $"a card already exists at '{alreadyExists.FilePath}'."),
+            onNotUnderReview: notUnderReview => new CommandOutcome.Refusal(
+                "nit-target-not-in-review",
+                $"block '{parsed.Id}' is '{notUnderReview.CurrentState.ToWireString()}', not 'in-review'; a nit may only " +
+                "be raised against a block under review. If this observation needs fixing, record it as an obligation " +
+                "naming the section expected to discharge it — that judgement is not automated."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCorrupt: corrupt => throw new InvalidOperationException(
+            onCardCorrupt: corrupt => throw new InvalidOperationException(
                 $"card '{corrupt.FilePath}' could not be read: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
@@ -1290,6 +1297,10 @@ internal static class CommandDispatcher
                 "undefined-transition",
                 $"no transition 'amendment-requested' from '{undefined.CurrentState.ToWireString()}'. " +
                 $"Available: {(undefined.Available.Count == 0 ? "none" : string.Join(", ", undefined.Available.Select(static t => t.Name)))}."),
+            onUndispositionedNits: undispositioned => new CommandOutcome.Refusal(
+                "undispositioned-nits",
+                $"'{resolved.FilePath}' cannot be reopened — the following nit(s) have no disposition: " +
+                $"{string.Join(", ", undispositioned.NitIds)}."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
             onCardCorrupt: corrupt => throw new InvalidOperationException(

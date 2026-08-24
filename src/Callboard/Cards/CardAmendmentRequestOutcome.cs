@@ -28,6 +28,7 @@ internal abstract record CardAmendmentRequestOutcome
         Func<NotABlockCard, TResult> onNotABlockCard,
         Func<CardNotFound, TResult> onCardNotFound,
         Func<UndefinedTransition, TResult> onUndefinedTransition,
+        Func<UndispositionedNits, TResult> onUndispositionedNits,
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
         Func<ToolFailure, TResult> onToolFailure);
@@ -38,7 +39,7 @@ internal abstract record CardAmendmentRequestOutcome
     /// exactly as they were, the same way every other route back to <c>briefed</c> leaves them.</param>
     internal sealed record Requested(CardFile Card) : CardAmendmentRequestOutcome
     {
-        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onRequested(this);
     }
 
@@ -46,7 +47,7 @@ internal abstract record CardAmendmentRequestOutcome
     /// approved block" — the only role permitted to invoke this verb.</summary>
     internal sealed record RoleNotPermitted(CardOwner AttemptedRole) : CardAmendmentRequestOutcome
     {
-        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onRoleNotPermitted(this);
     }
 
@@ -54,14 +55,14 @@ internal abstract record CardAmendmentRequestOutcome
     /// Refusal-shaped: caller pointed the verb at the wrong card.</summary>
     internal sealed record NotABlockCard(CardKind Kind) : CardAmendmentRequestOutcome
     {
-        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotABlockCard(this);
     }
 
     /// <summary>No card exists at the target path. Refusal-shaped: caller-correctable.</summary>
     internal sealed record CardNotFound(string FilePath) : CardAmendmentRequestOutcome
     {
-        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardNotFound(this);
     }
 
@@ -71,15 +72,36 @@ internal abstract record CardAmendmentRequestOutcome
     /// caller reads rather than a second hand-maintained list of the same facts.</summary>
     internal sealed record UndefinedTransition(BlockFlowState CurrentState, IReadOnlyList<BlockFlowTransition> Available) : CardAmendmentRequestOutcome
     {
-        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onUndefinedTransition(this);
+    }
+
+    /// <summary>The card carries at least one live, undispositioned nit (review-certification:
+    /// "A nit SHALL cease to be live only through one of these three dispositions"). Defence in
+    /// depth, not a reachable path through the tool's own writers as of the §8 remediation that
+    /// bound <c>nit raise</c> to <c>in-review</c>: <see cref="CardStore.RaiseNitUnderExistingLock"/>
+    /// now refuses to raise a nit against anything but an <c>in-review</c> card, and <see cref="
+    /// CardStore.RecordApprovalUnderExistingLock"/> refuses to leave <c>in-review</c> while one is
+    /// live — together they mean a card cannot reach <c>approved</c> (the only state this verb's
+    /// transition table accepts from) carrying a live nit through any path the tool itself writes.
+    /// Kept here anyway because that guarantee only covers writes the tool made: the primary record
+    /// is plain, git-committed Markdown a human can hand-edit directly (ADR-0003), so a nit comment
+    /// appended by hand to an already-<c>approved</c> card is a state <see cref="CardStore.
+    /// RecordApprovalUnderExistingLock"/> and <see cref="CardStore.
+    /// ApplyBlockTransitionUnderExistingLock"/> would never themselves have produced but this
+    /// method reads from disk exactly as it finds it, the same as they do — this is the same
+    /// re-validate-under-lock discipline those two use, not a third hard-coded state list.</summary>
+    internal sealed record UndispositionedNits(IReadOnlyList<string> NitIds) : CardAmendmentRequestOutcome
+    {
+        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            onUndispositionedNits(this);
     }
 
     /// <summary>The target path does not resolve under the given root/scope/change name
     /// (<see cref="AnchoredCardPath.TryCreate"/>). Refusal-shaped: caller-correctable.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardAmendmentRequestOutcome
     {
-        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onLayoutMismatch(this);
     }
 
@@ -89,7 +111,7 @@ internal abstract record CardAmendmentRequestOutcome
     /// type must not route it to a refusal exit.</summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardAmendmentRequestOutcome
     {
-        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardCorrupt(this);
     }
 
@@ -99,7 +121,7 @@ internal abstract record CardAmendmentRequestOutcome
     /// (ADR-0001).</summary>
     internal sealed record ToolFailure(string Reason) : CardAmendmentRequestOutcome
     {
-        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Requested, TResult> onRequested, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onToolFailure(this);
     }
 }

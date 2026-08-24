@@ -65,6 +65,41 @@ public sealed class CommandDispatcherNitTests
         Assert.Equal(["src/A.cs"], result.GetProperty("sites").EnumerateArray().Select(static e => e.GetString()).ToList());
     }
 
+    // §8 remediation, review-certification: "A nit SHALL be raised only against a block that is
+    // under review. Raising one against a block in any other state SHALL be refused, naming the
+    // state the block is in and the obligation route below." One case per non-review state, not one
+    // representative case — an enumerated-but-wrong state list is exactly the failure mode §8's own
+    // history (blocker 2, twice) already produced, so every state the guard must cover is proven
+    // individually rather than trusted by extrapolation from one.
+    [Theory]
+    [InlineData("drafting")]
+    [InlineData("briefed")]
+    [InlineData("building")]
+    [InlineData("approved")]
+    [InlineData("landed")]
+    [InlineData("closed")]
+    public void NitRaise_NotUnderReview_Refuses_NamingStateAndObligationRoute(string status)
+    {
+        using var repo = new TempGitRepo();
+        Assert.True(BlockFlowStateWireFormat.TryParse(status, out var currentState));
+        var path = WriteInitialBlockCard(repo.Path, "b-not-in-review", "B-NOT-IN-REVIEW", currentState);
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["nit", "raise", "--id", "B-NOT-IN-REVIEW", "--role", "reviewer", "--change", ChangeName],
+            output, repo, "An observation.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("nit-target-not-in-review", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString()!;
+        Assert.Contains($"'{status}'", message, StringComparison.Ordinal);
+        Assert.Contains("obligation", message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
     [Fact]
     public void NitRaise_WrongCardKind_Refuses()
     {
@@ -513,17 +548,24 @@ public sealed class CommandDispatcherNitTests
     }
 
     // §8 remediation blocker 2: the guard originally checked only 'transition.From == InReview',
-    // so 'approved's own exit ('land') carried no nit check at all — a block holding a live
-    // undispositioned nit (raised, e.g., during the provisional window while a sibling block's
-    // change lands) could reach 'landed' with nothing refusing. Nit raise itself never checks the
-    // card's current state, so a nit landing on an already-approved card is a real path, not a
-    // contrived one.
+    // so 'approved's own exit ('land') carried no nit check at all. §8's second remediation then
+    // bound 'nit raise' to 'in-review', so this state — 'approved' carrying a live undispositioned
+    // nit — is no longer reachable through the tool's own writers: RecordApprovalUnderExistingLock
+    // already refuses to certify a card with a live nit, and RaiseNitUnderExistingLock now refuses
+    // to raise one against anything but an in-review card. The card is a plain, git-committed file a
+    // human can hand-edit directly (ADR-0003), so the comment is seeded straight into the card file
+    // rather than through 'nit raise' — this is exactly the by-hand path the guard still has to
+    // cover, and the guard itself (this test's subject) is unchanged.
     [Fact]
     public void BlockTransition_Land_UndispositionedNit_Refuses_AndLeavesTheCardByteIdentical()
     {
         using var repo = new TempGitRepo();
-        var path = WriteInitialBlockCard(repo.Path, "b-0020", "B-0020", BlockFlowState.Approved);
-        var nitId = RaiseNit(repo, "B-0020");
+        const string nitId = "nit-hand-edited-0020";
+        var liveNit = new CardComment(
+            Id: nitId, Author: CardOwner.Reviewer, Timestamp: FixedNow, Body: "A nit.",
+            ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: [],
+            IsNit: true, Required: false, Sites: []);
+        var path = WriteInitialBlockCard(repo.Path, "b-0020", "B-0020", BlockFlowState.Approved, [liveNit]);
         var before = File.ReadAllBytes(path);
         var output = new StringWriter();
 
@@ -539,14 +581,19 @@ public sealed class CommandDispatcherNitTests
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 
-    // Same requirement, the 'close' exit — a nit raised while a block sits 'landed' (again, nit
-    // raise checks no state) must not be allowed to lapse by neglect through to 'closed' either.
+    // Same requirement, the 'close' exit, same hand-edited-record justification as the 'land' test
+    // above — a nit hand-added while a block sits 'landed' must not be allowed to lapse by neglect
+    // through to 'closed' either.
     [Fact]
     public void BlockTransition_Close_UndispositionedNit_Refuses_AndLeavesTheCardByteIdentical()
     {
         using var repo = new TempGitRepo();
-        var path = WriteInitialBlockCard(repo.Path, "b-0021", "B-0021", BlockFlowState.Landed);
-        var nitId = RaiseNit(repo, "B-0021");
+        const string nitId = "nit-hand-edited-0021";
+        var liveNit = new CardComment(
+            Id: nitId, Author: CardOwner.Reviewer, Timestamp: FixedNow, Body: "A nit.",
+            ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: [],
+            IsNit: true, Required: false, Sites: []);
+        var path = WriteInitialBlockCard(repo.Path, "b-0021", "B-0021", BlockFlowState.Landed, [liveNit]);
         var before = File.ReadAllBytes(path);
         var output = new StringWriter();
 
@@ -707,7 +754,8 @@ public sealed class CommandDispatcherNitTests
         return doc.RootElement.GetProperty("result").GetProperty("nitId").GetString()!;
     }
 
-    private static string WriteInitialBlockCard(string repoRoot, string fileStem, string id, BlockFlowState status)
+    private static string WriteInitialBlockCard(
+        string repoRoot, string fileStem, string id, BlockFlowState status, IReadOnlyList<CardComment>? comments = null)
     {
         var directory = Path.Combine(repoRoot, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(directory);
@@ -716,7 +764,7 @@ public sealed class CommandDispatcherNitTests
             id, CardKind.Block, "Title", status.ToWireString(), CardOwner.Architect, CardScope.Change, "8", FixedNow, FixedNow);
         var round = status == BlockFlowState.InReview ? 1 : (int?)null;
         var blockFields = new BlockCardFields(null, null, [], round, [], []);
-        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
+        var card = new CardFile(frontmatter, "Body.", comments ?? [], [], [], blockFields, []);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
     }

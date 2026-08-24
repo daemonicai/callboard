@@ -127,6 +127,8 @@ public sealed class CardCommentImmutabilityTests
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments
             "PromoteRule",                          // §7 block E: acquires the rule's own lock, then delegates to PromoteRuleUnderExistingLock; never touches a CardFile itself
             "PromoteRuleUnderExistingLock",         // §7 block E, remediation blocker 3: File.Move's the card to callboard/register/, then read-decide-write on Frontmatter.Scope/Updated and one appended attribution comment via the ordinary AnchoredCardPath/AtomicWrite path — appends, never edits or drops an existing comment
+            "RaiseNit",                              // §8 remediation: acquires the block's lock and delegates to RaiseNitUnderExistingLock; never touches a CardFile itself
+            "RaiseNitUnderExistingLock",             // §8 remediation: read-decide-write — refuses unless the card is in-review, then appends exactly one nit comment via `card with { Comments = [.. card.Comments, comment] }`; never edits or drops an existing comment
             "ReadAllCards",                         // read-only
             "ReadCard",                             // read-only
             "ReadOpenChangeScopedRule",             // §7 block F: read-only check (rule kind, open lifecycle state, change-scoped) shared by CompactRulesUnderLocks for both the family and every absorbed side; never touches a CardFile's Comments, and never writes

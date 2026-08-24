@@ -20771,6 +20771,135 @@ feature. Bounding where a nit may be raised keeps that and closes the hole.
 `review-certification` gains the bound, the obligation route, the explicit refusal of automation, and a
 scenario. `VALIDATE_EXIT:0`.
 
+**[worker]** §8 remediation — binds `nit raise` to `in-review`, closing the Product Owner ruling above.
+No new `N.M` numbers; ticks nothing.
+
+**The change.** `nit raise` used to go through the plain `CardStore.AppendComment` — general-purpose,
+shared with every other comment kind, no notion of "under review". Gave it its own writer instead:
+`CardStore.RaiseNit`/`RaiseNitUnderExistingLock`, its own closed outcome (`CardNitRaiseOutcome`,
+not folded into the shared `CardWriteResult` — every other `AppendComment` caller has no "under review"
+concept, so a case that can never apply to them stays out of their exhaustive switch, the same split
+`CardApprovalOutcome`/`CardAmendmentRequestOutcome` already made for their own verb-specific facts).
+Under the card's own lock, it re-reads the card, parses `status`, and refuses with
+`nit-target-not-in-review` unless it reads `in-review` — naming the current state and the obligation
+route in the refusal message, per the scenario. `AppendComment` itself is untouched and still serves
+every non-nit comment (the architect's own addressed comments still use it directly).
+
+**Not built:** no `--promote`, no path that turns a refused nit into an obligation on its own. The
+refusal names the route; a human runs `obligation create` if they judge it needed. Checked the diff
+against this before finishing — nothing in `RunNitRaise` or `RaiseNitUnderExistingLock` writes an
+obligation card.
+
+**Consequence 1, checked rather than assumed: no `approved`/`landed`/`closed` card can hold a live nit.**
+Traced every writer that can leave `in-review` or touch a block's comments: `ApplyBlockTransitionUnderExistingLock`
+already refuses to leave `in-review` with a live nit (pre-existing, unconditional guard from the prior
+remediation); `RecordApprovalUnderExistingLock` carries the same check for its own `approve` edge; and
+`RaiseNitUnderExistingLock` now refuses to raise one anywhere but `in-review`. No other writer appends a
+comment to a block card at all — `AppendComment`'s only block-card caller left is `nit raise`'s old path,
+now replaced. So the invariant holds for every path the tool itself writes.
+
+**Consequence 2 — the `RecordAmendmentRequestUnderExistingLock` gap: I chose to close it, not just
+document it, and here is the argument.** With the bound in place, that gap is genuinely unreachable
+through the tool's own writers: `amendment-requested` only ever fires from `approved`
+(`AvailableFrom(Approved)`), and `approved` can no longer be reached carrying a live nit (consequence 1).
+So a bare reachability argument would justify leaving it and writing that down. I added the check anyway
+(`CardAmendmentRequestOutcome.UndispositionedNits`, mirroring `RecordApprovalUnderExistingLock`'s), for
+one reason that isn't "defence in depth" as a vague reflex: **the tool's own writes are not the only way
+this card's state can arise.** ADR-0003 makes the primary record a plain, git-committed Markdown file a
+human is expected to be able to hand-edit; `CardCommentImmutabilityTests`'s own doc comment names this
+explicitly as "the honest limit" callboard does not close. A nit comment hand-appended to an already-
+`approved` card is exactly such a state — one the tool would never itself have produced, but one
+`RecordAmendmentRequestUnderExistingLock` would read from disk exactly as any other writer does. Every
+other writer in this family (`ApplyBlockTransitionUnderExistingLock`, `RecordApprovalUnderExistingLock`)
+re-validates state from the file it just read rather than trusting how the card got there; leaving this
+one writer as the sole exception would be inconsistent with that discipline for a cost of one already-
+proven-safe check (`CardCommentRouting.LiveUndispositionedNitIds`, the same helper the other two call) —
+not a new hard-coded state list, the thing blocker 2 actually was. Argued the other way too before
+deciding: the check can never fire through any path the test suite's own CLI calls exercise, which is a
+real cost (an assertion nothing in the ordinary flow proves false) — but I judged an unguarded write on a
+binding invariant ("no `approved`/`landed`/`closed` card holds a live nit", stated as a fact in this
+section's own history) the worse of the two costs, given the record is human-editable by design and not
+merely in principle. Proved it isn't dead by writing a regression that reaches it exactly the way a human
+hand-edit would: `AmendmentRequested_ApprovedCardWithHandEditedLiveNit_Refuses_...` seeds the live nit
+directly into an already-approved card's file (bypassing `nit raise` entirely) and asserts the refusal
+fires, byte-identical card after.
+
+**Consequence 3.** `ApplyBlockTransitionUnderExistingLock`'s unconditional guard is untouched — no
+narrowing, no new exception added to its list.
+
+**Tests.** `NitRaise_NotUnderReview_Refuses_NamingStateAndObligationRoute` — a `[Theory]` with one case
+per non-review state (`drafting`, `briefed`, `building`, `approved`, `landed`, `closed`), not one
+representative case, per this section's own history of a state list being wrong twice by omission.
+`NitRaise_Legal_Succeeds_RecordsIsNitRequiredAndSites` (pre-existing, `in-review`) is untouched and still
+proves the review-time path works exactly as before. The two pre-existing guard regressions
+(`BlockTransition_Land_...`/`BlockTransition_Close_...`) used `nit raise` to seed a live nit onto an
+`approved`/`landed` card — now refused, so re-pointed at a direct hand-edited seed (same justification as
+consequence 2) rather than deleted; they still prove the *transition* guard, which this block did not
+touch. `CardCommentImmutabilityTests`'s full-surface inventory gained `RaiseNit`/`RaiseNitUnderExistingLock`
+— it fails on any unaccounted `CardStore` method by construction, so it caught the new writer immediately.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. 717 tests (710 + 6
+theory cases + 1 new regression), 0 failed.
+
+→ @reviewer
+
+**[reviewer]** §8 remediation — binds `nit raise` to `in-review`, closes the supervisor's second
+`Request changes` — **Approve.**
+
+**Gates verified independently:** `make build` → `BUILD_EXIT:0`, `make test` → 717/717 `TEST_EXIT:0`
+(exact match to the worker's report), `make format` → `FORMAT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`.
+
+**No auto-promotion, checked at the type and the call site.** `CardNitRaiseOutcome.NotUnderReview`
+carries only `CurrentState` — no obligation reference, no partial write. `RaiseNitUnderExistingLock`
+(`CardStore.cs`) returns the refusal before `AnchoredCardPath.TryCreate`/`AtomicWrite` are ever reached
+on that path — nothing is written on refusal. `RunNitRaise`'s `onNotUnderReview` arm builds a
+`CommandOutcome.Refusal` naming the state and the obligation route in text only; grepped the whole diff
+for any `obligation create`/card-write call reachable from `nit raise`'s refusal path — none. Same
+honesty line as `recertify`'s re-derivation notice and the gate-freshness sentence: the tool states what
+it cannot verify or decide, and does nothing further.
+
+**The bound, traced across every writer that can append a comment to a block card**, not assumed from
+the worker's list: `AppendComment`'s only remaining live caller is `RunRulePromoteConstitution`, which
+targets a **rule** card, never a block card. `RaiseNitUnderExistingLock` is the sole writer of a *new*
+live nit onto a block card, and it now refuses outside `in-review`. `DispositionNitUnderLocks` appends a
+*disposition* comment that resolves an existing nit — it cannot create a new live one, and it is reached
+only from an already-live nit. `PromoteRuleUnderExistingLock`'s comment append is on a rule card too.
+That is every `Comments = [.. card.Comments, ...]` site in `CardStore.cs` (four total, checked by grep,
+not by the brief's list) — no fifth path missed. Combined with the pre-existing unconditional transition
+guard and `RecordApprovalUnderExistingLock`'s own check, no `approved`/`landed`/`closed` card can hold a
+live nit through any path the tool itself writes.
+
+**The judgement call — `RecordAmendmentRequestUnderExistingLock`'s guard — tested, not deferred to.**
+Confirmed the sibling-writer claim: `RecordApprovalUnderExistingLock` does carry the identical
+`LiveUndispositionedNitIds` check (grepped both call sites, same helper, same shape). Confirmed the new
+guard actually fires against a hand-edited card, not just against the argument for it:
+`AmendmentRequested_ApprovedCardWithHandEditedLiveNit_Refuses_AndLeavesTheCardByteIdentical` approves a
+card through the real CLI path, then appends a live nit by direct record construction +
+`CardFileWriter.Serialize` + `File.WriteAllText` — bypassing `nit raise` entirely, genuinely simulating
+ADR-0003's hand-edit case rather than asserting it — and asserts the refusal fires with the card
+byte-identical after. Ran this test in isolation to confirm it exercises the new code path rather than
+tripping an earlier refusal: it does — role/kind/transition checks all pass first, `UndispositionedNits`
+is what fires. The reasoning for keeping an otherwise-unreachable-through-the-tool check is sound and
+matches the discipline `RecordApprovalUnderExistingLock`/`ApplyBlockTransitionUnderExistingLock` already
+established: re-validate from the file as read, never trust how it got there.
+
+**Re-pointed tests — faithful, not weakened.** The hand-edited `CardComment` seeded into
+`BlockTransition_Land_Undispositioned...`/`BlockTransition_Close_Undispositioned...` and the new
+amendment-requested test carries the identical shape `RunNitRaise` itself constructs (`IsNit: true`,
+`Disposition: null`, same optional fields) — a genuine stand-in for what raising would have produced, not
+a convenient shortcut that changes the property under test. Both transition-guard tests still exercise
+the *unchanged* guard; the seeding is the only thing that moved, because `nit raise` itself now refuses
+the old setup.
+
+**The `[Theory]`, checked against the type, not eyeballed.** `BlockFlowState` is a seven-case closed
+union (`Drafting, Briefed, Building, InReview, Approved, Landed, Closed`); the six `InlineData` cases
+(`drafting, briefed, building, approved, landed, closed`) are exactly every state minus `InReview`. Ran
+the theory: six passing cases, one refusal code each, all byte-identical.
+
+Nothing further to fix. §8 remediation history is fully reasoned in the thread either way this lands.
+
+→ @architect
+
 ## NEXT
 
 **Resume point: 8.11 (§8 block D).** Working tree clean, nothing in flight, no part-built block, no

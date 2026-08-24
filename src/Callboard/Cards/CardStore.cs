@@ -161,6 +161,97 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// Appends a nit comment (<paramref name="comment"/>, which SHALL carry
+    /// <see cref="CardComment.IsNit"/>) to the block card at <paramref name="filePath"/>, but only
+    /// while that card is <see cref="BlockFlowState.InReview"/> (review-certification: "A nit SHALL
+    /// be raised only against a block that is under review" — §8 remediation, Product Owner ruling
+    /// of 2026-08-24). Not built on <see cref="AppendComment"/> — that surface is generic over any
+    /// comment on any card kind and has no notion of "under review"; this method re-reads and
+    /// re-validates state under its own lock instead, the same read-decide-write shape
+    /// <see cref="RecordApproval"/> and <see cref="RecordAmendmentRequest"/> already use for their
+    /// own verb-specific checks.
+    ///
+    /// <para>
+    /// <b>What this bound closes, and why raising is the right place to close it (not a second
+    /// check on every writer that can move a block).</b> <see cref="ApplyBlockTransitionUnderExistingLock"/>
+    /// already refuses to leave <c>in-review</c> while a nit is undispositioned; <see cref="
+    /// RecordApprovalUnderExistingLock"/> carries an equivalent check for its own <c>approve</c>
+    /// edge. With raising confined here, those two guards are jointly sufficient: no card can
+    /// reach <c>approved</c>, <c>landed</c> or <c>closed</c> carrying a live nit, because none of
+    /// them could have acquired one to begin with while outside <c>in-review</c>, and the one
+    /// state where a nit can be raised is exactly the one state neither guard permits to be left
+    /// while it is live. This is what makes a nit raised against a terminal (<c>closed</c>) card
+    /// unreachable rather than a live, undispositioned observation with no transition left to
+    /// refuse it — the failure-open gap a state-scoped raise was chosen to close at the source.
+    /// </para>
+    /// </summary>
+    internal static CardNitRaiseOutcome RaiseNit(
+        string cardsRoot, string filePath, CardComment comment, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => RaiseNitUnderExistingLock(heldLock, cardsRoot, comment, changeName),
+            onTimedOut: timedOut => new CardNitRaiseOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="RaiseNit"/>. Same structural lock precondition as
+    /// every other <c>*UnderExistingLock</c> method on this type — the target is
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>.
+    /// </summary>
+    internal static CardNitRaiseOutcome RaiseNitUnderExistingLock(
+        CardLock heldLock, string cardsRoot, CardComment comment, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardNitRaiseOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardNitRaiseOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsBlockCard(card))
+                {
+                    return new CardNitRaiseOutcome.NotABlockCard(card.Frontmatter.Kind);
+                }
+
+                if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
+                {
+                    return new CardNitRaiseOutcome.CardCorrupt(
+                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
+                }
+
+                if (currentState != BlockFlowState.InReview)
+                {
+                    return new CardNitRaiseOutcome.NotUnderReview(currentState);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardNitRaiseOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var updated = card with { Comments = [.. card.Comments, comment] };
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardNitRaiseOutcome>(
+                    onSuccess: _ => new CardNitRaiseOutcome.Raised(updated),
+                    onNotFound: notFound => new CardNitRaiseOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardNitRaiseOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardNitRaiseOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardNitRaiseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardNitRaiseOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardNitRaiseOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
     /// Reassigns <paramref name="filePath"/>'s card to <paramref name="newOwner"/> and appends a
     /// <see cref="CardHandover"/> entry recording the handover (card-model: "Ownership names whose
     /// turn it is" — "**Every** ownership change SHALL record the acting role and the time it
@@ -574,6 +665,17 @@ internal static class CardStore
                 if (transition is null)
                 {
                     return new CardAmendmentRequestOutcome.UndefinedTransition(currentState, available);
+                }
+
+                // Defence in depth (§8 remediation, CardAmendmentRequestOutcome.UndispositionedNits's
+                // own doc comment): not reachable through any write this tool itself makes now that
+                // `nit raise` is bound to `in-review`, but the card on disk can carry a hand-edited
+                // nit the tool never wrote (ADR-0003) — re-validated exactly like
+                // RecordApprovalUnderExistingLock's equivalent check, not inferred from history.
+                var liveNitIds = CardCommentRouting.LiveUndispositionedNitIds(card.Comments);
+                if (liveNitIds.Count > 0)
+                {
+                    return new CardAmendmentRequestOutcome.UndispositionedNits(liveNitIds);
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);

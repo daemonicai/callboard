@@ -153,6 +153,42 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 
+    // Defence in depth (§8 remediation, CardAmendmentRequestOutcome.UndispositionedNits's own doc
+    // comment): not reachable through the tool's own writers now that 'nit raise' is bound to
+    // 'in-review' — RecordApprovalUnderExistingLock already refuses to certify a card carrying a
+    // live nit, so an 'approved' card can never legitimately acquire one. The record is a plain,
+    // git-committed file a human can hand-edit directly (ADR-0003), so the live nit is seeded
+    // straight into the card rather than through 'nit raise', proving the guard this method carries
+    // still fires against that path.
+    [Fact]
+    public void AmendmentRequested_ApprovedCardWithHandEditedLiveNit_Refuses_AndLeavesTheCardByteIdentical()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0005", "B-0005", BlockFlowState.InReview);
+        Approve(repo, path, "B-0005", "commit-abc", "claim one");
+
+        var approved = AssertParseSuccess(CardStore.ReadCard(path));
+        var liveNit = new CardComment(
+            Id: "nit-hand-edited-0005", Author: CardOwner.Reviewer, Timestamp: FixedNow, Body: "A nit.",
+            ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: [],
+            IsNit: true, Required: false, Sites: []);
+        var withHandEditedNit = approved with { Comments = [.. approved.Comments, liveNit] };
+        File.WriteAllText(path, CardFileWriter.Serialize(withHandEditedNit), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "amendment-requested", "--id", "B-0005", "--role", "architect", "--change", ChangeName],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("undispositioned-nits", refusal.GetProperty("code").GetString());
+        Assert.Contains("nit-hand-edited-0005", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
     [Fact]
     public void AmendmentRequested_WrongCardKind_Refuses()
     {
