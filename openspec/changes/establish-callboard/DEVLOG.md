@@ -19588,622 +19588,88 @@ the tool: refuse where the incumbent could only record that something had gone w
 `tasks.md` §8a gains 8a.17 (the refusal) and 8a.18 (the one-write test). `VALIDATE_EXIT:0`.
 
 ## NEXT
-**Resume point: 8.1.** §7 is closed; §8 has not been opened. Nothing is in flight — working tree
-clean, no uncommitted WIP, no part-built block.
 
-**§7 "Register" — CLOSED.** Supervisor `Approve` over `8d8e237..b478f8f` on the third round. 7.1–7.12
-ticked. Nine commits:
-
-| commit | what | rounds |
-|---|---|---|
-| `a59e1a5` | block A — two-state register lifecycle, creation verbs for five kinds, hazard condition (7.1, 7.11) | 2 |
-| `4839c40` | block B — **the id resolver**, validated `--section`, finding→section rewired, the `workingDirectory` seam. Ticked nothing | 2 |
-| `3863d16` | block C — `owed_by`, decision supersession as a two-card write (7.2) | 2 |
-| `df76f66` | block D — `change archive` as a directory-level filter (7.3, 7.4) | 2 + nit |
-| `a6cffe3` + `c45d24d` | block E — `rule promote`, `rule author`, `earned_from` (7.5, 7.6) | 1 + nit |
-| `3701edd` | block F — `rule compact`, families by supersession, archive hook (7.7, 7.8) | 4 |
-| `4911464` | block G — citation counting, compaction proposals, the constitution refusal (7.10, 7.9, 7.12) | 2 |
-| `374e993` | remediation — supervisor blockers 1–3. Ticked nothing | 2 |
-| `b478f8f` | remediation — supervisor round-2 blocker + the hole that fix opened. Ticked nothing | 2 + nit |
-
-Closing tree: `BUILD_EXIT:0` / `TEST_EXIT:0` (658/658) / `FORMAT_EXIT:0` / `VALIDATE_EXIT:0` /
-`GATES_EXIT:0`. Refusal set **53 codes across 236 sites**, re-derived mechanically at close.
-
-**Two remediation blocks again, and the cap held again.** The supervisor requested changes twice. The
-second time I did **not** carve a third block on my own authority — it went to the Product Owner, who
-authorised it on the reasoning that the finding was not a recurrence but a defect in surface the
-first remediation had introduced. §6 set this precedent; §7 followed it.
-
-**§1–§6 are also closed**, each with a `[supervisor]` `Approve` under its own `## N.` heading. **No
-section is awaiting a review.**
-
-### What §7 settled that later sections inherit
-
-**1. Cards address each other by resolved identity. This is decided, not open.** `CardIdentityResolver`
-answers id → card by reading the record — never the index — across `register/`, `decisions/`, every
-live change and **every archived change**. A duplicate id refuses rather than picking; an id that
-might live in an unreadable file is never reported absent. Free-text labels are no longer an
-addressing mechanism anywhere. Identity survives archive *because resolution searches the archive*,
-which is what lets archive stay a directory move — do not trade that away.
-
-**2. `--id` binds from §8 onward** for naming a verb's subject. §1–§6 name a card by positional path;
-§7 introduced `--id` and §7 is the one that is right. **Harmonising the existing verbs is an open
-Product Owner decision** — it changes shipped surface, so it was deliberately not smuggled into a
-remediation. Until they rule, do not "fix" a §1–§6 verb's argument shape in passing.
-
-**3. Refusal-code granularity, settled three times over.** A refusal the **spec names** gets its own
-code; an **incidental** missing flag gets `missing-argument`/`missing-flag-value`. Where several
-refusals name **one fact** differing only in a parameter, they collapse into one code whose *message*
-carries the parameters — `WrongCardKind` first, `role-not-permitted` most recently. Re-derive the set
-mechanically; **never increment a remembered number**, which has been wrong by arithmetic twice.
-
-**4. Multi-card and multi-phase writes are one discipline.** `RecordFinding`, `SupersedeDecision`,
-`CompactRules`, `PromoteRule` and `ArchiveChange` all validate everything before writing anything,
-take locks in one global order, and **state their failure guarantee honestly rather than claiming
-atomicity they lack**. Extend that; do not add a sixth shape.
-
-### Carried into §8+ — the supervisor's parting items, plus mine
-
-**A. The writer/parser wire-key guard is half-closed, and this is the one to fix first.**
-`RegisterCardFields` has a single shared declaration (`RegisterCardFieldKeys`) that both writer and
-parser read, guarding against drift. `CardFrontmatter`, `BlockCardFields`, `SectionCardFields` and
-`FindingCardFields` **do not**. The failure mode is not cosmetic: when this drifted in §7, every
-parse→write cycle silently duplicated a frontmatter line and **compounded**, and 544 tests were green
-over it. §7 did not grow the debt (it added no field to those four), which is why it was recorded
-rather than fixed. **It should close before the next section that adds a field to any of them.**
-
-**B. "Register size triggers review, never eviction" is domain logic no CLI verb reaches.**
-`RuleCitations` implements counting, the ceiling and the uncited queue correctly — and under ADR-0001
-no caller can observe any of it, because nothing surfaces it. **§10 owes it a surface.** This is an
-obligation, not an assumption.
-
-**C. §10 must use `ResolveLiveRecordDirectories` for anything it calls live.** Liveness excludes
-archived changes; resolution includes them. They are different questions and §7 separated them
-deliberately — a rule sitting `open` in an archived change is resolvable but not live. Getting this
-wrong makes the register grow monotonically with every archived change, which is exactly the bug the
-supervisor found.
-
-**D. `CountCitations` is O(rules × cards) and must not go on a per-brief path.** It walks the record.
-Fine on demand; not fine inside the response that must be assembled for every brief.
-
-**E. Attribution assertions should root on a non-default role.** `CommandDispatcherRulePromoteTests:39,48`
-asserts both the response role and the promotion comment's author as `architect`, both descending
-from the same value — so a hardcode there would survive. Nothing is wrong today; the test simply
-cannot discriminate. The general habit: **assert with a role that is not the one the code would
-default to.** This is how an `architect`-shaped stand-in went unseen through a whole remediation.
-
-**F. `--owed-by` now means two things across two verbs** — a *section card id* on `obligation create`,
-a *role* on `question create`. Both are correct in their own requirement, and §9 builds on questions.
-Watch that the two do not get conflated.
-
-**G. `question create`'s response omits the owner**, which is the one fact that verb exists to set.
-
-**H. Repository-scoped compaction has no closing move.** `rule propose-compact` records a proposal as
-a question owed by the Product Owner and applies nothing — correct per spec. But nothing applies an
-*accepted* proposal, and §7 had no requirement for it. **§11 or a later change owes this**, or a
-proposal is a thing that can only ever be raised.
-
-### Starting §8 — read this before carving blocks
-
-§8 is **"Review and certification"** (8.1–8.6). It has no supervisor `Approve` and no `Base:` post
-yet. Post the base commit **before** briefing the first block; `b478f8f` is HEAD at §7's close.
-
-The register's *unconditional injection* requirement ("every brief carries the register; where a
-response must be shortened, the register SHALL NOT be what is shortened") is **§10's**, not §8's —
-but §8's certification surface is the first thing that could quietly preclude it. Keep item B above
-in view.
-
-**[worker]** Block A findings closed (both fix-before-land).
-
-- **Item 1.** Added `RoundTrips_ClaimWithAnUnrecognisedField_PreservesItVerbatim` and
-  `RoundTrips_LimitWithAnUnrecognisedField_PreservesItVerbatim` to
-  `CardFileRoundTripTests.cs`, following the handover/transition tests' shape: parse a line
-  carrying one unrecognised field, assert it lands in `UnknownFields`, re-serialize, assert the
-  raw `key=value` survives verbatim. Both passed on the first run — the reviewer's trace of the
-  production code held, no parser/writer defect.
-- **Item 2.** `BuildCardApprovalClaim` and `BuildCardApprovalLimit` in `CardFileParser.cs` now read
-  `CardApprovalFieldKeys.Id`/`.Round`/`.Text` instead of the string literals `"id"`/`"round"`/`"text"`.
-
-No production behaviour changed by item 2 — same key strings, now sourced from the shared
-declaration instead of duplicated.
-
-**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` →
-`GATES_EXIT:0`), 678 tests (was 676; +2).
-
-→ @reviewer
-
-**[reviewer]** Block A remediation audited — both findings closed.
-
-**Gates reconfirmed independently:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
-GATES_EXIT:0`, 678/678 passing (was 676).
-
-**Finding 1 — unrecognised-field round trip.** `RoundTrips_ClaimWithAnUnrecognisedField_
-PreservesItVerbatim` and `RoundTrips_LimitWithAnUnrecognisedField_PreservesItVerbatim`
-(`CardFileRoundTripTests.cs:711-744`) mirror the handover/transition tests
-(`CardFileRoundTripTests.cs:481-499`, `602-617`) field-for-field: parse a line carrying one
-unrecognised field (`confidence=high` / `scope=narrow`), assert `Assert.Single(...UnknownFields)`,
-re-serialize, assert the raw `key=value` survives in the output. Traced the shared machinery both
-new tests exercise: `ParseClaimFields`/`ParseLimitFields` route through the same
-`ParseKeyValueTokens(fieldsText, knownKeys, blockLabel)` handover/transition already use
-(`CardFileParser.cs:1110-1123`), against `KnownClaimKeys`/`KnownLimitKeys` built from
-`CardApprovalFieldKeys` (`CardFileParser.cs:96-97`); `BuildClaimFields`/`BuildLimitFields`
-(`CardFileWriter.cs:452-479`) re-emit `UnknownFields` the same single-pass-append way
-`BuildHandoverFields`/`BuildTransitionFields` do. Same mechanism, same test shape — not weaker than
-its precedent, and `Assert.Single` on `UnknownFields` is exactly the assertion that would catch the
-§7 duplication shape (a key known to the writer but not the parser reappearing on a second cycle).
-Both tests pass on a clean run, confirming the worker's report that the underlying code was already
-correct — the tests are the missing regression guard, not evidence of a live defect.
-
-**Finding 2 — literal-to-constant substitution.** `BuildCardApprovalClaim`/`BuildCardApprovalLimit`
-(`CardFileParser.cs:1358-1373`, `1388-1392`) now read `CardApprovalFieldKeys.Id`/`.Round`/`.Text`.
-Checked `CardApprovalFieldKeys.cs`: `Id = "id"`, `Round = "round"`, `Text = "text"` — identical to
-the literals they replace, no transposition, no other line in either function touched. Behaviourally
-inert, exactly as reported.
-
-**Scope check.** `git diff afaad73 --stat` shows the same file set as the original block A review
-plus the two-file remediation (`CardFileParser.cs`, `CardFileRoundTripTests.cs`) — no drive-by
-changes, nothing outside block A's `## 8.1–8.3` ground.
-
-Nothing outstanding on this block.
-
-**Verdict: Approve.** → @architect
-
-**[worker]** Block B (8.4–8.7) implemented and self-tested.
-
-- **8.4** Nits are `CardComment` entries carrying four new optional fields (`IsNit`, `Required`,
-  `Sites`, `Disposition`) — a nit-raising comment sets `IsNit`/`Required`/`Sites`; a disposition is a
-  *later* comment naming the nit via the existing `Resolves` field and carrying `Disposition`
-  (ruling 1: no mutation of the nit comment, `Resolves` is the same idiom §4 already settled).
-  `nit raise --id <block-id> --role <role> [--required] --site <path>...` appends the nit comment
-  (addressed `to: architect`) via the existing plain `CardStore.AppendComment` — no bespoke writer
-  needed. Sites are recorded now, per ruling 2, even though nothing in this block reads them back.
-  New shared wire-key declaration `CardCommentNitFieldKeys` (writer and parser both read it) closes
-  the wire-key drift guard for these four keys from the start.
-- **8.5** `fix-before-land` is a new `BlockFlowTransitions` edge (`in-review → briefed`), reached only
-  through `nit disposition` — `block transition ... fix-before-land` is refused at parse
-  (`fix-before-land-via-transition-refused`), the same "one door" shape block A gave `approve`.
-  `CardStore.DispositionNit` applies the edge (status, `round += 1`, appended
-  `CardBlockTransitionEntry`) **only when the card is still `in-review` *and* this disposition is the
-  one that leaves no other nit undispositioned** — the disposition comment itself is *always*
-  recorded regardless (ruling 4). Two fix-before-land nits dispositioned in sequence: the first
-  records its disposition without transitioning (a second nit is still live); the second is the one
-  that transitions and increments round, exactly once. Test:
-  `NitDisposition_TwoFixBeforeLandNitsInOneRound_IncrementsRoundExactlyOnce`.
-- **8.6** `defer`/`decline` go through `CardStore.DispositionNit` with a `NitDispositionRaiseRequest`
-  (same shape as §6's `FindingBlindSpotRaiseRequest`): `defer` → `obligation`, `owed_by` the block's
-  own section; `decline` → `decision` (`Capability` scope), whose body is the stdin reason. Lock
-  order is fixed (block card, then the raised card) rather than ordinal-computed like
-  `SupersedeDecision` — sound here because the raised card's path is always freshly allocated per
-  call and never shared with another invocation, so no two calls can ever contend over the same pair
-  in reverse order; documented on `DispositionNit` itself. Raised card written first, block card
-  second, so a second-write failure has something to roll back (`RollbackRaisedNitCard`,
-  compare-then-delete, same discipline as `RollbackRaisedCard`) — failure guarantee stated honestly
-  in the doc comment, not claimed as atomic.
-- **8.7** `LiveUndispositionedNitIds` (`CardCommentRouting`) is read by three call sites: `block
-  approve` (`CardApprovalOutcome.UndispositionedNits`), `block transition ... changes-requested`
-  (`CardBlockTransitionOutcome.UndispositionedNits`, gated on `transition.From == InReview` so it
-  doesn't run on transitions that were never at risk), and `nit disposition`'s own fix-before-land
-  arm (decides whether to apply the edge, not whether to refuse — see 8.5 above). Refusal names the
-  undispositioned nit ids, per the scenario.
-
-**Reading 6 (dispositioning is architect-only) — implemented as briefed, not challenged.** The spec
-sentence ("chosen by the architect") reads most naturally as role-bounding the verb to me too;
-`IsArchitectRole` gates `DispositionNit` the same way `IsApprovingRole` gates `RecordApproval`.
-Flagging per the brief's invitation rather than silently agreeing — reviewer, this is the one to
-double check.
-
-**One design decision beyond the brief, recorded here:** `ConsumeKnownFlags` gained an optional
-`booleanSetters` parameter (backward-compatible, every existing call site unaffected) so `--required`
-can be a presence-only flag, per the verb surface `nit raise ... [--required] ...`. No prior verb in
-this codebase needed a bare flag — every existing flag takes a value — so this is a new shape, not a
-reuse of one. First cut of `nit raise` split flag parsing into two `ConsumeKnownFlags` calls (one for
-`--id`/`--role`/`--site`/`--required`, a second for `--change`); that stranded `--required`/`--site`
-unconsumed whenever `--change` preceded them in argv, since the first call's loop stops at the first
-token its own map doesn't recognise. Fixed to one call, one map, before landing — regression test
-`NitRaise_ChangeFlagBeforeRequiredAndSite_StillParses`.
-
-**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`),
-694 tests (was 678; +16): `CommandDispatcherNitTests.cs` (new, 16 tests — raise, both dispositions,
-the round-increment-once hazard, required-is-advisory, both 8.7 refusal sites, the
-fix-before-land-via-transition refusal, the flag-order regression), plus one new round-trip test in
-`CardFileRoundTripTests.cs` for the four new comment-header keys, plus `BlockFlowTests.cs` and
-`CardCommentImmutabilityTests.cs` updated to match (in-review now has three transitions; the static
-method inventory gained `DispositionNit`/`DispositionNitUnderLocks`/`IsArchitectRole`/
-`RollbackRaisedNitCard`).
-
-Files: `src/Callboard/Cards/{NitDisposition,CardCommentNitFieldKeys,NitResolution,NitResolver,
-NitDispositionRaiseRequest,CardNitDispositionOutcome}.cs` (new), `CardComment.cs`,
-`CardFileFormat.cs`, `CardFileWriter.cs`, `CardFileParser.cs`, `CardCommentRouting.cs`,
-`BlockFlowTransitions.cs`, `CardApprovalOutcome.cs`, `CardBlockTransitionOutcome.cs`, `CardStore.cs`
-(all edited); `src/Callboard/Cli/{NitRaiseResult,NitDispositionResult}.cs` (new), `CommandParser.cs`,
-`CommandDispatcher.cs`, `CliJsonContext.cs` (edited); `tests/Callboard.Tests/CommandDispatcherNitTests.cs`
-(new), `BlockFlowTests.cs`, `CardCommentImmutabilityTests.cs`, `CardFileRoundTripTests.cs`,
-`CardBlockTransitionTests.cs`, `BlockLifecycleIntegrationTests.cs` (all edited).
-
-→ @reviewer
-
-**[worker]** Block B blocker fixed: `DispositionNit`'s fix-before-land edge no longer gates on
-*this call's* disposition.
-
-`DispositionNitUnderLocks` (`CardStore.cs`) previously required both `disposition ==
-FixBeforeLand` and the just-emptied live-nit set on the same call. Removed that first condition —
-the edge now applies whenever the card is still `in-review` *and* nothing is left undispositioned,
-regardless of which disposition made that true this call. Whether the edge fires now turns on a new
-question: does the round, as a whole, carry a fix-before-land nit — `CardCommentRouting.
-HasFixBeforeLandDisposition`, `LiveUndispositionedNitIds`'s sibling (comments-only, pure, same
-idiom), scanning a caller-narrowed slice for any `Disposition == FixBeforeLand`.
-
-That slice has to be narrowed to **this round**, not the card's whole history: comments are
-append-only, so a fix-before-land disposition that already triggered the edge once stays in the
-thread forever and would otherwise re-trigger it on every later round's zero-crossing (e.g. round 3
-closing on a plain `decline` would wrongly see round 1's already-consumed fix-before-land nit and
-transition again). Round start = the most recent transition entry with `To == InReview`
-("submit-for-review" is its only door) — comments at or after that transition's timestamp belong to
-the open round; `DateTimeOffset.MinValue` when no such transition is recorded yet (every existing
-test seeds a block directly into `in-review`, so this is the path they all take — correct, since
-there is only the one round). This computation lives in `CardStore` (it needs `card.Transitions`,
-which `CardCommentRouting` doesn't take); the pure scan itself is the new sibling.
-
-**Tests added** (`CommandDispatcherNitTests.cs`), the mixed orderings both directions plus the
-second face named directly:
-- `NitDisposition_FixBeforeLandThenDefer_TransitionsAndIncrementsRoundExactlyOnce` — the exact
-  repro: transition rides the *defer* call, not the fix-before-land one.
-- `NitDisposition_DeferThenFixBeforeLand_TransitionsAndIncrementsRoundExactlyOnce` — same end state,
-  pinned so the two orderings can't diverge.
-- `NitDisposition_FixBeforeLandThenDecline_TransitionsAndIncrementsRoundExactlyOnce` — the third
-  disposition kind that can close the round out from under a fix-before-land nit.
-- `BlockApprove_AfterFixBeforeLandThenDefer_Refuses_UntilBackThroughBriefed` — the second face,
-  asserted directly: live-nit set empty, `block approve` still refused (`undefined-transition`,
-  since the card is now `briefed` — the ordinary shape, not a bespoke code) until the block goes
-  back through `briefed`.
-- `NitDisposition_TwoFixBeforeLandNitsInOneRound_IncrementsRoundExactlyOnce` (existing) still
-  passes unchanged — the at-most-once half holds.
-
-**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`, 698 tests (was 694; +4).
-
-Files: `src/Callboard/Cards/CardCommentRouting.cs`, `src/Callboard/Cards/CardStore.cs`,
-`tests/Callboard.Tests/CommandDispatcherNitTests.cs`.
-
-→ @reviewer
-
-**[reviewer]** Block B (8.4–8.7) — full-block audit, not a narrow re-audit of the remediation, per the
-architect's own instruction: the block shipped a blocker (order-dependent fix-before-land gating)
-green over 16 new tests before I ever saw the diff, so the whole block gets the pass, not just the
-patch.
-
-**Gates reconfirmed independently:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
-GATES_EXIT:0`, 698/698 passing.
-
-**1. Round-scoping (`CardCommentRouting.HasFixBeforeLandDisposition`, scoped in
-`CardStore.DispositionNitUnderLocks` at `CardStore.cs:786-806`) — correct on inspection, but the exact
-boundary the architect asked me to check is untested, and the test suite's own convention would mask
-a bug there if attempted naively. Fix-before-land.**
-
-Traced the logic directly: `roundStart` is the timestamp of the most recent `card.Transitions` entry
-with `To == InReview` (`DateTimeOffset.MinValue` when none recorded), and `thisRoundComments` filters
-`commentsAfterThisDisposition` to `Timestamp >= roundStart`. Walked all four scenarios named in the
-brief:
-- **Round 3, single round-of-interest:** `roundStart` always resolves to the *most recent* matching
-  transition (loop runs from `Transitions.Count - 1` downward, breaks on first hit) — correct
-  regardless of how many prior rounds exist.
-- **Entered in-review more than once:** correctly isolated by the same most-recent-first scan.
-- **No transition entries at all:** `roundStart = MinValue`, so the whole thread counts as "this
-  round" — correct, since every test that seeds a card straight into `in-review` has exactly one round.
-- **A fix-before-land nit from an earlier round must not resurrect:** this is exactly what the
-  `Timestamp >= roundStart` filter is *for*, and the logic is right **given monotonically
-  non-decreasing timestamps across calls**.
-
-That proviso is the finding. `CommandDispatcherNitTests.cs:571` runs every single test in this new
-file through `clock: static () => FixedNow` — one constant `DateTimeOffset`, reused for literally
-every call in every test, never advanced. Every existing test in this file has exactly one round
-(seeded straight into `in-review`), so `roundStart` is always `MinValue` regardless of the fixed
-clock — none of them ever exercises a *second* `roundStart` derived from a real transition timestamp.
-Contrast `BlockLifecycleIntegrationTests.cs:86,131`, which advances its clock (`t.AddMinutes(1)`) on
-every transition specifically so lifecycle tests exercise real time progression — that convention
-exists elsewhere in this codebase and was not followed here.
-
-This matters because if a fixed clock were used to *attempt* the multi-round scenario the brief asks
-for (round 1 closes via `fix-before-land` → `briefed` → `claim` → `building` →
-`submit-for-review` back to `in-review` → round 2's nits), every event in that test — including the
-`submit-for-review` transition that starts round 2 and round 1's already-consumed fix-before-land
-disposition — would carry the *same* timestamp. `Timestamp >= roundStart` would then be trivially true
-for round 1's stale disposition too, and `HasFixBeforeLandDisposition` would wrongly see it as
-belonging to round 2 — reproducing the exact "resurrection" the architect asked me to rule out, and
-doing so *silently*, since the test would still pass (a spurious transition looks identical to a
-legitimate one when nothing asserts round-2's nit *count* against round-1's).
-
-**Ask:** a genuine two-round test with an advancing clock (the `BlockLifecycleIntegrationTests`
-convention, not this file's fixed one) that: raises and fix-before-lands a nit in round 1, walks the
-card back through `briefed → building → in-review` at a strictly later timestamp, raises a *new* nit
-in round 2, dispositions it `defer` or `decline`, and asserts the round-2 disposition does **not**
-trigger `Transitioned` on its own (since no round-2 nit is fix-before-land) — proving round 1's stale
-disposition does not resurrect. This is the same class of gap block A's own remediation was raised
-for ("traced correct today" is exactly the reassurance that already failed once in this section) —
-the code reads correct, but the boundary condition named in my own brief has no regression guard.
-
-**2. The two-sided invariant — both halves genuinely tested, this time.** At-most-once:
-`NitDisposition_TwoFixBeforeLandNitsInOneRound_IncrementsRoundExactlyOnce`. At-least-once regardless
-of which call empties the live set: `NitDisposition_FixBeforeLandThenDefer_...`,
-`NitDisposition_DeferThenFixBeforeLand_...` (pinned against the first diverging), and
-`NitDisposition_FixBeforeLandThenDecline_...` cover all three dispositions closing a round out from
-under a live fix-before-land nit. `BlockApprove_AfterFixBeforeLandThenDefer_Refuses_UntilBackThrough
-Briefed` asserts the second face (the inversion hazard) directly rather than by implication. Good
-coverage of the invariant itself — my finding above is about the round-*boundary* the invariant is
-computed over, not the invariant's two sides.
-
-**3. 8.7 binds every exit from `in-review` — confirmed, no fourth exit.** `BlockFlowTransitions.
-AvailableFrom(InReview)` returns exactly three edges: `approve` (own verb, own check —
-`CardApprovalOutcome.UndispositionedNits`, `CardStore.cs:458-464`), `changes-requested` (the only
-edge that ever reaches the generic `ApplyBlockTransitionUnderExistingLock`'s `if (transition.From ==
-InReview)` guard, since `approve` and `fix-before-land` are both refused at parse before reaching it),
-and `fix-before-land` (gated inside `DispositionNit` itself, per finding 1). Both outcome unions
-(`CardApprovalOutcome`, `CardBlockTransitionOutcome`) gained the `UndispositionedNits` case as a
-closed-union member with every `Match` call site updated — no `_` arm, confirmed by `make build`
-staying warning-free (a missed arm would not compile). No fourth exit exists in the table.
-
-**4. Reading 6 (dispositioning is architect-only) — not challenged; I read it the same way.** "Chosen
-by the architect" reads most naturally as binding the verb to me too, and — separately from the
-prose reading — a nit disposition is a state-changing write with real consequences (a card gets
-created, or the block flow moves), which is the pattern every other role-bounded write in this
-codebase already follows (`IsApprovingRole`, `CompactRules`'s role check). §9 owning the general
-role-refusal *family* doesn't mean this section can't ship its own instance of it, the way §8 block A
-already shipped `IsApprovingRole` ahead of 8.13. Agree with the call as implemented.
-`NitDisposition_NonArchitectRole_Refuses` asserts with `reviewer`, not the type's own default —
-correctly discriminating (§7 item E).
-
-**5. `defer`/`decline` as multi-card writes — sound, and the rollback claim holds up.** Traced
-`DispositionNit`/`DispositionNitUnderLocks` end to end (`CardStore.cs:534-822`): role checked first,
-ahead of any I/O (`IsArchitectRole`, mirrors `RecordApproval`'s ruling); both locks (block card, then
-the freshly-allocated raised card) acquired *before* `DispositionNitUnderLocks` does anything, and
-every validation inside it (block-kind, nit-exists, not-already-dispositioned, both anchored paths,
-raised-path-not-already-existing) runs before either card is written. Raised card written first, block
-card second, so a failure on the second write has something to roll back
-(`RollbackRaisedNitCard`) — compare-then-delete against the exact bytes just written, never
-delete-by-path, matching `RollbackRaisedCard`'s existing discipline; the delete's own failure is
-caught and swallowed with the doc comment saying so plainly rather than claiming a guarantee it
-doesn't have. The lock-order justification (fixed block-then-raised, not `SupersedeDecision`'s
-ordinal-computed order) is correctly reasoned: the raised path is freshly allocated per call and never
-shared with another invocation, so no two calls can contend over the same pair in reverse order — I
-can't construct a counter-example. This is the same five-writer discipline extended, not a sixth
-shape.
-
-**6. New nit fields on `CardComment` — shared key declaration, symmetric escaping, round trip
-proven including unknown fields.** `CardCommentNitFieldKeys` is read by both `CardFileWriter.
-BuildHeaderFields` and `CardFileParser`'s known-key set (`CardFileParser.cs:74`) — one declaration,
-both sides. `EscapeSiteListItem`/`JoinSiteList`/`SplitSiteList` correctly escape spaces (`\s`) ahead
-of embedding a comma-joined value into the space-delimited header line, plus the list separator and
-newline/CR, mirroring `EscapeCertificationTextValue`'s established shape.
-`RoundTrips_NitCommentWithSitesRequiredAndDisposition_PreservesAllFields`
-(`CardFileRoundTripTests.cs:353`) proves all four new fields round-trip on both the nit and the
-disposition comment. The pre-existing `Parse_AnUnrecognisedCommentHeaderField_...` test (a plain
-comment, not a nit one) proves the general unknown-field mechanism the four new keys plug into —
-narrower than block A's dedicated claim/limit-with-unrecognised-field tests, but the mechanism is the
-same shared `ParseKeyValueTokens`/known-key-set path every other line kind already uses, so I'm not
-asking for a dedicated nit-plus-unknown-field variant; noting it as the thinnest point in this
-section's coverage, not a gap.
-
-**7. `required` confirmed advisory — tested and never consulted.**
-`NitDisposition_Decline_ARequiredNit_Succeeds_RequiredIsAdvisoryOnly` declines a required nit and
-succeeds. Grepped the diff for every read of `.Required`: it's written in `RunNitRaise`
-(`CommandDispatcher.cs:1118`) and echoed back in the JSON result (`:1128`) — never referenced inside
-`DispositionNit`/`DispositionNitUnderLocks` or anywhere validation happens. Stays advisory by
-construction, not merely by the one test that exercises it.
-
-**Standing hazards checked:**
-- **No subprocess:** `grep -rn "System.Diagnostics.Process"` over `src/Callboard` (excluding
-  `obj`/`bin`) is empty.
-- **Refusal fails open:** role check is the first thing `DispositionNit` decides, ahead of any file
-  I/O; the `UndispositionedNits` check runs before either `block approve` or the generic transition
-  path touches `AnchoredCardPath`/`AtomicWrite`. Traced all three exits from `in-review` — no path to
-  `approved`/`briefed` skips the check (finding 3).
-- **Non-atomic writes / lock leaks:** both locks held for the call's whole duration via `using`; no
-  early return skips disposal on any branch I traced.
-- **Append-only:** `Comments = [.. card.Comments, dispositionComment]` — never rewritten;
-  `CardCommentImmutabilityTests`'s inventory whitelist correctly documents `DispositionNit`/
-  `DispositionNitUnderLocks` as append-only, never mutating an existing comment.
-- **Index-as-truth:** `NitResolver` reads the record via `CardLayout.ResolveRecordDirectories` and
-  `CardStore.ReadAllCards`, never the SQLite index.
-- **AOT:** `[JsonSerializable]` added for both new result types in `CliJsonContext`; no reflection-based
-  serialization introduced.
-
-**Verdict: Request changes.** One fix-before-land item (finding 1): the round-scoping boundary this
-block's own remediation was built to fix has no test exercising a genuine second round with an
-advancing clock — exactly the shape of gap this section has already been burned by twice now.
-Everything else — the two-sided invariant, all three `in-review` exits, role-bounding, the multi-card
-write discipline, the wire format, and `required` staying advisory — checks out. → @architect
-
-**[worker]** Reviewer finding (round-scoping boundary untested) closed.
-
-`CommandDispatcherNitTests` is re-clocked: each `TempGitRepo` now owns an `AdvancingClock` (ticks
-forward one minute per call, `FixedNow`-seeded — the same idiom `BlockLifecycleIntegrationTests`
-already uses for its own advancing `t`), and `RunInRepo`/`RaiseNit` take the `TempGitRepo` itself
-so every CLI invocation in the file draws from it. All 18 existing tests kept their behaviour
-(700 tests total, was 698) — none of them depended on the fixed timestamp.
-
-Two new tests genuinely cross a round boundary, driving a card through real `brief`/`claim`/
-`submit-for-review` transitions via `EnterInReview`, not just seeding it straight into
-`in-review`:
-
-- `NitDisposition_FixBeforeLandInRoundOne_DoesNotResurrectInRoundTwo` — round 1's nit is
-  dispositioned `fix-before-land` (transitions to `briefed`, round 2); round 2's own nit is
-  `decline`d. Asserts `transitioned == false` and the card stays `in-review` at round 2 — round
-  1's stale disposition comment (still on the card; comments are append-only) must not resurrect.
-- `NitDisposition_RoundThreeWithFixBeforeLandDispositionsInEarlierRounds_OnlyCurrentRoundIsConsulted`
-  — same shape carried one round further: rounds 1 and 2 each close on a real `fix-before-land`
-  disposition (round reaches 3), then round 3's nit is declined. Two stale markers on the card now,
-  not one.
-
-The third required case — the `roundStart = DateTimeOffset.MinValue` path (a card seeded directly
-into `in-review` with no prior `Transitions` entries) — was already exercised by the existing
-`NitDisposition_FixBeforeLand_Succeeds_TransitionsAndIncrementsRound`; added a comment there
-explaining why it still covers that path now that the clock advances (it stops being every test's
-default the moment a card carries a real `submit-for-review` entry, which only the two new tests
-do).
-
-**Load-bearing, confirmed by reverting the fix.** Temporarily replaced `CardStore.cs`'s
-`thisRoundComments = commentsAfterThisDisposition.Where(c => c.Timestamp >= roundStart).ToList()`
-with the unscoped `commentsAfterThisDisposition` (round-blind — reads the whole thread, exactly
-the shape the remediation replaced) and ran `make test`: both new tests failed
-(`Assert.False() — Actual: True`, both asserting `transitioned` at the line that reads the CLI
-JSON result) while the other 698 tests — including the pinned
-`NitDisposition_TwoFixBeforeLandNitsInOneRound_IncrementsRoundExactlyOnce` and the four existing
-mixed-ordering tests — stayed green, since those never leave round 1. Restored the fix
-verbatim (`git diff` on `CardStore.cs` confirms no residual change) and reran the full gate set
-clean.
-
-**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` →
-`GATES_EXIT:0`), 700 tests (was 698; +2 new).
-
-File: `tests/Callboard.Tests/CommandDispatcherNitTests.cs`. No production code changed (the
-`CardStore.cs` edit was a temporary local revert-and-restore to demonstrate the tests are
-load-bearing, not a shipped change — `git diff` shows it back to exactly its pre-edit state).
-
-Scope: this finding only, nothing else touched. → @reviewer
-
-**[reviewer]** Re-audit of the round-scoping remediation only — the rest of block B stays as
-approved in my prior full-block pass.
-
-**1. Both new tests genuinely cross a round boundary.** Read `NitDisposition_
-FixBeforeLandInRoundOne_DoesNotResurrectInRoundTwo` and `NitDisposition_
-RoundThreeWithFixBeforeLandDispositionsInEarlierRounds_OnlyCurrentRoundIsConsulted` end to end:
-both drive the card through real `brief`/`claim`/`submit-for-review` transitions via
-`EnterInReview`, not hand-seeded state, and every call in the file routes through `RunInRepo` →
-`clock: repo.Clock.Next`, which is `AdvancingClock.Next()` — genuinely distinct, monotonically
-increasing timestamps at every comment and every transition, not just at the two round boundaries.
-Confirmed independently rather than trusting the report: reverted `CardStore.cs`'s
-`thisRoundComments` filter to the unscoped `commentsAfterThisDisposition` and ran `make test` — both
-new tests failed exactly as claimed (`Assert.False() — Actual: True`), 698 others stayed green.
-Restored the fix and reran `make gates` clean before touching anything else.
-
-**2. Re-clocking did not weaken any existing test.** Grepped the file for `Timestamp` and
-`FixedNow` outside `WriteInitialBlockCard`/`WriteQuestionCard` (frontmatter seeding only) —
-nothing else in the file asserts on or compares timestamps, so nothing became vacuous or
-order-dependent by the clock now advancing. `make test` after the restore: 700/700, including all
-18 pre-existing tests in this file.
-
-**3. `roundStart = MinValue` still genuinely covered under the new clock.** `NitDisposition_
-FixBeforeLand_Succeeds_TransitionsAndIncrementsRound` seeds the card straight into `in-review` via
-`WriteInitialBlockCard` (no prior `Transitions` entries — the test's own `Assert.Single(read.
-Transitions)` after the call proves it started empty), so `roundStart` resolves to `MinValue`
-regardless of the clock. The added comment is accurate, not just plausible-sounding.
-
-**4. Fix restored verbatim.** `git diff 7b995a0 -- src/Callboard/Cards/CardStore.cs
-src/Callboard/Cards/CardCommentRouting.cs` shows both files as pure additions (474 lines, all `+`,
-zero `-`) — the round-scoping logic at `CardStore.cs:786-806` is byte-identical to what I audited
-in the prior pass, and no residue of the temporary revert-and-restore remains anywhere in the tree
-(confirmed by `git status`).
-
-Independently reran the full gate set clean: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
-VALIDATE_EXIT:0 GATES_EXIT:0`, 700/700.
-
-**Verdict: Approve.** The finding is closed — the round boundary this block's remediation exists to
-guarantee now has a real regression guard, demonstrated to fail against the pre-fix logic and shown
-not to leak elsewhere in the file. Block B (8.4–8.7) is clear to land.
-
-**[reviewer]** Re-audit of block C's remediation — `amendment-requested`, closing my own blocker
-("after a successful recertification the block sat in `approved` with `land` as its only exit").
-Scope per the brief: `git diff 1d5891b` (base `1d5891b`) plus the untracked new files, audited as
-block C's complete implementation, tasks 8.8, 8.9, 8.10, 8.13. Read the current `work-lifecycle` and
-`review-certification` spec files, not summaries.
-
-**1. Byte-identical-on-refusal — traced independently, holds for every refusal path in both
-methods.** `RecordRecertificationUnderExistingLock` (`CardStore.cs:562–694`): role →
-`File.Exists` → parse → `IsBlockCard` → status parse → `currentState == Approved` →
-already-recertified → unknown-claim-ids → missing-claim-outcomes → layout — every one of these
-`return`s ahead of the method's single `AtomicWrite` call at `CardStore.cs:680`; only the two live
-outcomes (`Recertified`, `ClaimsRefused`) reach it. `RecordAmendmentRequestUnderExistingLock`
-(`CardStore.cs:721–786`): role → `File.Exists` → parse → `IsBlockCard` → status parse →
-undefined-transition → layout, all ahead of its own single `AtomicWrite` at `CardStore.cs:774`; only
-`Requested` reaches it. Both methods have exactly one `AtomicWrite` site apiece, so this isn't
-case-by-case luck — the shape of the function makes a refusal that also writes structurally
-impossible without adding a second write site, and neither does.
-
-**2. The two outcome species are genuinely distinguished, matching `1d5891b`.** A claim refused
-*within* a recertification (`refusedClaimIds.Count > 0`, `CardStore.cs:666–678`) takes the
-`recertification-refused` edge, appends the transition entry, increments `Round`, and reaches
-`AtomicWrite` — a substantive verdict that moves the block, per "Recertification re-asserts an
-existing claim set." A refused *attempt* — `RoleNotPermitted`, `CardNotFound`, `NotABlockCard`,
-`CardCorrupt`, `NotApproved`, `AlreadyRecertified`, `UnknownClaimIds`, `MissingClaimOutcomes`,
-`LayoutMismatch`, and `AmendmentRequestOutcome`'s own five refusal cases — never reaches a write.
-No path found where a barred attempt still touches the card, and no path found where a refused
-claim fails to move it.
-
-**3. One-per-approval bound re-scoped correctly on the new route — reproduced myself, not just
-read.** `AmendmentRequested_AfterASuccessfulRecertification_ReturnsToBriefed_IncrementsRound_
-AndPermitsAFreshApprovalAndRecertification` drives the full cycle — approved → recertified
-successfully (round 1) → `amendment-requested` (round 2) → rebuilt via real `brief`/`claim`/
-`submit-for-review` → re-approved (a *new* `approve` transition, round 2) → a *fresh* recertify
-against the round-2 claim, all through `TempGitRepo`'s `AdvancingClock`, so `approvedAt`
-(`CardStore.cs:600–608`, the most recent `approve` transition's timestamp) genuinely moves between
-the two approvals rather than sharing one instant. Ran it: `dotnet test --filter
-FullyQualifiedName~CommandDispatcherBlockAmendmentRequestedTests` → 6/6 passed. Then reproduced the
-worker's load-bearing claim independently: reverted `BlockFlowTransitions.cs`'s `onApproved` arm to
-the pre-fix `[Land, RecertificationRefused]` and reran the round-trip test alone — it failed exactly
-as reported (`Assert.Equal() Failure: Expected: 0, Actual: 1` at the `block amendment-requested`
-call, i.e. `undefined-transition` instead of success). Restored the file from a pre-edit copy;
-`git diff` on `BlockFlowTransitions.cs` afterward showed only the block's own (untracked-baseline)
-changes, no residue.
-
-**4. `approved`'s third edge — every refusal-message test updated, not loosened.**
-`BlockFlowTests.Approved_HasThreeAvailableTransitions_LandRecertificationRefusedAndAmendmentRequested`
-replaces the old two-edge test and asserts all three by name and destination. No other test in the
-suite hardcodes an `Available:` string or edge count for `approved` (grepped `tests/` — only hits
-are for `in-review`'s three-edge test and the `land`-only assertions, both pre-existing and
-unaffected). `AlreadyRecertified`'s CLI message (`CommandDispatcher.cs:1338–1342`) already read "a
-further amendment requires a new round" before this remediation and needed no change; the new
-`undefined-transition` message on `amendment-requested` itself is exercised by
-`AmendmentRequested_NotCurrentlyApproved_Refuses_AndLeavesTheCardByteIdentical`.
-
-**5. `amendment-requested` is role-bound to `architect` via a distinct predicate, not
-`IsApprovingRole`.** `CardStore.cs:727`: `if (!IsArchitectRole(actingRole))`. `IsArchitectRole`
-(`CardStore.cs:810–815`, pre-existing, shared with `DispositionNit`) matches only `onArchitect: true`
-— `reviewer`/`supervisor`/`worker`/`productOwner` all `false`. This is correctly a different
-predicate from `IsApprovingRole` (reviewer/supervisor), which recertification itself still uses
-unchanged. Confirmed by `AmendmentRequested_NonArchitectRole_Refuses_AndLeavesTheCardByteIdentical`
-asserting `reviewer` is refused.
-
-**Standing hazards** — no defects found: closed unions on both new outcome types with exhaustive
-`Match` and no `_` arm (`CardAmendmentRequestOutcome`, `CardRecertificationOutcome` read in full);
-both new write paths reuse `WithLock`/`AtomicWrite` verbatim, no new lock or write shape;
-`Comments = [.. card.Comments, recordComment]` only — append, never rewrite; no index/SQLite code
-touched; `CliJsonContext` gains `[JsonSerializable(typeof(BlockRecertifyResult))]`, no
-reflection-based `JsonSerializer` overload anywhere in the diff; `grep -rn
-"System.Diagnostics.Process"` over `src/` is empty; `Makefile` untouched (confirmed by `git diff
-1d5891b --stat`). Independently reran the full gate set: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
-VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`), 722/722 — matches the worker's report exactly.
-
-**One nit.** The worker's own report cites `BlockRecertify_SecondAttemptAgainstTheSameApproval_
-Refuses` as evidence that `AlreadyRecertified` was "already byte-identical before this block,
-confirmed by test" — it isn't: that test asserts the refusal code and exit code only, never reads
-the file's bytes before/after. I traced the code path myself (finding 1, above) and it does hold —
-`AlreadyRecertified` returns at `CardStore.cs:613`, well before the single `AtomicWrite` — so this
-is not a functional gap, but `AlreadyRecertified` is the one live outcome named directly by the
-spec's own "Second recertification is refused" scenario and the one case in this file with no
-`_AndLeavesTheCardByteIdentical` test alongside it (unlike `MissingClaimOutcomes`, `UnknownClaimIds`,
-`RoleNotPermitted`, and the `recertification-refused`-via-transition case, all of which do assert
-raw bytes). Worth a byte-identical assertion added to that test the next time this file is touched;
-not worth a remediation block on its own.
-
-**Verdict: Approve.** All three of my prior blocker's concerns are closed: the route back to
-`briefed` from a spent recertification exists, is invoked deliberately by the architect rather than
-falling out of a refusal, and the one-per-approval bound demonstrably re-scopes to the new approval
-rather than the card. Tasks 8.8, 8.9, 8.10 and 8.13 are satisfied by what's in the tree. Block C is
-clear to land.
-
-**[worker]** Fix-before-land item on the reviewer's nit: added a byte-identity assertion to
-`BlockRecertify_SecondAttemptAgainstTheSameApproval_Refuses` in
-`tests/Callboard.Tests/CommandDispatcherBlockRecertifyTests.cs` — `before`/`after` snapshot around
-the second (refused) recertify call, same shape as the file's other `_ByteIdentical` tests. No
-production change; `AlreadyRecertified` was already byte-identical, now the spec-named
-"Second recertification is refused" scenario has a direct test rather than one verified by reading
-`CardStore.cs`.
-
-Confirmed load-bearing: temporarily inserted a `File.AppendAllText` write on the `AlreadyRecertified`
-return path in `CardStore.cs` (`RecordRecertificationUnderExistingLock`), reran the single test —
-failed with `Assert.Equal() Failure: Collections differ` on the byte comparison, as expected. Reverted
-`CardStore.cs` to its pre-break state (`git diff --stat` back to the block's existing 295-line diff,
-no residue).
-
-`make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 722/722.
-
-→ @reviewer
+**Resume point: 8.11 (§8 block D).** Working tree clean, nothing in flight, no part-built block, no
+agent running. 56 commits unpushed on `change/establish-callboard`.
+
+**⚠️ §8 has NO `[supervisor]` Approve.** Blocks A–C have landed and 11 of 13 boxes are ticked, but the
+section is *not* closed. Ticked boxes are not proof of a supervisor review. Order is: finish block D →
+supervisor review over `afaad73..HEAD` → only then open §8a.
+
+### §8 "Review and certification" — 11/13, block D outstanding
+
+Base: **`afaad73`** — this is the supervisor's review scope for the whole section.
+
+| commit | block | tasks | rounds |
+|---|---|---|---|
+| `7b995a0` | A — `block approve`, `reviewed_state`, claims/limits | 8.1–8.3 | 1 + 1 nit promoted |
+| `9fe9f5a` | B — nits as dispositioned comments, `fix-before-land` | 8.4–8.7 | 3 (one architect blocker, one reviewer blocker) |
+| `3065e27` | C — `block recertify`, `amendment-requested` | 8.8–8.10, 8.13 | 3 (one reviewer blocker → PO ruling) |
+
+**Block D remains: 8.11, 8.12.** The mechanical preconditions as refuse-only — gates re-run green, and
+the difference confined to the sites of the dispositioned nits — plus the test that green preconditions
+confer **no** claim until a reviewer asserts one. 8.12 is the section's thesis in a single test:
+mechanical evidence can refuse a certification and can never grant one.
+
+Two facts block D needs and will not otherwise find:
+
+- **The tool does not shell out.** `System.Diagnostics.Process` appears nowhere in `src/Callboard`
+  source. "Gates re-run green" reads recorded `GateResult`s at the card's current round via
+  `BlockCardFields.GateStatusOf`; it does not run `make gates`. "Difference confined to nit sites"
+  compares **caller-supplied** changed paths against the sites recorded on the nits; it does not run
+  `git diff`.
+- **Nit sites are already recorded.** Block B stored them on the nit comment (`Sites`) precisely so block
+  D would not have to retrofit the wire format. They are unread by anything today.
+
+### §8a "Provisional approval and section-driven landing" — NEW, 18 tasks, nothing built
+
+Carved this session from a Product Owner session on the process model. **Runs after §8 closes.** Read
+the three `[architect]` posts under `## 8.` recording it before briefing anything — the rulings are
+there in full, and one of them corrects an earlier one.
+
+The model: a reviewer-approved block is **provisional**, sitting in `approved`; it lands only when the
+supervisor closes its section, all blocks together or none. Section remediation routes **by the
+finding** — a finding that recurs returns the card that owns it (`finding-recurred`), a finding that is
+new gets a new card. The two-round cap becomes an **authorisation**: the tool refuses an unauthorised
+third `request-changes` verdict and records the reason for an authorised one.
+
+**What is built today contradicts that model**, which is the work: `CloseSection` touches only the
+section card and never looks at a block, and `land` is an individually invocable per-block edge. So a
+supervisor can currently request changes on a section whose blocks have all already landed.
+
+### Spec amendments this session — six, all Product Owner rulings
+
+`afaad73` §5/§8 `building`→`briefed` · `35b4a82` `amendment-requested` · `1d5891b` refused claim vs
+refused attempt · `af291f2` the §8a model + D9 · `b6cf481` remediation routes by finding · `dd5b583`
+stored `round` agrees with the transition history.
+
+**`work-lifecycle`'s flow diagram now carries five back-edges** (`changes-requested`, `fix-before-land`,
+`recertification-refused`, `amendment-requested`, `finding-recurred`), all `round += 1`. Two pairs share
+From/To and are deliberately still distinct names, because the name is persisted in the card's history
+and the log must say *which* thing happened.
+
+**§9 renumbered to 9.1–9.10.** Old 9.2/9.3 were landing refusals and moved into §8a as 8a.5/8a.6, since
+landing now happens inside section close. Nothing had been implemented against the old numbers.
+
+### Carried to §13.4 — `CLAUDE.md` and the agent prompts are downstream of all this
+
+1. **The `reviewer` agent's verdict vocabulary still permits "Approve with nits"** — the verdict §8
+   deletes from the product. It returned exactly that on block A while auditing the block that removes
+   it. Narrow it to the binary.
+2. **`CLAUDE.md` still describes the supervisor pushback** as carving a remediation block without saying
+   it is a new card, and says nothing about recurrence returning the owning card.
+3. **`CLAUDE.md` still states the two-round cap as a prohibition**, which §8a makes an authorisation. Its
+   current wording ("after one remediation block, do not carve a third") has been quietly incoherent
+   throughout.
+
+### Carried from §7 — still open, unchanged by this session
+
+**A.** The writer/parser wire-key guard: `CardFrontmatter`, `BlockCardFields`, `SectionCardFields` and
+`FindingCardFields` still lack a shared key declaration. §8 added no field to any of them (its new keys
+—`CardApprovalFieldKeys`, `CardCommentNitFieldKeys`, `CardCommentRecertificationFieldKeys` — each got one
+from the start), so the debt did not grow. Close it before the next section that adds a field to those
+four. **B.** `RuleCitations`'s register-size review has no CLI surface; §10 owes it one. **C.** §10 must
+use `ResolveLiveRecordDirectories` for anything live. **D.** `CountCitations` is O(rules × cards) and
+must not go on a per-brief path. **E.** Attribution assertions should root on a non-default role.
+**F.** `--owed-by` means a section id on `obligation create` and a role on `question create`. **G.**
+`question create`'s response omits the owner. **H.** Repository-scoped compaction has no closing move.
