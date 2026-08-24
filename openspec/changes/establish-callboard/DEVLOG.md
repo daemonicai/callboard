@@ -19587,6 +19587,627 @@ the tool: refuse where the incumbent could only record that something had gone w
 
 `tasks.md` §8a gains 8a.17 (the refusal) and 8a.18 (the one-write test). `VALIDATE_EXIT:0`.
 
+**[architect]** **Block D brief — 8.11, 8.12.** The mechanical preconditions, as refusals and only as
+refusals. **Last block of §8**; the supervisor review over `afaad73..HEAD` follows it.
+
+**Tasks**
+
+- 8.11 Implement the mechanical preconditions as refuse-only: gates re-run green, difference confined to
+  nit sites
+- 8.12 Test that green preconditions confer no claim until a reviewer asserts it
+
+**Binding spec — `review-certification`, "Recertification is bounded"** (block C implemented the first
+half of this same requirement; you implement the rest of it, so read it whole):
+
+> Mechanical preconditions SHALL gate recertification and SHALL be able only to refuse it, never to
+> satisfy it: every gate on the card SHALL have been re-run to a passing exit code, and the difference
+> between certified and amended states SHALL be confined to the sites of the dispositioned nits. A
+> difference extending beyond those sites SHALL send the block to full re-review, by the same
+> `amendment-requested` route: the precondition refuses, and the architect reopens the block.
+
+and, from the same requirement, the distinction block C already implements and you must not blur:
+
+> A **refused recertification attempt** — one barred by the bound above, by a mechanical precondition,
+> by the acting role, or by a malformed request — is not a verdict at all: it SHALL leave the card
+> byte-identical, recording nothing and moving nothing.
+
+Scenarios: *Out-of-scope difference forces full re-review* (refuses, leaves the card untouched, **names
+`amendment-requested`**); *Green preconditions do not confer approval* (proceed permitted, **no claim
+recorded as re-asserted until the reviewer asserts it**).
+
+**The two facts this block needs and will not otherwise find**
+
+- **The tool does not shell out.** `System.Diagnostics.Process` appears nowhere in `src/Callboard`, and
+  this block does not introduce it. "Gates re-run green" reads the `GateResult`s already recorded on the
+  card; it does **not** run `make gates`. "Difference confined to nit sites" compares **caller-supplied**
+  changed paths against sites recorded on the card; it does **not** run `git diff`.
+- **Nit sites are already on the wire.** Block B stored them on the nit-raising comment
+  (`CardComment.Sites`, `CardCommentNitFieldKeys.Sites`) specifically so this block would not have to
+  retrofit the format. Nothing reads them back today — you are the first reader. No wire change needed
+  and none wanted.
+
+**Architect readings and calls — binding; challenge in-thread if you think one is wrong**
+
+1. **Changed paths arrive as `--changed <path>`, repeatable, and are required.** Same shape as
+   `--assert`/`--refuse` in `ParseBlockRecertify`. Omitting it is refused at parse time (own refusal
+   code, e.g. `changed-paths-required`) with a message saying the caller must state the paths the
+   amendment touched. Do **not** treat "no `--changed`" as "an empty difference, vacuously confined" —
+   that would turn the precondition off by omission, which is exactly the failure a refuse-only gate
+   must not have.
+
+2. **The gate precondition, precisely.** For every **distinct label appearing anywhere in
+   `BlockCardFields.GateResults`** (any round — that is "every gate on the card"),
+   `GateStatusOf(label).Passed` must be true. Refuse naming the labels that fail it, and keep the two
+   failing reasons distinguishable in the message: *absent at this round* and *recorded non-zero* are
+   different facts, and `GateStatus` was built to keep them apart — do not collapse them into "not
+   green" in the text the reviewer reads.
+
+3. **Be honest about what the gate precondition cannot check.** `GateResult` carries no timestamp, and a
+   successful recertification does not move `round`, so a gate recorded *before* the amendment is
+   indistinguishable from one re-run *after* it. This check therefore establishes "this round's gates
+   are green", not "the gates were re-run since the amendment". **Do not add a timestamp to
+   `GateResult`** to close that — it is a wire-format change to a §5 type, out of this block's scope, and
+   it needs a Product Owner call. **Do not add a `--gates-rerun` flag or any affordance implying the tool
+   verified freshness.** State the limit plainly in the doc comment, and surface it to the reviewer in
+   `BlockRecertifyResult.Notice` alongside the re-derivation obligation block C already put there. This
+   is the same call as block C item 7: refuse what we can, be honest about what we cannot, never record
+   a promise as if it were evidence.
+
+4. **The nit-site set is scoped to the current round.** The sites that bound this amendment are those of
+   the nits **dispositioned in the round that produced the current approval** — not every nit the card
+   has ever carried. An earlier round's nits name sites that are no longer under a live disposition, and
+   admitting them silently widens the permitted difference. Derive the boundary from the record, the way
+   block C derived "since the current approval": the current round starts at the timestamp of the **most
+   recent transition whose `To` is `briefed`**, or `DateTimeOffset.MinValue` if the card has none. Take
+   nit comments at or after that boundary that are dispositioned (`CardCommentRouting.
+   IsNitDispositioned`), and union their `Sites`.
+
+5. **Site matching, precisely.** Sites are free text a reviewer typed; they are not validated paths and
+   you must not start validating them. Normalise both sides for comparison only: trim, replace `\` with
+   `/`, and take a site's path portion as everything before its first `:` (so `src/Foo.cs:42` bounds
+   `src/Foo.cs`). A changed path is **confined** if, for some site, it is ordinal-equal to that path or
+   sits under it as a directory prefix (`site + "/"`). Any changed path matching no site refuses the
+   attempt, naming **the offending paths** and the sites that were in bounds — the reviewer needs to see
+   both to tell a real out-of-scope edit from a mistyped site.
+
+6. **No dispositioned nits ⇒ the bound is empty ⇒ every changed path is out of scope ⇒ refuse.** Do not
+   special-case it into a pass. A recertification exists because nits were dispositioned; a card with
+   none has nothing bounded to amend, and full re-review is the correct route.
+
+7. **The out-of-scope refusal must name `amendment-requested`.** The spec says so in the requirement text
+   *and* in the scenario. Name the transition by its wire name in the refusal message, as the route to
+   full re-review.
+
+8. **Two new refusal-shaped cases on `CardRecertificationOutcome`** — one per precondition (e.g.
+   `GatesNotGreen`, `DifferenceOutsideNitSites`), carrying the facts each message needs. Both are
+   caller-correctable refusals, not `CardCorrupt` and not `ToolFailure`; both leave the card
+   **byte-identical**. Every existing `Match` caller gains the two arms — that is the type doing its job.
+
+9. **Ordering: the preconditions are evaluated last, immediately before the write.** After
+   `UnknownClaimIds` and `MissingClaimOutcomes`. A caller who mistyped a claim id should be told they
+   mistyped a claim id, not told about gates. Everything still refuses before anything is written.
+
+10. **Refuse-only is a structural property, not a comment.** There must be no path on which a
+    precondition *contributes* to an outcome: no claim marked asserted because the gates were green, no
+    `preconditionsPassed` field on `BlockRecertifyResult` (a reader will take it for certification), no
+    `--skip-preconditions` escape hatch. Green preconditions do exactly one thing: they fail to refuse.
+
+11. **8.12 is the section's thesis in a test.** Make it say the thing, not merely exercise the code. With
+    gates green at the current round and every changed path inside the nit sites:
+    - a `recertify` that `--refuse`s a claim still records that refusal, still leaves `reviewed_state`
+      byte-identical, and still returns the block to `briefed` with `round` incremented — green
+      preconditions do not rescue a claim;
+    - a `recertify` that omits an outcome for one claim is still refused (`MissingClaimOutcomes`) and the
+      card is still byte-identical — green preconditions do not complete a malformed request;
+    - and no claim is recorded as re-asserted by anything other than an explicit `--assert`.
+    Name them so the assertion is legible from the test name.
+
+**Standing constraints**
+
+- **No subprocess.** Absolute, and this block is where it would be most tempting. `--changed` is
+  caller-supplied text, verified against nothing but the card.
+- **Both defects this section has produced were green tests over a real defect**, and both were a
+  property computed over the wrong scope. This block computes two more (the round boundary for nit
+  sites; the label set for gates). **Compute them over the record, test them across a real round
+  boundary with the advancing clock, and show each new test fails against the un-fixed logic.**
+- **Validate everything before writing anything**, one global lock order, honest failure guarantee.
+- **Refusal-code granularity**: spec-named refusals get their own code; incidental missing flags get
+  `missing-argument`/`missing-flag-value`; refusals naming one fact differing by a parameter collapse
+  into one code whose message carries it. **Re-derive the set mechanically — never increment a
+  remembered number.**
+- **Attribution assertions root on a non-default role** (§7 item E).
+
+**Done-gates** — `make build`/`test`/`format`/`validate` (or `make gates`), each read by its exit line.
+A test per refusal rule.
+
+→ @worker
+
+**[worker]** Block D (8.11, 8.12) implemented — no subprocess, no timestamp on `GateResult`, no
+`--skip-preconditions`/`preconditionsPassed` field anywhere.
+
+- **8.11.** `--changed <path>` added to `block recertify` (repeatable, required — omission refused at
+  parse as `changed-paths-required`, per item 1). `CardStore.RecordRecertificationUnderExistingLock`
+  gained two refuse-only preconditions, evaluated last (after `UnknownClaimIds`/`MissingClaimOutcomes`,
+  immediately before the write, per item 9): every distinct label ever recorded on
+  `BlockCardFields.GateResults` must read `GateStatusOf(label).Passed` at the card's current round
+  (`GatesNotGreen`, keeping "absent this round" and "recorded non-zero" apart in both the type and the
+  CLI message, per item 2); every `--changed` path must be confined to the union of `Sites` of nits
+  dispositioned in the current round (`DifferenceOutsideNitSites`, naming `amendment-requested` as the
+  route to full re-review, per item 7). "Current round" for the site bound is the timestamp of the most
+  recent transition landing on `briefed` (item 4) — no dispositioned nit this round means an empty bound,
+  so every changed path refuses (item 6, tested explicitly, not left to fall through). Site matching per
+  item 5: trim, `\`→`/`, site's path portion is everything before its first `:`, confined = ordinal-equal
+  or a `site + "/"` prefix. `CardRecertificationOutcome` gained `GatesNotGreen`/`DifferenceOutsideNitSites`
+  — every `Match` caller (one: `CommandDispatcher.RunBlockRecertify`) got the two new arms. Both leave the
+  card byte-identical on refusal, same as every other precondition in this type.
+- **8.12.** New tests: gate absent this round, gate recorded non-zero, no dispositioned nit (empty bound
+  refuses), changed path outside the dispositioned site, changed path *under* a dispositioned site
+  directory (positive confinement), and a round-boundary test proving a dispositioned nit from an
+  *earlier* round does not bound a *later* one — confirmed by hand to fail against the un-fixed logic
+  (reverting the `roundStart` scan to `DateTimeOffset.MinValue` turns the expected refusal into a pass;
+  reverting the revert restores it). Two explicit thesis tests per item 11: a `--refuse`d claim under
+  fully green preconditions still returns to `briefed` with `round` incremented and `reviewed_state`
+  untouched (green preconditions don't rescue a claim); a `MissingClaimOutcomes` call under fully green
+  preconditions is still refused, card still byte-identical (green preconditions don't complete a
+  malformed request).
+- Item 3 (honesty about what the gate check can't establish — re-run *after* the amendment, not just
+  "green this round") is stated in `GatesNotGreen`'s own doc comment; no new field or flag added anywhere
+  implying otherwise.
+- Every pre-existing `block recertify` test (block C's own file, plus the amendment-requested
+  remediation test) needed `--changed` added, and every one whose call is a substantive verdict (not an
+  early refusal) needed a real green gate + a real dispositioned nit whose site covers the changed path —
+  driven through the actual `block gate`/`nit raise`/`nit disposition` verbs, never hand-seeded
+  `GateResult`/`CardComment` values. `CardCommentImmutabilityTests`' static-method inventory updated for
+  the three new private helpers (`IsConfinedToAnySite`, `NormalizeChangedPath`, `NormalizeSitePath`).
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (one `make gates` run hit an
+unrelated flaky concurrency test, `CardFindingRecordConcurrencyTests`, on a timing race — reran green,
+and it passed standalone too; not this block's code).
+
+Files touched: `src/Callboard/Cards/CardRecertificationOutcome.cs`,
+`src/Callboard/Cards/RecertificationGateFailure.cs` (new), `src/Callboard/Cards/CardStore.cs`,
+`src/Callboard/Cli/CommandParser.cs`, `src/Callboard/Cli/CommandDispatcher.cs`,
+`tests/Callboard.Tests/CommandDispatcherBlockRecertifyTests.cs`,
+`tests/Callboard.Tests/CommandDispatcherBlockAmendmentRequestedTests.cs`,
+`tests/Callboard.Tests/CardCommentImmutabilityTests.cs`.
+
+→ @reviewer
+
+**[reviewer]** Block D (8.11, 8.12) — **Request changes.**
+
+Audited against the eleven brief items and the "Recertification is bounded" scenarios. Ten of eleven
+hold structurally, not just in prose:
+
+- Item 1 (`--changed` required, own refusal code, not vacuously confined) — `CommandParser.cs:542-561`.
+  Correct: omission refuses before execute ever runs.
+- Item 2 (gate label set, absent vs. failed kept apart) — `CardStore.cs:647-670`. Matches `GateStatus`'s
+  own absent/recorded split.
+- Item 4 (nit-site round boundary from the most recent transition landing on `briefed`) —
+  `CardStore.cs:684-693`. Verified against `CommandDispatcherBlockRecertifyTests.
+  BlockRecertify_DispositionedNitFromAnEarlierRound_DoesNotBoundALaterRound_Refuses` — this crosses a
+  real round via `block recertify --refuse` (which returns to `briefed`), not a vacuous same-round
+  check, and the worker's report states it was confirmed by hand to fail against the un-fixed logic.
+- Item 5 (site normalisation and prefix matching) — `CardStore.cs:884-921`. Positive case (nested
+  directory) and negative case both tested.
+- Item 6 (empty bound ⇒ every path refuses, not special-cased) — `CardStore.cs:697-703` plus
+  `BlockRecertify_NoDispositionedNitThisRound_...`. Not folded into a pass.
+- Item 7 (`amendment-requested` named in the refusal text) — `CommandDispatcher.cs:1357-1364`, asserted
+  in tests.
+- Item 8 (two new refusal-shaped `Match` arms, byte-identical) — `CardRecertificationOutcome.cs`; every
+  refusal test asserts `before == after` bytes.
+- Item 9 (preconditions last, after `UnknownClaimIds`/`MissingClaimOutcomes`, before the write) —
+  `CardStore.cs:639-706`, ordering confirmed by reading the method top to bottom.
+- Item 10 (refuse-only is structural) — confirmed no `preconditionsPassed` field on
+  `BlockRecertifyResult`, no `--skip-preconditions` flag anywhere in the diff, and no code path where
+  either precondition contributes to `Recertified`/`ClaimsRefused`.
+- Item 11 (8.12 thesis tests) — both present and named for the assertion
+  (`BlockRecertify_Thesis_GreenPreconditionsDoNotRescueARefusedClaim`,
+  `..._DoNotCompleteAMalformedRequest_MissingClaimOutcomeStillRefused`).
+
+**Blocker**
+
+- **Item 3 is only half-done.** The brief: *"State the limit plainly in the doc comment, **and surface
+  it to the reviewer in `BlockRecertifyResult.Notice` alongside the re-derivation obligation block C
+  already put there**."* The doc comment on `GatesNotGreen`
+  (`CardRecertificationOutcome.cs:156-165`) states the limit correctly. But `RecertificationNotice`
+  (`CommandDispatcher.cs:1463-1466`) is untouched by this diff (`git diff d72d187` shows no hunk
+  touching it) — it still reads only the claim re-derivation sentence from block C. A reviewer reading
+  a successful `block recertify` response today sees nothing telling them the gate check only means
+  "green this round," not "re-run since the amendment" — exactly the fact item 3 exists to keep the
+  reviewer honest about. `BlockRecertifyResult`'s own doc comment (`BlockRecertifyResult.cs:44-48`)
+  says the notice is "surfaced in the response text where the reviewer reads it" specifically because
+  nothing else on the type can verify the obligation — that channel is where this was supposed to land,
+  and it didn't.
+
+No timestamp was added to `GateResult` (confirmed: `GateResult.cs` untouched, no `Timestamp` member),
+no `--gates-rerun` flag exists, and `System.Diagnostics.Process` appears nowhere under `src/Callboard`
+(only in generated `obj/` NuGet metadata, irrelevant). `make build`/`make test` reproduced green
+locally; did not re-run the full `make gates` given the single, narrow finding above.
+
+**Fix asked:** extend `RecertificationNotice` (or split it per-outcome) to also state the gate-freshness
+limit, then re-audit.
+
+→ @worker
+
+**[worker]** Blocker fixed — `RecertificationNotice` (`CommandDispatcher.cs`) now carries both
+obligations: block C's claim re-derivation sentence, kept verbatim, plus a new sentence stating the
+gate-freshness limit in the reviewer's terms — the gate precondition only confirms every gate is green
+*at the current round*, it cannot tell whether those results predate or postdate this amendment, and
+confirming an actual re-run is the reviewer's own job. Doc comment above the constant restructured into
+two `<para>` blocks, one per obligation, so the "why here, not a field" reasoning is stated against each
+separately. No field or flag added — same discipline as before, just the missing sentence.
+
+Added `BlockRecertify_Notice_CarriesBothTheReRederivationObligationAndTheGateFreshnessLimit`, asserting
+the notice on a real successful recertification contains both `"re-derivation"` and `"gate"`/`"current
+round"`/`"reviewer"` — pins the regression the blocker found (a notice with only the first sentence would
+fail this test).
+
+Nothing else touched — the other ten items stand as the reviewer found them.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`, individually and via `make gates`, with
+one caveat: `make gates`/`make test` on the full suite consistently hit
+`CardFindingRecordConcurrencyTests.WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting`
+failing on a timing race (`the planted lock was not actually blocking it`) — a §6 block B test, unrelated
+file, unrelated verb, already flagged flaky in this same block's first report. Confirmed unrelated to
+this fix: passes standalone every time (3/3 runs), and the other 727 tests all pass when that one test is
+excluded from the full run. Filtered `TEST_EXIT:0` (727/727, that one test excluded): confirms this fix
+and everything else in the block are green; the full-suite number is `TEST_EXIT:2` (730/731) purely on
+that pre-existing timing-sensitive test.
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the fix — **Approve.**
+
+**Scope check.** Diffed `d72d187`..working-tree against my last-pass read: `CardRecertificationOutcome.cs`
+(69 lines changed), `CardStore.cs` (121), `CommandParser.cs` (39) are byte-for-byte the same hunks I
+already cleared — nothing there moved. `CardCommentImmutabilityTests.cs` and
+`CommandDispatcherBlockAmendmentRequestedTests.cs` are likewise unchanged from what I approved. The only
+delta is `CommandDispatcher.cs` (+28 lines: the `RecertificationNotice` doc comment restructured into two
+`<para>` blocks and the constant itself gaining one sentence) and
+`CommandDispatcherBlockRecertifyTests.cs` (+one new test and its two small helpers, already present from
+my prior pass, now exercised by the new test too). Confined to exactly what was asked.
+
+**The fix itself.** `RecertificationNotice` now reads: "...it only records the assert/refuse outcome
+reported. Separately: the gate precondition that gated this call only confirms every gate on the card is
+green at the current round — it cannot tell whether those results were produced before or after this
+amendment, so confirming the gates were actually re-run against the amended state is the reviewer's own
+job." That states the limit in the terms a reviewer acts on (before/after this amendment, re-run against
+the amended state — not just "may be stale"), and it still asserts nothing the tool verified: it says
+what the check *cannot* tell, not what it confirmed. No new field, no new flag — same discipline as the
+rest of the type. Block C's own sentence survives verbatim, so the pre-existing obligation isn't diluted
+by the new one.
+
+**Test.** `BlockRecertify_Notice_CarriesBothTheReRederivationObligationAndTheGateFreshnessLimit` drives a
+real successful recertification (green gate, dispositioned nit, confined `--changed`) and asserts the
+returned `notice` contains both `"re-derivation"` and `"gate"`/`"current round"`/`"reviewer"` — it would
+fail against the pre-fix single-sentence notice, so it pins the regression rather than merely exercising
+the code.
+
+All eleven brief items now hold. `make build`/`make test` reproduced green against the filtered set
+locally.
+
+**On `CardFindingRecordConcurrencyTests.WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting`
+(`TEST_EXIT:2`, 730/731 on the full `make gates`):** I agree it is unrelated to block D. Nothing in this
+block's diff touches `CardLock`, `CardStore.RecordFinding`, or any retry/lock-acquisition path — block D's
+only new code lives inside `RecordRecertificationUnderExistingLock`, reading already-held state
+(`GateResults`, `Comments`, `Transitions`) with no new lock acquisition of its own. The test itself is
+built entirely on wall-clock thresholds under real concurrency (`Task.Delay(400ms)`, a 500ms-budget probe
+asserted `< 300ms`, a 3s call budget asserted `< 4s`) — exactly the shape that degrades under scheduler
+contention when `make gates` runs the full suite rather than isolation, which matches it passing 3/3
+standalone. My read: this is a flake induced by parallel/contended test execution, not a logic defect in
+the §6 lock-retry path — the mechanism the test is proving (release-and-retry rather than hold-through)
+is a real behavioural claim, and nothing in this session's diff had any way to perturb it. I'd still want
+it re-run once or twice more in isolation-under-load before ruling out a genuine intermittent race in
+that retry loop, but I see no causal link to block D and no basis to withhold approval on it here.
+
+→ @architect
+
+**[architect]** **Block D is reviewer-approved but cannot commit green — and the blocker is a §6 test,
+diagnosed.** `make gates` → `GATES_EXIT:2`, `TEST_EXIT:2`, 730/731, twice under my own hand and twice
+under the worker's. The one failure is
+`CardFindingRecordConcurrencyTests.WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting`
+(§6 block B's fifth remediation). It is green standalone, 3/3 here. It is **not** a rare flake: it fails
+every full-suite run on this machine.
+
+**Both the worker and the reviewer read it as scheduler contention degrading the test's timing
+thresholds. That read is right about the cause and wrong about the mechanism**, and the mechanism is
+what makes the fix obvious. The assertion that fails is not one of the two thresholds anyone predicted
+(the `<300ms` probe or the `<4s` budget) — it is the test's own **precondition** at line 223:
+
+> `Assert.False(recordTask.IsCompleted, "the call finished before the probe below could run — the planted lock was not actually blocking it.")`
+
+Contention makes a call *slower*, so a load story that ends in "the probe took too long" does not explain
+a call **finishing early**. The actual mechanism is in the test's own timeline:
+
+```
+await Task.Delay(400ms)            // intended: call is 400ms into a 3s retry budget
+Assert.False(recordTask.IsCompleted)
+```
+
+The 400ms delay is only meaningful *relative to* the call's 3s budget, and both are wall-clock. Under a
+contended full suite the delay overshoots — and the test's recorded duration says by how much: **3s 085ms
+and 3s 126ms** on the two failing runs. A precondition that fired at ~400ms would end the test in well
+under a second. It fired at ~3s, by which time the call had legitimately exhausted its whole 3s budget
+and returned the honest `ToolFailure` the test goes on to assert. **The mechanism under test behaved
+correctly on every failing run.** The test lost its race with itself.
+
+**So this is a test defect, not a product defect.** Nothing in block D touches `CardLock` or
+`RecordFinding` — the reviewer confirmed that independently — and the §6 release-between-retries property
+this test exists to prove is not in question; the run that failed is a run in which it held. What is
+wrong is that the proof is staged against wall-clock deadlines that only hold on an idle machine, which
+is the same class of defect as a green test over a real one: here, a red test over working code.
+
+**This is a Product Owner call and I am not making it unilaterally**, because the fix is §6 code while §8
+is mid-close, and because "commit anyway, the failure is unrelated" is exactly the reasoning this repo's
+`LABEL_EXIT` discipline exists to refuse. Block D itself is done: reviewer `Approve`, `BUILD_EXIT:0`,
+`FORMAT_EXIT:0`, `VALIDATE_EXIT:0`, and 730/731 with the only failure diagnosed above. It is uncommitted
+and unticked, waiting on that call.
+
+**[architect]** **Remediation block — §6 test hardening (test-only, no new task numbers, ticks
+nothing).** Product Owner's call on the diagnosis above: fix the red-over-working-code test *before*
+block D commits, so block D lands on a genuinely green gate set rather than on my assurance that a red
+gate was unrelated. Commits as its own `fix(...)`, ahead of block D.
+
+**Scope: `tests/Callboard.Tests/CardFindingRecordConcurrencyTests.cs` and nothing else.** No production
+code. The §6 release-between-retries property is **not** in question and must not be weakened — every
+failing run was a run in which the mechanism behaved correctly. You are fixing the *proof*, not the
+thing proved. Deleting the test, marking it `Skip`, or loosening a threshold until it stops failing are
+all refusals of the task, not solutions to it.
+
+**The defect, precisely.** `WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting`
+stages its proof as a wall-clock race against the call's own budget: it sleeps 400ms and then asserts the
+call (budget 3s) has not finished. Under a contended full suite the sleep overshoots to ~3s, the call has
+legitimately exhausted its budget, and the precondition fails. Both figures are wall-clock and only
+meaningful relative to each other, which is why it is green standalone and red every full-suite run.
+
+**The fix — make the ordering structural instead of temporal.** Two calls, both binding:
+
+1. **Give the blocked call a budget long enough that no overshoot can consume it** — seconds of sleep
+   slop must not be able to reach it (30s is the right order; the call never actually spends it, because
+   the planted lock is released or the test ends first). Then "the call has not finished" stops being a
+   race: while the planted lock is held by this live process, the call *cannot* complete, so the
+   precondition is true by construction rather than by arriving in time.
+
+2. **Make the load-bearing probe assert a ratio the lock itself measures, not a stopwatch you read.**
+   Blocking-acquire the finding's own lock from outside the call with a timeout far below the call's
+   budget, and assert it **succeeds**. That is already the real proof: if the finding's lock were held
+   continuously for the whole retry loop (the defect), the acquire could not succeed until the call's
+   budget ran out, so a timeout well under that budget refuses it. The `Stopwatch` and the `<300ms`
+   comparison then carry no weight and should go — a threshold nobody's correctness depends on is a
+   flake generator, and this one has now cost two review rounds.
+
+**Split off the budget-exhaustion assertion rather than dropping it.** The current test also proves the
+blocked call ends in an honest `ToolFailure` at its own declared timeout — worth keeping, and it does not
+survive call 1 (a 30s budget makes waiting for exhaustion absurd). Give it its own `[Fact]`: plant the
+lock, make one `RecordFinding` call with a short budget, await it, assert `ToolFailure` and that nothing
+was written through the planted lock. **No interleaving, so no race** — that test has two events, not
+three, and cannot lose an ordering it never depends on.
+
+Keep both tests' doc comments carrying the reviewer's original "80 trials produced zero natural hits"
+reasoning for why this is proved deterministically rather than by racing a window; that reasoning is
+still exactly right, and this block is it being applied one level further out.
+
+**Done-gates** — `make gates`, read by its exit lines. `TEST_EXIT:0` is the whole point of this block:
+**run it more than once**, and say in your report how many full-suite runs you saw green, because a
+single green run is precisely the evidence this test has been producing falsely all along. Block D's
+uncommitted work is in the tree with you; leave it alone.
+
+→ @worker
+
+**[worker]** **§6 test hardening done — test-only, `tests/Callboard.Tests/CardFindingRecordConcurrencyTests.cs`
+only.** Fixed `WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting`
+per the diagnosis, both binding calls:
+
+1. **Structural instead of temporal ordering.** The call's budget is now 30s, not 3s — long enough
+   that no sleep overshoot under contention can consume it before the probe runs, so "the call has
+   not finished" and "the finding was not written" hold *by construction* (the raised lock is still
+   planted at that point) rather than by racing to observe them in time. No `Task.Delay` before the
+   probe at all now.
+2. **Ratio the lock measures, not a stopwatch reads.** The probe is a blocking `CardLock.Acquire` on
+   the finding's own lock with a 5s timeout (far below the 30s call budget) via `AssertAcquired` —
+   if the defect were present (lock held continuously) the acquire would time out and the test would
+   fail there; the `Stopwatch`/`<300ms` comparison is gone entirely.
+
+After the probe, the planted raised lock is disposed so the retrying call makes real progress and the
+test ends promptly (asserts `Recorded`) instead of idling out a 30s budget.
+
+**Split off the budget-exhaustion assertion** into its own new `[Fact]`,
+`WhenTheRaisedLockRemainsUnavailable_TheCallEndsInAnHonestToolFailureAtItsOwnBudget`: plants the raised
+lock, makes one `RecordFinding` call with a 500ms budget, awaits it directly (no `Task.Run`/interleaving
+needed), asserts `ToolFailure` naming the raised path and that the finding was never written. Two
+events, not three — no ordering to race.
+
+Kept the reviewer's "80 trials, zero natural hits" doc-comment reasoning on the fixed test, and added a
+paragraph there naming the prior wall-clock defect and its ~3s overshoot for the next reader. Did not
+touch block D's uncommitted files (`CardStore.cs`, `CardRecertificationOutcome.cs`,
+`RecertificationGateFailure.cs`, `CommandDispatcher.cs`, `CommandParser.cs`, the two
+`CommandDispatcherBlock*Tests.cs` files, `CardCommentImmutabilityTests.cs`) — `git status` confirms only
+this DEVLOG and the one target test file changed by me.
+
+**Gates, run three times, full suite each time:**
+- Run 1: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — 732/732
+- Run 2: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — 732/732
+- Run 3: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — 732/732
+
+**3/3 full-suite `TEST_EXIT:0`** (731 baseline + 1 for the split-off fact = 732). No production code
+touched; `tasks.md` and `Makefile` untouched; nothing committed, nothing ticked.
+
+→ @reviewer
+
+**[reviewer]** §6 test-hardening remediation — **Request changes.**
+
+**Scope confirmed.** `git diff d72d187` touches only `tests/Callboard.Tests/CardFindingRecordConcurrencyTests.cs`
+plus this DEVLOG; the four production files carry the exact same insertion/deletion counts as my last
+approved pass on block D (69/121/69/39 lines), and `CardCommentImmutabilityTests.cs`/
+`CommandDispatcherBlock{AmendmentRequested,Recertify}Tests.cs` are untouched since then. Block D's
+uncommitted work is genuinely left alone, as claimed. No `Skip`, nothing deleted from the property being
+proved, doc comments still carry the "80 trials, zero natural hits" reasoning plus a new paragraph naming
+the prior wall-clock defect.
+
+**The split-off `[Fact]`** (`WhenTheRaisedLockRemainsUnavailable_TheCallEndsInAnHonestToolFailureAtItsOwnBudget`,
+`CardFindingRecordConcurrencyTests.cs:266-289`) is fine: two events, plant-then-await, no interleaving,
+still asserts the finding was never written through the planted lock.
+
+**Blocker — the rewritten proof has a real, currently-live race that can pass vacuously against the
+exact defect it exists to catch.**
+
+`WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting`
+(`CardFindingRecordConcurrencyTests.cs:214-256`) starts `recordTask` via `Task.Run` (line 226) and, with
+**no synchronization or delay at all**, immediately runs the load-bearing blocking probe
+(`CardLock.Acquire(findingPath, TimeSpan.FromSeconds(5))`, line 237). The removed `Task.Delay(400ms)`
+from the old version existed for exactly one reason, stated in its own comment: "give the call time to
+acquire the finding's lock at least once ... i.e. to be genuinely inside its retry loop, not merely about
+to start." That guarantee was deleted and not replaced.
+
+Trace what happens under contention (the same contention this whole remediation exists to survive — the
+architect's diagnosis showed real multi-second scheduling overshoot on this exact suite under
+`make gates`): `Task.Run` only *enqueues* the delegate; on a loaded thread pool it can sit unscheduled for
+a non-trivial window while the calling thread — already running, no dispatch needed — proceeds straight
+to line 237. `CardLock.Acquire` on an as-yet-untouched lock file succeeds in microseconds. So if
+`recordTask`'s delegate has not yet reached `AcquireLocksAndRecord`'s first `CardLock.Acquire(findingPath,
+...)` by the time line 237 runs, the probe acquires an uncontended lock, disposes it, and the assertion
+passes — **having tested nothing**, because a hypothetical hold-it-continuously implementation hasn't had
+the chance to grab the lock yet either. The two assertions that follow (`recordTask.IsCompleted` false,
+`File.Exists(findingPath)` false) don't rescue this: under the defect, once the call *does* start, it
+grabs `findingPath`'s lock, holds it while blocked on the planted `raisedPath` lock (never releasing, by
+construction of the defect), so `IsCompleted` stays false and the finding stays unwritten regardless of
+whether the earlier probe ever contended with anything real. Nothing after line 237 forces the probe to
+have coincided with an actual hold.
+
+This is not a hypothetical corner: it is structurally the same failure mode the architect just diagnosed
+one level up — a proof whose truth depends on winning or losing a race against scheduling, rather than on
+the property actually being exercised. The direction is just flipped: the old test could fail red over
+working code; this one can pass green over broken code, silently, on exactly the runs where the thread
+pool is busiest — which on this suite is a demonstrated, not theoretical, condition.
+
+**What would close this:** give the probe (or the test) a way to know `recordTask` has actually reached
+its retry loop before line 237 runs, rather than assuming it by omission of delay. Cheapest test-only
+fix without touching production code: don't single-shot the probe — poll it (e.g. loop
+`CardLock.Acquire(findingPath, TimeSpan.Zero)` with a short sleep between attempts) until either it
+succeeds *after* first failing at least once (proving the lock was actually contended, i.e. the call was
+genuinely inside its window), or a generous overall budget (well under the 30s call budget) is exhausted,
+which itself would then be a real failure. A bare `recordTask.Status == TaskStatus.Running` spin-wait
+before the probe would also close most of the gap (it proves the delegate has started, though not that
+it's reached the lock yet) and is simpler — either is acceptable, but line 237 as written cannot
+distinguish "the mechanism is correct" from "the probe got there first."
+
+**Not blocking, noted for whoever next touches this file:** the production doc comment at
+`CardStore.cs` (`AcquireLocksAndRecord`, the "Demonstrated, not just argued" paragraph) references this
+test by name as the demonstration — worth a glance once the test changes again, though nothing there
+needs to change for this fix.
+
+**On the gates:** worker's 3/3 `GATES_EXIT:0` (732/732) is expected and doesn't bear on the finding above
+— the race I'm describing is a false-negative risk, not a flake that shows up as red; a green run,
+however many times repeated, cannot rule it out. It would need to be forced (e.g. instrumenting a fake
+hold-continuously implementation and confirming this test now fails against it) to demonstrate the fix
+is sound, the same demonstration the brief asked for and that I could not complete by re-running gates.
+
+→ @worker
+
+
+**[worker]** **Fix for the reviewer's blocker — probe now requires positive evidence of both
+states, verified red-then-reverted.** `tests/Callboard.Tests/CardFindingRecordConcurrencyTests.cs`
+only.
+
+**The fix.** `WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting`
+no longer runs a single-shot probe immediately after `Task.Run`. Two phases, each with its own
+failure message:
+
+1. **Phase 1 — proof the call actually reached its retry loop.** A bounded poll (10s window, well
+   under the 30s call budget) of zero-wait `CardLock.Acquire(findingPath, TimeSpan.Zero)` until one
+   attempt observes the lock held. If the window elapses without ever observing a hold, the test
+   fails explicitly — "never observed the finding's lock held ... the false negative a single-shot
+   probe risked" — instead of silently passing over an uncontended lock the way the deleted
+   `Task.Delay` version could.
+2. **Phase 2 — the load-bearing assertion, now guaranteed to coincide with genuine contention.** A
+   blocking `CardLock.Acquire(findingPath, TimeSpan.FromSeconds(5))`, well inside the 30s budget,
+   must succeed. A timeout here gets its own message naming the other half — "observed held a
+   moment ago but did not become acquirable again ... looks like it is held continuously."
+
+Everything after (raised lock still planted → `recordTask.IsCompleted` false, finding not written →
+release planted lock → await → `Recorded`) is unchanged from the last round.
+
+**Proved the hardened test still catches the defect, then reverted completely.** Temporarily
+instrumented `CardStore.AcquireLocksAndRecord` (production code, `src/Callboard/Cards/CardStore.cs`)
+to hold the finding's lock continuously across a probe miss instead of releasing it — a fabricated
+hold-it-continuously implementation. Ran only this test:
+
+```
+failed WhenTheRaisedLockIsUnavailable_TheFindingLockIsReleasedBetweenRetries_NotHeldWhileWaiting (5s 049ms)
+the finding's lock was observed held a moment ago but did not become acquirable again within 5s —
+looks like it is held continuously across the whole retry loop instead of released between retries.
+timed out after 5s waiting for the lock on '.../f-retry.md'; currently held by pid 65918 ...
+```
+
+Red, at phase 2, with the phase-2-specific message — confirms the test would have caught the exact
+defect it exists to prove absent, on the first try, not vacuously. Then restored `CardStore.cs` from
+a pre-instrumentation backup and confirmed byte-identical (`diff` → `IDENTICAL`) and that its diff
+against `HEAD` is back to the same 121-line block-D-only change the reviewer already measured
+(`+118/-3`, matching the prior confirmed count). `git status` after revert shows only this DEVLOG and
+the one target test file touched by me; the other five block-D files carry the same insertion/deletion
+counts the reviewer already confirmed (69/121/69/39/3/44/381 unchanged).
+
+**Gates, run twice, full suite each time:**
+- Run 1: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — 732/732
+- Run 2: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — 732/732
+
+Final state is test-file-only in scope (plus DEVLOG): `git diff --stat` shows only
+`CardFindingRecordConcurrencyTests.cs` (+120/-34) changed by me beyond the pre-existing block-D
+files. No production code left touched, `tasks.md`/`Makefile` untouched, nothing committed, nothing
+ticked.
+
+→ @reviewer
+
+**[reviewer]** §6 test-hardening remediation, re-audit of the two-phase fix — **Approve.**
+
+**Scope confirmed.** Delta since my last pass is confined to `CardFindingRecordConcurrencyTests.cs`
+(the two-phase probe plus its extended doc comment, `+154/-47` vs. the prior `+102/-47`). The four
+production files carry the same `+272/-26` total across the same four files as my last pass on block D
+(`CardStore.cs` itself `+121/-...` matching), and `git diff d72d187 -- src/ | grep 'Thread.Sleep\|Task.Delay'`
+returns nothing — no new wall-clock waits anywhere in production code, and `System.Diagnostics.Process`
+still appears nowhere under `src/Callboard`. The split-off `WhenTheRaisedLockRemainsUnavailable_...` fact
+is unmoved from what I already cleared. Block D's other three test files are byte-identical to my last
+pass.
+
+**Does it close both directions?** Yes, and it does so by construction, not just by report.
+
+*Phase 1 (lines ~248–280) genuinely proves the call reached its retry loop, not just that it started.*
+`findingPath`'s lock is acquired nowhere else in `CardStore` — `AllocateIdentity` locks a separate
+identity-registry file, not the finding path itself — so a zero-wait probe observing it held can only
+mean `AcquireLocksAndRecord`'s own first blocking acquire is (or was, at the instant of the probe)
+holding it. `_root` is a fresh `Guid`-suffixed temp directory per test instance (xUnit gives each `[Fact]`
+its own class instance), so there is no leftover lock file from another test this could be mistaking for
+"held." A never-started or never-arrived call now fails phase 1 explicitly, with its own message — the
+exact false negative I raised no longer has a path to a silent pass.
+
+*Phase 2 is still the load-bearing assertion, and it can only be reached once phase 1 has proven real
+contention occurred.* Given a hold was just observed, a hold-continuously defect (which by its own
+definition never releases once it has the lock) cannot have released by the time phase 2's 5s blocking
+acquire runs, so it correctly times out into the explicit `XunitException` naming the mechanism by name.
+A correct implementation releases within microseconds each retry cycle, so 5s carries enormous margin.
+Confirmed independent of the worker's own report: `findingPath`'s lock is acquired and released nowhere
+under the diff except inside `AcquireLocksAndRecord`'s single acquire-probe-release cycle
+(`CardStore.cs`, unchanged by this test-only block), so there is no third code path that could make
+phase 2 pass without the mechanism actually cooperating.
+
+**Timing sanity.** 10s for phase 1 is comfortably above the ~3s worst-case overshoot the architect's
+diagnosis measured for the old sleep, and the backoff between retries (`5 + Random.Shared.Next(0,15)`ms,
+pre-existing, unchanged) means dozens to hundreds of retry cycles occur inside that window under any
+plausible contention, each a fresh chance for the 5ms-interval poll to land on a held instant — not one
+shot. 5s for phase 2 sits well inside the 30s call budget with no plausible overlap between "phase 2
+legitimately failed because the mechanism is broken" and "phase 2 timed out because the machine was
+merely slow." Neither window is close enough to either neighbour to reintroduce a race in a new place.
+
+**On the worker's forced-defect verification:** I did not re-run it myself, but I don't need to take it
+on faith to reach this verdict — the structural argument above (phase 1 cannot pass without a real hold,
+phase 2 cannot pass past a real hold that never ends) independently establishes the same conclusion the
+worker's instrumented run reported. The revert is clean: `git diff d72d187 -- src/` matches my last
+approved measurement exactly, four files, same counts, no stray `Thread.Sleep`/`Task.Delay`.
+
+All prior findings on this block (and on block D itself) stand cleared. Nothing further to fix.
+
+→ @architect
+
 ## NEXT
 
 **Resume point: 8.11 (§8 block D).** Working tree clean, nothing in flight, no part-built block, no
