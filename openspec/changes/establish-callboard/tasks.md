@@ -80,11 +80,11 @@
 - [ ] 8.2 Record `reviewed_state` as the exact state certified, including uncommitted content
 - [ ] 8.3 Refuse an approval that enumerates no claims and no limits
 - [ ] 8.4 Implement nits as addressed comments carrying a disposition
-- [ ] 8.5 Implement `fix-before-land` returning the block to building with an incremented round
+- [ ] 8.5 Implement `fix-before-land` returning the block to `briefed` with an incremented round
 - [ ] 8.6 Implement `defer` promoting to an obligation and `decline` promoting to a decision
 - [ ] 8.7 Refuse leaving `in-review` with any undispositioned nit
 - [ ] 8.8 Implement `recertify` with individually assertable and refusable claims
-- [ ] 8.9 Implement per-claim refusal returning the block to building without re-stamping `reviewed_state`
+- [ ] 8.9 Implement per-claim refusal returning the block to `briefed` without re-stamping `reviewed_state`
 - [ ] 8.10 Enforce at most one recertification per approval
 - [ ] 8.11 Implement the mechanical preconditions as refuse-only: gates re-run green, difference confined to nit sites
 - [ ] 8.12 Test that green preconditions confer no claim until a reviewer asserts it

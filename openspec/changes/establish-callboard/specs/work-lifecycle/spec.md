@@ -13,10 +13,16 @@ A `block` card SHALL occupy exactly one of `drafting`, `briefed`, `building`, `i
 
 ```
 drafting ──▶ briefed ──▶ building ──▶ in-review ──┬──▶ approved ──▶ landed ──▶ closed
-                  ▲                               │
-                  └──── changes-requested ◀───────┘
-                            (round += 1)
+                ▲                                 │        │
+                ├──── changes-requested ◀─────────┤        │
+                ├──── fix-before-land ◀───────────┘        │
+                └──── recertification-refused ◀────────────┘
+                            (round += 1 on all three)
 ```
+
+`changes-requested` and `fix-before-land` both leave `in-review`; `recertification-refused` leaves
+`approved`. They are distinct named transitions because the name is recorded in the card's history —
+see `review-certification` for what raises each.
 
 Every transition SHALL record the acting role and the time it occurred.
 

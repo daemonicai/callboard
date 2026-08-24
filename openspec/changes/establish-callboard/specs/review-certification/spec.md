@@ -48,7 +48,7 @@ The disposition SHALL determine what becomes of the nit:
 
 | Disposition | Outcome |
 |---|---|
-| `fix-before-land` | Stays inline; the block returns to `building`, `round` increments, and the amended state requires re-certification |
+| `fix-before-land` | Stays inline; the block returns to `briefed`, `round` increments, and the amended state requires re-certification |
 | `defer` | Promoted to an `obligation` card naming what discharges it |
 | `decline` | Promoted to a `decision` card recording the reason the code is right as it stands |
 
@@ -81,13 +81,13 @@ sufficient, because a difference confined to the expected sites has been observe
 real defect.
 
 A successful recertification SHALL re-stamp `reviewed_state` to the amended state. A refusal of any
-claim SHALL be a first-class outcome that returns the block to `building` and increments `round`.
+claim SHALL be a first-class outcome that returns the block to `briefed` and increments `round`.
 
 #### Scenario: Per-claim refusal returns the block
 
 - **WHEN** a reviewer recertifies three claims and refuses the second
 - **THEN** the system records all three outcomes, does not re-stamp `reviewed_state`, and returns the
-  block to `building` with `round` incremented
+  block to `briefed` with `round` incremented
 
 #### Scenario: All claims re-asserted
 
