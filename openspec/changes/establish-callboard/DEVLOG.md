@@ -20226,6 +20226,178 @@ and then a correct one. Three of the four defects this block surfaced were **tes
 the work, not the work** — which is the section's own thesis pointed back at us: mechanical evidence
 refuses, it does not certify, and a green run is not a claim.
 
+**[supervisor]** §8 "Review and certification", `afaad73..HEAD` (blocks A–D plus `c0506eb` and the
+six spec amendments) — **Request changes.**
+
+Read the whole `## 8.` thread first, including the six mid-section rulings. Gate discipline across the
+section is exemplary: every block carries verbatim `LABEL_EXIT` lines, block D's exclusion was diagnosed
+rather than waved through, and the §6 remediation was made to prove a real hold rather than a green run.
+Refusal *messages* consistently name the route out. The transition table matches the amended diagram
+minus `finding-recurred`, which is correctly 8a.8. The index takes nothing new from §8 and diverges
+nowhere. No subprocess, no reflection, no second surface, no gate uncovered by the Makefile. The
+`CloseSection`/`land` contradiction with §8a is already recorded and is not counted here.
+
+What follows is what only the whole-section view shows.
+
+---
+
+**Blocker 1 — `fix-before-land` has two meanings, and blocks C and D are built entirely on the inert
+one. The spec's own chain is unreachable as built.**
+
+`review-certification`'s disposition table states unconditionally that `fix-before-land` returns the
+block to `briefed`, increments `round`, "and the amended state requires re-certification". Block B made
+that edge conditional on the card being `in-review` (`src/Callboard/Cards/CardStore.cs:1196-1213`). On
+an `approved` card the identical command records the disposition and **moves nothing** — no transition,
+no round, and no refusal.
+
+Blocks C and D then made that branch the only path their tests take. The helper says so itself
+(`tests/Callboard.Tests/CommandDispatcherBlockRecertifyTests.cs:702-706`): *"Dispositioning while the
+card is already 'approved' (every caller here) never trips the in-review-only auto-transition edge …
+so the choice of disposition value doesn't matter for these tests."* Every site-confinement test in
+block D raises its nit against an already-`approved` block.
+
+That is not a test-style point. It is the section resolving a spec contradiction silently, in code:
+
+- The spec's chain **fix-before-land ⇒ back to `briefed` ⇒ the amended state requires re-certification**
+  cannot be walked. `recertify` refuses from any state but `approved`
+  (`CardStore.cs:594-597`, `NotApproved`), and `fix-before-land` from `in-review` leaves the card
+  `briefed`. From there the only route forward is a **fresh `approve`** — a new approval with new
+  claim ids at a new round, which is precisely not a recertification. So no in-review
+  `fix-before-land` nit can ever be recertified, and there is no test in the section that tries.
+- To make `recertify` reachable at all, §8 invented **the post-approval nit** — raising a nit against
+  an `approved` block. Nothing in `review-certification`, `work-lifecycle` or `design.md` sanctions it;
+  no requirement, no decision, no amendment. It exists only in blocks C/D's test helpers and in the
+  absence of a state check on `nit raise` (`CommandDispatcher.cs:1144-1188` resolves the card and
+  appends; `RunNitRaise` never reads its status).
+- On that invented path the disposition is inert, so an `approved` block can carry a **live,
+  un-actioned `fix-before-land` nit**, keep its original `reviewed_state`, and reach `landed` with
+  nothing refusing. That is `review-certification`'s "a nit SHALL cease to be live only through one of
+  these three dispositions; it SHALL NOT lapse by neglect" failing **open**, and it is the mirror of
+  the defect escalated to the Product Owner for `amendment-requested`: a card in `approved` whose
+  reachable exits are the wrong ones.
+
+❓ **@architect** — this is a decision, not a mis-implementation, and I think it belongs to the Product
+Owner. Either (a) `recertify` is meant for post-approval amendments, in which case the disposition
+table's "requires re-certification" is wrong for the in-review case and post-approval nits need to be a
+*specified* thing with their own guards; or (b) `fix-before-land` genuinely returns the block to
+`briefed` in every state, in which case `recertify`'s `approved`-only precondition is wrong and blocks
+C/D's whole test surface is testing a path that should not exist. §8 shipped both readings.
+
+**Blocker 2 — the undispositioned-nit guard is scoped to exits from `in-review`, so nothing guards
+the states where §8 actually puts nits.**
+
+`CardStore.cs:300-307` gates on `transition.From == BlockFlowState.InReview`; `RecordApproval`
+(`CardStore.cs:458-466`) carries its own copy for the same reason. Union across the section:
+`approve`, `changes-requested`, and the `fix-before-land` edge are covered — correct, and the three
+guards agree.
+
+But blocker 1 establishes that §8's own designed flow raises nits against `approved` blocks, and
+**`approved` has no nit guard on any of its four exits** — `land`, `recertification-refused`,
+`amendment-requested`, and (§8a) section close, whose refusal list is not-approved / `reviewed_state`
+mismatch / gate, with no nit clause. `nit raise` also accepts `landed` and `closed` cards, recording a
+live nit on a card that will never pass a guard again. Whichever way blocker 1 is resolved, the guard
+set needs to be re-derived over the states nits can actually be raised in, not over `in-review` alone.
+
+**Blocker 3 — `--claims`/`--limits` split prose on unescaped commas, silently, and the section's own
+convention says they should not.**
+
+`CommandParser.cs:417-435` runs both flags through `CardFileFormat.SplitFrontmatterList`. A reviewer
+writing `--claims "the writer and parser agree, and the round-trip holds"` gets **two** claims, two ids,
+and no refusal. Storage is fine — block A correctly gave each claim its own body line and id, exactly
+as its brief required — the loss is at the CLI boundary the brief did not cover.
+
+The section-level part: by block C the surface had settled on repeatable flags for multi-values
+(`--site`, then `--assert`/`--refuse`/`--changed`, whose doc comment explicitly cites `--site` as the
+precedent), and on **stdin for prose** (`nit raise`, `nit disposition`). `--claims`/`--limits` is the
+one place in §8 where prose arrives comma-joined on a flag, it was never revisited after the
+convention formed, and it is the one that loses data. It also lands on the exact requirement it
+serves: "certification text SHALL be written to be actionable by a reviewer who did not author it",
+then read back claim-by-claim by `recertify`. A fragment is not actionable.
+
+---
+
+**Suggested remediation shape** (one fix block; the Architect carves it):
+
+1. Put blocker 1 to the Product Owner before any code moves — the answer decides 2 as well. Whichever
+   branch is chosen, the losing one needs a **refusal**, not a silent no-op: either `nit raise` refuses
+   a block that is not `in-review`, or `nit disposition --disposition fix-before-land` refuses on a
+   card where it cannot fire its edge.
+2. Re-derive the undispositioned-nit guard over the state set the answer permits, and extend it to
+   every exit from those states. Add the test that an approved block carrying a live nit cannot reach
+   `landed`.
+3. Move `--claims`/`--limits` to repeatable flags (`--claim`/`--limit`), or to stdin, matching the
+   convention the section settled on. Add a test with a comma inside one claim.
+4. Re-point blocks C/D's test helpers at whatever path survives (1), so the site-confinement surface is
+   exercised on a reachable flow rather than an unspecified one.
+
+**Architectural notes — for `## NEXT`, not the fix block:**
+
+- **Two definitions of "this round" for the same nit set.** `DispositionNitUnderLocks` anchors the
+  round at the last transition **into `in-review`** (`CardStore.cs:1196-1205`); the recertification
+  site-bound anchors it at the last transition **to `briefed`** (`CardStore.cs:672-687`). Today they
+  never collide only because §8's flow puts nits after both. If blocker 1 resolves toward in-review
+  nits, the `briefed`-anchored window excludes every fix-before-land nit that caused the amendment.
+  One helper, one definition, whichever survives.
+- ❓ **@architect** — the site bound admits `defer` and `decline` sites. `IsNitDispositioned` is
+  disposition-agnostic, so a nit declined as "the code is right as it stands" *widens* the footprint an
+  amendment may legally touch. The spec says "the sites of the dispositioned nits", so this is literally
+  compliant, but it weakens a refusal. Worth a sentence in the spec either way.
+- **`ParsedCommand.Match` now takes 30 delegates**, re-declared in full on each of ~30 records. §8 added
+  five. It is compile-checked and correct, and I am not asking for it to change now — but it is the
+  shape that will make §8a/§9's additions expensive, and it should be a deliberate decision rather than
+  a default by the time §13 documents the surface.
+- Claims and limits are stored as HTML comments (`callboard:claim` / `callboard:limit`), following §5's
+  `handover`/`transition`/`verdict` precedent — consistent, so not a §8 erosion, but the certification
+  text a human is meant to read cold is now the part a rendered view hides. Worth one look before the
+  human view is specified.
+
+→ @architect
+
+**[architect]** **Product Owner ruling — `recertify` does not survive; carried debt is an `obligation`.**
+Recorded from the session that followed the supervisor's `Request changes` on §8. This is the seventh
+spec amendment of the section and the largest: it removes work that has already landed, been reviewed,
+and been committed.
+
+**1. A nit fix gets a fresh review, never a recertification.** When the architect sends a block back to
+the worker over a nit, the next review is a **full** one. The Product Owner's reasoning: *"that's where
+nit fixes can break something else and not get noticed."* That is the spec's own warning — "a difference
+confined to the expected sites has been observed to be green over a real defect" — turned on
+recertification itself, which is the one place §8 had exempted from it. `review-certification`'s
+disposition table is wrong where it says `fix-before-land` means "the amended state requires
+re-certification"; it requires a **fresh review**. The implementation's `in-review`-only branch, which
+the supervisor found and read as a defect, turns out to be right; the spec sentence above it was wrong.
+
+**2. That leaves `recertify` with no caller, so it is cut.** Walked with the Product Owner: a nit fix is
+a fresh review; `defer` is by definition not fixed now; `decline` changes nothing; an approval over
+uncommitted content that is later committed changes the state's *name* and not its content, so there is
+nothing to re-derive. The one genuinely new candidate — §8a's provisional window, where an approved
+block waits while sibling blocks land and a sibling edits its files — dies by the same argument, because
+a change made by *another* block is exactly the unnoticed break the ruling is about.
+
+Worth stating plainly, because it is the whole reason this was found at all: **`recertify` spent a
+paragraph telling the reviewer not to trust the property its own precondition was built on.** It required
+the difference to be confined to the nit sites, and in the same requirement warned that confinement to
+the expected sites is not evidence. That was incoherent before the ruling; the ruling makes it explicit.
+
+**3. Cut, ~1,110 lines:** `block recertify`, `CardRecertificationOutcome`, `BlockRecertifyResult`, its
+tests, the `recertification-refused` transition, and **block D in its entirety** —
+`RecertificationGateFailure`, both mechanical preconditions, `--changed`, `GatesNotGreen`,
+`DifferenceOutsideNitSites`. Tasks 8.8–8.12 are unticked. `CardComment.Sites` and `nit raise --site` go
+with it: block B stored them solely for block D, they had exactly one reader, and all five of the spec's
+mentions of "sites" sit inside the two recertification requirements.
+
+**4. `amendment-requested` survives and is promoted.** It references recertification only in doc
+comments, never as a guard. It is the architect deliberately reopening an `approved` block to `briefed`
+with `round + 1` — which under this ruling is now the **only** route from approved back to work. Written
+as recertification's escape hatch; it becomes the main road.
+
+**5. Carried debt is an `obligation`, not a new kind.** The Product Owner's "fix it later" case is
+already served: `obligation` *"SHALL name the section expected to discharge it"* and section close *"SHALL
+refuse while any obligation owed by that section remains open"* — front-loading onto a future section and
+blocking the current one, both already specified. The gap is not the kind; it is that nothing routes a
+`## NEXT` item into one. That includes §7's items A–H, which have ridden `## NEXT` for two sections and
+should become real obligation cards owed by real sections.
+
 ## NEXT
 
 **Resume point: 8.11 (§8 block D).** Working tree clean, nothing in flight, no part-built block, no

@@ -196,7 +196,7 @@ count sees all three. The override stops being a chat message and
 becomes part of the record.
 
 Implemented by section 8a. `land`'s individual transition is withdrawn under the same one-door discipline
-already applied to `approve`, `fix-before-land`, `recertification-refused` and `amendment-requested`.
+already applied to `approve`, `fix-before-land` and `amendment-requested`.
 
 ## Risks / Trade-offs
 

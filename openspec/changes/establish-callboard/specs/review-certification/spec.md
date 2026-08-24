@@ -1,8 +1,9 @@
 ## Purpose
 
-Governs what a review verdict certifies and how it can be amended — approval as a binary certification
-of one exact state, recertification of an already-certified claim set over a small amendment, and the
-disposition every nit must receive so none dies by neglect.
+Governs what a review verdict certifies — approval as a binary certification of one exact state, the
+claims and limits it must enumerate, and the disposition every nit must receive so none dies by
+neglect. A certification covers one state and one state only: once that state changes, the approval is
+spent, and the block is reviewed afresh rather than having its claims re-asserted over the difference.
 
 ## ADDED Requirements
 
@@ -28,8 +29,8 @@ name that state explicitly, including any uncommitted working-tree content it co
 ### Requirement: Certification enumerates its claims
 
 An approval SHALL enumerate the claims it makes and state what it does not establish. Certification text
-SHALL be written to be actionable by a reviewer who did not author it, because recertification may be
-performed by a different reviewer reading it cold.
+SHALL be written to be actionable by a reviewer who did not author it, because the reviewer who reads a
+block's certification is frequently not the one who wrote it.
 
 #### Scenario: Approval without enumerated claims is refused
 
@@ -48,9 +49,14 @@ The disposition SHALL determine what becomes of the nit:
 
 | Disposition | Outcome |
 |---|---|
-| `fix-before-land` | Stays inline; the block returns to `briefed`, `round` increments, and the amended state requires re-certification |
+| `fix-before-land` | Stays inline; the block returns to `briefed`, `round` increments, and the amended state requires a **fresh review** |
 | `defer` | Promoted to an `obligation` card naming what discharges it |
 | `decline` | Promoted to a `decision` card recording the reason the code is right as it stands |
+
+A nit MAY name the sites it concerns, so that a worker picking the fix up knows where to start. Those
+sites SHALL be guidance to whoever does the work and SHALL NOT be treated as a bound on what the fix may
+touch: a nit's stated sites are where the reviewer noticed the problem, not a claim about where the
+problem ends.
 
 A nit SHALL cease to be live only through one of these three dispositions. It SHALL NOT lapse by
 neglect.
@@ -70,70 +76,9 @@ neglect.
 - **WHEN** a block is moved out of `in-review` while a nit raised against it has no disposition
 - **THEN** the system refuses and names the undispositioned nits
 
-### Requirement: Recertification re-asserts an existing claim set
-
-The system SHALL provide a `recertify` operation by which a reviewer re-asserts an existing approval's
-enumerated claims over an amended state, claim by claim, without performing a full re-audit.
-
-Each claim SHALL be individually assertable or refusable. The reviewer SHALL re-derive each claim
-against the code; reading the difference between the certified and amended states SHALL NOT be
-sufficient, because a difference confined to the expected sites has been observed to be green over a
-real defect.
-
-A successful recertification SHALL re-stamp `reviewed_state` to the amended state. A refusal of any
-claim SHALL be a first-class outcome that returns the block to `briefed` and increments `round`.
-
-#### Scenario: Per-claim refusal returns the block
-
-- **WHEN** a reviewer recertifies three claims and refuses the second
-- **THEN** the system records all three outcomes, does not re-stamp `reviewed_state`, and returns the
-  block to `briefed` with `round` incremented
-
-#### Scenario: All claims re-asserted
-
-- **WHEN** a reviewer re-asserts every enumerated claim over the amended state
-- **THEN** the system re-stamps `reviewed_state` to the amended state without incrementing `round`
-
-### Requirement: Recertification is bounded
-
-The system SHALL permit at most one recertification per approval. A further amendment after a
-recertification SHALL require a new round, obtained through the `amendment-requested` transition
-(`work-lifecycle`), by which the architect deliberately reopens the approved block and returns it to
-`briefed` with `round` incremented.
-
-Two outcomes SHALL be distinguished and SHALL NOT be conflated. A **claim refused within a
-recertification** is a substantive verdict: it moves the block, as "Recertification re-asserts an
-existing claim set" requires. A **refused recertification attempt** — one barred by the bound above, by
-a mechanical precondition, by the acting role, or by a malformed request — is not a verdict at all: it
-SHALL leave the card byte-identical, recording nothing and moving nothing.
-
-Mechanical preconditions SHALL gate recertification and SHALL be able only to refuse it, never to
-satisfy it: every gate on the card SHALL have been re-run to a passing exit code, and the difference
-between certified and amended states SHALL be confined to the sites of the dispositioned nits. A
-difference extending beyond those sites SHALL send the block to full re-review, by the same
-`amendment-requested` route: the precondition refuses, and the architect reopens the block.
-
-#### Scenario: Second recertification is refused
-
-- **WHEN** a block that has already been recertified once is amended again
-- **THEN** the system refuses recertification and states that further iteration requires a new round
-
-#### Scenario: Out-of-scope difference forces full re-review
-
-- **WHEN** an amendment touches code outside the sites of the dispositioned nits
-- **THEN** the system refuses recertification, leaves the card untouched, and names `amendment-requested`
-  as the route to full re-review
-
-#### Scenario: Green preconditions do not confer approval
-
-- **WHEN** gates re-run green and the difference is confined to the nit sites
-- **THEN** the system permits recertification to proceed but records no claim as re-asserted until the
-  reviewer asserts it
-
 ### Requirement: Approval is role-bounded
 
-Only the `reviewer` and `supervisor` roles SHALL record an `approve` verdict or perform a
-recertification.
+Only the `reviewer` and `supervisor` roles SHALL record an `approve` verdict.
 
 #### Scenario: Non-reviewing role attempts approval
 

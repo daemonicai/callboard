@@ -48,7 +48,7 @@ gate that is expected but absent from the record.
 
 ### Requirement: Approval is refused from the wrong role
 
-The system SHALL refuse an approval or a recertification attempted by a role other than `reviewer` or
+The system SHALL refuse an approval attempted by a role other than `reviewer` or
 `supervisor`.
 
 #### Scenario: Architect approves its own work

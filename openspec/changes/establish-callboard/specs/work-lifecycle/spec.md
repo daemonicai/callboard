@@ -16,24 +16,24 @@ drafting ──▶ briefed ──▶ building ──▶ in-review ──┬─�
                 ▲                                 │        │
                 ├──── changes-requested ◀─────────┤        │
                 ├──── fix-before-land ◀───────────┘        │
-                ├──── recertification-refused ◀────────────┤
                 ├──── amendment-requested ◀────────────────┤
                 └──── finding-recurred ◀───────────────────┘
-                            (round += 1 on all five)
+                            (round += 1 on all four)
 ```
 
-`changes-requested` and `fix-before-land` both leave `in-review`; `recertification-refused`,
-`amendment-requested` and `finding-recurred` all leave `approved`. They are distinct named transitions
-because the name is recorded in the card's history — see `review-certification` for what raises each.
+`changes-requested` and `fix-before-land` both leave `in-review`; `amendment-requested` and
+`finding-recurred` both leave `approved`. They are distinct named transitions because the name is
+recorded in the card's history — see `review-certification` for what raises each.
 
 `finding-recurred` is a supervisor returning a remediation card whose finding it reports still
 unresolved; it is the only transition a supervisor drives directly, and it never targets a
 task-implementing block.
 
-`amendment-requested` is the architect deliberately reopening an approved block for a further
-amendment. It is the transition that delivers `review-certification`'s "a further amendment after a
-recertification SHALL require a new round": once a block's single recertification is spent, this is
-the only way back to `briefed`, and it is invoked on purpose rather than falling out of a refusal.
+`amendment-requested` is the architect deliberately reopening an approved block. It is the **only**
+route from `approved` back to work that is not a supervisor's recurrence, and it is invoked on purpose
+rather than falling out of a refusal. An approval certifies one exact state; any change to that state
+spends it, and this transition is how the block is handed back for the fresh review that change
+requires.
 
 Every transition SHALL record the acting role and the time it occurred.
 
@@ -124,6 +124,13 @@ and land none.
 Closing a section SHALL refuse where any block in it is not `approved`, where any block's
 `reviewed_state` does not match that block's current state, or where any block carries an expected gate
 whose recorded exit code is non-zero or absent.
+
+The `reviewed_state` refusal is the provisional window's whole point. A block can sit `approved` for a
+long time while its siblings land, and a sibling touching its files leaves its certification describing a
+state that no longer exists. The system SHALL NOT offer any means of re-asserting that certification over
+the changed state: the block SHALL be reopened through `amendment-requested` and reviewed afresh. A
+change made by another block is precisely the case where a fix confined to one place breaks something in
+another and nobody notices, which is what a full review exists to catch.
 
 #### Scenario: An approved block is not yet landed
 

@@ -83,12 +83,7 @@
 - [x] 8.5 Implement `fix-before-land` returning the block to `briefed` with an incremented round
 - [x] 8.6 Implement `defer` promoting to an obligation and `decline` promoting to a decision
 - [x] 8.7 Refuse leaving `in-review` with any undispositioned nit
-- [x] 8.8 Implement `recertify` with individually assertable and refusable claims
-- [x] 8.9 Implement per-claim refusal returning the block to `briefed` without re-stamping `reviewed_state`
-- [x] 8.10 Enforce at most one recertification per approval
-- [x] 8.11 Implement the mechanical preconditions as refuse-only: gates re-run green, difference confined to nit sites
-- [x] 8.12 Test that green preconditions confer no claim until a reviewer asserts it
-- [x] 8.13 Restrict approval and recertification to `reviewer` and `supervisor`
+- [x] 8.13 Restrict approval to `reviewer` and `supervisor`
 
 ## 8a. Provisional approval and section-driven landing
 

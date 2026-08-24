@@ -45,8 +45,10 @@ minimal role-scoped working context on demand; and refuses transitions that viol
   so nothing can be dropped there.
 - **BREAKING — `Approve with nits` is removed as a verdict.** Approve becomes binary and certifies one
   SHA. Each nit takes an architect-chosen disposition instead: fix-before-land, defer, or decline.
-- **New — a `recertify` operation.** A reviewer re-asserts an existing certification's enumerated
-  claims over an amended state, claim by claim, without a full re-audit.
+- **A certification covers one state and is spent when that state changes.** There is deliberately no
+  operation for re-asserting an approval's claims over an amended state: a fix confined to the sites a
+  reviewer named is exactly where an unnoticed break hides, so an amended block is reviewed afresh
+  rather than re-certified over the difference.
 - **Lose no narrative.** Everything currently written to `DEVLOG.md` stays recorded and retrievable; it
   simply leaves the default read path. The record stays legible without the tool.
 
@@ -60,8 +62,8 @@ minimal role-scoped working context on demand; and refuses transitions that viol
   → closed, with remediation as the same card at a higher round, gates as recorded exit codes, blocked
   derived from `blocked_by`, and sections as entities carrying status, base commit and verdict.
 - `review-certification`: binary approve certifying one SHA, certification text written to be legible
-  to a reviewer who did not author it, `recertify` with per-claim refusal, and nits as comments carrying
-  a disposition.
+  to a reviewer who did not author it, an approval spent by any change to the state it certifies, and
+  nits as comments carrying a disposition.
 - `findings`: clean findings with instrument, declared extent and blind spot; staleness computed when
   covered code moves; a separate disposition for findings that argue rather than measure and so cannot
   be re-verified.
