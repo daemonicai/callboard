@@ -460,10 +460,15 @@ internal static class CommandParser
     /// non-empty/whitespace (the same "an empty name names nothing" check <c>block approve</c>'s own
     /// <c>--state</c> uses), every claim id non-blank, and a claim id named by both
     /// <c>--assert</c> and <c>--refuse</c> in the same call (an ambiguous, argv-decidable
-    /// self-contradiction). Whether a named id actually belongs to the current approval's claim set,
-    /// and whether every one of that set received an outcome, both depend on the card's on-disk
-    /// state, so both are left to the execute phase. Role <em>permission</em> (reviewer/supervisor
-    /// only) is likewise left to execute, the same split <c>block approve</c>'s own role check uses.
+    /// self-contradiction). <c>--changed &lt;path&gt;</c> is repeatable and required (§8 block D
+    /// brief item 1, review-certification: "Recertification is bounded") — omitted entirely is
+    /// refused here (never read as "an empty difference, vacuously confined"), a blank value is
+    /// refused here; whether each path is actually confined to a dispositioned nit's site depends
+    /// on the card's on-disk state, so that is left to the execute phase, same as the claim checks
+    /// below. Whether a named id actually belongs to the current approval's claim set, and whether
+    /// every one of that set received an outcome, both depend on the card's on-disk state, so both
+    /// are left to the execute phase. Role <em>permission</em> (reviewer/supervisor only) is
+    /// likewise left to execute, the same split <c>block approve</c>'s own role check uses.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseBlockRecertify(CommandDispatcher.CommandContext context)
     {
@@ -473,6 +478,7 @@ internal static class CommandParser
         string? changeName = null;
         var assertedClaimIds = new List<string>();
         var refusedClaimIds = new List<string>();
+        var changedPaths = new List<string>();
 
         var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
@@ -481,6 +487,7 @@ internal static class CommandParser
             ["--state"] = value => state = value,
             ["--assert"] = value => assertedClaimIds.Add(value),
             ["--refuse"] = value => refusedClaimIds.Add(value),
+            ["--changed"] = value => changedPaths.Add(value),
             ["--change"] = value => changeName = value,
         });
         if (flagRefusal is not null)
@@ -532,8 +539,30 @@ internal static class CommandParser
                 "Each claim receives exactly one outcome."));
         }
 
+        // review-certification: "the difference between certified and amended states SHALL be
+        // confined to the sites of the dispositioned nits" (§8 block D brief item 1) — required,
+        // not merely accepted: omitting '--changed' must not be read as "an empty difference,
+        // vacuously confined", which would turn the precondition off by omission.
+        if (changedPaths.Count == 0)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "changed-paths-required",
+                "'block recertify' requires at least one '--changed <path>' naming a path the amendment " +
+                "touched — the mechanical precondition that confines the difference to the sites of the " +
+                "dispositioned nits has nothing to check without it."));
+        }
+
+        foreach (var changedPath in changedPaths)
+        {
+            if (string.IsNullOrWhiteSpace(changedPath))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "invalid-changed-path", "'--changed' cannot name an empty or whitespace-only path."));
+            }
+        }
+
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.Recertify(
-            id, role, state, assertedClaimIds, refusedClaimIds, changeName, context.WorkingDirectory, context.Clock()));
+            id, role, state, assertedClaimIds, refusedClaimIds, changedPaths, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

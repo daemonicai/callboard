@@ -37,13 +37,15 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
 
         EnterInReview(repo, path, firstRound: true);
         var round1ClaimIds = Approve(repo, path, "B-0001", "commit-round1", "round one claim");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0001", "src/Round1.cs");
 
         // Successful recertification: spends the one recertification this approval permits: round
         // does not move, status stays approved.
         Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
             [
                 "block", "recertify", "--id", "B-0001", "--role", "reviewer", "--state", "commit-round1-amended",
-                "--assert", round1ClaimIds[0], "--change", ChangeName,
+                "--assert", round1ClaimIds[0], "--changed", "src/Round1.cs", "--change", ChangeName,
             ],
             new StringWriter(), repo));
         var afterRecertification = AssertParseSuccess(CardStore.ReadCard(path));
@@ -90,6 +92,12 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
         Assert.Equal("approved", afterReapproval.Frontmatter.Status);
         Assert.Equal(2, afterReapproval.BlockFields.Round);
 
+        // Round 2's own evidence — the round-1 gate result and dispositioned nit stay on the card
+        // but are scoped to round 1 (round-1 gate result carries Round=1; the round-1 nit site sits
+        // before the 'amendment-requested' transition's own 'To: briefed' boundary).
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0001", "src/Round2.cs");
+
         // 8.10's own bound is scoped to the approval, not the card (Architect ruling): this
         // approval has never been recertified, so it gets a FRESH recertification even though the
         // card as a whole has already been recertified once, in an earlier round.
@@ -97,7 +105,7 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
         var freshExitCode = RunInRepo(
             [
                 "block", "recertify", "--id", "B-0001", "--role", "reviewer", "--state", "commit-round2-amended",
-                "--assert", round2ClaimIds[0], "--change", ChangeName,
+                "--assert", round2ClaimIds[0], "--changed", "src/Round2.cs", "--change", ChangeName,
             ],
             freshOutput, repo);
 
@@ -211,6 +219,33 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
         Assert.Equal("missing-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
+    // §8 block D's mechanical preconditions (review-certification: "Recertification is bounded")
+    // need real evidence on the card — same helpers CommandDispatcherBlockRecertifyTests
+    // established, driving the real verbs rather than hand-seeding GateResult/CardComment values.
+    private static void RecordGateGreen(TempGitRepo repo, string path, string label)
+    {
+        Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
+            ["block", "gate", path, label, "0", "--role", "worker", "--change", ChangeName], new StringWriter(), repo));
+    }
+
+    private static string RaiseAndDispositionNit(TempGitRepo repo, string id, string site)
+    {
+        var raiseOutput = new StringWriter();
+        var raiseExit = RunInRepo(
+            ["nit", "raise", "--id", id, "--role", "reviewer", "--site", site, "--change", ChangeName],
+            raiseOutput, repo, "A nit for the recertification bound.");
+        Assert.Equal(CommandDispatcher.SuccessExitCode, raiseExit);
+        using var raiseDoc = JsonDocument.Parse(raiseOutput.ToString());
+        var nitId = raiseDoc.RootElement.GetProperty("result").GetProperty("nitId").GetString()!;
+
+        var dispositionOutput = new StringWriter();
+        var dispositionExit = RunInRepo(
+            ["nit", "disposition", "--id", nitId, "--role", "architect", "--disposition", "fix-before-land", "--change", ChangeName],
+            dispositionOutput, repo, "Fixed within the recertified amendment.");
+        Assert.Equal(CommandDispatcher.SuccessExitCode, dispositionExit);
+        return nitId;
+    }
+
     private static List<string> Approve(TempGitRepo repo, string path, string id, string state, string claimsRaw)
     {
         var output = new StringWriter();
@@ -258,6 +293,11 @@ public sealed class CommandDispatcherBlockAmendmentRequestedTests
     private static int RunInRepo(string[] args, TextWriter output, TempGitRepo repo) =>
         CommandDispatcher.Run(
             args, output, TextReader.Null, TextWriter.Null, isInputRedirected: true, workingDirectory: repo.Path, clock: repo.Clock.Next);
+
+    // 'nit raise'/'nit disposition' read their body from stdin (ADR-0001/D1).
+    private static int RunInRepo(string[] args, TextWriter output, TempGitRepo repo, string body) =>
+        CommandDispatcher.Run(
+            args, output, new StringReader(body), TextWriter.Null, isInputRedirected: true, workingDirectory: repo.Path, clock: repo.Clock.Next);
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

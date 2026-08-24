@@ -20208,6 +20208,24 @@ All prior findings on this block (and on block D itself) stand cleared. Nothing 
 
 → @architect
 
+**[architect]** Block D landed as the commit following `c0506eb`. 8.11 and 8.12 ticked; gates green
+twice under my own hand over the whole tree — `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 732/732 — after the §6 test-hardening remediation landed ahead of it as `c0506eb`.
+
+**§8's blocks are all in. The section is not closed:** it still has no `[supervisor]` verdict. Review
+scope is `afaad73..HEAD`, per the base post at the top of this section. Spawning it now; §8a does not
+open until it returns `Approve`.
+
+Worth recording what block D cost, because the shape recurs. Two rounds, and **neither was about the
+preconditions themselves** — ten of the brief's eleven binding calls held on the first pass. Round one
+was the honesty half of item 3: the gate-freshness limit went into the doc comment but not into the
+notice the reviewer actually reads, so the tool would have told a reviewer about one obligation and
+stayed silent on the other. Round two was not block D at all — it was a §6 test that had been red over
+working code, and the two attempts to fix it produced, in order, a green test over possibly-broken code
+and then a correct one. Three of the four defects this block surfaced were **tests or messages about
+the work, not the work** — which is the section's own thesis pointed back at us: mechanical evidence
+refuses, it does not certify, and a green run is not a claim.
+
 ## NEXT
 
 **Resume point: 8.11 (§8 block D).** Working tree clean, nothing in flight, no part-built block, no

@@ -26,13 +26,15 @@ public sealed class CommandDispatcherBlockRecertifyTests
         using var repo = new TempGitRepo();
         var path = WriteInitialBlockCard(repo, "b-0001", "B-0001", BlockFlowState.InReview);
         var claimIds = Approve(repo, path, "B-0001", "commit-abc", "claim one,claim two");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0001", "src/Foo.cs");
         const string amendedState = "commit-def + uncommitted working tree";
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
                 "block", "recertify", "--id", "B-0001", "--role", "reviewer", "--state", amendedState,
-                "--assert", claimIds[0], "--assert", claimIds[1], "--change", ChangeName,
+                "--assert", claimIds[0], "--assert", claimIds[1], "--changed", "src/Foo.cs", "--change", ChangeName,
             ],
             output, repo);
 
@@ -60,12 +62,14 @@ public sealed class CommandDispatcherBlockRecertifyTests
         var path = WriteInitialBlockCard(repo, "b-0002", "B-0002", BlockFlowState.InReview);
         const string certifiedState = "commit-abc";
         var claimIds = Approve(repo, path, "B-0002", certifiedState, "claim one,claim two,claim three");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0002", "src/Bar.cs");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
                 "block", "recertify", "--id", "B-0002", "--role", "reviewer", "--state", "commit-def",
-                "--assert", claimIds[0], "--assert", claimIds[2], "--refuse", claimIds[1], "--change", ChangeName,
+                "--assert", claimIds[0], "--assert", claimIds[2], "--refuse", claimIds[1], "--changed", "src/Bar.cs", "--change", ChangeName,
             ],
             output, repo);
 
@@ -100,7 +104,10 @@ public sealed class CommandDispatcherBlockRecertifyTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["block", "recertify", "--id", "B-0003", "--role", "reviewer", "--state", "commit-def", "--assert", claimIds[0], "--change", ChangeName],
+            [
+                "block", "recertify", "--id", "B-0003", "--role", "reviewer", "--state", "commit-def", "--assert", claimIds[0],
+                "--changed", "src/Whatever.cs", "--change", ChangeName,
+            ],
             output, repo);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -122,7 +129,10 @@ public sealed class CommandDispatcherBlockRecertifyTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["block", "recertify", "--id", "B-0004", "--role", "reviewer", "--state", "commit-def", "--assert", "not-a-real-claim-id", "--change", ChangeName],
+            [
+                "block", "recertify", "--id", "B-0004", "--role", "reviewer", "--state", "commit-def", "--assert", "not-a-real-claim-id",
+                "--changed", "src/Whatever.cs", "--change", ChangeName,
+            ],
             output, repo);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -141,7 +151,7 @@ public sealed class CommandDispatcherBlockRecertifyTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["block", "recertify", "--id", "B-0005", "--role", "reviewer", "--state", "commit-def", "--change", ChangeName],
+            ["block", "recertify", "--id", "B-0005", "--role", "reviewer", "--state", "commit-def", "--changed", "src/Whatever.cs", "--change", ChangeName],
             output, repo);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -163,7 +173,10 @@ public sealed class CommandDispatcherBlockRecertifyTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["block", "recertify", "--id", "B-0006", "--role", "worker", "--state", "commit-def", "--assert", claimIds[0], "--change", ChangeName],
+            [
+                "block", "recertify", "--id", "B-0006", "--role", "worker", "--state", "commit-def", "--assert", claimIds[0],
+                "--changed", "src/Whatever.cs", "--change", ChangeName,
+            ],
             output, repo);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -187,7 +200,7 @@ public sealed class CommandDispatcherBlockRecertifyTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["block", "recertify", "--id", "Q-0001", "--role", "reviewer", "--state", "commit-def", "--change", ChangeName],
+            ["block", "recertify", "--id", "Q-0001", "--role", "reviewer", "--state", "commit-def", "--changed", "src/Whatever.cs", "--change", ChangeName],
             output, repo);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -295,11 +308,13 @@ public sealed class CommandDispatcherBlockRecertifyTests
 
         EnterInReview(repo, path, firstRound: true);
         var claimIds = Approve(repo, path, "B-0011", "commit-round1", "round one claim");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0011", "src/Foo.cs");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
             [
                 "block", "recertify", "--id", "B-0011", "--role", "reviewer", "--state", "commit-round1-amended",
-                "--assert", claimIds[0], "--change", ChangeName,
+                "--assert", claimIds[0], "--changed", "src/Foo.cs", "--change", ChangeName,
             ],
             new StringWriter(), repo));
         Assert.Equal("approved", AssertParseSuccess(CardStore.ReadCard(path)).Frontmatter.Status);
@@ -309,7 +324,7 @@ public sealed class CommandDispatcherBlockRecertifyTests
         var exitCode = RunInRepo(
             [
                 "block", "recertify", "--id", "B-0011", "--role", "reviewer", "--state", "commit-round1-amended-again",
-                "--assert", claimIds[0], "--change", ChangeName,
+                "--assert", claimIds[0], "--changed", "src/Foo.cs", "--change", ChangeName,
             ],
             output, repo);
 
@@ -341,10 +356,12 @@ public sealed class CommandDispatcherBlockRecertifyTests
 
         EnterInReview(repo, path, firstRound: true);
         var round1ClaimIds = Approve(repo, path, "B-0012", "commit-round1", "round one claim");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0012", "src/Round1.cs");
         Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
             [
                 "block", "recertify", "--id", "B-0012", "--role", "reviewer", "--state", "commit-round1-refused",
-                "--refuse", round1ClaimIds[0], "--change", ChangeName,
+                "--refuse", round1ClaimIds[0], "--changed", "src/Round1.cs", "--change", ChangeName,
             ],
             new StringWriter(), repo));
         var afterRefusal = AssertParseSuccess(CardStore.ReadCard(path));
@@ -355,11 +372,18 @@ public sealed class CommandDispatcherBlockRecertifyTests
         var round2ClaimIds = Approve(repo, path, "B-0012", "commit-round2", "round two claim");
         Assert.NotEqual(round1ClaimIds[0], round2ClaimIds[0]);
 
+        // Round 2's own evidence — the round 1 gate result stays on the card (retained, not
+        // overwritten) but is stamped round 1, so it is not evidence this round's gates are green;
+        // likewise round 1's dispositioned nit site is out of the round 2 bound (roundStart moves
+        // to the 'recertification-refused' transition above, which also lands on 'briefed').
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0012", "src/Round2.cs");
+
         var output = new StringWriter();
         var exitCode = RunInRepo(
             [
                 "block", "recertify", "--id", "B-0012", "--role", "reviewer", "--state", "commit-round2-amended",
-                "--assert", round2ClaimIds[0], "--change", ChangeName,
+                "--assert", round2ClaimIds[0], "--changed", "src/Round2.cs", "--change", ChangeName,
             ],
             output, repo);
 
@@ -367,6 +391,335 @@ public sealed class CommandDispatcherBlockRecertifyTests
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("commit-round2-amended", doc.RootElement.GetProperty("result").GetProperty("reviewedState").GetString());
         Assert.Equal("approved", AssertParseSuccess(CardStore.ReadCard(path)).Frontmatter.Status);
+    }
+
+    // §8 block D (8.11): the two mechanical preconditions themselves — review-certification:
+    // "Recertification is bounded". Both refuse-only, evaluated last (after UnknownClaimIds/
+    // MissingClaimOutcomes), both leave the card byte-identical on refusal.
+
+    [Fact]
+    public void BlockRecertify_GateNeverRecordedThisRound_Refuses_NamesTheAbsentLabel_AndLeavesTheCardByteIdentical()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0013", "B-0013", BlockFlowState.Drafting);
+
+        EnterInReview(repo, path, firstRound: true);
+        RecordGateGreen(repo, path, "build");
+        // Empties the live-nit set while still in-review, which is 'nit disposition's own edge back
+        // to briefed (§8 block B) — advances the round without ever going near 'block recertify',
+        // so the round-1 'build' result is retained but stops being this round's evidence. Must
+        // happen before 'block approve' — dispositioning while already 'approved' never trips the
+        // in-review-only auto-transition, so the round would never actually advance.
+        RaiseAndDispositionNit(repo, "B-0013", "src/Round1.cs");
+        var afterFixBeforeLand = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("briefed", afterFixBeforeLand.Frontmatter.Status);
+        Assert.Equal(2, afterFixBeforeLand.BlockFields.Round);
+
+        EnterInReview(repo, path, firstRound: false);
+        var round2ClaimIds = Approve(repo, path, "B-0013", "commit-round2", "round two claim");
+        // Deliberately no 'block gate' call this round — 'build' is the only distinct label the
+        // card has ever recorded, and it has no round-2 entry.
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0013", "--role", "reviewer", "--state", "commit-round2-amended",
+                "--assert", round2ClaimIds[0], "--changed", "src/Round2.cs", "--change", ChangeName,
+            ],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("gates-not-green", refusal.GetProperty("code").GetString());
+        Assert.Contains("build", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void BlockRecertify_GateRecordedNonZeroThisRound_Refuses_NamesTheLabelAndExitCode_AndLeavesTheCardByteIdentical()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0014", "B-0014", BlockFlowState.InReview);
+        var claimIds = Approve(repo, path, "B-0014", "commit-abc", "claim one");
+        RecordGate(repo, path, "test", exitCode: 1);
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0014", "--role", "reviewer", "--state", "commit-def",
+                "--assert", claimIds[0], "--changed", "src/Whatever.cs", "--change", ChangeName,
+            ],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("gates-not-green", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString()!;
+        Assert.Contains("test", message, StringComparison.Ordinal);
+        Assert.Contains("1", message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // review-certification: "the difference … SHALL be confined to the sites of the dispositioned
+    // nits" — brief item 6: no dispositioned nit ⇒ an empty bound ⇒ every changed path is out of
+    // scope, never a vacuous pass.
+    [Fact]
+    public void BlockRecertify_NoDispositionedNitThisRound_Refuses_EveryChangedPathOutOfScope_AndNamesAmendmentRequested()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0015", "B-0015", BlockFlowState.InReview);
+        var claimIds = Approve(repo, path, "B-0015", "commit-abc", "claim one");
+        RecordGateGreen(repo, path, "build");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0015", "--role", "reviewer", "--state", "commit-def",
+                "--assert", claimIds[0], "--changed", "src/Foo.cs", "--change", ChangeName,
+            ],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("difference-outside-nit-sites", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString()!;
+        Assert.Contains("src/Foo.cs", message, StringComparison.Ordinal);
+        Assert.Contains("amendment-requested", message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void BlockRecertify_ChangedPathOutsideDispositionedSites_Refuses_NamesOffendingPathAndInBoundsSite()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0016", "B-0016", BlockFlowState.InReview);
+        var claimIds = Approve(repo, path, "B-0016", "commit-abc", "claim one");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0016", "src/Foo.cs");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0016", "--role", "reviewer", "--state", "commit-def",
+                "--assert", claimIds[0], "--changed", "src/Bar.cs", "--change", ChangeName,
+            ],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("difference-outside-nit-sites", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString()!;
+        Assert.Contains("src/Bar.cs", message, StringComparison.Ordinal);
+        Assert.Contains("src/Foo.cs", message, StringComparison.Ordinal);
+        Assert.Contains("amendment-requested", message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // Site-confinement's positive half (brief item 5): a changed path nested under a dispositioned
+    // site's directory is confined, not merely a path ordinal-equal to the site itself.
+    [Fact]
+    public void BlockRecertify_ChangedPathUnderDispositionedSiteDirectory_IsConfined_Succeeds()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0017", "B-0017", BlockFlowState.InReview);
+        var claimIds = Approve(repo, path, "B-0017", "commit-abc", "claim one");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0017", "src/pkg");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0017", "--role", "reviewer", "--state", "commit-def",
+                "--assert", claimIds[0], "--changed", "src/pkg/File.cs", "--change", ChangeName,
+            ],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+    }
+
+    // brief item 4 — the round-boundary property this section has already gotten wrong twice
+    // (§8 block B's own remediation, twice), computed a third time here: a nit dispositioned in an
+    // EARLIER round must not bound a LATER round's recertification. Demonstrated to fail against
+    // the un-fixed logic: scoping the nit-site scan to the card's whole comment history (i.e.
+    // dropping the roundStart scan down to always DateTimeOffset.MinValue) makes this call
+    // succeed instead of refuse. Confirmed by hand before landing this block: applying exactly
+    // that change and running this test alone reproduces the failure described above; reverting
+    // restores the pass.
+    [Fact]
+    public void BlockRecertify_DispositionedNitFromAnEarlierRound_DoesNotBoundALaterRound_Refuses()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0018", "B-0018", BlockFlowState.Drafting);
+
+        EnterInReview(repo, path, firstRound: true);
+        var round1ClaimIds = Approve(repo, path, "B-0018", "commit-round1", "round one claim");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0018", "src/Round1.cs");
+        Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0018", "--role", "reviewer", "--state", "commit-round1-refused",
+                "--refuse", round1ClaimIds[0], "--changed", "src/Round1.cs", "--change", ChangeName,
+            ],
+            new StringWriter(), repo));
+
+        EnterInReview(repo, path, firstRound: false);
+        var round2ClaimIds = Approve(repo, path, "B-0018", "commit-round2", "round two claim");
+        RecordGateGreen(repo, path, "build"); // round 2's own evidence — required either way
+
+        var output = new StringWriter();
+        var exitCode = RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0018", "--role", "reviewer", "--state", "commit-round2-amended",
+                "--assert", round2ClaimIds[0], "--changed", "src/Round1.cs", "--change", ChangeName,
+            ],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("difference-outside-nit-sites", refusal.GetProperty("code").GetString());
+        Assert.Contains("src/Round1.cs", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+    }
+
+    // §8 block D (8.12) — the section's thesis in a single file's worth of tests: mechanical
+    // evidence can refuse a certification and can never grant one. review-certification: "Green
+    // preconditions do not confer approval".
+    [Fact]
+    public void BlockRecertify_Thesis_GreenPreconditionsDoNotRescueARefusedClaim()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0019", "B-0019", BlockFlowState.InReview);
+        const string certifiedState = "commit-abc";
+        var claimIds = Approve(repo, path, "B-0019", certifiedState, "claim one,claim two");
+        // Every mechanical precondition green: gates re-run passing, and the lone changed path
+        // confined to the lone dispositioned nit's site.
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0019", "src/Foo.cs");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0019", "--role", "reviewer", "--state", "commit-def",
+                "--assert", claimIds[0], "--refuse", claimIds[1], "--changed", "src/Foo.cs", "--change", ChangeName,
+            ],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode); // a substantive verdict, not a refused attempt
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.True(result.GetProperty("transitioned").GetBoolean());
+        Assert.Equal([claimIds[1]], result.GetProperty("refusedClaimIds").EnumerateArray().Select(static e => e.GetString()).ToArray());
+        // Green preconditions did not rescue the refused claim into the asserted set.
+        Assert.DoesNotContain(claimIds[1], result.GetProperty("assertedClaimIds").EnumerateArray().Select(static e => e.GetString()));
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("briefed", read.Frontmatter.Status);
+        Assert.Equal(certifiedState, read.BlockFields.ReviewedState); // untouched — the refusal is real, not overridden by green gates
+        Assert.Equal(2, read.BlockFields.Round);
+    }
+
+    [Fact]
+    public void BlockRecertify_Thesis_GreenPreconditionsDoNotCompleteAMalformedRequest_MissingClaimOutcomeStillRefused()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0020", "B-0020", BlockFlowState.InReview);
+        var claimIds = Approve(repo, path, "B-0020", "commit-abc", "claim one,claim two");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0020", "src/Foo.cs");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        // Every mechanical precondition passes — yet naming only one of the two claims is still
+        // refused: a precondition can refuse, never complete, a malformed request.
+        var exitCode = RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0020", "--role", "reviewer", "--state", "commit-def",
+                "--assert", claimIds[0], "--changed", "src/Foo.cs", "--change", ChangeName,
+            ],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("missing-claim-outcome", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // Reviewer blocker (§8 block D remediation): brief item 3 required the gate-freshness limit
+    // stated in BOTH the doc comment AND BlockRecertifyResult.Notice, "alongside the re-derivation
+    // obligation block C already put there" — this asserts the notice carries both, not only the
+    // claim re-derivation sentence block C shipped with.
+    [Fact]
+    public void BlockRecertify_Notice_CarriesBothTheReRederivationObligationAndTheGateFreshnessLimit()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo, "b-0021", "B-0021", BlockFlowState.InReview);
+        var claimIds = Approve(repo, path, "B-0021", "commit-abc", "claim one");
+        RecordGateGreen(repo, path, "build");
+        RaiseAndDispositionNit(repo, "B-0021", "src/Foo.cs");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "block", "recertify", "--id", "B-0021", "--role", "reviewer", "--state", "commit-def",
+                "--assert", claimIds[0], "--changed", "src/Foo.cs", "--change", ChangeName,
+            ],
+            output, repo);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var notice = doc.RootElement.GetProperty("result").GetProperty("notice").GetString()!;
+
+        // Block C's own obligation — must survive this fix, not be replaced by it.
+        Assert.Contains("re-derivation", notice, StringComparison.Ordinal);
+        // Block D's own obligation — the fact this test exists to pin down.
+        Assert.Contains("gate", notice, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("current round", notice, StringComparison.Ordinal);
+        Assert.Contains("reviewer", notice, StringComparison.Ordinal);
+    }
+
+    // §8 block D's own two mechanical preconditions (review-certification: "Recertification is
+    // bounded") need real evidence on the card, not hand-seeded state — the two properties this
+    // section has already gotten wrong twice were both computed over the wrong scope, so these
+    // helpers drive the real verbs (block gate / nit raise / nit disposition) rather than writing
+    // GateResult/CardComment values directly.
+    private static void RecordGateGreen(TempGitRepo repo, string path, string label) => RecordGate(repo, path, label, exitCode: 0);
+
+    private static void RecordGate(TempGitRepo repo, string path, string label, int exitCode)
+    {
+        Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
+            ["block", "gate", path, label, exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture), "--role", "worker", "--change", ChangeName],
+            new StringWriter(), repo));
+    }
+
+    // Raises a nit against block card 'id' naming 'site', then dispositions it fix-before-land.
+    // Dispositioning while the card is already 'approved' (every caller here) never trips the
+    // in-review-only auto-transition edge (CardStore.DispositionNitUnderLocks), so the choice of
+    // disposition value doesn't matter for these tests — only that the nit ends up dispositioned
+    // (CardCommentRouting.IsNitDispositioned), which is all the site-confinement bound reads.
+    private static string RaiseAndDispositionNit(TempGitRepo repo, string id, string site)
+    {
+        var raiseOutput = new StringWriter();
+        var raiseExit = RunInRepo(
+            ["nit", "raise", "--id", id, "--role", "reviewer", "--site", site, "--change", ChangeName],
+            raiseOutput, repo, "A nit for the recertification bound.");
+        Assert.Equal(CommandDispatcher.SuccessExitCode, raiseExit);
+        using var raiseDoc = JsonDocument.Parse(raiseOutput.ToString());
+        var nitId = raiseDoc.RootElement.GetProperty("result").GetProperty("nitId").GetString()!;
+
+        var dispositionOutput = new StringWriter();
+        var dispositionExit = RunInRepo(
+            ["nit", "disposition", "--id", nitId, "--role", "architect", "--disposition", "fix-before-land", "--change", ChangeName],
+            dispositionOutput, repo, "Fixed within the recertified amendment.");
+        Assert.Equal(CommandDispatcher.SuccessExitCode, dispositionExit);
+        return nitId;
     }
 
     private static List<string> Approve(TempGitRepo repo, string path, string id, string state, string claimsRaw)
@@ -416,6 +769,12 @@ public sealed class CommandDispatcherBlockRecertifyTests
     private static int RunInRepo(string[] args, TextWriter output, TempGitRepo repo) =>
         CommandDispatcher.Run(
             args, output, TextReader.Null, TextWriter.Null, isInputRedirected: true, workingDirectory: repo.Path, clock: repo.Clock.Next);
+
+    // 'nit raise'/'nit disposition' read their body from stdin (ADR-0001/D1) — same shape
+    // CommandDispatcherNitTests's own RunInRepo overload uses.
+    private static int RunInRepo(string[] args, TextWriter output, TempGitRepo repo, string body) =>
+        CommandDispatcher.Run(
+            args, output, new StringReader(body), TextWriter.Null, isInputRedirected: true, workingDirectory: repo.Path, clock: repo.Clock.Next);
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

@@ -48,6 +48,8 @@ internal abstract record CardRecertificationOutcome
         Func<AlreadyRecertified, TResult> onAlreadyRecertified,
         Func<UnknownClaimIds, TResult> onUnknownClaimIds,
         Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes,
+        Func<GatesNotGreen, TResult> onGatesNotGreen,
+        Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites,
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
         Func<ToolFailure, TResult> onToolFailure);
@@ -62,7 +64,7 @@ internal abstract record CardRecertificationOutcome
     /// all of them is refused before reaching this case (<see cref="MissingClaimOutcomes"/>).</param>
     internal sealed record Recertified(CardFile Card, IReadOnlyList<string> AssertedClaimIds) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onRecertified(this);
     }
 
@@ -82,7 +84,7 @@ internal abstract record CardRecertificationOutcome
     /// refused" — see <see cref="MissingClaimOutcomes"/>).</param>
     internal sealed record ClaimsRefused(CardFile Card, IReadOnlyList<string> AssertedClaimIds, IReadOnlyList<string> RefusedClaimIds) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onClaimsRefused(this);
     }
 
@@ -91,7 +93,7 @@ internal abstract record CardRecertificationOutcome
     /// a second predicate.</summary>
     internal sealed record RoleNotPermitted(CardOwner AttemptedRole) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onRoleNotPermitted(this);
     }
 
@@ -99,14 +101,14 @@ internal abstract record CardRecertificationOutcome
     /// Refusal-shaped: caller pointed the verb at the wrong card.</summary>
     internal sealed record NotABlockCard(CardKind Kind) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotABlockCard(this);
     }
 
     /// <summary>No card exists at the target path. Refusal-shaped: caller-correctable.</summary>
     internal sealed record CardNotFound(string FilePath) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardNotFound(this);
     }
 
@@ -115,7 +117,7 @@ internal abstract record CardRecertificationOutcome
     /// shaped: caller pointed the verb at a card that has nothing to recertify.</summary>
     internal sealed record NotApproved(BlockFlowState CurrentState) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotApproved(this);
     }
 
@@ -127,7 +129,7 @@ internal abstract record CardRecertificationOutcome
     /// doc comment for how "since the current approval" is derived.</summary>
     internal sealed record AlreadyRecertified : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onAlreadyRecertified(this);
     }
 
@@ -136,7 +138,7 @@ internal abstract record CardRecertificationOutcome
     /// already-superseded approval's claim set. Refusal-shaped: caller-correctable.</summary>
     internal sealed record UnknownClaimIds(IReadOnlyList<string> ClaimIds) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onUnknownClaimIds(this);
     }
 
@@ -147,15 +149,58 @@ internal abstract record CardRecertificationOutcome
     /// rule exists to prevent"). Refusal-shaped: caller-correctable.</summary>
     internal sealed record MissingClaimOutcomes(IReadOnlyList<string> ClaimIds) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onMissingClaimOutcomes(this);
+    }
+
+    /// <summary>
+    /// review-certification: "Recertification is bounded" — "every gate on the card SHALL have
+    /// been re-run to a passing exit code". Mechanical, refuse-only (§8 block D brief items 2/3/10):
+    /// this cannot establish that a gate was re-run <em>after</em> the amendment, only that this
+    /// round's gates — every distinct label ever recorded on <see cref="BlockCardFields.
+    /// GateResults"/>, checked via <see cref="BlockCardFields.GateStatusOf"/> — currently read as
+    /// green. Absent and failed are kept apart in <see cref="AbsentLabels"/>/<see cref="
+    /// FailedLabels"/> exactly as <see cref="GateStatus"/> keeps them apart (a label with no
+    /// recorded result this round is not the same fact as one recorded non-zero). Refusal-shaped:
+    /// caller-correctable — re-run the named gates and record their results.
+    /// </summary>
+    /// <param name="AbsentLabels">Every distinct gate label the card has ever recorded that has no
+    /// result recorded for the card's current round.</param>
+    /// <param name="FailedLabels">Every distinct gate label with a result recorded for the current
+    /// round whose exit code was non-zero, paired with that exit code.</param>
+    internal sealed record GatesNotGreen(IReadOnlyList<string> AbsentLabels, IReadOnlyList<RecertificationGateFailure> FailedLabels) : CardRecertificationOutcome
+    {
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            onGatesNotGreen(this);
+    }
+
+    /// <summary>
+    /// review-certification: "the difference between certified and amended states SHALL be
+    /// confined to the sites of the dispositioned nits. A difference extending beyond those sites
+    /// SHALL send the block to full re-review, by the same <c>amendment-requested</c> route" (§8
+    /// block D brief items 4/5/6/7). The bound is the union of <see cref="CardComment.Sites"/> of
+    /// every dispositioned nit raised in the current round (the round starting at the most recent
+    /// transition landing on <see cref="BlockFlowState.Briefed"/>) — a round with no dispositioned
+    /// nit has an empty bound, so every caller-supplied changed path is necessarily out of scope
+    /// (Architect ruling: not a vacuous pass). Refusal-shaped: caller-correctable — the caller
+    /// mistyped a site, or the amendment genuinely exceeds what was dispositioned, in which case
+    /// the architect reopens the block via <c>block amendment-requested</c>.
+    /// </summary>
+    /// <param name="OffendingPaths">The caller-supplied <c>--changed</c> paths that matched no
+    /// in-bounds site.</param>
+    /// <param name="InBoundsSites">The dispositioned nit sites that bounded this attempt, so the
+    /// caller can tell a genuine out-of-scope edit from a mistyped site.</param>
+    internal sealed record DifferenceOutsideNitSites(IReadOnlyList<string> OffendingPaths, IReadOnlyList<string> InBoundsSites) : CardRecertificationOutcome
+    {
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            onDifferenceOutsideNitSites(this);
     }
 
     /// <summary>The target path does not resolve under the given root/scope/change name
     /// (<see cref="AnchoredCardPath.TryCreate"/>). Refusal-shaped: caller-correctable.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onLayoutMismatch(this);
     }
 
@@ -165,7 +210,7 @@ internal abstract record CardRecertificationOutcome
     /// type must not route it to a refusal exit.</summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardCorrupt(this);
     }
 
@@ -175,7 +220,7 @@ internal abstract record CardRecertificationOutcome
     /// (ADR-0001).</summary>
     internal sealed record ToolFailure(string Reason) : CardRecertificationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recertified, TResult> onRecertified, Func<ClaimsRefused, TResult> onClaimsRefused, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotApproved, TResult> onNotApproved, Func<AlreadyRecertified, TResult> onAlreadyRecertified, Func<UnknownClaimIds, TResult> onUnknownClaimIds, Func<MissingClaimOutcomes, TResult> onMissingClaimOutcomes, Func<GatesNotGreen, TResult> onGatesNotGreen, Func<DifferenceOutsideNitSites, TResult> onDifferenceOutsideNitSites, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onToolFailure(this);
     }
 }

@@ -515,11 +515,11 @@ internal static class CardStore
     /// </summary>
     internal static CardRecertificationOutcome RecordRecertification(
         string cardsRoot, string filePath, string amendedState, IReadOnlyList<string> assertedClaimIds, IReadOnlyList<string> refusedClaimIds,
-        CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        IReadOnlyList<string> changedPaths, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
         WithLock(
             filePath,
             lockTimeout,
-            heldLock => RecordRecertificationUnderExistingLock(heldLock, cardsRoot, amendedState, assertedClaimIds, refusedClaimIds, actingRole, timestamp, changeName),
+            heldLock => RecordRecertificationUnderExistingLock(heldLock, cardsRoot, amendedState, assertedClaimIds, refusedClaimIds, changedPaths, actingRole, timestamp, changeName),
             onTimedOut: timedOut => new CardRecertificationOutcome.ToolFailure(timedOut.Message));
 
     /// <summary>
@@ -561,7 +561,7 @@ internal static class CardStore
     /// </summary>
     internal static CardRecertificationOutcome RecordRecertificationUnderExistingLock(
         CardLock heldLock, string cardsRoot, string amendedState, IReadOnlyList<string> assertedClaimIds, IReadOnlyList<string> refusedClaimIds,
-        CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+        IReadOnlyList<string> changedPaths, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
     {
         ArgumentNullException.ThrowIfNull(heldLock);
         var filePath = heldLock.CardPath;
@@ -637,6 +637,84 @@ internal static class CardStore
                 if (missingIds.Count > 0)
                 {
                     return new CardRecertificationOutcome.MissingClaimOutcomes(missingIds);
+                }
+
+                // §8 block D — the two mechanical preconditions, evaluated last, immediately before
+                // the write: a caller who mistyped a claim id is told that, not shown a gate
+                // refusal. Both are refuse-only (review-certification: "Recertification is
+                // bounded") — neither can contribute to Recertified/ClaimsRefused below, only fail
+                // to refuse.
+                var distinctGateLabels = card.BlockFields.GateResults
+                    .Select(result => result.Label)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                var absentGateLabels = new List<string>();
+                var failedGateLabels = new List<RecertificationGateFailure>();
+                foreach (var label in distinctGateLabels)
+                {
+                    card.BlockFields.GateStatusOf(label).Match(
+                        onAbsent: () =>
+                        {
+                            absentGateLabels.Add(label);
+                            return true;
+                        },
+                        onRecorded: exitCode =>
+                        {
+                            if (exitCode != 0)
+                            {
+                                failedGateLabels.Add(new RecertificationGateFailure(label, exitCode));
+                            }
+
+                            return true;
+                        });
+                }
+
+                if (absentGateLabels.Count > 0 || failedGateLabels.Count > 0)
+                {
+                    return new CardRecertificationOutcome.GatesNotGreen(absentGateLabels, failedGateLabels);
+                }
+
+                // "The current round" for nit-site scoping (brief item 4): the timestamp of the
+                // most recent transition landing on 'briefed' — every edge that returns a block to
+                // briefed shares that destination (brief/changes-requested/fix-before-land/
+                // recertification-refused/amendment-requested) — or the epoch when the card has
+                // never carried one (seeded straight into in-review, as some tests do), which
+                // correctly folds in the card's whole comment history since there is only the one
+                // round.
+                var roundStart = DateTimeOffset.MinValue;
+                for (var i = card.Transitions.Count - 1; i >= 0; i--)
+                {
+                    if (card.Transitions[i].To == BlockFlowState.Briefed)
+                    {
+                        roundStart = card.Transitions[i].Timestamp;
+                        break;
+                    }
+                }
+
+                var thisRoundComments = card.Comments.Where(c => c.Timestamp >= roundStart).ToList();
+                var inBoundsSites = new List<string>();
+                for (var i = 0; i < thisRoundComments.Count; i++)
+                {
+                    if (thisRoundComments[i].IsNit && CardCommentRouting.IsNitDispositioned(thisRoundComments, i))
+                    {
+                        foreach (var site in thisRoundComments[i].Sites)
+                        {
+                            inBoundsSites.Add(NormalizeSitePath(site));
+                        }
+                    }
+                }
+
+                // No dispositioned nit this round ⇒ an empty bound ⇒ every changed path (never
+                // empty — CommandParser.ParseBlockRecertify refuses an omitted '--changed' before
+                // this is ever reached) is out of scope (brief item 6: not a vacuous pass).
+                var offendingPaths = changedPaths
+                    .Select(NormalizeChangedPath)
+                    .Where(changedPath => !IsConfinedToAnySite(changedPath, inBoundsSites))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                if (offendingPaths.Count > 0)
+                {
+                    return new CardRecertificationOutcome.DifferenceOutsideNitSites(offendingPaths, inBoundsSites);
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -800,6 +878,43 @@ internal static class CardStore
 
         var refusedText = string.Join(", ", refusedClaimIds);
         return $"Recertification against '{amendedState}' refused. Asserted claim(s): {assertedText}. Refused claim(s): {refusedText}.";
+    }
+
+    /// <summary>
+    /// §8 block D brief item 5 — a dispositioned nit's <see cref="CardComment.Sites"/> is free text
+    /// a reviewer typed, never validated as a path; this normalises only for comparison. A site's
+    /// path portion is everything before its first <c>:</c> (so <c>src/Foo.cs:42</c> bounds
+    /// <c>src/Foo.cs</c>), after trimming and turning <c>\</c> into <c>/</c>.
+    /// </summary>
+    private static string NormalizeSitePath(string site)
+    {
+        var normalized = site.Trim().Replace('\\', '/');
+        var colonIndex = normalized.IndexOf(':', StringComparison.Ordinal);
+        return colonIndex >= 0 ? normalized[..colonIndex] : normalized;
+    }
+
+    /// <summary>
+    /// <see cref="NormalizeSitePath"/>'s sibling for a caller-supplied <c>--changed</c> path — the
+    /// same trim/backslash normalisation, without the colon split (a changed path names no line).
+    /// </summary>
+    private static string NormalizeChangedPath(string changedPath) => changedPath.Trim().Replace('\\', '/');
+
+    /// <summary>
+    /// §8 block D brief item 5 — <paramref name="changedPath"/> is confined if it is ordinal-equal
+    /// to some normalised site, or sits under it as a directory prefix (<c>site + "/"</c>).
+    /// </summary>
+    private static bool IsConfinedToAnySite(string changedPath, IReadOnlyList<string> normalizedSites)
+    {
+        foreach (var site in normalizedSites)
+        {
+            if (string.Equals(changedPath, site, StringComparison.Ordinal)
+                || changedPath.StartsWith(site + "/", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

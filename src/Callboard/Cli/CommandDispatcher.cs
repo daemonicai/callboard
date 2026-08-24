@@ -663,8 +663,12 @@ internal static class CommandDispatcher
         /// <param name="RefusedClaimIds">The current approval's claim ids this call refuses, each
         /// checked non-blank during parse and checked during parse to share no id with
         /// <see cref="AssertedClaimIds"/> (an argv-decidable self-contradiction).</param>
+        /// <param name="ChangedPaths">The paths the amendment touched, repeatable and required (§8
+        /// block D brief item 1) — <see cref="Cards.CardStore.RecordRecertificationUnderExistingLock"/>
+        /// checks each is confined to a dispositioned nit's site; never validated against the
+        /// filesystem or a VCS diff (the tool does not shell out).</param>
         internal sealed record Recertify(
-            string Id, CardOwner ActingRole, string State, IReadOnlyList<string> AssertedClaimIds, IReadOnlyList<string> RefusedClaimIds, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Id, CardOwner ActingRole, string State, IReadOnlyList<string> AssertedClaimIds, IReadOnlyList<string> RefusedClaimIds, IReadOnlyList<string> ChangedPaths, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution, Func<BlockApprove, TResult> onBlockApprove, Func<NitRaise, TResult> onNitRaise, Func<NitDisposition, TResult> onNitDisposition, Func<Recertify, TResult> onRecertify, Func<AmendmentRequested, TResult> onAmendmentRequested) =>
                 onRecertify(this);
@@ -1293,7 +1297,7 @@ internal static class CommandDispatcher
 
         var outcome = CardStore.RecordRecertification(
             repoRoot, resolved.FilePath!, parsed.State, parsed.AssertedClaimIds, parsed.RefusedClaimIds,
-            parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+            parsed.ChangedPaths, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return outcome.Match<CommandOutcome>(
             onRecertified: recertified => new CommandOutcome.Success(new BlockRecertifyResult
@@ -1348,11 +1352,44 @@ internal static class CommandDispatcher
                 "missing-claim-outcome",
                 $"the current approval's claim(s) received no outcome from this call: {string.Join(", ", missing.ClaimIds)}. " +
                 "Every claim must be named by '--assert' or '--refuse'."),
+            onGatesNotGreen: gatesNotGreen => new CommandOutcome.Refusal(
+                "gates-not-green",
+                BuildGatesNotGreenMessage(gatesNotGreen)),
+            onDifferenceOutsideNitSites: outsideSites => new CommandOutcome.Refusal(
+                "difference-outside-nit-sites",
+                $"'--changed' named path(s) outside every dispositioned nit's site: {string.Join(", ", outsideSites.OffendingPaths)}. " +
+                (outsideSites.InBoundsSites.Count == 0
+                    ? "No nit was dispositioned this round, so no path is in scope for a recertification."
+                    : $"In-bounds site(s): {string.Join(", ", outsideSites.InBoundsSites)}.") +
+                " A difference beyond the dispositioned sites requires full re-review via 'block " +
+                "amendment-requested'."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
             onCardCorrupt: corrupt => throw new InvalidOperationException(
                 $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
+    }
+
+    /// <summary>
+    /// review-certification: "Recertification is bounded" — keeps "absent at this round" and
+    /// "recorded non-zero" distinguishable in the text the reviewer reads (§8 block D brief item
+    /// 2), rather than collapsing both into one "not green" sentence.
+    /// </summary>
+    private static string BuildGatesNotGreenMessage(CardRecertificationOutcome.GatesNotGreen gatesNotGreen)
+    {
+        var parts = new List<string>();
+        if (gatesNotGreen.AbsentLabels.Count > 0)
+        {
+            parts.Add($"no result recorded this round for: {string.Join(", ", gatesNotGreen.AbsentLabels)}");
+        }
+
+        if (gatesNotGreen.FailedLabels.Count > 0)
+        {
+            var failedText = string.Join(", ", gatesNotGreen.FailedLabels.Select(f => $"{f.Label} (exit {f.ExitCode})"));
+            parts.Add($"recorded non-zero this round: {failedText}");
+        }
+
+        return $"every gate on the card must have re-run to a passing exit code this round — {string.Join("; ", parts)}.";
     }
 
     /// <summary>
@@ -1415,18 +1452,38 @@ internal static class CommandDispatcher
     }
 
     /// <summary>
+    /// Two unenforceable-by-construction obligations, both surfaced here rather than as a field or
+    /// flag that would falsely imply the tool verified either:
+    ///
+    /// <para>
     /// review-certification: "The reviewer SHALL re-derive each claim against the code; reading the
     /// difference between the certified and amended states SHALL NOT be sufficient". That sentence
     /// governs the human recording the recertification, not this tool — nothing in
     /// <see cref="Cards.CardStore.RecordRecertification"/> or <see cref="BlockRecertifyResult"/> can
-    /// tell a genuine re-derivation apart from a rubber-stamped diff read. Surfaced here, in the
-    /// response text the reviewer actually reads, rather than as a flag that would falsely imply the
-    /// tool checked (Architect ruling, §8 block C brief item 7).
+    /// tell a genuine re-derivation apart from a rubber-stamped diff read (Architect ruling, §8
+    /// block C brief item 7).
+    /// </para>
+    ///
+    /// <para>
+    /// §8 block D brief item 3: the gate precondition that gated this call (<see cref="
+    /// Cards.CardRecertificationOutcome.GatesNotGreen"/>) only established that every gate on the
+    /// card is green <em>at the current round</em> — <see cref="Cards.GateResult"/> carries no
+    /// timestamp, and a successful recertification does not move <c>round</c>, so a gate recorded
+    /// before this amendment is indistinguishable to the tool from one re-run after it. Confirming
+    /// the gates were actually re-run against the amended state is the reviewer's own job, same as
+    /// the claim re-derivation above — this sentence exists so the reviewer reading a successful
+    /// response is told that, rather than left to assume the tool checked freshness because it
+    /// checked something gate-shaped.
+    /// </para>
     /// </summary>
     private const string RecertificationNotice =
         "Recertification re-asserts each claim on the reviewer's own re-derivation against the code — " +
         "reading the diff between the certified and amended states is not sufficient. This tool cannot " +
-        "verify that re-derivation happened; it only records the assert/refuse outcome reported.";
+        "verify that re-derivation happened; it only records the assert/refuse outcome reported. " +
+        "Separately: the gate precondition that gated this call only confirms every gate on the card is " +
+        "green at the current round — it cannot tell whether those results were produced before or " +
+        "after this amendment, so confirming the gates were actually re-run against the amended state " +
+        "is the reviewer's own job.";
 
     /// <summary>
     /// <c>section verdict</c> (§5 block E, work-lifecycle: "Sections are entities" — "the verdict,
