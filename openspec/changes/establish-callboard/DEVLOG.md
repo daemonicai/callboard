@@ -23768,11 +23768,68 @@ returned result at parse time (not an exception), no reflection, no suppressed w
 
 → @architect
 
+**[architect]** A2 landed as `4b40f01` — `[reviewer]` `Approve` on the third round, `GATES_EXIT:0`,
+801/801. Ticks nothing; `9.1` was ticked by block A. Three rounds is more than this block should have
+taken, and the two things that cost them are now standing instructions for A3, below.
+
+**[architect]** Brief — **block A3**: retrofit the card and review family onto the refusal reporting
+format. This is the last retrofit block; after it, every outcome union §9 does not itself rewrite is in
+the format. → @worker
+
+**Tasks in scope:** none to tick. This finishes `9.1`'s reach.
+
+**The six unions**, all in `src/Callboard/Cards/`: `CardNitRaiseOutcome`, `CardNitDispositionOutcome`,
+`CardFindingRecordOutcome`, `CardGateResultOutcome`, `CardCreateOutcome`, `CardWriteResult`.
+
+**The pattern is landed and twice-reviewed** — read `CardBlockTransitionOutcome` (block A, `5caa2c4`)
+and the five unions block A2 did (`4b40f01`), plus `CardStore.RefuseAndRecord` and its generalised
+overload. Follow them. For each case: decide whether it is card-addressed, and if so implement
+`ICardRefusalReason` naming the rule and the remedy, and route the return through `RefuseAndRecord`
+under the lock the refusing read already holds. `CardNotFound`, `CardCorrupt`, `LayoutMismatch` and
+every `ToolFailure` do not record — a tool-failure is enforcement being unavailable (ADR-0001), not the
+board saying no.
+
+**Four standing instructions, each of them something A2 got wrong first and paid for:**
+
+1. **A test per rule, asserting the line landed on the card** — not merely that the refusal came back.
+   Strengthen an existing test where one already exercises the case; add one where none does. The
+   suite is at 801 and **is expected to move**. "No new tests" on a retrofit block is the shape of an
+   uncovered rule, and an uncovered rule does not just lack a test — it removes the thing that would
+   have caught a wrong analysis of it. That is not hypothetical: it is exactly how A2's
+   mischaracterisation of `PromoteRule` reached me.
+2. **A case that is card-addressed on some paths and not others gets split, not blanket-disposed.**
+   Look for the shape deliberately in this family — a pre-lock occurrence with no card and a
+   post-lock occurrence with the card resolved and held. "Which occurrence is primary" is not the
+   question. If splitting widens the union, widen it.
+3. **If a fix needs a value threaded down, follow it to the door a real caller comes through.** A2
+   threaded `changeName` through `PromoteRule` and left `--change` optional, so the ordinary
+   invocation still anchored `null`. A guarantee that holds only when the caller remembers a flag is
+   not a guarantee. If you add or require a CLI flag, match the sibling `requireChange` convention and
+   prove the omission is refused at the CLI boundary.
+4. **Post to the DEVLOG as you go**, `[worker]` under `## 9.`. **Insert by matching the `## NEXT`
+   heading as a whole anchored line, never as a bare substring** — the string `## NEXT` also occurs in
+   this file's own header sentence, and a substring replace put two of A2's posts inside that sentence
+   and damaged it. Nothing committed was harmed, but the reviewer went looking for the narration,
+   found none, and audited the diff blind.
+
+**One thing in this family I expect to bite, and want reported rather than improvised.**
+`CardWriteResult` is the *generic* write surface — `AppendComment`, `TransferOwnership` and others all
+return it — so the rule a given case enforces depends on the verb that called it, not on the case
+alone. Do not invent a generic rule name to make it fit. If a case cannot name its rule without
+knowing its caller, post that here with what you found and leave it; whether the rule name comes from
+the caller is my call, not yours.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`; `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim. Do not commit,
+do not tick, do not touch the Makefile or `CLAUDE.md`. Stop and post if a Product Owner call appears.
+
 ## NEXT
 
-**Resume point: §9 "Process enforcement", block A2 — briefed, worker running.** §9 is open at base
-`ec2d99b`. Block A landed as `5caa2c4` (reviewer `Approve`, `GATES_EXIT:0`); `9.1` is the only box
-ticked in §9. The retrofit question is **answered** — §9 is now **seven** blocks, A, A2, A3, B–E; the
+**Resume point: §9 "Process enforcement", block A3 — briefed, worker running.** §9 is open at base
+`ec2d99b`. Block A landed as `5caa2c4` and A2 as `4b40f01` (both reviewer `Approve`, both `GATES_EXIT:0`, suite
+at 801); `9.1` is the only box ticked in §9, and A2/A3 tick nothing — they finish 9.1's reach.
+**A2 took three review rounds**; the two causes (a retrofit that added no tests, and a fix that was
+real everywhere except the door callers use) are written into A3's brief as standing instructions. The retrofit question is **answered** — §9 is now **seven** blocks, A, A2, A3, B–E; the
 ruling and the A2 brief are under `## 9.` above. §8a closed with a supervisor `Approve` at `2561cef`.
 
 **Standing for the rest of §9:** each of B–E retrofits **its own outcome union, entire**, onto the
