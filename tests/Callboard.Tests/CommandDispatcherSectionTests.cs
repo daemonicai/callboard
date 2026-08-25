@@ -433,6 +433,29 @@ public sealed class CommandDispatcherSectionTests
         var result = doc.RootElement.GetProperty("result");
         Assert.Equal("open", result.GetProperty("status").GetString());
         Assert.Equal(0, result.GetProperty("verdictCount").GetInt32());
+        Assert.Empty(result.GetProperty("ageingThreads").EnumerateArray());
+    }
+
+    // §9 block E, architect ruling on 9.6's ageing-thread prompt: 'section status' is the surface
+    // that reads it, not 'section close' — end to end through the CLI envelope.
+    [Fact]
+    public void SectionStatus_ABlockWithAnAddressedCommentThatSurvivedARoundBoundary_SurfacesItAsAgeing()
+    {
+        using var repo = new TempGitRepo();
+        var sectionPath = WriteInitialSectionCard(repo.Path, "s-0015", "S-0015");
+        var blockPath = WriteBlockCardWithAgeingComment(repo.Path, "b-0011", "B-0011", "S-0015", "C-0001");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(["section", "status", sectionPath], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        var ageing = Assert.Single(result.GetProperty("ageingThreads").EnumerateArray());
+        Assert.Equal("B-0011", ageing.GetProperty("blockId").GetString());
+        Assert.Equal(blockPath, ageing.GetProperty("blockFilePath").GetString());
+        Assert.Equal("C-0001", ageing.GetProperty("threadId").GetString());
+        Assert.Equal("reviewer", ageing.GetProperty("addressedTo").GetString());
     }
 
     // Construction site 3 of 3 for "wrong-card-kind": section status.
@@ -523,6 +546,24 @@ public sealed class CommandDispatcherSectionTests
             id, CardKind.Block, "Title", "approved", CardOwner.Architect, CardScope.Change, sectionId, FixedNow, FixedNow);
         var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: reviewedState, Tasks: ["5.1"], Round: null, BlockedBy: [], GateResults: []);
         var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    // §9 block E — a block card carrying one addressed comment posted before a round-incrementing
+    // transition, still unresolved: CardCommentRouting.AgeingAddressedThreadIds' own "aged" shape.
+    private static string WriteBlockCardWithAgeingComment(string repoRoot, string fileStem, string id, string sectionId, string commentId)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Block, "Title", "approved", CardOwner.Architect, CardScope.Change, sectionId, FixedNow, FixedNow);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: 2, BlockedBy: [], GateResults: []);
+        var comment = new CardComment(commentId, CardOwner.Worker, FixedNow, "a question", null, To: CardOwner.Reviewer, null, []);
+        var changesRequested = new CardBlockTransitionEntry(
+            CardOwner.Reviewer, "changes-requested", BlockFlowState.InReview, BlockFlowState.Briefed, FixedNow.AddHours(1), []);
+        var card = new CardFile(frontmatter, "Body.", [comment], [], [], blockFields, [changesRequested]);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
     }

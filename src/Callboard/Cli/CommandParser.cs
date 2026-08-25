@@ -2151,6 +2151,18 @@ internal static class CommandParser
     /// <c>--owed-by &lt;role&gt;</c> (required, own parsing here — the same shape <see cref="
     /// ParseObligationCreate"/> already gives its own differently-typed <c>--owed-by</c>) names the
     /// owner explicitly; <c>--role</c> keeps meaning the acting role everywhere, unchanged.
+    ///
+    /// <para>
+    /// <b><c>--section &lt;section-id&gt;</c> is optional (§9 block E ruling).</b> A question's own
+    /// <see cref="CardScope"/> is <see cref="CardScope.Repository"/> and deliberately outlives any
+    /// one section (register: "Question outlives its change") — but <em>which</em> section raised
+    /// it is a different fact <see cref="CardFrontmatter.Section"/> already exists to carry, and
+    /// 9.5's "section close settles its questions" gate has nothing to check without it. Unlike
+    /// <c>obligation create</c>'s <c>--section</c> (required — an obligation is meaningless without
+    /// naming who owes it), a question raised outside any section is a legitimate case (register's
+    /// own scenario), so this is refused only when supplied and unresolvable — never for being
+    /// absent.
+    /// </para>
     /// </summary>
     private static CommandDispatcher.ParseResult ParseQuestionCreate(CommandDispatcher.CommandContext context)
     {
@@ -2164,12 +2176,14 @@ internal static class CommandParser
         string? title = null;
         string? roleText = null;
         string? owedByText = null;
+        string? sectionId = null;
 
         var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
             ["--title"] = value => title = value,
             ["--role"] = value => roleText = value,
             ["--owed-by"] = value => owedByText = value,
+            ["--section"] = value => sectionId = value,
         });
         if (flagRefusal is not null)
         {
@@ -2218,7 +2232,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.QuestionCreate(
-            filePath, title, actingRole, owedByRole, body, context.WorkingDirectory, context.Clock()));
+            filePath, title, actingRole, owedByRole, body, sectionId, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

@@ -61,7 +61,7 @@ public sealed class CardSectionCloseTests : IDisposable
     // have to break for this to go red is CloseSectionUnderExistingLock skipping the
     // already-closed check and silently overwriting ClosedBy/ClosedAt on a second call.
     [Fact]
-    public void CloseSection_AlreadyClosed_Refuses_AndDoesNotOverwriteTheFirstClosure()
+    public void CloseSection_AlreadyClosed_Refuses_AndDoesNotOverwriteTheFirstClosure_AndRecordsTheRefusal()
     {
         var path = WriteInitialSectionCard("s-0002", "S-0002");
         AssertClosed(CardStore.CloseSection(_root, path, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName));
@@ -74,10 +74,14 @@ public sealed class CardSectionCloseTests : IDisposable
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(CardOwner.Architect, read.SectionFields.ClosedBy);
         Assert.Equal(Created, read.SectionFields.ClosedAt);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(already.RefusingRule, recorded.Rule);
+        Assert.Equal(already.Remedy, recorded.Remedy);
     }
 
     [Fact]
-    public void CloseSection_TargetIsNotASectionCard_Refuses()
+    public void CloseSection_TargetIsNotASectionCard_Refuses_AndRecordsTheRefusal()
     {
         var path = Path.Combine(_directory, "q-0001.md");
         var frontmatter = new CardFrontmatter(
@@ -88,6 +92,12 @@ public sealed class CardSectionCloseTests : IDisposable
 
         var notASection = Assert.IsType<CardSectionCloseOutcome.NotASectionCard>(outcome);
         Assert.Equal(CardKind.Question, notASection.Kind);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(notASection.RefusingRule, recorded.Rule);
+        Assert.Equal(notASection.Remedy, recorded.Remedy);
     }
 
     [Fact]
@@ -194,16 +204,18 @@ public sealed class CardSectionCloseTests : IDisposable
         Assert.Equal(mtimeBefore, File.GetLastWriteTimeUtc(landedPath));
     }
 
-    // 8a.4 — any block not approved refuses the whole close, and leaves every card untouched.
+    // 8a.4 — any block not approved refuses the whole close, and leaves every other card
+    // untouched. The offending block itself is not "untouched" any more (§9 block E): the refusal
+    // records against it, under its own already-held lock — see the coverage-gate test below for
+    // the recorded-entry assertion this test predates.
     [Fact]
-    public void CloseSection_ABlockNotApproved_RefusesTheWholeClose_LeavesEveryCardUntouched()
+    public void CloseSection_ABlockNotApproved_RefusesTheWholeClose_LeavesEveryOtherCardUntouched()
     {
         var sectionPath = WriteInitialSectionCard("s-0009", "S-0009");
         var approvedPath = WriteApprovedBlockCard("b-0005", "B-0005", "S-0009");
         var inReviewPath = WriteBlockCardInState("b-0006", "B-0006", "S-0009", "in-review");
         var sectionBytesBefore = File.ReadAllText(sectionPath);
         var approvedBytesBefore = File.ReadAllText(approvedPath);
-        var inReviewBytesBefore = File.ReadAllText(inReviewPath);
 
         var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
 
@@ -214,7 +226,11 @@ public sealed class CardSectionCloseTests : IDisposable
 
         Assert.Equal(sectionBytesBefore, File.ReadAllText(sectionPath));
         Assert.Equal(approvedBytesBefore, File.ReadAllText(approvedPath));
-        Assert.Equal(inReviewBytesBefore, File.ReadAllText(inReviewPath));
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(inReviewPath)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(notApproved.RefusingRule, recorded.Rule);
+        Assert.Equal(notApproved.Remedy, recorded.Remedy);
     }
 
     // 8a.5 was cut in full (Product Owner ruling: "approved is terminal") — closing a section no
@@ -235,7 +251,7 @@ public sealed class CardSectionCloseTests : IDisposable
 
     // 8a.6 — a gate recorded non-zero refuses the close.
     [Fact]
-    public void CloseSection_ABlockWithAFailingGate_Refuses()
+    public void CloseSection_ABlockWithAFailingGate_Refuses_AndRecordsTheRefusal()
     {
         var sectionPath = WriteInitialSectionCard("s-0011", "S-0011");
         var blockPath = WriteApprovedBlockCard("b-0008", "B-0008", "S-0011", gateResults: [new GateResult("build", 1, 1)]);
@@ -247,12 +263,17 @@ public sealed class CardSectionCloseTests : IDisposable
         Assert.Equal(blockPath, failed.BlockFilePath);
         Assert.Equal("build", failed.GateLabel);
         Assert.Equal(1, failed.ExitCode);
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(blockPath)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(failed.RefusingRule, recorded.Rule);
+        Assert.Equal(failed.Remedy, recorded.Remedy);
     }
 
     // 8a.6 — absent is a refusal in its own right, not a pass by default: a gate this block has
     // evidence for in an earlier round, with nothing recorded for the current round, still refuses.
     [Fact]
-    public void CloseSection_ABlockWithAnAbsentGateThisRound_Refuses_NotAPassByDefault()
+    public void CloseSection_ABlockWithAnAbsentGateThisRound_Refuses_NotAPassByDefault_AndRecordsTheRefusal()
     {
         var sectionPath = WriteInitialSectionCard("s-0012", "S-0012");
         // Round 2, but the only recorded gate result is from round 1 — GateStatusOf("build") for
@@ -266,6 +287,11 @@ public sealed class CardSectionCloseTests : IDisposable
         Assert.Equal("B-0009", absent.BlockId);
         Assert.Equal(blockPath, absent.BlockFilePath);
         Assert.Equal("build", absent.GateLabel);
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(blockPath)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(absent.RefusingRule, recorded.Rule);
+        Assert.Equal(absent.Remedy, recorded.Remedy);
     }
 
     // 8a.6 — a green gate this round does not refuse.
@@ -295,6 +321,296 @@ public sealed class CardSectionCloseTests : IDisposable
 
         var corrupt = Assert.IsType<CardSectionCloseOutcome.CardCorrupt>(outcome);
         Assert.Equal(corruptPath, corrupt.FilePath);
+    }
+
+    // 8a.17 / §9 block E — a block's stored round disagreeing with its own transition history
+    // refuses the whole close, and records against that block.
+    [Fact]
+    public void CloseSection_ABlockWithADisagreeingRound_Refuses_NamesBothFigures_AndRecordsTheRefusal()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0015", "S-0015");
+        // Stored round 3, but no round-incrementing transition in history at all — expected round 1.
+        var blockPath = Path.Combine(_directory, "b-0011.md");
+        var blockFrontmatter = new CardFrontmatter(
+            "B-0011", CardKind.Block, "A block", "approved", CardOwner.Architect, CardScope.Change, "S-0015", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: 3, BlockedBy: [], GateResults: []);
+        var blockCard = new CardFile(blockFrontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var disagreement = Assert.IsType<CardSectionCloseOutcome.RoundDisagreesWithHistory>(outcome);
+        Assert.Equal(blockPath, disagreement.BlockFilePath);
+        Assert.Equal(3, disagreement.StoredRound);
+        Assert.Equal(1, disagreement.ExpectedRound);
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(blockPath)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(disagreement.RefusingRule, recorded.Rule);
+        Assert.Equal(disagreement.Remedy, recorded.Remedy);
+    }
+
+    // process-enforcement: "Section close settles its obligations" (9.4) — an open obligation owed
+    // by this section refuses the close, lists it, and records against the section.
+    [Fact]
+    public void CloseSection_AnOpenObligationOwedByTheSection_Refuses_AndRecordsTheRefusal()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0016", "S-0016");
+        var obligationPath = Path.Combine(_directory, "o-0001.md");
+        var obligationFrontmatter = new CardFrontmatter(
+            "O-0001", CardKind.Obligation, "Discharge the debt", RegisterLifecycleState.Open.ToWireString(), CardOwner.Worker, CardScope.Change, string.Empty, Created, Created);
+        var obligationCard = new CardFile(
+            obligationFrontmatter, "Body.", [], [], RegisterFields: new RegisterCardFields(null, null, null, null, OwedBy: "S-0016"));
+        File.WriteAllText(obligationPath, CardFileWriter.Serialize(obligationCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var openObligations = Assert.IsType<CardSectionCloseOutcome.OpenObligations>(outcome);
+        Assert.Equal("S-0016", openObligations.SectionId);
+        var only = Assert.Single(openObligations.Obligations);
+        Assert.Equal("O-0001", only.Id);
+        Assert.Equal("Discharge the debt", only.Title);
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(sectionPath)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(openObligations.RefusingRule, recorded.Rule);
+        Assert.Equal(openObligations.Remedy, recorded.Remedy);
+    }
+
+    // process-enforcement: "Section close settles its obligations" — a discharged obligation owed
+    // by the section does not block the close.
+    [Fact]
+    public void CloseSection_ADischargedObligationOwedByTheSection_DoesNotRefuse()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0017", "S-0017");
+        var obligationPath = Path.Combine(_directory, "o-0002.md");
+        var obligationFrontmatter = new CardFrontmatter(
+            "O-0002", CardKind.Obligation, "Already paid", RegisterLifecycleState.Discharged.ToWireString(), CardOwner.Worker, CardScope.Change, string.Empty, Created, Created);
+        var obligationCard = new CardFile(
+            obligationFrontmatter, "Body.", [], [], RegisterFields: new RegisterCardFields(null, null, CardOwner.Worker, Created, OwedBy: "S-0017"));
+        File.WriteAllText(obligationPath, CardFileWriter.Serialize(obligationCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        AssertClosed(outcome);
+    }
+
+    // process-enforcement: "Section close settles its questions" (9.5) — an open question raised
+    // in this section refuses the close, names it, and records against the section.
+    [Fact]
+    public void CloseSection_AnOpenQuestionRaisedInTheSection_Refuses_AndRecordsTheRefusal()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0018", "S-0018");
+        WriteQuestionCard("q-0001", "Q-0001", "S-0018", QuestionStatus.Open);
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var openQuestion = Assert.IsType<CardSectionCloseOutcome.OpenUndeferredQuestion>(outcome);
+        Assert.Equal("S-0018", openQuestion.SectionId);
+        Assert.Equal("Q-0001", openQuestion.QuestionId);
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(sectionPath)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(openQuestion.RefusingRule, recorded.Rule);
+        Assert.Equal(openQuestion.Remedy, recorded.Remedy);
+    }
+
+    // process-enforcement: "Section close settles its questions" — a question deferred to a named
+    // target permits the close, and stays open against that target (register: "the close proceeds
+    // and the question remains open against its target").
+    [Fact]
+    public void CloseSection_ADeferredQuestionRaisedInTheSection_DoesNotRefuse()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0019", "S-0019");
+        WriteQuestionCard("q-0002", "Q-0002", "S-0019", QuestionStatus.Deferred);
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        AssertClosed(outcome);
+    }
+
+    // process-enforcement: "Section close settles its addressed threads" (9.6, the refusal half) —
+    // an unresolved comment addressed to a role, on the section card itself, refuses the close and
+    // records against it.
+    [Fact]
+    public void CloseSection_AnUnresolvedAddressedThreadOnTheSectionItself_Refuses_AndRecordsTheRefusal()
+    {
+        var path = Path.Combine(_directory, "s-0020.md");
+        var frontmatter = new CardFrontmatter(
+            "S-0020", CardKind.Section, "Title", "open", CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created, "please confirm", null, To: CardOwner.Reviewer, null, []);
+        var card = new CardFile(frontmatter, "Body.", [comment], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, path, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var unresolvedThread = Assert.IsType<CardSectionCloseOutcome.UnresolvedAddressedThread>(outcome);
+        Assert.Equal("S-0020", unresolvedThread.CardId);
+        Assert.Equal(["C-0001"], unresolvedThread.ThreadIds);
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(path)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(unresolvedThread.RefusingRule, recorded.Rule);
+        Assert.Equal(unresolvedThread.Remedy, recorded.Remedy);
+    }
+
+    // process-enforcement: "Section close settles its addressed threads" — a *resolved* addressed
+    // comment does not refuse.
+    [Fact]
+    public void CloseSection_AResolvedAddressedThreadOnTheSectionItself_DoesNotRefuse()
+    {
+        var path = Path.Combine(_directory, "s-0021.md");
+        var frontmatter = new CardFrontmatter(
+            "S-0021", CardKind.Section, "Title", "open", CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
+        var raised = new CardComment("C-0002", CardOwner.Worker, Created, "please confirm", null, To: CardOwner.Reviewer, null, []);
+        var resolved = new CardComment("C-0003", CardOwner.Reviewer, Created.AddHours(1), "confirmed", null, To: null, Resolves: "C-0002", []);
+        var card = new CardFile(frontmatter, "Body.", [raised, resolved], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, path, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        AssertClosed(outcome);
+    }
+
+    // process-enforcement: "Work cannot proceed past a stop-and-ask" (9.8's carried arm) — an
+    // approved block blocked by an open Product Owner question cannot land by its section closing,
+    // and the refusal records against the block.
+    [Fact]
+    public void CloseSection_AnApprovedBlockBlockedByAnOpenProductOwnerQuestion_Refuses_AndRecordsTheRefusal()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0022", "S-0022");
+        WriteOpenProductOwnerQuestion("q-0003", "Q-0003");
+        var blockPath = Path.Combine(_directory, "b-0012.md");
+        var blockFrontmatter = new CardFrontmatter(
+            "B-0012", CardKind.Block, "A block", "approved", CardOwner.Architect, CardScope.Change, "S-0022", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: null, BlockedBy: ["Q-0003"], GateResults: []);
+        var blockCard = new CardFile(blockFrontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var blocked = Assert.IsType<CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion>(outcome);
+        Assert.Equal("B-0012", blocked.BlockId);
+        Assert.Equal("Q-0003", blocked.QuestionId);
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(blockPath)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(blocked.RefusingRule, recorded.Rule);
+        Assert.Equal(blocked.Remedy, recorded.Remedy);
+    }
+
+    // process-enforcement: "Section close settles its addressed threads" — a fresh unresolved
+    // addressed thread (never survived a round boundary) refuses the close.
+    [Fact]
+    public void CloseSection_AnAddressedCommentRaisedThisRound_Refuses()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0023", "S-0023");
+        var blockPath = Path.Combine(_directory, "b-0013.md");
+        var comment = new CardComment("C-0004", CardOwner.Worker, Created, "a question", null, To: CardOwner.Reviewer, null, []);
+        var blockFrontmatter = new CardFrontmatter(
+            "B-0013", CardKind.Block, "A block", "approved", CardOwner.Architect, CardScope.Change, "S-0023", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: null, BlockedBy: [], GateResults: []);
+        var blockCard = new CardFile(blockFrontmatter, "Body.", [comment], [], [], blockFields, []);
+        File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var unresolvedThread = Assert.IsType<CardSectionCloseOutcome.UnresolvedAddressedThread>(outcome);
+        Assert.Equal("B-0013", unresolvedThread.CardId);
+        Assert.Equal(["C-0004"], unresolvedThread.ThreadIds);
+    }
+
+    // process-enforcement: "Section close settles its addressed threads" (§9 block E, architect
+    // ruling) — the refusal is absolute, with no age qualifier. An addressed thread that has
+    // survived a round boundary on its own block still refuses the close exactly like a fresh one —
+    // ageing never exempts a thread from this gate, only adds it to the separate, non-refusing
+    // 'section status' prompt (CloseSection_..._IsSurfacedAsAgeing_ByFindAgeingAddressedThreads,
+    // below, proves that half).
+    [Fact]
+    public void CloseSection_AnAddressedCommentThatSurvivedARoundBoundary_StillRefuses()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0024", "S-0024");
+        var blockPath = Path.Combine(_directory, "b-0014.md");
+        var comment = new CardComment("C-0005", CardOwner.Worker, Created, "a question", null, To: CardOwner.Reviewer, null, []);
+        var changesRequested = new CardBlockTransitionEntry(
+            CardOwner.Reviewer, "changes-requested", BlockFlowState.InReview, BlockFlowState.Briefed, Created.AddHours(1), []);
+        var blockFrontmatter = new CardFrontmatter(
+            "B-0014", CardKind.Block, "A block", "approved", CardOwner.Architect, CardScope.Change, "S-0024", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: 2, BlockedBy: [], GateResults: []);
+        var blockCard = new CardFile(blockFrontmatter, "Body.", [comment], [], [], blockFields, [changesRequested]);
+        File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var unresolvedThread = Assert.IsType<CardSectionCloseOutcome.UnresolvedAddressedThread>(outcome);
+        Assert.Equal("B-0014", unresolvedThread.CardId);
+        Assert.Equal(["C-0005"], unresolvedThread.ThreadIds);
+    }
+
+    // process-enforcement: "the system SHALL surface addressed comments left unresolved for longer
+    // than one round, as a prompt rather than a constraint" (9.6, the prompt half — architect
+    // ruling: read from 'section status', not from a close attempt). Same fixture shape as the
+    // refusal test above, read directly through the finder 'section status' calls.
+    [Fact]
+    public void FindAgeingAddressedThreads_AnAddressedCommentThatSurvivedARoundBoundary_IsSurfacedAsAgeing()
+    {
+        var blockPath = Path.Combine(_directory, "b-0015.md");
+        var comment = new CardComment("C-0006", CardOwner.Worker, Created, "a question", null, To: CardOwner.Reviewer, null, []);
+        var changesRequested = new CardBlockTransitionEntry(
+            CardOwner.Reviewer, "changes-requested", BlockFlowState.InReview, BlockFlowState.Briefed, Created.AddHours(1), []);
+        var blockFrontmatter = new CardFrontmatter(
+            "B-0015", CardKind.Block, "A block", "approved", CardOwner.Architect, CardScope.Change, "S-0025", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: 2, BlockedBy: [], GateResults: []);
+        var blockCard = new CardFile(blockFrontmatter, "Body.", [comment], [], [], blockFields, [changesRequested]);
+        File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var ageing = Assert.Single(CardStore.FindAgeingAddressedThreads(_directory, "S-0025"));
+
+        Assert.Equal("B-0015", ageing.CardId);
+        Assert.Equal(blockPath, ageing.CardFilePath);
+        Assert.Equal("C-0006", ageing.ThreadId);
+        Assert.Equal(CardOwner.Reviewer, ageing.AddressedTo);
+    }
+
+    // A fresh unresolved thread (never survived a round boundary) is not reported as ageing.
+    [Fact]
+    public void FindAgeingAddressedThreads_AnAddressedCommentRaisedThisRound_IsNotSurfaced()
+    {
+        var blockPath = Path.Combine(_directory, "b-0016.md");
+        var comment = new CardComment("C-0007", CardOwner.Worker, Created, "a question", null, To: CardOwner.Reviewer, null, []);
+        var blockFrontmatter = new CardFrontmatter(
+            "B-0016", CardKind.Block, "A block", "approved", CardOwner.Architect, CardScope.Change, "S-0026", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: null, BlockedBy: [], GateResults: []);
+        var blockCard = new CardFile(blockFrontmatter, "Body.", [comment], [], [], blockFields, []);
+        File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        Assert.Empty(CardStore.FindAgeingAddressedThreads(_directory, "S-0026"));
+    }
+
+    private void WriteQuestionCard(string fileStem, string id, string sectionId, QuestionStatus status)
+    {
+        var registerDirectory = Path.Combine(_root, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(registerDirectory);
+        var path = Path.Combine(registerDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "A question", QuestionStatusWireFormat.ToWireString(status), CardOwner.Worker, CardScope.Repository, sectionId, Created, Created);
+        var card = new CardFile(
+            frontmatter, "Body.", [], [],
+            QuestionFields: status == QuestionStatus.Deferred
+                ? new QuestionCardFields { DeferredBy = CardOwner.Worker, DeferredAt = Created, DeferredTarget = "a later change" }
+                : QuestionCardFields.Empty);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    private void WriteOpenProductOwnerQuestion(string fileStem, string id)
+    {
+        var registerDirectory = Path.Combine(_root, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(registerDirectory);
+        var path = Path.Combine(registerDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "Should we ship X?", QuestionStatus.Open.ToWireString(), CardOwner.ProductOwner, CardScope.Repository, string.Empty, Created, Created);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private string WriteInitialSectionCard(string fileStem, string id)
@@ -349,6 +665,10 @@ public sealed class CardSectionCloseTests : IDisposable
                 $"expected Closed, got BlockGateFailed({failed.BlockId}, {failed.GateLabel}={failed.ExitCode})"),
             onBlockGateAbsent: static absent => throw new Xunit.Sdk.XunitException(
                 $"expected Closed, got BlockGateAbsent({absent.BlockId}, {absent.GateLabel})"),
+            onOpenObligations: static o => throw new Xunit.Sdk.XunitException($"expected Closed, got OpenObligations({o.SectionId})"),
+            onOpenUndeferredQuestion: static q => throw new Xunit.Sdk.XunitException($"expected Closed, got OpenUndeferredQuestion({q.QuestionId})"),
+            onUnresolvedAddressedThread: static t => throw new Xunit.Sdk.XunitException($"expected Closed, got UnresolvedAddressedThread({t.CardId}, {string.Join(", ", t.ThreadIds)})"),
+            onBlockedByOpenProductOwnerQuestion: static b => throw new Xunit.Sdk.XunitException($"expected Closed, got BlockedByOpenProductOwnerQuestion({b.BlockId}, {b.QuestionId})"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Closed, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Closed, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Closed, got CardCorrupt: {corrupt.Reason}"),

@@ -25397,7 +25397,286 @@ acquisition. A close that deadlocks is worse than a close that refuses.
 `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim. Do not commit,
 do not tick, do not touch the Makefile or `CLAUDE.md`.
 
+**[worker]** Block E (9.4, 9.5, 9.6, 9.8's carried arm) implemented — the section-close gates, plus
+the 9.8 arm the brief asked me to land first.
+
+**The carried arm, first.** `ValidateBlockForLanding` now calls block D's `FindBlockingOpenProductOwnerQuestion`
+against each candidate block before it lands, adding `CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion`
+— card-addressed against the block, the same disposition as `CardApprovalOutcome`/`CardBlockTransitionOutcome`'s
+own cases of the same name ("this block may not advance" is a fact about the block regardless of which
+verb discovered it). `9.8` now ticks.
+
+**9.4.** A fresh pass over the section's own directory (obligations are `CardScope.Change`, so they
+live alongside the section and its blocks) finds every open obligation whose `owed_by` names this
+section. Conservative the same way the existing block scan is: an unreadable card anywhere in that
+directory refuses the whole close via `CardCorrupt`. `CardSectionCloseOutcome.OpenObligations` lists
+every offending obligation's id and title; records against the section.
+
+**9.5 — the gap first.** `question create` gained an optional `--section <section-id>`, resolved
+against the record when supplied (refused if it names nothing real), recorded into the existing
+`CardFrontmatter.Section` field `CreateCard` had hardcoded to `string.Empty` for every kind until
+now. Omitting it still succeeds with an empty section (register: "Question outlives its change" —
+a question raised outside any section blocks no section's close). The gate itself scans every live
+record directory (`CardLayout.ResolveLiveRecordDirectories`, the same as `RuleCitations.UncitedOpenRules`)
+for an open question whose `Section` names this one — unlike the obligation scan, an unreadable card
+out there is skipped, not refused (the same "resolution failures are conservative by omission"
+precedent `FindBlockingOpenProductOwnerQuestion` already established for a question lookup outside a
+card's own directory — a typo in an unrelated card should not block every section everywhere).
+`CardSectionCloseOutcome.OpenUndeferredQuestion` names the first one found; records against the
+section. A `deferred` question never reaches this check at all (only `Open` blocks) — proven, not
+just asserted, by `CloseSection_ADeferredQuestionRaisedInTheSection_DoesNotRefuse`.
+
+**9.6 — the two halves, and a real contradiction I had to resolve rather than choose blindly.**
+The refusal (`CardSectionCloseOutcome.UnresolvedAddressedThread`) sweeps the section's own comments
+first, then each block's, for any live comment addressed to any role (`CardCommentRouting.LiveAddressedThreadIds`,
+a new role-agnostic sibling of the existing `LiveThreadIdsAddressedTo` — a section close is not
+acting as any one role). Records against whichever card carries the thread.
+
+Here's the contradiction the brief warned me to expect. Read literally, "the system SHALL refuse to
+close a section while any comment addressed to a role... remains unresolved" (no age qualifier) and
+"an addressed comment [aged past one round]... surfaces... without refusing anything" cannot both be
+true of the same thread at the same time — if *every* unresolved addressed comment already refuses,
+no section could ever reach `Closed` carrying an aged one to prompt about, and "without refusing
+anything" would be false. I found this out empirically: my first pass computed the ageing prompt only
+after every refusal had already passed, and a fixture with a fresh (non-aged) unresolved comment
+correctly refused — but a fixture for the aged case *also* refused, because ageing didn't exempt
+anything from the refusal set. Two tests contradicted each other until I fixed one.
+
+**Resolution:** the refusal and the ageing prompt are never both true of the same thread. A thread
+still within the round it was raised in (on its own block — round is a block property, never a
+section's) is a hard blocker. Once it has survived a round boundary on that block, it is *excluded*
+from the refusal's own set and only ever prompted — read together with the spec's own reason ("to
+keep this gate from becoming a formality discharged in bulk at the moment of closing"): a refusal
+that never expires would just get bulk-resolved the moment someone wants to close, which is the
+formality the spec is naming. A thread on the *section* card itself has no round to age out of, so
+it always falls in the refusal, never the prompt — "round" genuinely has no meaning for a section,
+which settles the "rounds belong to blocks, a section spans several" half of what I was asked to
+post rather than silently decide. This is my read of a literal contradiction in the requirement
+text, not an invented threshold; posting it here per the brief's own instruction. `CardCommentRouting.AgeingAddressedThreadIds`
+(new) computes "aged" as: a live addressed comment for which some later round-incrementing transition
+timestamp exists on that same block's own history — i.e., the round it was raised in has since
+closed out from under it. `CardSectionCloseOutcome.Closed` gained `AgeingThreads` (surfaced through
+`SectionCloseResult.ageingThreads` in the CLI envelope), computed once every refusal above has
+already passed.
+
+❓ @architect — if the literal-contradiction reading above is wrong, or the Product Owner would
+rather the refusal simply not have an age qualifier at all (i.e. drop the "prompt" requirement's
+distinct behaviour, or vice versa), that's a spec call, not mine to re-litigate further — flag it
+back to me and I'll rework it.
+
+**Locking — nothing new taken.** Obligations and questions are read fresh at decision time without
+their own lock, the same precedent `FindBlockingOpenProductOwnerQuestion` already set for reading a
+question outside the caller's own lock (a read-only check with no compensating action needed).
+Threads are checked over cards already loaded under lock (the section's own `heldLock`, each block's
+in `acquiredLocks`) — no new acquisition at all, so the existing ordinal-order argument in
+`CloseSectionUnderExistingLock`'s own doc comment is untouched by this block.
+
+**The retrofit.** `CardSectionCloseOutcome` — all ten pre-existing plus new cases — is in the refusal
+format entire, per the standing rule: `AlreadyClosed`/`NotASectionCard` record against the section;
+`BlockNotApproved`/`BlockGateFailed`/`BlockGateAbsent`/`RoundDisagreesWithHistory` now record against
+the *block* they're about, not the section attempting to close over it (the standing line from D's
+ruling: "ask what the refusal asserts"). `CardNotFound`/`LayoutMismatch` stay unrecorded
+(categorical); `CardCorrupt`/`ToolFailure` stay outside the format entirely.
+
+**Coverage gate:** all ten cases registered in `RefusalCoverageGateTests.cs`, each with a direct
+`CardStore`-level test in `CardSectionCloseTests.cs` asserting `.Refusals` recorded (not just the
+outcome type). Also added CLI-level coverage for `question create --section` (success, omitted,
+unresolvable) in `CommandDispatcherQuestionCreateTests.cs`.
+
+**Tests:** 842 → 855 (13 new: 10 coverage-gate cases + 3 `question create --section` cases).
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — 855/855 passing.
+
+**Tasks completed:** 9.4, 9.5, 9.6, 9.8 (all four tick). No task ticked by me;
+`tasks.md`/`Makefile`/`CLAUDE.md` untouched.
+
+→ @reviewer
+
+**[architect]** Answering the `❓` on 9.6. **There is no contradiction in the spec, and this is not a
+Product Owner call — the requirement's own purpose clause decides it.** You were right to stop and
+post rather than push on; the reading is what I am correcting, not the instinct. → @worker
+
+**The misreading is *when* the prompt happens.** You implemented both halves at close time, and at
+close time they genuinely cannot both hold — that part of your analysis is correct, and your two
+contradicting tests proved it honestly. But the prompt was never a close-time behaviour:
+
+> To keep this gate from becoming a formality discharged in bulk **at the moment of closing**, the
+> system SHALL surface addressed comments left unresolved for longer than one round, as a prompt
+> rather than a constraint.
+
+The clause names the failure it exists to prevent: threads being cleared *en masse* at the gate. A
+prompt that fires **at** the gate cannot prevent that — it is at the gate. The prompt is an **earlier
+surfacing**, during the section's life, to the role the comment is addressed to, so the thread is dealt
+with while there is still time to deal with it properly. "As a prompt rather than a constraint" says
+only that this surfacing refuses nothing; it does not carve an exemption out of the refusal.
+
+Read that way both requirements hold literally and neither needs amending:
+
+- **The refusal is absolute.** *Every* unresolved addressed thread blocks the close, with no age
+  qualifier. Each one is resolved, promoted to a `question`, promoted to a `decision`, or declined
+  with a recorded reason — the four dispositions the requirement already names.
+- **The prompt is a separate surfacing** on a different path at a different time, and it refuses
+  nothing.
+
+**Note what your resolution does, which is the strongest evidence against it.** Exempting aged threads
+from the refusal means a section may close over an addressed thread *precisely because it has been
+ignored for long enough*. That does not prevent bulk discharge at the gate — it removes the gate for
+exactly the threads that have been neglected longest, and rewards neglect with an exemption. The
+requirement's purpose clause is aimed at the opposite outcome.
+
+**What to change:**
+
+1. **Drop the age exemption from the refusal.** `UnresolvedAddressedThread` fires on every live
+   addressed thread, section-owned or block-owned, regardless of round. Your fixture that "correctly
+   refused" for the aged case was correct; it was the other test that was wrong.
+2. **Keep `AgeingAddressedThreadIds`** — the computation is right and it is genuinely 9.6's second
+   half. Your definition of aged (a live addressed comment on a block whose round has since
+   incremented past the one it was raised in) is sound, and so is the finding that a section-owned
+   thread has no round and therefore never ages. Keep both.
+3. **Surface it where the addressed role will see it before close, not on the `Closed` outcome.**
+   `section status` is the §9-era surface that exists and is read during a section's life; put it
+   there. Leave `Closed.AgeingThreads` off — by the time a close succeeds, every addressed thread has
+   been settled, so the field would always be empty and would be dead weight in the envelope.
+4. **§10 is where this prompt finally lands in the queue.** The working-context response is 10.1–10.2's
+   and routes on unresolved addressed threads already. Post a line for `## NEXT` saying §10 should
+   consume `AgeingAddressedThreadIds` when it builds the queue, so this does not have to be
+   rediscovered.
+
+Everything else in the block stands as reported — the carried arm's disposition (a fact about the
+block, recorded against the block), 9.4's conservative refuse-on-unreadable within the section's own
+directory versus 9.5's skip-on-unreadable outside it, and taking no new locks. Those are all right,
+and the asymmetry in the two scans is correctly reasoned rather than accidental.
+
+**[worker]** Addressed the architect's ruling on 9.6. Understood — the misreading was *when* the
+prompt fires, not whether the two requirements coexist; agreed the corrected reading is right, and
+implemented all four changes.
+
+1. **Dropped the age exemption.** `CloseSectionUnderExistingLock`'s `UnresolvedAddressedThread`
+   check is unconditional again: every live addressed thread on the section or any of its blocks
+   refuses, regardless of round. The fixture that "correctly refused" for the aged case is now the
+   kept one (`CloseSection_AnAddressedCommentThatSurvivedARoundBoundary_StillRefuses`); the other
+   was rewritten to match.
+2. **Kept `CardCommentRouting.AgeingAddressedThreadIds`** unchanged — the "aged" definition (a live
+   addressed comment for which a round-incrementing transition has since landed on the same block)
+   and the "a section-owned thread never ages" finding both stand.
+3. **Moved the surfacing to `section status`.** New `CardStore.FindAgeingAddressedThreads(sectionDirectory,
+   sectionId)` — read-only, no lock (matching `FindBlockingOpenProductOwnerQuestion`'s own
+   precedent), skip-on-unreadable-sibling (a status read, not a gate) — scans the section's own
+   blocks for `AgeingAddressedThreadIds`, never the section card itself (no round to age against).
+   `RunSectionStatus` calls it and reports `ageingThreads` on `SectionStatusResult`.
+   `CardSectionCloseOutcome.Closed` no longer carries `AgeingThreads` at all — removed the field and
+   `SectionCloseResult`'s own — since by the time a close succeeds every addressed thread, aged or
+   not, has already been settled by the refusal above.
+4. **This `## NEXT` line, below.**
+
+Also cleaned up a leftover duplicate `/// <summary>` doc comment on `ValidateBlockForLanding` from
+my own earlier edit, folded into one `<para>`, while I was in that method.
+
+**Tests:** dropped one (the now-wrong "surfaced without refusing" close-time test), added four:
+two direct `CardStore.FindAgeingAddressedThreads` tests (ages the aged case, skips the fresh one),
+one `CardSectionCloseTests` proof that an aged thread still refuses the close, one CLI-level
+`section status` test proving `ageingThreads` reaches the envelope end to end. 855 → 858 (net, after
+the one removal) — also added one registry entry the mechanical `CardStore` surface-inventory test
+(`CardCommentImmutabilityTests`) required for the new method.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — 858/858 passing.
+
+**Tasks completed:** 9.4, 9.5, 9.6, 9.8 (all four tick — unchanged from the original report). No
+task ticked by me; `tasks.md`/`Makefile`/`CLAUDE.md` untouched.
+
+→ @reviewer
+
+**[reviewer]** Block E (9.4, 9.5, 9.6, 9.8's carried arm) — **Approve.**
+
+Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (858/858), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+Scope confirmed: no `Makefile`/`CLAUDE.md` touch, `9.4`/`9.5`/`9.6`/`9.8` correctly left unticked for
+you to flip on landing.
+
+**1. Optional `--section` on `question create` — I don't think it's the A2 defect, and here's the
+structural reason, not just an instinct.** A2's `--change` had no legitimate omission case: every real
+`rule promote` call targets a still-change-scoped rule, so making the flag required cost nothing and
+closed the hole completely. `--section` is different in kind: the domain genuinely has two classes of
+question — one meant to gate a specific section's close, one that is legitimately independent
+(register: "Question outlives its change", the same reasoning that makes the question's own *scope*
+`Repository`). Making `--section` required would be wrong for the second class — it would force every
+orphan question into a section it doesn't belong to, or block the case the spec explicitly protects.
+So "make it required" isn't an available fix here the way it was for `PromoteRule`; the two situations
+share a shape (an optional flag a caller can silently omit) but not the same defect, because there is
+no single always-correct value being silently defaulted away — the correct value genuinely depends on
+a fact about the world only the caller knows.
+
+That said, the residual risk you're naming is real: nothing signals the consequence of omitting it.
+Checked `RunQuestionCreate` (`CommandDispatcher.cs:2048-2077`) and `CardCreateResult`
+(`CardCreateResult.cs`) directly — the create response has **no `section` field at all**, so a caller
+cannot even see from the response whether the section it meant to name landed, was mistyped and
+silently dropped, or was never supplied. An agent creating a question mid-section who forgets the flag
+gets a normal success response with nothing distinguishing it from an intentionally-orphaned question.
+On the third question you asked — whether anything in the card's own context could infer the section
+rather than trusting argv — I'd advise against it: this tool is deliberately built to never infer
+ambient state (the same "does not shell out, does not resolve a SHA" discipline §8 established for
+`reviewed_state`), and inferring "the currently active section" would be a first exception to that
+rule, not a small one. **My recommendation, not a blocker**: surface the recorded `section` (or its
+absence) in `question create`'s own response — the same visibility `owedBy` already got in block D's
+carried item G — so a caller sees the consequence immediately rather than discovering it only by
+reading the card back later or by a section closing with a question nobody meant to exclude. I'd
+raise this with the Product Owner or fold it into whichever later block touches this response next,
+not hold this block on it — the current behaviour is not incorrect, it's under-signalled.
+
+**2. The 9.6 rework verified clean.** Traced `LiveAddressedThreadIds` (`CardCommentRouting.cs:191`)
+— no round/age filtering at all — used unconditionally for both the section's own comments and every
+block's (`CardStore.cs:2529,2541`). Grepped `AgeingThreads` across the whole diff: gone from
+`CardSectionCloseOutcome.Closed` and `SectionCloseResult` entirely; the only remaining reference is a
+doc-comment pointer to its new home. `FindAgeingAddressedThreads` (`CardStore.cs:2648-2669`) scans
+the section's own blocks and applies `CardCommentRouting.AgeingAddressedThreadIds` to each — exactly
+the function the refusal path deliberately does *not* apply — and correctly never sweeps the section
+card itself (no round to age against). Both directions are proven with the identical fixture shape:
+`CloseSection_AnAddressedCommentThatSurvivedARoundBoundary_StillRefuses` (close-time, still refuses)
+and `FindAgeingAddressedThreads_AnAddressedCommentThatSurvivedARoundBoundary_IsSurfacedAsAgeing`
+(status-time, surfaced, refuses nothing), plus an end-to-end CLI test on `section status` proving
+`ageingThreads` reaches the envelope with the right block id, file path, thread id and addressee.
+
+**3. The carried arm's cross-card recording is genuinely under the block's own held lock.** Traced
+`CloseSectionUnderExistingLock`'s block-candidate loop (`CardStore.cs:2395-2443`): `acquiredLocks`
+acquires a `CardLock` for every `candidatePath` (the same list `freshBlocks` is built from,
+immediately after) *before* `ValidateBlockForLanding` ever runs over `freshBlocks`. `ValidateBlockForLanding`'s
+`RefuseAndRecord` call for `BlockedByOpenProductOwnerQuestion` (`CardStore.cs:2770-2776`) always
+targets exactly the `(blockCard, blockFilePath)` pair passed into it from that same loop — never an
+invented path — so the write can only ever land on a block whose lock is already held. Confirmed with
+`CloseSection_AnApprovedBlockBlockedByAnOpenProductOwnerQuestion_Refuses_AndRecordsTheRefusal`, which
+reads the entry back off the block file, not the section's.
+
+**4. The 9.4/9.5 asymmetry is drawn in the right place and matches an existing codebase-wide
+convention, not a rationalisation invented for this block.** 9.4's obligation scan is confined to
+`sectionDirectory` (the same bounded directory the pre-existing block-candidate scan already refuses
+the whole close over on an unreadable sibling, since §8a) and refuses on unreadable
+(`CardStore.cs:2461`). 9.5's question scan walks `CardLayout.ResolveLiveRecordDirectories` — the
+*entire* live record space — and skips on unreadable. I checked this against `RuleCitations.
+UncitedOpenRules` (`RuleCitations.cs:145-165`), which is the direct precedent cited: identical
+`ResolveLiveRecordDirectories` walk, identical `onFailure: static _ => null` skip. So the actual line
+is "a bounded, directly-owned directory refuses on unreadable; an unbounded, repository-wide scan
+skips" — applied identically in both the pre-existing precedent and this block's own two new scans.
+Not an accident.
+
+**5. All ten coverage-gate registrations are genuine, and I checked the four re-targeted cases
+specifically for weakening rather than trusting the report.** Scripted the same all-`Assert.Empty`
+check I've run on every block since C against all ten `CardSectionCloseTests` entries — none
+suspicious. Read all four of the retargeted tests directly (`BlockNotApproved`, `BlockGateFailed`,
+`BlockGateAbsent`, `RoundDisagreesWithHistory`): each now asserts `Assert.Single(...Refusals)` against
+the **block's own file**, matching `By`/`Rule`/`Remedy`. `CloseSection_ABlockNotApproved_..._
+LeavesEveryOtherCardUntouched` in particular got *stronger*, not weaker — it kept its pre-existing
+byte-identical checks on the section and the unrelated approved block while adding the new recording
+assertion on the block that actually refused.
+
+Clean. Land it.
+
+→ @architect
+
 ## NEXT
+
+**Carried to §10:** `CardStore.FindAgeingAddressedThreads` (§9 block E) computes exactly the
+ageing-addressed-thread set a role's working-context queue should nudge on. §10.1–10.2's queue
+already routes on unresolved addressed threads — when it builds, it should consume this rather than
+rediscovering the computation. Not done here: `section status` is the only reader so far.
+
 
 **Resume point: §9 "Process enforcement", block E (9.4, 9.5, 9.6 + 9.8's carried arm) — briefed,
 worker running.** §9 is open at base

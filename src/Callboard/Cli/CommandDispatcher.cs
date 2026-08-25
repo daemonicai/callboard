@@ -490,7 +490,7 @@ internal static class CommandDispatcher
         /// </para>
         /// </summary>
         internal sealed record QuestionCreate(
-            string FilePath, string Title, CardOwner ActingRole, CardOwner OwedByRole, string Body, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string FilePath, string Title, CardOwner ActingRole, CardOwner OwedByRole, string Body, string? SectionId, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionAuthorise, TResult> onSectionAuthorise, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution, Func<BlockApprove, TResult> onBlockApprove, Func<NitRaise, TResult> onNitRaise, Func<NitDisposition, TResult> onNitDisposition, Func<QuestionAnswer, TResult> onQuestionAnswer, Func<QuestionDefer, TResult> onQuestionDefer) =>
                 onQuestionCreate(this);
@@ -1497,13 +1497,12 @@ internal static class CommandDispatcher
 
     /// <summary>
     /// <c>section close</c> (§5 block E, work-lifecycle: "closing it SHALL record the acting role
-    /// and the time"; §8a block A, "Approval is provisional until the section closes"): lands every
-    /// approved block the section owns and closes the section, via <see cref="CardStore.
-    /// CloseSection"/>. The two landing refusals (not-approved, non-zero-or-absent gate) are §8a
-    /// block A's; the closing <em>conditions</em> §9 owns (open obligations, undeferred questions,
-    /// unresolved threads) are still not this handler's job, the same boundary <see cref="
-    /// CardSectionCloseOutcome"/>'s own doc comment states.
-    /// <see langword="private"/>: <see cref="CommandParser"/> cannot name this method.
+    /// and the time"; §8a block A, "Approval is provisional until the section closes"; §9 block E,
+    /// "Section close settles its obligations/questions/addressed threads", "Work cannot proceed
+    /// past a stop-and-ask"): lands every approved block the section owns and closes the section,
+    /// via <see cref="CardStore.CloseSection"/> — every closing condition is decided there; this
+    /// handler only maps the outcome. <see langword="private"/>: <see cref="CommandParser"/> cannot
+    /// name this method.
     /// </summary>
     private static CommandOutcome RunSectionClose(ParsedCommand.SectionClose parsed, TimeSpan lockTimeout)
     {
@@ -1528,21 +1527,55 @@ internal static class CommandDispatcher
             }),
             onAlreadyClosed: already => new CommandOutcome.Refusal(
                 "already-closed",
-                $"'{already.FilePath}' is already closed."),
-            onNotASectionCard: notASection => WrongCardKind(filePath, CardKind.Section, notASection.Kind, "only a section card can be closed by this verb"),
-            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(disagreement.BlockFilePath, disagreement.StoredRound, disagreement.ExpectedRound),
+                $"'{already.FilePath}' is already closed.",
+                already.RefusingRule, already.Remedy),
+            onNotASectionCard: notASection => WrongCardKind(filePath, CardKind.Section, notASection.Kind, "only a section card can be closed by this verb") with
+            {
+                Rule = notASection.RefusingRule,
+                Remedy = notASection.Remedy,
+            },
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(disagreement.BlockFilePath, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            },
             onBlockNotApproved: notApproved => new CommandOutcome.Refusal(
                 "block-not-approved",
                 $"block '{notApproved.BlockId}' ('{notApproved.BlockFilePath}') is '{notApproved.ActualState.ToWireString()}', not 'approved' — every block in a " +
-                "section must be approved before the section can close."),
+                "section must be approved before the section can close.",
+                notApproved.RefusingRule, notApproved.Remedy),
             onBlockGateFailed: gateFailed => new CommandOutcome.Refusal(
                 "block-gate-failed",
                 $"block '{gateFailed.BlockId}' ('{gateFailed.BlockFilePath}') carries gate '{gateFailed.GateLabel}' recorded at exit code {gateFailed.ExitCode}, " +
-                "not 0 — every gate a block carries must have passed before the section can close."),
+                "not 0 — every gate a block carries must have passed before the section can close.",
+                gateFailed.RefusingRule, gateFailed.Remedy),
             onBlockGateAbsent: gateAbsent => new CommandOutcome.Refusal(
                 "block-gate-absent",
                 $"block '{gateAbsent.BlockId}' ('{gateAbsent.BlockFilePath}') has no exit code recorded this round for gate '{gateAbsent.GateLabel}' — " +
-                "an absent gate is not a pass by default. Record it with 'block gate' before closing."),
+                "an absent gate is not a pass by default. Record it with 'block gate' before closing.",
+                gateAbsent.RefusingRule, gateAbsent.Remedy),
+            onOpenObligations: openObligations => new CommandOutcome.Refusal(
+                "section-close-open-obligations",
+                $"section '{openObligations.SectionId}' still owes {openObligations.Obligations.Count} open obligation(s): " +
+                string.Join(", ", openObligations.Obligations.Select(static o => $"{o.Id} (\"{o.Title}\")")) +
+                " — each must be discharged, promoted to a wider scope, or declined with a recorded reason before this section can close.",
+                openObligations.RefusingRule, openObligations.Remedy),
+            onOpenUndeferredQuestion: openQuestion => new CommandOutcome.Refusal(
+                "section-close-open-question",
+                $"question '{openQuestion.QuestionId}' (\"{openQuestion.QuestionTitle}\") is open and raised in section '{openQuestion.SectionId}' — " +
+                "answer or defer it before this section can close.",
+                openQuestion.RefusingRule, openQuestion.Remedy),
+            onUnresolvedAddressedThread: unresolvedThread => new CommandOutcome.Refusal(
+                "section-close-unresolved-thread",
+                $"card '{unresolvedThread.CardId}' ('{unresolvedThread.CardFilePath}') carries unresolved addressed thread(s): " +
+                $"{string.Join(", ", unresolvedThread.ThreadIds)} — resolve, promote to a 'question', promote to a 'decision', or " +
+                "decline with a recorded reason, before this section can close.",
+                unresolvedThread.RefusingRule, unresolvedThread.Remedy),
+            onBlockedByOpenProductOwnerQuestion: blocked => new CommandOutcome.Refusal(
+                "blocked-by-open-product-owner-question",
+                $"block '{blocked.BlockId}' ('{blocked.BlockFilePath}') is blocked by open question '{blocked.QuestionId}' " +
+                $"(\"{blocked.QuestionTitle}\"), owned by the product owner — it cannot land while this section closes.",
+                blocked.RefusingRule, blocked.Remedy),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to close."),
@@ -1649,6 +1682,14 @@ internal static class CommandDispatcher
                         $"card '{filePath}' has an unrecognised section status: '{card.Frontmatter.Status}'.");
                 }
 
+                // §9 block E, architect ruling on 9.6's ageing-thread prompt: this is the earlier,
+                // during-the-section's-life surfacing the requirement's own purpose clause calls
+                // for, not the section-close gate itself. Read-only scan of the section's own
+                // directory — no lock, matching FindBlockingOpenProductOwnerQuestion's own
+                // precedent for a read that decides nothing load-bearing.
+                var sectionDirectory = Path.GetDirectoryName(filePath)!;
+                var ageingThreads = CardStore.FindAgeingAddressedThreads(sectionDirectory, card.Frontmatter.Id);
+
                 return new CommandOutcome.Success(new SectionStatusResult
                 {
                     FilePath = filePath,
@@ -1657,6 +1698,13 @@ internal static class CommandDispatcher
                     ClosedBy = card.SectionFields.ClosedBy?.ToWireString(),
                     ClosedAt = card.SectionFields.ClosedAt,
                     VerdictCount = card.SectionFields.Verdicts.Length,
+                    AgeingThreads = [.. ageingThreads.Select(static ageing => new AgeingThreadResult
+                    {
+                        BlockId = ageing.CardId,
+                        BlockFilePath = ageing.CardFilePath,
+                        ThreadId = ageing.ThreadId,
+                        AddressedTo = ageing.AddressedTo.ToWireString(),
+                    })],
                 });
             },
             onFailure: failure => throw new InvalidOperationException(
@@ -2007,11 +2055,25 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var sectionId = string.Empty;
+        if (!string.IsNullOrEmpty(parsed.SectionId))
+        {
+            var resolvedSection = ResolveCardReference(
+                repoRoot, parsed.SectionId, CardKind.Section, CardStore.IsSectionCard, "'--section'",
+                "create the section first with 'section create'");
+            if (resolvedSection.Refusal is not null)
+            {
+                return resolvedSection.Refusal;
+            }
+
+            sectionId = parsed.SectionId;
+        }
+
         var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
             repoRoot, filePath, CardKind.Question, CardScope.Repository, parsed.Title,
             QuestionStatus.Open.ToWireString(), parsed.OwedByRole, parsed.Body,
-            registerFields: null, parsed.Timestamp, lockTimeout, changeName: null);
+            registerFields: null, parsed.Timestamp, lockTimeout, changeName: null, section: sectionId);
 
         return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole, owedByRoleOverride: parsed.OwedByRole.ToWireString());
     }

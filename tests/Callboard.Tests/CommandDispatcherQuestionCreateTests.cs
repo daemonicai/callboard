@@ -108,6 +108,61 @@ public sealed class CommandDispatcherQuestionCreateTests
         Assert.False(File.Exists(path));
     }
 
+    // §9 block E ruling: --section is optional, and records CardFrontmatter.Section — the fact
+    // 9.5's "section close settles its questions" gate reads to find a question raised in it.
+    [Fact]
+    public void QuestionCreate_WithSection_Succeeds_AndRecordsTheSectionOnTheCard()
+    {
+        using var repo = new TempGitRepo();
+        var sectionId = WriteSectionCard(repo.Path, "establish-callboard", "s-0001", "S-0001");
+        var path = Path.Combine(repo.RegisterDirectory, "q-0006.md");
+
+        var output = new StringWriter();
+        var exitCode = RunInRepo(
+            ["question", "create", path, "--title", "A section-raised question", "--role", "worker", "--owed-by", "product-owner", "--section", sectionId],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        var card = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(sectionId, card.Frontmatter.Section);
+    }
+
+    // A question raised outside any section is legitimate (register: "Question outlives its
+    // change") — omitting --section is never refused.
+    [Fact]
+    public void QuestionCreate_WithoutSection_Succeeds_WithAnEmptySection()
+    {
+        using var repo = new TempGitRepo();
+        var path = Path.Combine(repo.RegisterDirectory, "q-0007.md");
+
+        var output = new StringWriter();
+        var exitCode = RunInRepo(
+            ["question", "create", path, "--title", "A repository-wide question", "--role", "worker", "--owed-by", "product-owner"],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        var card = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(string.Empty, card.Frontmatter.Section);
+    }
+
+    // Unlike an omitted --section, a supplied one that names nothing real is refused — the same
+    // "argv names it, execute resolves it against the record" split obligation create's own
+    // --section already follows.
+    [Fact]
+    public void QuestionCreate_WithSectionNamingNoRealCard_Refuses()
+    {
+        using var repo = new TempGitRepo();
+        var path = Path.Combine(repo.RegisterDirectory, "q-0008.md");
+
+        var output = new StringWriter();
+        var exitCode = RunInRepo(
+            ["question", "create", path, "--title", "A question", "--role", "worker", "--owed-by", "product-owner", "--section", "S-9999"],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        Assert.False(File.Exists(path));
+    }
+
     [Fact]
     public void QuestionCreate_NoSubcommand_Refuses_WithMissingSubcommand()
     {
@@ -157,6 +212,18 @@ public sealed class CommandDispatcherQuestionCreateTests
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("card-already-exists", refusal.GetProperty("code").GetString());
+    }
+
+    private static string WriteSectionCard(string repoRoot, string changeName, string fileStem, string id)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.ChangesDirectory(changeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Section, "Title", "open", CardOwner.Architect, CardScope.Change, string.Empty, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return id;
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

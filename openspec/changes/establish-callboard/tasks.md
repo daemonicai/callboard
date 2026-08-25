@@ -110,11 +110,11 @@
 - [x] 9.1 Implement the refusal reporting format: name the rule, state what would satisfy it, record role and timestamp
 - [x] 9.2 Refuse approval from a role other than reviewer or supervisor
 - [x] 9.3 Refuse leaving `in-review` with threads addressed to the acting role unresolved
-- [ ] 9.4 Refuse section close over open obligations owed by that section
-- [ ] 9.5 Refuse section close over open undeferred questions
-- [ ] 9.6 Refuse section close over unresolved addressed threads, and surface threads older than one round as a prompt
+- [x] 9.4 Refuse section close over open obligations owed by that section
+- [x] 9.5 Refuse section close over open undeferred questions
+- [x] 9.6 Refuse section close over unresolved addressed threads, and surface threads older than one round as a prompt
 - [x] 9.7 Refuse marking a question answered without a decision reference or an inline answer
-- [ ] 9.8 Refuse advancing a card blocked by an open Product Owner question
+- [x] 9.8 Refuse advancing a card blocked by an open Product Owner question
 - [ ] 9.9 Refuse archive over open change-scoped obligations owed by no remaining section
 - [x] 9.10 Add a test per refusal rule demonstrating it fires, per the amended S5
 

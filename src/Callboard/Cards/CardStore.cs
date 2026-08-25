@@ -2263,10 +2263,10 @@ internal static class CardStore
     /// entities" — "closing it SHALL record the acting role and the time", §5 block E; "Approval is
     /// provisional until the section closes", §8a block A) — reads the current card, and only if it
     /// is a section card not already closed, lands every <c>approved</c> block the section owns and
-    /// then writes <c>status: closed</c> plus <c>closed_by</c>/<c>closed_at</c>, all under lock.
-    /// Whether a section is <em>permitted</em> to close (§9: open obligations, undeferred questions,
-    /// unresolved threads) is not decided here — see <see cref="CardSectionCloseOutcome"/>'s own
-    /// doc comment.
+    /// then writes <c>status: closed</c> plus <c>closed_by</c>/<c>closed_at</c>, all under lock. §9
+    /// block E's closing conditions (open obligations, undeferred questions, unresolved addressed
+    /// threads, a landing block blocked by an open Product Owner question) are checked here too —
+    /// see <see cref="CardSectionCloseOutcome"/>'s own doc comment for where each lives.
     /// </summary>
     internal static CardSectionCloseOutcome CloseSection(
         string cardsRoot, string filePath, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
@@ -2347,7 +2347,10 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsSectionCard(card))
                 {
-                    return new CardSectionCloseOutcome.NotASectionCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.NotASectionCard>(
+                        cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardSectionCloseOutcome.NotASectionCard(card.Frontmatter.Kind),
+                        onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
                 }
 
                 if (!SectionFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentSectionState))
@@ -2358,7 +2361,10 @@ internal static class CardStore
 
                 if (currentSectionState == SectionFlowState.Closed)
                 {
-                    return new CardSectionCloseOutcome.AlreadyClosed(filePath);
+                    return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.AlreadyClosed>(
+                        cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardSectionCloseOutcome.AlreadyClosed(filePath),
+                        onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -2434,10 +2440,113 @@ internal static class CardStore
 
                     foreach (var (blockFilePath, blockCard) in freshBlocks)
                     {
-                        var refusal = ValidateBlockForLanding(blockCard, blockFilePath);
+                        var refusal = ValidateBlockForLanding(cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp);
                         if (refusal is not null)
                         {
                             return refusal;
+                        }
+                    }
+
+                    // process-enforcement: "Section close settles its obligations" (§9 block E,
+                    // 9.4). Obligations are CardScope.Change-scoped, so a fresh pass over this same
+                    // sectionDirectory finds every one owed by this section (RegisterCardFields.
+                    // OwedBy naming its id) — conservative the same way the block scan above already
+                    // is: an unreadable card anywhere in this directory refuses the whole close.
+                    var openObligations = new List<(string Id, string Title)>();
+                    foreach (var (obligationPath, obligationParseResult) in ReadAllCards(sectionDirectory))
+                    {
+                        var obligationCorruptReason = obligationParseResult.Match<string?>(onSuccess: static _ => null, onFailure: static failure => failure.Reason);
+                        if (obligationCorruptReason is not null)
+                        {
+                            return new CardSectionCloseOutcome.CardCorrupt(obligationPath, obligationCorruptReason);
+                        }
+
+                        var obligationCandidate = obligationParseResult.Match(onSuccess: static s => s.Card, onFailure: static _ => throw new InvalidOperationException("unreachable: obligationCorruptReason above already returned on failure."));
+                        if (!IsObligationCard(obligationCandidate) || !string.Equals(obligationCandidate.RegisterFields?.OwedBy, card.Frontmatter.Id, StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        if (!RegisterLifecycleStateWireFormat.TryParse(obligationCandidate.Frontmatter.Status, out var obligationState) || !ReferenceEquals(obligationState, RegisterLifecycleState.Open))
+                        {
+                            continue;
+                        }
+
+                        openObligations.Add((obligationCandidate.Frontmatter.Id, obligationCandidate.Frontmatter.Title));
+                    }
+
+                    if (openObligations.Count > 0)
+                    {
+                        return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.OpenObligations>(
+                            cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                            new CardSectionCloseOutcome.OpenObligations(card.Frontmatter.Id, openObligations),
+                            onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
+                    }
+
+                    // process-enforcement: "Section close settles its questions" (§9 block E, 9.5).
+                    // Questions are CardScope.Repository-scoped and live outside this section's own
+                    // directory, so this reads every live record directory the same way
+                    // RuleCitations.UncitedOpenRules already does — an unreadable card out there is
+                    // skipped, not refused (Architect ruling: "resolution failures are conservative
+                    // by omission", the same precedent FindBlockingOpenProductOwnerQuestion already
+                    // established for a question lookup outside a card's own directory).
+                    foreach (var recordDirectory in CardLayout.ResolveLiveRecordDirectories(cardsRoot))
+                    {
+                        if (!Directory.Exists(recordDirectory))
+                        {
+                            continue;
+                        }
+
+                        foreach (var (_, questionParseResult) in ReadAllCards(recordDirectory))
+                        {
+                            var questionCandidate = questionParseResult.Match<CardFile?>(onSuccess: static s => s.Card, onFailure: static _ => null);
+                            if (questionCandidate is null || !IsQuestionCard(questionCandidate)
+                                || !string.Equals(questionCandidate.Frontmatter.Section, card.Frontmatter.Id, StringComparison.Ordinal))
+                            {
+                                continue;
+                            }
+
+                            if (!QuestionStatusWireFormat.TryParse(questionCandidate.Frontmatter.Status, out var questionState) || !ReferenceEquals(questionState, QuestionStatus.Open))
+                            {
+                                continue;
+                            }
+
+                            return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.OpenUndeferredQuestion>(
+                                cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                                new CardSectionCloseOutcome.OpenUndeferredQuestion(card.Frontmatter.Id, questionCandidate.Frontmatter.Id, questionCandidate.Frontmatter.Title),
+                                onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
+                        }
+                    }
+
+                    // process-enforcement: "Section close settles its addressed threads" (§9 block
+                    // E, 9.6). Role-agnostic — this close is not acting as any one role.
+                    //
+                    // Absolute — no age qualifier (architect ruling on the worker's own ❓: the
+                    // requirement's purpose clause — "to keep this gate from becoming a formality
+                    // discharged in bulk at the moment of closing" — names a close-time failure a
+                    // close-time exemption cannot prevent; carving one out would let a section close
+                    // over exactly the threads neglected longest, rewarding the neglect). Every live
+                    // addressed thread refuses, aged or not — see <see cref="FindAgeingAddressedThreads"/>
+                    // for the separate, non-refusing surfacing "section status" reads instead, during
+                    // the section's life rather than at the gate.
+                    var sectionThreadIds = CardCommentRouting.LiveAddressedThreadIds(card.Comments);
+                    if (sectionThreadIds.Count > 0)
+                    {
+                        return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.UnresolvedAddressedThread>(
+                            cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                            new CardSectionCloseOutcome.UnresolvedAddressedThread(card.Frontmatter.Id, filePath, sectionThreadIds),
+                            onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
+                    }
+
+                    foreach (var (blockFilePath, blockCard) in freshBlocks)
+                    {
+                        var blockThreadIds = CardCommentRouting.LiveAddressedThreadIds(blockCard.Comments);
+                        if (blockThreadIds.Count > 0)
+                        {
+                            return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.UnresolvedAddressedThread>(
+                                cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp,
+                                new CardSectionCloseOutcome.UnresolvedAddressedThread(blockCard.Frontmatter.Id, blockFilePath, blockThreadIds),
+                                onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
                         }
                     }
 
@@ -2516,6 +2625,53 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// process-enforcement's ageing-thread prompt (§9 block E, "Section close settles its
+    /// addressed threads" — architect ruling on the worker's own ❓ about 9.6). The requirement's
+    /// own purpose clause — "to keep this gate from becoming a formality discharged in bulk at the
+    /// moment of closing" — names a <em>close-time</em> failure; a prompt that only ever fired at
+    /// the close-time gate could not prevent it, so this is read from <c>section status</c> instead,
+    /// an earlier surfacing during the section's life, to the role each comment is addressed to.
+    /// It never refuses anything and is entirely separate from <see cref="CardSectionCloseOutcome.
+    /// UnresolvedAddressedThread"/>, which fires on every live addressed thread regardless of
+    /// whether it is also reported here.
+    ///
+    /// <para>
+    /// Scans <paramref name="sectionDirectory"/> (the same directory <see cref="
+    /// CloseSectionUnderExistingLock"/> scans for its own block candidates) for every <see
+    /// cref="IsBlockCard"/> card whose own <see cref="CardFrontmatter.Section"/> names <paramref
+    /// name="sectionId"/>, and applies <see cref="CardCommentRouting.AgeingAddressedThreadIds"/> to
+    /// each. Read-only — no lock is taken, matching <see cref="FindBlockingOpenProductOwnerQuestion"/>'s
+    /// own precedent for a read that decides nothing load-bearing on its own. An unreadable sibling
+    /// card is skipped rather than refusing the read (this is a status surface, not a gate — an
+    /// unrelated corrupt file must not make every other block's status unreadable). The section
+    /// card itself is never swept: it carries no round, so nothing on it can ever age by this
+    /// definition (<see cref="CardCommentRouting.AgeingAddressedThreadIds"/>'s own doc comment).
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<AgeingThread> FindAgeingAddressedThreads(string sectionDirectory, string sectionId)
+    {
+        var ageingThreads = new List<AgeingThread>();
+        foreach (var (blockFilePath, parseResult) in ReadAllCards(sectionDirectory))
+        {
+            var blockCard = parseResult.Match<CardFile?>(onSuccess: static s => s.Card, onFailure: static _ => null);
+            if (blockCard is null || !IsBlockCard(blockCard) || !string.Equals(blockCard.Frontmatter.Section, sectionId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var ageingThreadId in CardCommentRouting.AgeingAddressedThreadIds(blockCard.Comments, blockCard.Transitions))
+            {
+                var ageingComment = blockCard.Comments.First(comment => comment.Id == ageingThreadId);
+                // AgeingAddressedThreadIds only ever returns the id of a comment whose To is
+                // non-null (that is exactly what "addressed" means here).
+                ageingThreads.Add(new AgeingThread(blockCard.Frontmatter.Id, blockFilePath, ageingThreadId, ageingComment.To!));
+            }
+        }
+
+        return ageingThreads;
+    }
+
+    /// <summary>
     /// The two §8a block A closing conditions applied to one block (work-lifecycle: "Closing a
     /// section SHALL refuse where any block in it is not `approved`, or where any block carries an
     /// expected gate whose recorded exit code is non-zero or absent"), checked in that order.
@@ -2535,8 +2691,19 @@ internal static class CardStore
     /// supervisor's whole-section review, not a per-block field comparison, is what catches a
     /// sibling's change touching an already-approved block's files.
     /// </para>
+    ///
+    /// <para>
+    /// <b>§9 block E adds the carried 9.8 arm</b> (process-enforcement: "Work cannot proceed past a
+    /// stop-and-ask" — the section-driven half). Every refusal-shaped case returned here is
+    /// card-addressed against <paramref name="blockCard"/> (§9 block E ruling: "ask what the
+    /// refusal asserts" — each of these is a fact about this block, not about the section
+    /// attempting to close over it) and is recorded, via <see cref="RefuseAndRecord{TOutcome,
+    /// TRefusal}"/>, under the lock <see cref="CloseSectionUnderExistingLock"/> already holds on
+    /// this block by the time this runs — no new lock is taken here.
+    /// </para>
     /// </summary>
-    private static CardSectionCloseOutcome? ValidateBlockForLanding(CardFile blockCard, string blockFilePath)
+    private static CardSectionCloseOutcome? ValidateBlockForLanding(
+        string cardsRoot, CardFile blockCard, string blockFilePath, string? changeName, CardOwner actingRole, DateTimeOffset timestamp)
     {
         if (!IsBlockCard(blockCard))
         {
@@ -2562,26 +2729,51 @@ internal static class CardStore
 
         if (state != BlockFlowState.Approved)
         {
-            return new CardSectionCloseOutcome.BlockNotApproved(blockCard.Frontmatter.Id, blockFilePath, state);
+            return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.BlockNotApproved>(
+                cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp,
+                new CardSectionCloseOutcome.BlockNotApproved(blockCard.Frontmatter.Id, blockFilePath, state),
+                onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
         }
 
         if (!RoundAgreesWithHistory(blockCard, out var storedRound, out var expectedRound))
         {
-            return new CardSectionCloseOutcome.RoundDisagreesWithHistory(blockFilePath, storedRound, expectedRound);
+            return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.RoundDisagreesWithHistory>(
+                cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp,
+                new CardSectionCloseOutcome.RoundDisagreesWithHistory(blockFilePath, storedRound, expectedRound),
+                onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
         }
 
         foreach (var label in blockCard.BlockFields.GateResults.Select(static result => result.Label).Distinct(StringComparer.Ordinal))
         {
             var status = blockCard.BlockFields.GateStatusOf(label);
             var gateRefusal = status.Match<CardSectionCloseOutcome?>(
-                onAbsent: () => new CardSectionCloseOutcome.BlockGateAbsent(blockCard.Frontmatter.Id, blockFilePath, label),
+                onAbsent: () => RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.BlockGateAbsent>(
+                    cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp,
+                    new CardSectionCloseOutcome.BlockGateAbsent(blockCard.Frontmatter.Id, blockFilePath, label),
+                    onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason)),
                 onRecorded: exitCode => exitCode == 0
                     ? null
-                    : new CardSectionCloseOutcome.BlockGateFailed(blockCard.Frontmatter.Id, blockFilePath, label, exitCode));
+                    : RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.BlockGateFailed>(
+                        cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp,
+                        new CardSectionCloseOutcome.BlockGateFailed(blockCard.Frontmatter.Id, blockFilePath, label, exitCode),
+                        onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason)));
             if (gateRefusal is not null)
             {
                 return gateRefusal;
             }
+        }
+
+        // process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block E, 9.8's carried
+        // arm). Section-driven landing was the one forward motion this guard did not already reach
+        // when block D shipped it for the generic transitions and 'approve' (§9 block D DEVLOG
+        // note) — an approved block blocked on an open Product Owner question could otherwise still
+        // reach 'landed' by its section closing.
+        if (FindBlockingOpenProductOwnerQuestion(cardsRoot, blockCard) is { } blockingQuestion)
+        {
+            return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion>(
+                cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp,
+                new CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion(blockCard.Frontmatter.Id, blockFilePath, blockingQuestion.QuestionId, blockingQuestion.Title),
+                onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
         }
 
         return null;
@@ -2601,7 +2793,11 @@ internal static class CardStore
     /// computed (<see cref="RegisterLifecycleStateWireFormat"/> for a register kind,
     /// <see cref="SectionFlowStateWireFormat"/> for a section) — this method does not choose it,
     /// the same "carries the vocabulary, not a second copy of it" discipline every wire-format type
-    /// in this codebase already follows.
+    /// in this codebase already follows. <paramref name="section"/> is <see cref="CardFrontmatter.
+    /// Section"/> — "the section a card was raised within" — left empty by every caller except
+    /// <c>question create</c> (§9 block E ruling: a question's <em>scope</em> deliberately outlives
+    /// any one section, but "which section raised it" is a different fact <c>question create</c>
+    /// needed a way to record so 9.5's "raised in it" has something to check).
     /// </summary>
     internal static CardCreateOutcome CreateCard(
         string cardsRoot,
@@ -2615,7 +2811,8 @@ internal static class CardStore
         RegisterCardFields? registerFields,
         DateTimeOffset timestamp,
         TimeSpan lockTimeout,
-        string? changeName)
+        string? changeName,
+        string section = "")
     {
         var scopeValidation = CardScopeRules.Validate(kind, scope);
         if (scopeValidation is CardScopeValidationResult.Refused refused)
@@ -2629,7 +2826,7 @@ internal static class CardStore
             return new CardCreateOutcome.ToolFailure(allocationFailure);
         }
 
-        var frontmatter = new CardFrontmatter(id!, kind, title, initialStatus, actingRole, scope, string.Empty, timestamp, timestamp);
+        var frontmatter = new CardFrontmatter(id!, kind, title, initialStatus, actingRole, scope, section, timestamp, timestamp);
         var cardFile = new CardFile(frontmatter, body, [], [], FindingFields: null, RegisterFields: registerFields);
 
         var writeResult = WriteCard(cardsRoot, filePath, new NewCardFile(frontmatter, body, RegisterFields: registerFields), lockTimeout, changeName);

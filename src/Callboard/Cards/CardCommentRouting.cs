@@ -178,4 +178,67 @@ internal static class CardCommentRouting
 
         return false;
     }
+
+    /// <summary>
+    /// The ids of every live thread addressed to <em>any</em> role — <see cref="
+    /// LiveThreadIdsAddressedTo"/>'s role-agnostic sibling (process-enforcement: "Section close
+    /// settles its addressed threads", §9 block E). A section close is not acting as any one role,
+    /// so the check it needs is "is anyone still owed a resolution", not "is a specific actor still
+    /// owed one" — the same <see cref="CardComment.To"/>-only, body-text-never-routes discipline
+    /// every other reader in this type already follows, just without narrowing by <paramref
+    /// name="role"/>.
+    /// </summary>
+    internal static IReadOnlyList<string> LiveAddressedThreadIds(IReadOnlyList<CardComment> comments)
+    {
+        var ids = new List<string>();
+        for (var i = 0; i < comments.Count; i++)
+        {
+            if (comments[i].To is not null && !IsResolved(comments, i))
+            {
+                ids.Add(comments[i].Id);
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>
+    /// The ids of every live addressed thread on <paramref name="comments"/> that has survived at
+    /// least one round boundary on its own block — process-enforcement: "the system SHALL surface
+    /// addressed comments left unresolved for longer than one round, as a prompt rather than a
+    /// constraint" (§9 block E). "Round" belongs to a block card, not a section (work-lifecycle:
+    /// <c>round</c> lives on <see cref="BlockCardFields"/> and increments only on the three
+    /// transitions <see cref="BlockFlowTransitions.RoundIncrementingTransitionNames"/> names) — so
+    /// this reads a block's own <paramref name="transitions"/>, never a section-wide notion of
+    /// round that does not exist. A live addressed comment counts as aged exactly when
+    /// <paramref name="transitions"/> carries a round-incrementing entry timestamped after the
+    /// comment's own <see cref="CardComment.Timestamp"/>: the round the comment was raised in has
+    /// since closed out from under it while the thread itself is still open. A comment raised in
+    /// the block's <em>current</em> round — no round-incrementing transition has happened since —
+    /// is never aged by this reading, no matter how long ago it was posted; elapsed wall-clock time
+    /// is not what "a round" means here.
+    /// </summary>
+    internal static IReadOnlyList<string> AgeingAddressedThreadIds(
+        IReadOnlyList<CardComment> comments, IReadOnlyList<CardBlockTransitionEntry> transitions)
+    {
+        var ids = new List<string>();
+        for (var i = 0; i < comments.Count; i++)
+        {
+            var comment = comments[i];
+            if (comment.To is null || IsResolved(comments, i))
+            {
+                continue;
+            }
+
+            var agedPastItsOwnRound = transitions.Any(transition =>
+                BlockFlowTransitions.RoundIncrementingTransitionNames.Contains(transition.Name, StringComparer.Ordinal)
+                && transition.Timestamp > comment.Timestamp);
+            if (agedPastItsOwnRound)
+            {
+                ids.Add(comment.Id);
+            }
+        }
+
+        return ids;
+    }
 }
