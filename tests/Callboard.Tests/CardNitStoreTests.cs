@@ -57,6 +57,31 @@ public sealed class CardNitStoreTests : IDisposable
         Assert.Equal(notABlock.Remedy, refusal.Remedy);
     }
 
+    // 9.10 coverage gate finding (§9 block C): CardNitRaiseOutcome.RoundDisagreesWithHistory had no
+    // test at all — RaiseNitUnderExistingLock checks it immediately after IsBlockCard, before the
+    // 'in review' check, so a round mismatch is reachable independent of status.
+    [Fact]
+    public void RaiseNit_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard()
+    {
+        var path = WriteBlockCard("b-0009", "B-0009", BlockFlowState.InReview, round: 2);
+        var comment = new CardComment(
+            Id: "nit-0009", Author: CardOwner.Reviewer, Timestamp: Created, Body: "An observation.",
+            ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: [], IsNit: true);
+
+        var outcome = CardStore.RaiseNit(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
+
+        var disagreement = Assert.IsType<CardNitRaiseOutcome.RoundDisagreesWithHistory>(outcome);
+        Assert.Equal(2, disagreement.StoredRound);
+        Assert.Equal(1, disagreement.ExpectedRound);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Empty(read.Comments);
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, refusal.By);
+        Assert.Equal(disagreement.RefusingRule, refusal.Rule);
+        Assert.Equal(disagreement.Remedy, refusal.Remedy);
+    }
+
     [Fact]
     public void DispositionNit_TargetIsNotABlockCard_Refuses_AndRecordsAgainstTheCard()
     {
@@ -99,6 +124,31 @@ public sealed class CardNitStoreTests : IDisposable
         Assert.Equal(CardOwner.Architect, refusal.By);
         Assert.Equal(nitNotFound.RefusingRule, refusal.Rule);
         Assert.Equal(nitNotFound.Remedy, refusal.Remedy);
+    }
+
+    // 9.10 coverage gate finding (§9 block C): CardNitDispositionOutcome.RoundDisagreesWithHistory
+    // had no test at all — DispositionNitUnderLocks checks it immediately after IsBlockCard, before
+    // the nit is even looked up, so a round mismatch is reachable independent of which nit id (or
+    // whether any nit at all) is named.
+    [Fact]
+    public void DispositionNit_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard()
+    {
+        var path = WriteBlockCard("b-0009", "B-0009", BlockFlowState.InReview, round: 2);
+
+        var outcome = CardStore.DispositionNit(
+            _root, path, "nit-0009", NitDisposition.FixBeforeLand, "reason", CardOwner.Architect, Created,
+            TimeSpan.FromSeconds(5), ChangeName, raiseRequest: null);
+
+        var disagreement = Assert.IsType<CardNitDispositionOutcome.RoundDisagreesWithHistory>(outcome);
+        Assert.Equal(2, disagreement.StoredRound);
+        Assert.Equal(1, disagreement.ExpectedRound);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Empty(read.Comments);
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, refusal.By);
+        Assert.Equal(disagreement.RefusingRule, refusal.Rule);
+        Assert.Equal(disagreement.Remedy, refusal.Remedy);
     }
 
     [Fact]

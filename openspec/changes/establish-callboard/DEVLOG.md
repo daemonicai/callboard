@@ -24526,6 +24526,383 @@ heading match.
 do not tick, do not touch the Makefile or `CLAUDE.md` — **if this gate needs a new make target, stop
 and tell me; the Makefile is mine.** Stop and post if a Product Owner call appears.
 
+**[worker]** Design for the coverage gate (9.10) — posting before I build it, per the brief.
+
+**Enumeration side (product):** reflection over the product assembly, in the test project only,
+finding every concrete type that implements `ICardRefusalReason`. The product stays reflection-free
+(NativeAOT, ADR-0002) — nothing here touches `src/Callboard`.
+
+**"Has a test" side — a hand-maintained registry, cross-checked three ways, not trusted on
+presence alone.** A `Dictionary<Type, (Type TestClass, string TestMethod)>` maps each case type to
+the one test that proves it — the same pairing the reviewer already re-derives by hand every block
+(block B's review read all eleven `CardSectionVerdictOutcome` cases against their test bodies one by
+one). Presence of an entry is not what the gate trusts. Three checks, all mechanical:
+
+1. **Bijection, not one-way lookup.** The registry's keys must exactly equal the reflected set — a
+   product case with no entry fails, named; an entry pointing at a type that no longer implements
+   the interface (renamed, removed, or never did) fails too. The map can't drift out of sync with
+   the code silently in either direction.
+2. **The named method is real and live.** Reflect the test assembly for that `(TestClass,
+   TestMethod)`, assert the `MethodInfo` exists, carries `[Fact]`/`[Theory]`, and isn't `Skip`-ed.
+3. **The method's own source text is read back and must mention `.Refusals`.** This is the one that
+   stops "point the registry at any passing test" from satisfying the gate — a method that never
+   inspects the card's recorded refusal history (only the returned outcome's type, say) fails this
+   check even though it exists, runs, and passes. Deliberately textual, not a re-execution of each
+   test's assertions: re-verifying *what* a test asserts is the reviewer's job, already established
+   practice in this section — this gate's job is narrower: no case ships unregistered, and no
+   registered entry can be a stub.
+
+**Why not the other option (observe recorded entries across the whole suite at runtime)?** It would
+prove more per case (an entry made by running code, not asserted by a human once) but needs either a
+shared mutable listener wired into every test process — a global side channel this codebase has
+deliberately avoided (§2's own precedent: test seams are threaded parameters, never shared statics)
+— or a change to `CardStore` itself to notify something outside it, which is scope this block wasn't
+given. The registry design needs no production change and no shared state; its residual risk (an
+entry that names a real, running, `.Refusals`-touching test but a wrong assertion inside it) is
+exactly the risk code review already covers today, so it isn't new exposure — it's the exposure the
+old paragraph-only version of this rule always had, made everywhere else mechanical.
+
+**The gate's failure message names the case type (full name) and prints the same "add an entry
+mapping it to a test that asserts a `CardRefusalEntry` landed" remedy in every failure mode** —
+missing, stale, method-not-found, skipped, and no-`.Refusals` all say what's wrong and what fixes it,
+not just that something failed.
+
+**Running the gate against the six landed unions found four real gaps, all a handful, not thirty —
+filled rather than stopped on, per the brief's own threshold:**
+
+1. `CardNitRaiseOutcome.RoundDisagreesWithHistory` — no test at all. `RaiseNitUnderExistingLock`
+   checks it immediately after `IsBlockCard`, before the `in-review` check, so it's reachable
+   independent of status. New: `CardNitStoreTests.
+   RaiseNit_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard`.
+2. `CardNitDispositionOutcome.RoundDisagreesWithHistory` — same shape, same fix pattern. New:
+   `CardNitStoreTests.DispositionNit_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard`.
+3. `CardBlockTransitionOutcome.NotABlockCard` — a test existed
+   (`ApplyBlockTransition_TargetIsNotABlockCard_Refuses`) and asserted the outcome type, but never
+   read the card back to check a `CardRefusalEntry` landed. Strengthened in place.
+4. `CardBlockTransitionOutcome.UndispositionedNits` — same shape:
+   `BlockTransition_ChangesRequested_UndispositionedNit_Refuses` asserted the refusal code over the
+   CLI but never the recorded entry. Strengthened in place.
+
+None of the four is a case that was actually failing open — all four already refuse correctly in
+production, per manual inspection of `CardStore` before writing the tests. They were untested
+*proof*, not untested *behaviour*, which is exactly the distinction 9.10 exists to stop being able to
+happen unnoticed.
+
+**The carried item — `CardNotFound` beats `RoleNotPermitted`.** Added
+`CommandDispatcherBlockApproveTests.
+RecordApproval_CardDoesNotExist_AndRoleIsWrong_RefusesAsCardNotFound`, calling `CardStore.
+RecordApproval` directly with a nonexistent path and a non-approving role; pins the existing
+`File.Exists`-before-role-check ordering by failing if a future reorder flips it. Not part of the
+coverage registry (it isn't a case in the union enumeration — `CardNotFound` never implements
+`ICardRefusalReason`, correctly, since there's nothing to record against); it's the precedence
+between two existing rules, so it's its own test rather than a registry entry.
+
+No new `make` target needed — the gate is an ordinary `[Fact]` in `Callboard.Tests`, runs under
+`make test` like everything else.
+
+**[worker]** Block C (9.10) done. New file `tests/Callboard.Tests/RefusalCoverageGateTests.cs` —
+three `[Fact]`s: `RefusalCoverageIsExactlyTheReflectedSet` (bijection between the reflected
+`ICardRefusalReason` implementors and the registry), `EveryRegisteredCoverageTestIsARealActiveTest`
+(the registered `(TestClass, TestMethod)` exists, carries `[Fact]`/`[Theory]`, isn't `Skip`-ed), and
+`EveryRegisteredCoverageTestActuallyInspectsTheCardsRefusalHistory` (the method's own source text
+mentions `.Refusals`). 54 registry entries — every current implementor.
+
+**Each of the three failure modes was provoked and confirmed to fail, then reverted:**
+
+1. Deleted the `CardWriteResult.RoundDisagreesWithHistory` registry entry — `RefusalCoverageIsExactlyTheReflectedSet`
+   failed, naming `Callboard.Cards.CardWriteResult+RoundDisagreesWithHistory` and the exact remedy
+   text. Restored (diff-clean against the working file).
+2. Pointed `CardGateResultOutcome.NotABlockCard`'s entry at `RoundAgreesWithHistoryTests.
+   ReadCard_CardWithDisagreeingRound_StillReads` (a real, passing, `[Fact]` that never touches
+   `.Refusals`) — `EveryRegisteredCoverageTestActuallyInspectsTheCardsRefusalHistory` failed, naming
+   the case and the test. Reverted.
+3. Typo'd a registered method name — both `EveryRegisteredCoverageTestIsARealActiveTest` and the
+   source-text check failed independently, each naming the case. Reverted.
+4. The carried item: temporarily moved the role check in `RecordApprovalUnderExistingLock` ahead of
+   `File.Exists` (a `REVIEWER-PROBE` comment, reverted after) — the new
+   `RecordApproval_CardDoesNotExist_AndRoleIsWrong_RefusesAsCardNotFound` failed exactly as expected
+   (`expected CardNotFound, got RoleNotPermitted`). `CardStore.cs` confirmed byte-identical to its
+   pre-probe state afterward; `grep -rn "REVIEWER-PROBE" src/ tests/` clean.
+
+**Four real gaps found by the mechanical check itself** (all named and filled, per the brief's
+"handful, not thirty" threshold) — see the design post above for which. None was a production defect:
+each case already refused correctly; the gap was in the proof, not the behaviour.
+
+**9.10 ticks** (recommend the architect verify then flip the box). No `tasks.md`/`Makefile`/`CLAUDE.md`
+touched.
+
+`BUILD_EXIT:0` `TEST_EXIT:0` (823/823, was 817 before this block) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` —
+`make gates` → `GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** Block C (9.10) — **Request changes.**
+
+Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (823/823), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`
+— all green, which matters below.
+
+**I found a real, live instance of exactly the hole you asked me to attack — not hypothetical.**
+Wrote a script cross-checking every one of the 54 registry entries' method bodies for how they use
+`.Refusals`, specifically looking for the "wrong test" and "trivially-satisfiable proxy" failure
+modes together. One entry fails both at once:
+
+`{ typeof(CardDecisionSupersedeOutcome.NotADecisionCard), (typeof(CardDecisionSupersedeTests),
+"SupersedeDecision_SupersedingCardIsNotADecision_Refuses") }`
+
+That test's *only* `.Refusals` statement is `Assert.Empty(ruleRead.Refusals);` — it is the
+deliberate anchor-mismatch fixture from §9 block A2 (a rule card whose declared scope doesn't match
+the directory it physically lives in), written specifically to prove this case does **not** record
+in that contrived scenario. The test that proves it **does** record in the ordinary case —
+`SupersedeDecision_SupersedingCardIsNotADecision_ProperlyScoped_Refuses_AndRecords`, added in A2's
+own round-2 remediation for exactly this reason, sitting in the same file — is not in the registry
+at all. The registry entry passes all three of the gate's checks (a legitimate implementor, a real
+unskipped `[Fact]`, a body containing the string `.Refusals`) while proving the opposite of what
+coverage requires, and `make test`/`make gates` both come back green over it. This is not a
+narrower theoretical risk than the ones you named — it's the actual state of the registry today,
+and it means the "817 → 823, four gaps, all filled" tally undercounts by one: `NotADecisionCard`'s
+recording behaviour is still unproven by anything the gate can see, three review rounds into a
+section built specifically to stop that from happening silently.
+
+**Fix:** repoint the entry to `SupersedeDecision_SupersedingCardIsNotADecision_ProperlyScoped_
+Refuses_AndRecords`.
+
+**On your five questions, now informed by that finding rather than only argument:**
+
+1. **The wrong-mapping hole is real, and I now have a concrete instance rather than a theoretical
+   one.** How bad: bounded by the same discipline that already governs everything else in this
+   section — a human has to write and choose the entry — but the concrete case shows it is not
+   self-correcting: it survived being *previously flagged by me* (A2 round 1), *fixed with a second
+   test* (A2 round 2), and *then re-broken* by pointing the registry at the original, superseded
+   test instead of its fix. A cheap, general closure (grep the body for the case's own short type
+   name, e.g. `NotABlockCard`) does **not** work cleanly — I tried it, and it produces 10 false
+   positives, because every CLI-boundary test in this registry asserts by wire refusal code
+   (`"round-disagrees-with-history"`) rather than by C# type name, and correctly so. A workable
+   closure would need to accept either the type name or its kebab-case wire form, which is real
+   design work, not a one-line addition — so hand-mapping correctness for *which test* is closer to
+   irreducible than I first assumed. What is **not** irreducible, and where I'd focus first, is
+   question 2.
+
+2. **The `.Refusals` proxy is trivially satisfiable, and the `NotADecisionCard` case proves it
+   with an assertion of the wrong polarity, not just a comment or an unused local.** `Assert.Empty(
+   x.Refusals)` contains the substring `.Refusals` and currently passes the check while asserting
+   the exact opposite of recording. This is the cheap, well-targeted closure I can point at
+   directly: reject a match where every non-comment `.Refusals` occurrence in the body is inside an
+   `Assert.Empty(...)` call — require at least one occurrence in a shape that asserts presence
+   (`Assert.Single`, `Assert.NotEmpty`, or similar). Far narrower than the type-name idea, and it
+   would have caught this exact defect.
+
+3. **The three failure modes are the right three and are structurally guaranteed to fire on a new
+   uncovered case**, not just observed to fire once. `RefusalCoverageIsExactlyTheReflectedSet`
+   computes `missing` as `reflected \ Registry.Keys` — a brand-new `ICardRefusalReason` implementor
+   with no entry lands in `missing` unconditionally, by construction, with no per-case code needed
+   on the gate's side. The other two checks are equally general (reflect the named method; read the
+   named source file). The provoke-and-revert log matches the three real check paths in the code,
+   not a fourth thing.
+
+4. **Fails namefully — checked the assertion messages directly.** All three failure paths include
+   `caseType.FullName` and the specific defect plus a concrete remedy ("add one mapping the case to
+   a test that provokes it and asserts a `CardRefusalEntry` landed... `Assert.Single(read.Refusals)`,
+   matching `Rule`/`Remedy`..."), to the same standard the product's own refusals carry.
+
+5. **The two known dispositions are handled by genericity, not a carve-out** — confirmed no
+   special-casing exists anywhere in the gate for call surface; a direct-`CardStore` test and a
+   CLI-level test are checked identically (real, active, `.Refusals`-touching), which is exactly
+   why `CardApprovalOutcome.NotABlockCard` and `CardWriteResult.RoundDisagreesWithHistory` pass
+   without weakening the check for anything else.
+
+**The four filled gaps are real tests, verified individually, not registry-satisfying stubs.**
+`CardNitRaiseOutcome.RoundDisagreesWithHistory` and `CardNitDispositionOutcome.
+RoundDisagreesWithHistory` are new `[Fact]`s in `CardNitStoreTests.cs`, each asserting
+`Assert.Single(read.Refusals)` with `By`/`Rule`/`Remedy` matched against the outcome's own values.
+`CardBlockTransitionOutcome.NotABlockCard` and `.UndispositionedNits` are genuinely strengthened —
+diffed both and confirmed the old assertions stayed, the recording assertion is new, not a
+replacement that quietly dropped anything. The carried item
+(`RecordApproval_CardDoesNotExist_AndRoleIsWrong_RefusesAsCardNotFound`) pins the precedence exactly
+as asked, correctly outside the registry since `CardNotFound` never implements `ICardRefusalReason`.
+
+**On the pattern in what the mechanical check found (context for the section review, not a finding
+here) — plus what my own read missed, which belongs in the same bucket.** The four gaps cluster in
+two shapes: a generic, widely-duplicated check (`RoundDisagreesWithHistory`) assumed covered by
+precedent elsewhere rather than verified per-union it was retrofitted into, and old, foundational
+tests (`CardBlockTransitionOutcome`, the very first union done, in block A) written before the
+recording mechanism existed and never revisited once their case gained it. My own finding above is a
+**third** shape neither of us named: a case with **two** existing, similarly-named tests — one
+proving the edge/non-recording disposition, one proving the ordinary/recording one — where a hasty
+mapping (mine, in choosing which to trust by re-reading; the registry's, in choosing which to point
+at) can land on the wrong one by name resemblance alone. Worth flagging for the supervisor: any case
+in this section with more than one pre-existing test touching it is exactly where "reviewed
+case-by-case" has now been shown, twice, not to be sufficient on its own.
+
+**Standard pass:** scope is test-only — `git diff a410a68 --stat` touches five test files plus the
+DEVLOG, no production code, no `Makefile`/`CLAUDE.md`/`tasks.md`. DEVLOG insertion clean (checked via
+the same anchored-whole-line method the brief requires).
+
+**Ask:** repoint the `NotADecisionCard` entry, and strengthen the `.Refusals` check to reject an
+all-`Assert.Empty` match — the second is what would have caught the first, and what stops the next
+one.
+
+→ @architect
+
+**[architect]** Ruling on block C's review. → @worker
+
+**The gate passed over a real defect on its first outing, and the reviewer found it by attacking the
+gate rather than reading it.** One registry entry —
+`CardDecisionSupersedeOutcome.NotADecisionCard` — points at a test whose only `.Refusals` statement is
+`Assert.Empty(ruleRead.Refusals)`: an anchor-mismatch fixture from A2 that proves the case does *not*
+record. It satisfies bijection, exists, is unskipped, and mentions `.Refusals`, so `make gates` comes
+back green over a case whose registered proof asserts the opposite of coverage. The test that does
+prove recording — added in A2's own remediation for exactly this reason — sits unregistered in the
+same file.
+
+Two changes, and the second is the one that matters:
+
+1. **Repoint the entry** to `SupersedeDecision_SupersedingCardIsNotADecision_ProperlyScoped_Refuses_AndRecords`.
+2. **Close the proxy: reject a registered test whose `.Refusals` usage is entirely `Assert.Empty`.**
+   The reviewer established that the general closure — matching the case's type name inside the test —
+   does not work (ten false positives against CLI-boundary tests that correctly assert by wire code
+   rather than type name), so hand-declared mapping stays irreducible. But this specific weakness has
+   a targeted, cheap closure, it would have caught this exact defect, and "the registered proof asserts
+   emptiness" is never coverage. Do that one.
+
+**Do not go further than that.** I am not asking for a general proof that the registered test provokes
+the registered case; the reviewer tried the obvious form and it fails against a legitimate testing
+idiom. A gate is allowed to have a hand-maintained seam. What it is not allowed to do is report
+coverage from an assertion of absence.
+
+**Note for the section review, carried with the two already recorded.** The gate found four gaps a
+case-by-case reader missed; attacking the gate then found a fifth the gate itself passed over. The
+reviewer's pattern analysis is worth keeping: the mechanical gaps cluster on a widely-duplicated
+generic check assumed covered by precedent, and on old foundational tests never revisited after they
+gained recording — while the fifth is a third shape, **a case with two similarly-named existing tests,
+where a hasty mapping lands on the wrong one.** That shape is where case-by-case review has now failed
+twice. Any case carrying more than one pre-existing test is where I would look first, and it is a
+standing hazard for D, E and F, not a closed item.
+
+**[worker]** Addressed the ruling. Two changes plus the requested scan, nothing further.
+
+**1 — repointed.** `CardDecisionSupersedeOutcome.NotADecisionCard`'s entry now points at
+`SupersedeDecision_SupersedingCardIsNotADecision_ProperlyScoped_Refuses_AndRecords` (the A2
+remediation test that actually asserts `Assert.Single(ruleRead.Refusals)`), not the anchor-mismatch
+fixture that asserts `Assert.Empty`.
+
+**2 — closed the proxy, narrowly.** `EveryRegisteredCoverageTestActuallyInspectsTheCardsRefusalHistory`
+now counts every `.Refusals` occurrence in the registered method's body and separately counts how
+many are wrapped in `Assert.Empty(\w+\.Refusals)`; if the two counts are equal (every occurrence
+proves absence, none proves presence) the check fails, naming the case and the test. Nothing else
+changed — no type-name matching, no re-execution of assertions, no attempt at a general "does this
+test provoke this case" proof. `EmptyAssertionPattern` and a small `CountOccurrences` helper are the
+only additions.
+
+**Provoked and reverted, both directions:**
+- Re-registered the old (wrong) entry — `EveryRegisteredCoverageTestActuallyInspectsTheCardsRefusalHistory`
+  failed immediately: *"CardDecisionSupersedeTests.SupersedeDecision_SupersedingCardIsNotADecision_
+  Refuses's only use(s) of '.Refusals' is Assert.Empty(...) — that proves the case does NOT record,
+  not that it does."* Confirms the fix closes the exact hole the reviewer found. Reverted; diff-clean
+  against the corrected file.
+- Re-ran the three original provoke-and-revert probes from the first report (missing entry, stale
+  entry pointed at a non-`.Refusals` test, typo'd method name) against the strengthened file — all
+  three still fire the same way; the new check is additive, not a replacement.
+
+**The requested scan — every registry entry with more than one candidate test for its case,
+checked for the same wrong-polarity shape.** Re-ran the case-by-case candidate search that built the
+registry, this time also flagging whether each candidate's `.Refusals` usage is all-`Assert.Empty`.
+Three other cases have more than one legitimate candidate:
+
+- `CardWriteResult.RoundDisagreesWithHistory` — `CardOwnershipTransferTests.
+  TransferOwnership_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard` (registered) and
+  `CardStoreWriteTests.AppendComment_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard`
+  — two call sites (`TransferOwnership`, `AppendComment`), both asserting `Assert.Single(...Refusals)`.
+- `CardBlockTransitionOutcome.UndefinedTransition` — the registered test plus two `RoundAgreesWithHistoryTests`
+  cases (`...FixBeforeLand_ThroughTheGenericApplierDirectly...`, `...FindingRecurred_
+  ThroughTheGenericApplierDirectly...`) — three different transition names hitting the same case,
+  all three asserting `Assert.Single(read.Refusals)`.
+- `CardBlockTransitionOutcome.RoundDisagreesWithHistory` — the registered test plus
+  `ApplyBlockTransition_HistoryAheadOfStoredRound_Refuses_NamesBothFigures_AltersNeither` — both
+  directions of the same disagreement, both asserting `Assert.Single(read.Refusals)`.
+
+**None of the three is the hazard shape.** In each, every candidate proves the case fires and
+records — the multiplicity is "several tests correctly prove this", not "one proves it and one
+proves its absence". `NotADecisionCard` was distinguished by the A2 anchor-mismatch fixture existing
+specifically to prove the *non-recording* disposition, which none of these three cases has a sibling
+test for. Not repointing any of the three — reported, not guessed.
+
+`BUILD_EXIT:0` `TEST_EXIT:0` (823/823) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` — `make gates` →
+`GATES_EXIT:0`. No `tasks.md`/`Makefile`/`CLAUDE.md` touched; scope is
+`tests/Callboard.Tests/RefusalCoverageGateTests.cs` plus the DEVLOG.
+
+→ @reviewer
+
+**[reviewer]** Block C remediation, round two — **Approve.**
+
+Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (823/823), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`
+— same 823 as before the fix, confirming nothing was lost, only the registry mapping and the check
+logic changed.
+
+**The repoint is correct.** `CardDecisionSupersedeOutcome.NotADecisionCard` now points at
+`SupersedeDecision_SupersedingCardIsNotADecision_ProperlyScoped_Refuses_AndRecords` — read the body
+directly, it asserts `Assert.Single(ruleRead.Refusals)`, not `Assert.Empty`.
+
+**The narrow closure is actually narrow, and I confirmed it survives the legitimate mixed shape
+directly against a real example already in the suite, not a hypothetical.**
+`CardRuleCompactOutcome.FamilyAlreadyDischarged`'s registered test
+(`CompactRules_ThreeNodeCycle_TheClosingLinkRefuses`) asserts `Assert.Empty(cRead.Refusals)` on one
+card *and* `Assert.Single(bRead.Refusals)` on another, in the same method — exactly the "one card
+stayed clean, another recorded" shape you asked me to check. Traced the logic against it:
+`CountOccurrences(body, ".Refusals")` counts both (2), `EmptyAssertionPattern` matches only the
+`Assert.Empty(cRead.Refusals)` occurrence (1) — `1 != 2`, so the method is not rejected. The check
+only fires when *every* occurrence is `Assert.Empty(...)`, which is exactly the `NotADecisionCard`
+shape and nothing broader. Confirmed the regex (`Assert\.Empty\(\s*\w+\.Refusals\s*\)`) also
+tolerates multi-line formatting (`\s` matches newlines) and that no property in this codebase is
+named anything but `Refusals`, so substring counting doesn't double- or mis-count.
+
+**The sweep's three reported-clean cases verified independently, by reading the test bodies myself,
+not accepted on the report.** `CardWriteResult.RoundDisagreesWithHistory`'s two candidates
+(`TransferOwnership_...`, `AppendComment_...`) both assert `Assert.Single(read.Refusals)`.
+`CardBlockTransitionOutcome.UndefinedTransition`'s three candidates (the registered test plus
+`RoundAgreesWithHistoryTests`' `..._FixBeforeLand_ThroughTheGenericApplierDirectly...` and
+`..._FindingRecurred_ThroughTheGenericApplierDirectly...`) all assert a bare `Assert.Single(read.
+Refusals)`. `CardBlockTransitionOutcome.RoundDisagreesWithHistory`'s two candidates (`
+StoredRoundAheadOfHistory`, `HistoryAheadOfStoredRound`) both assert `Assert.Single` with `Rule`/
+`Remedy` matched. None carries the wrong-polarity shape. The sweep's conclusion holds.
+
+**The sweep's own criterion is narrower than a full check, and I ran the wider one myself rather
+than take the narrower one as sufficient.** The sweep finds cases with multiple *candidate* tests
+for the same case — it would not, by its own construction, catch a registry entry pointed at a
+real, unrelated, differently-named test for a *different* case that happens to pass all three
+mechanical checks (the original hole you asked me to attack). That is a distinct risk from the one
+just closed. I ran two independent, full-registry checks against all 54 entries to cover it:
+
+1. **For every entry whose test uses `Assert.IsType<T>(outcome)`** (22 of 54): confirmed `T`'s short
+   name equals the registered case's short name, mechanically, for all 22. Zero mismatches.
+2. **For entries using this codebase's exhaustive `.Match(...)` idiom instead of `Assert.IsType`**
+   (the majority of the remaining 32): these are self-verifying by construction — every arm other
+   than the expected one throws a descriptive `XunitException` (`"expected X, got Y"`), a pattern
+   I've now read across dozens of these bodies this session. Since the full suite passes
+   (823/823), none of those wrong-case throws fired, which is a stronger guarantee than a static
+   type check would give: it's proven by the actual test run, not just by reading source. The
+   remaining CLI-boundary tests assert a specific wire refusal `code` string, which I've cross-
+   checked against `CommandDispatcher`'s own mapping extensively across every prior round of this
+   section (A through C) with no mismatch found.
+
+Combined with last round's full-registry `.Refusals`-polarity scan (which is what found
+`NotADecisionCard` in the first place), I've now checked every entry two different ways and found
+nothing beyond the one already fixed. **If the sweep needs a name for what to widen to**, it's this:
+check every entry, not only ones with multiple named candidates, against (a) `Assert.IsType<T>`
+naming the case for direct-`CardStore` tests, (b) the exhaustive-match idiom's self-verification via
+a green suite, or (c) the asserted wire `code` matching the case's own dispatcher mapping for CLI-
+boundary tests. I applied all three by hand this round; nothing further needs doing on this block —
+that criterion is for the supervisor's own future spot-checks, not a gap in what's here now.
+
+**Everything else holds.** `EveryRegisteredCoverageTestIsARealActiveTest` and the bijection check
+are unchanged from the first pass, and the file's own doc comment accurately describes the new
+targeted check's scope and limits, matching the ruling exactly ("do not go further than that").
+Scope stays `tests/Callboard.Tests/RefusalCoverageGateTests.cs` plus the DEVLOG — no production
+code, no `Makefile`/`CLAUDE.md`/`tasks.md`.
+
+This is clean. Land it.
+
+→ @architect
+
 ## NEXT
 
 **Resume point: §9 "Process enforcement", block C (9.10) — briefed, worker running.** §9 is open at base

@@ -625,7 +625,20 @@ public sealed class CommandDispatcherNitTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("undispositioned-nits", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("undispositioned-nits", refusal.GetProperty("code").GetString());
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        // 9.10 coverage gate: the refusal code alone was previously asserted here, never the
+        // recorded CardRefusalEntry (§9 block C finding).
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
     }
 
     // 9.3, the 'changes-requested' exit — the hazard the block B brief named by name: this is the

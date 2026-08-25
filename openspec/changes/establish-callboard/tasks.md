@@ -116,7 +116,7 @@
 - [ ] 9.7 Refuse marking a question answered without a decision reference or an inline answer
 - [ ] 9.8 Refuse advancing a card blocked by an open Product Owner question
 - [ ] 9.9 Refuse archive over open change-scoped obligations owed by no remaining section
-- [ ] 9.10 Add a test per refusal rule demonstrating it fires, per the amended S5
+- [x] 9.10 Add a test per refusal rule demonstrating it fires, per the amended S5
 
 ## 10. Working context and derived state
 

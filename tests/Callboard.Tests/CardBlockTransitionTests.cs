@@ -232,6 +232,14 @@ public sealed class CardBlockTransitionTests : IDisposable
 
         var notABlock = Assert.IsType<CardBlockTransitionOutcome.NotABlockCard>(outcome);
         Assert.Equal(CardKind.Question, notABlock.Kind);
+
+        // 9.10 coverage gate: the outcome type alone was previously asserted here, never the
+        // recorded CardRefusalEntry (§9 block C finding).
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, refusal.By);
+        Assert.Equal(notABlock.RefusingRule, refusal.Rule);
+        Assert.Equal(notABlock.Remedy, refusal.Remedy);
     }
 
     [Fact]

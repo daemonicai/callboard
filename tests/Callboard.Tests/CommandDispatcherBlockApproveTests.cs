@@ -346,6 +346,25 @@ public sealed class CommandDispatcherBlockApproveTests
         Assert.Equal(notABlock.Remedy, recorded.Remedy);
     }
 
+    // Carried from §9 block B's review: RecordApprovalUnderExistingLock checks File.Exists before
+    // the role check in the same short method, so a wrong role attempted against a nonexistent
+    // card must refuse as CardNotFound, not RoleNotPermitted — pinned here so a future reorder of
+    // the two checks fails a test rather than only failing open silently.
+    [Fact]
+    public void RecordApproval_CardDoesNotExist_AndRoleIsWrong_RefusesAsCardNotFound()
+    {
+        using var repo = new TempGitRepo();
+        var directory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "b-does-not-exist.md");
+
+        var outcome = CardStore.RecordApproval(
+            repo.Path, path, "commit-abc", ["claim one"], [], CardOwner.Architect, FixedNow, TimeSpan.FromSeconds(5), ChangeName);
+
+        var notFound = Assert.IsType<CardApprovalOutcome.CardNotFound>(outcome);
+        Assert.Equal(path, notFound.FilePath);
+    }
+
     [Fact]
     public void BlockApprove_InvalidClaimItem_Refuses()
     {
