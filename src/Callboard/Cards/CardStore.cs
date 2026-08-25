@@ -469,6 +469,43 @@ internal static class CardStore
         onProductOwner: static () => false);
 
     /// <summary>
+    /// <see langword="true"/> only for <see cref="CardOwner.ProductOwner"/> — work-lifecycle:
+    /// "Remediation beyond the second round requires recorded authorisation" — "The authorisation
+    /// SHALL be part of the record, not a permission granted out of band" (§8a block C). The one
+    /// permission in the system that exists to be granted from outside the agents; unlike
+    /// <see cref="IsApprovingRole"/>'s two roles, exactly one may ever satisfy this.
+    /// </summary>
+    internal static bool IsAuthorisingRole(CardOwner role) => role.Match(
+        onArchitect: static () => false,
+        onWorker: static () => false,
+        onReviewer: static () => false,
+        onSupervisor: static () => false,
+        onProductOwner: static () => true);
+
+    /// <summary>
+    /// The one derivation both <see cref="RecordSectionVerdictUnderExistingLock"/>'s bound check
+    /// and <see cref="RecordSectionAuthorisationUnderExistingLock"/>'s own precondition read from —
+    /// so the two can never drift on what "at the bound" or "unspent" means (§8a block C
+    /// remediation, Architect ruling). Nothing here is stored: both counts are read straight off
+    /// <paramref name="fields"/> and recomputed on every call.
+    /// </summary>
+    /// <param name="fields">The section card's own fields, as currently on disk (or about to be —
+    /// callers read this fresh under the card's lock before deciding).</param>
+    /// <returns><c>PriorRequestChanges</c>: the count of <c>request-changes</c> verdicts already
+    /// retained (work-lifecycle: "an approve is not a remediation round" — an <c>approve</c> never
+    /// contributes). <c>UnspentAuthorisations</c>: <c>Authorisations.Length</c> minus every
+    /// authorisation already spent by a <c>request-changes</c> verdict past the first two
+    /// (<c>max(PriorRequestChanges - 2, 0)</c>) — consumed FIFO against that sequence, one per
+    /// over-the-bound verdict, in the order those verdicts were themselves recorded.</returns>
+    private static (int PriorRequestChanges, int UnspentAuthorisations) SectionRemediationBoundState(SectionCardFields fields)
+    {
+        var priorRequestChanges = fields.Verdicts.Count(static v => v.Verdict == SectionVerdict.RequestChanges);
+        var alreadySpentAuthorisations = Math.Max(priorRequestChanges - 2, 0);
+        var unspentAuthorisations = fields.Authorisations.Length - alreadySpentAuthorisations;
+        return (priorRequestChanges, unspentAuthorisations);
+    }
+
+    /// <summary>
     /// Records a binary approval on the block card at <paramref name="filePath"/>
     /// (review-certification: "Approve is binary and certifies one state" / "Certification
     /// enumerates its claims", §8 block A) — the one door to <see cref="BlockFlowState.Approved"/>:
@@ -1180,6 +1217,112 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// Appends one Product Owner authorisation to the section card at <paramref name="filePath"/>
+    /// (work-lifecycle: "Remediation beyond the second round requires recorded authorisation", §8a
+    /// block C) — reads the current card, and only if the acting role is <see cref="CardOwner.
+    /// ProductOwner"/> and the card is a section card, appends the entry under the card's lock, the
+    /// same read-decide-write shape <see cref="RecordApproval"/> established for its own
+    /// role-checked write. Recording one never spends it — see <see cref="SectionAuthorisationEntry"/>'s
+    /// own doc comment for how spending is derived, entirely inside <see cref="
+    /// RecordSectionVerdictUnderExistingLock"/>, from nothing this method itself does.
+    /// </summary>
+    /// <param name="reason">Why the bound was pushed further — never empty or whitespace-only,
+    /// checked by <see cref="Callboard.Cli.CommandParser"/>'s <c>section authorise</c> parse arm
+    /// before this is ever called, the same argv-decidable-first discipline every other free-text
+    /// field here follows.</param>
+    internal static CardSectionAuthorisationOutcome RecordSectionAuthorisation(
+        string cardsRoot, string filePath, string reason, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => RecordSectionAuthorisationUnderExistingLock(heldLock, cardsRoot, reason, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardSectionAuthorisationOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="RecordSectionAuthorisation"/>. Same structural lock
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type — the target is
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>. The role check is
+    /// the very first thing decided, ahead of even <see cref="File.Exists(string)"/> — the same
+    /// ordering <see cref="RecordApprovalUnderExistingLock"/>'s own doc comment justifies:
+    /// role-not-permitted is a fact about whether this call is allowed to happen at all.
+    ///
+    /// <para>
+    /// <b>§8a block C remediation, Architect ruling: recording is refused unless the section is
+    /// already at the bound with none unspent.</b> An authorisation banked ahead of need satisfies
+    /// the one-for-one count literally while defeating it — its reason would be written before the
+    /// round it discharges, and a reason for a round that has not happened cannot be one. So this
+    /// call refuses unless a <c>request-changes</c> verdict is, at this exact moment, being refused
+    /// for want of one — checked via the same <see cref="SectionRemediationBoundState"/> derivation
+    /// <see cref="RecordSectionVerdictUnderExistingLock"/> reads for its own bound check, so the
+    /// two can never drift on what "at the bound" means.
+    /// </para>
+    /// </summary>
+    internal static CardSectionAuthorisationOutcome RecordSectionAuthorisationUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string reason, CardOwner actingRole, DateTimeOffset timestamp, string? changeName)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!IsAuthorisingRole(actingRole))
+        {
+            return new CardSectionAuthorisationOutcome.RoleNotPermitted(actingRole);
+        }
+
+        if (!File.Exists(filePath))
+        {
+            return new CardSectionAuthorisationOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardSectionAuthorisationOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsSectionCard(card))
+                {
+                    return new CardSectionAuthorisationOutcome.NotASectionCard(card.Frontmatter.Kind);
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardSectionAuthorisationOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                // work-lifecycle: "Recording an authorisation SHALL be refused unless the section
+                // is already at the bound with none unspent" (§8a block C remediation, Architect
+                // ruling: banking authorisations ahead of need satisfies the one-for-one count
+                // literally while defeating what it is for — the recorded reason has to describe a
+                // round that has actually happened). Same derivation RecordSectionVerdictUnderExistingLock's
+                // own bound check reads, so the two can never drift on what "at the bound" means.
+                var (priorRequestChanges, unspentAuthorisations) = SectionRemediationBoundState(card.SectionFields);
+                if (priorRequestChanges < 2 || unspentAuthorisations > 0)
+                {
+                    return new CardSectionAuthorisationOutcome.NotAtBound(priorRequestChanges, unspentAuthorisations);
+                }
+
+                var entry = new SectionAuthorisationEntry(actingRole, reason, timestamp, []);
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Updated = timestamp },
+                    SectionFields = card.SectionFields with { Authorisations = [.. card.SectionFields.Authorisations, entry] },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardSectionAuthorisationOutcome>(
+                    onSuccess: _ => new CardSectionAuthorisationOutcome.Recorded(updated, entry),
+                    onNotFound: notFound => new CardSectionAuthorisationOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardSectionAuthorisationOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardSectionAuthorisationOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardSectionAuthorisationOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardSectionAuthorisationOutcome.ToolFailure(toolFailure.Reason));
+            },
+            onFailure: failure =>
+                new CardSectionAuthorisationOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
     /// Appends one supervisor verdict to the section card at <paramref name="filePath"/>
     /// (work-lifecycle: "Sections are entities" — "the verdict, the range and the acting role are
     /// recorded against that section entity", §5 block E) — reads the current card, and only if it
@@ -1316,6 +1459,22 @@ internal static class CardStore
                 if (anchored is null)
                 {
                     return new CardSectionVerdictOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                // work-lifecycle: "Remediation beyond the second round requires recorded
+                // authorisation" (§8a block C). Derived here, at the moment it is asked, from
+                // nothing but SectionRemediationBoundState's own two counts — never a stored
+                // figure (8a.14). The bound applies once this call's own verdict would become the
+                // section's third-or-later request-changes verdict, and no unspent authorisation
+                // covers it.
+                if (verdict == SectionVerdict.RequestChanges)
+                {
+                    var (priorRequestChanges, unspentAuthorisations) = SectionRemediationBoundState(card.SectionFields);
+                    if (priorRequestChanges >= 2 && unspentAuthorisations <= 0)
+                    {
+                        return new CardSectionVerdictOutcome.RemediationBoundExceeded(
+                            priorRequestChanges + 1, card.SectionFields.Authorisations.Length, unspentAuthorisations);
+                    }
                 }
 
                 // Validated here, before anything else — pure computation, no filesystem side

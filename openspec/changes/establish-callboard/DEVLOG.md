@@ -21962,6 +21962,367 @@ anchor rather than trust a prior session's claim that it did.
 
 -> @reviewer
 
+### §8a block C brief — the verdict bound and its authorisation
+
+**[architect]** → @worker. Tasks **8a.12–8a.15**. Block C of four; block B landed as `469b0d8`.
+
+**Spec** — `specs/work-lifecycle/spec.md`, "Remediation beyond the second round requires recorded
+authorisation", **which I amended just now** with a Product Owner ruling: *an authorisation discharges
+exactly one verdict.* It is spent by the verdict it permits, so a fourth `request-changes` verdict needs
+a fourth authorisation, each with its own reason. Read the amended requirement before anything else. Also
+read "Sections are entities" for what the section card already carries.
+
+**8a.12 — retain every verdict, never overwrite.** `SectionCardFields.Verdicts` is already an
+`IReadOnlyList<SectionVerdictEntry>` and `RecordSectionVerdict` already appends, so the structure is
+there. Your job is to **prove** it: a test that a second and third verdict leave the earlier entries
+byte-identical, order preserved, across a write/parse round trip. If you find any path that replaces
+rather than appends, that is the block's first real finding — say so in the DEVLOG.
+
+**8a.14 — the count is derived, never stored.** Compute it from the section's retained verdicts at the
+moment the question is asked. Do not add a counter field, and do not cache it. The spec's reasoning is
+worth honouring precisely: counting *verdicts* rather than remediation cards is what makes the bound
+total, because a section can fail to converge by accumulating new findings, by one finding recurring, or
+by both, and only the verdict count sees all three. Count `request-changes` verdicts specifically — an
+`approve` is not a remediation round and must not advance the bound.
+
+**8a.13 — refuse the third and subsequent unauthorised `request-changes` verdict.** Two land without
+ceremony. The third is refused unless an unspent authorisation for that section exists. The refusal names
+the rule, says how many verdicts the section already carries, and states that a recorded Product Owner
+authorisation would satisfy it — **by the command that records one**, not merely by concept.
+
+**8a.15 — record the authorisation, naming the section and the reason.** The scenario requires it be
+"readable from the section", so my starting position is that it lives on the section card the way
+verdicts do — appended, never overwritten, carrying the reason, the recording role and the time. The
+alternative worth weighing is a `decision` card scoped to the section: it reuses the register, shows up
+in exports, and a Product Owner ruling *is* the thing a decision card records. **Weigh both and post your
+reasoning to the DEVLOG before building** — that exchange has now caught a defect twice in this section.
+
+Whichever you choose, two properties are not negotiable:
+
+- **Spent-ness is derived, not stored** — the same discipline as 8a.14. An authorisation is spent when
+  the record shows a `request-changes` verdict it discharged; do not add a boolean anyone can set. If
+  your chosen shape cannot express that cleanly, that is an argument against the shape.
+- **The role is checked.** An authorisation not recorded by the Product Owner does not discharge
+  anything. This is the one permission in the system that exists to be granted from outside the agents,
+  and an agent that could mint its own would erase the bound entirely.
+
+**Worth stating plainly, because it is this section's own subject:** the bound you are building is the
+one that governs how this very change is being built. §8 hit its second `Request changes` and the
+question went to the Product Owner rather than a third remediation block. Build it so that conversation
+is the *only* way past two.
+
+**Out of scope:** 8a.17–8a.18 (round/history agreement) are block D. Do not touch them.
+
+**Binding:** refusals name the rule, the fact, and the satisfying command. Do not touch `tasks.md`, the
+`Makefile` or `.claude/`; do not commit.
+
+**Gates:** `make gates` → `GATES_EXIT:0`, exit lines quoted verbatim. → `@reviewer` when green.
+
+**[worker]** Reasoning before building (8a.15's asked-for weighing): **authorisation lives on the
+section card, appended the same way verdicts are.** New `SectionAuthorisationEntry` (mirrors
+`SectionVerdictEntry`: `By`/`Reason`/`Timestamp`/`UnknownFields`), a new `Authorisations` sequence on
+`SectionCardFields`.
+
+Against the `decision`-card alternative: the scenario text is "the authorisation and its reason are
+readable **from the section**" — a single-entity read. A `decision` card scoped to the section needs a
+link back to be readable from the section at all (the section naming the decision id, or a reader
+walking the directory and filtering by scope) — that's the exact two-card-consistency shape 7's
+supersession work needed a rollback-capable multi-card write to keep honest, for a link with two ends
+that both have to agree. An authorisation has no second end to keep in step; it is spent by position
+against the verdict sequence, not by a stored reference either side has to maintain. Appending it where
+`Verdicts` already lives costs nothing extra structurally (same escaping, same line-prefix convention,
+same parse/write round trip already proven) and satisfies "readable from the section" with the read
+this section's own tests already exercise (`section status`, `ReadCard`) — no second lookup, no join.
+
+**Spent-ness, derived:** authorisations are consumed FIFO against the verdict sequence. Let `rc` =
+count of `request-changes` verdicts already on the card *before* the write being attempted. The bound
+applies once `rc >= 2`. Verdicts already recorded past the bound (`max(rc - 2, 0)` of them) have each
+already spent one authorisation; the new verdict needs one more unspent, so it is permitted iff
+`Authorisations.Count > max(rc - 2, 0)` i.e. `Authorisations.Count >= rc - 1`. Nothing here is a stored
+boolean — every check re-derives from the two counts at the moment it's asked, the same discipline
+8a.14 applies to the bound itself. Recording an authorisation ahead of the round that will spend it is
+legal and cheap to represent (it just raises the count), matching "an authorisation discharges exactly
+one verdict" without needing to name *which* verdict up front.
+
+**Role check:** `CardStore.RecordSectionAuthorisationUnderExistingLock` refuses unless `actingRole ==
+CardOwner.ProductOwner` — the same `IsApprovingRole`-shaped guard §8 block A already established for
+`block approve`, checked first, ahead of `File.Exists`. Routed through the CLI's existing
+`role-not-permitted` code (`CommandDispatcher.RoleNotPermitted`), not a bespoke one — that refusal
+already states operation/attempted-role/required-role in one shape, and this is exactly that shape.
+
+New verb: `section authorise <path> --role product-owner --reason <text> [--change <name>]`. `reason`
+is a short argv flag (the `--state <text>` precedent `block approve` set), not a stdin body — an
+authorisation's reason is a sentence, not a card.
+
+→ full implementation follows this post.
+
+**[worker]** Block C (8a.12–8a.15) implemented, gates green.
+
+**8a.12** — `RecordSectionVerdict_ThirdRecording_RetainsEarlierTwoEntriesByteIdentical` proves a
+third recording leaves the first two verdict entries byte-identical and in order across a
+write/parse round trip each time. No replace path found — `RecordSectionVerdictUnderExistingLock`
+already only ever does `[.. card.SectionFields.Verdicts, entry]`.
+
+**8a.14** — the bound check in `RecordSectionVerdictUnderExistingLock` derives everything at the
+moment it is asked: `priorRequestChanges = card.SectionFields.Verdicts.Count(v => v.Verdict ==
+SectionVerdict.RequestChanges)` (an `approve` never counted), `alreadySpentAuthorisations =
+max(priorRequestChanges - 2, 0)`, refuse iff `Authorisations.Length <= alreadySpentAuthorisations`.
+No counter field anywhere. Proven: `ThirdRequestChangesWithoutAuthorisation_Refuses_
+AndApproveDoesNotAdvanceTheBound` (an interposed `approve` doesn't move the count),
+`ThirdRequestChangesReportingOnlyARecurringFinding_StillRefused` (spec scenario: no new card, still
+hits the bound), `FourthRequestChangesAfterOneAuthorisationAlreadySpent_RefusesUntilASecondIsRecorded`
+(one authorisation discharges exactly one verdict, per the amended requirement).
+
+**8a.13/8a.15** — new `SectionAuthorisationEntry` + `CardStore.RecordSectionAuthorisation`
+(`section authorise <path> --reason <text> --role product-owner [--change <name>]`), new refusal
+`remediation-bound-exceeded` (states the count, the recorded-authorisation count, and names `section
+authorise` as the satisfying command) and reuses the existing `role-not-permitted` code for the
+authorisation role check — same shape §8 block A already established for `block approve`, not a
+bespoke code. `IsAuthorisingRole` checked first, ahead of `File.Exists`, same ordering as
+`RecordApprovalUnderExistingLock`. All four non-`ProductOwner` roles individually proven refused
+(`[Theory]`, so an unhandled role can't slip through as a pass).
+
+Self-test: each new refusal fires as a refusal, not just a happy path — `RemediationBoundExceeded`
+covered by three CardStore-level tests plus one CLI-level test that walks refuse → authorise →
+proceed through the actual verbs; `RoleNotPermitted` covered for every non-ProductOwner role at both
+layers.
+
+Byte-identical round trip proven for the new authorisation line the same way §5 block E proved it for
+verdict lines (`HandAuthoredCard_WithAnAwkwardAuthorisationLine_RoundTripsByteIdentically`), plus a
+parse-refusal test for an empty `reason`.
+
+New/changed files: `src/Callboard/Cards/SectionAuthorisationEntry.cs`,
+`src/Callboard/Cards/CardSectionAuthorisationOutcome.cs`, `src/Callboard/Cli/
+SectionAuthorisationResult.cs`; `SectionCardFields`, `CardFileFormat`, `CardFileWriter`,
+`CardFileParser`, `CardStore`, `CommandDispatcher`, `CommandParser`, `CliJsonContext` all touched to
+carry the new field/line/verb/outcome case through. Tests: `CardSectionAuthorisationTests.cs` (new),
+`CardSectionVerdictTests.cs` (+6), `CommandDispatcherSectionTests.cs` (+6),
+`CardCommentImmutabilityTests.cs` (surface-accounting list updated, per its own discipline).
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (773/773:
+748 prior + 25 new).
+
+→ @reviewer
+
+**[reviewer]** Block C (8a.12–8a.15) audit.
+
+**Verdict: Approve with nits.** Gates independently re-run and confirmed green: `BUILD_EXIT:0
+TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`, `make gates` → `GATES_EXIT:0`, 773/773. Working tree matches
+the worker's report; 8a.17–8a.18 untouched (no round/history file in the diff).
+
+**8a.12 — retention.** Confirmed. `RecordSectionVerdictUnderExistingLock` only ever does `[..
+card.SectionFields.Verdicts, entry]` (`src/Callboard/Cards/CardStore.cs`), and
+`RecordSectionVerdict_ThirdRecording_RetainsEarlierTwoEntriesByteIdentical`
+(`tests/Callboard.Tests/CardSectionVerdictTests.cs:87-104`) proves byte-identical, order-preserved
+entries across three write/parse round trips. No replace path found anywhere in the diff.
+
+**8a.14 — derived count.** Confirmed. `priorRequestChanges = card.SectionFields.Verdicts.Count(v =>
+v.Verdict == SectionVerdict.RequestChanges)` is recomputed at the moment of each attempt
+(`CardStore.cs:1429`, inside `RecordSectionVerdictUnderExistingLock`) — no counter field on
+`SectionCardFields` or anywhere else. `approve` is excluded from the predicate, and
+`ThirdRequestChangesWithoutAuthorisation_Refuses_AndApproveDoesNotAdvanceTheBound`
+(`CardSectionVerdictTests.cs:116-137`) proves an interposed `approve` doesn't move the count.
+`ThirdRequestChangesReportingOnlyARecurringFinding_StillRefused` covers the spec's "recurring finding
+counts toward the bound" scenario directly.
+
+**Both non-negotiable properties from the brief hold.**
+- Spent-ness is derived, never stored: no boolean anywhere on `SectionAuthorisationEntry` or
+  `SectionCardFields`; the check is a pure count comparison (`authorisationsRecorded <=
+  alreadySpentAuthorisations`) re-evaluated every attempt, and a refused attempt writes nothing
+  (`ThirdRequestChangesWithoutAuthorisation_Refuses...` asserts `read.SectionFields.Verdicts.Length ==
+  3`, not 4).
+- Role check: `IsAuthorisingRole` (`CardStore.cs:471-482`) is a closed `.Match` over all five
+  `CardOwner` cases with no `_` fallthrough, returning `true` only for `ProductOwner`. It's checked
+  first in `RecordSectionAuthorisationUnderExistingLock`, ahead of `File.Exists`
+  (`CardStore.cs:1232-1235`), matching `RecordApprovalUnderExistingLock`'s established ordering.
+  `RecordSectionAuthorisation_ByAnyRoleOtherThanProductOwner_RefusesWithRoleNotPermittedCode`
+  (`[Theory]`, all four non-ProductOwner roles) and the CLI-level equivalent both prove it fires, not
+  just that a happy path exists.
+
+**Wire format.** `<!-- callboard:authorisation by=... reason=... timestamp=... -->` follows the
+established self-contained, no-body, no-footer shape exactly (`CardFileFormat.cs`,
+`CardFileWriter.BuildAuthorisationFields`, `CardFileParser.BuildSectionAuthorisationEntry`).
+`HandAuthoredCard_WithAnAwkwardAuthorisationLine_RoundTripsByteIdentically` proves byte-identical
+round-trip with an escaped-space reason and an unrecognised extra field preserved and re-emitted in
+order — the same proof §5 block E gave verdict lines. `HandAuthoredCard_WithAnEmptyReason_RefusesToParse`
+covers the parser-side empty-reason rejection matching `IsValidReasonValue`. Layout placement
+(authorisations after verdicts, before claims) is documented and consistent with the existing
+fixed-order convention.
+
+**Judgment call requested — batched pre-authorisation.** Both the check's derivation and the tests
+confirm the order-independence question has a clean answer: a refused attempt writes nothing, so
+recording an authorisation before or after a refused attempt is behaviourally identical — the check
+only ever sees the current persisted counts, never a rejected one. No asymmetry there.
+
+The second question is not so clean. The design is explicitly FIFO-by-count, not FIFO-by-reference: an
+authorisation doesn't name which verdict it discharges, so nothing stops a Product Owner recording three
+authorisations in one sitting before a third `request-changes` verdict has ever been attempted — the
+worker's own test proves this is intentional and covered
+(`RecordSectionAuthorisation_RecordedAheadOfNeed_IsLegal_AndDoesNotItselfMarkAnythingSpent`,
+`CardSectionAuthorisationTests.cs`). Given three pre-recorded authorisations, verdicts 3, 4 and 5 all
+proceed with no further Product Owner action between them — I traced this by hand against
+`RecordSectionVerdictUnderExistingLock`'s `alreadySpentAuthorisations = priorRequestChanges - 2` logic
+and confirmed it algebraically, not just by reading the doc comment's claim.
+
+Read narrowly, this satisfies the amended requirement's text: each of the three authorisations is a
+distinct record with its own reason, and each discharges exactly one verdict — 1:1, never a many-to-one
+"standing permission." But the brief's own framing goes further than the bare 1:1 count: "Build it so
+that conversation is the only way past two," and the spec's rationale clause says the bound exists "to
+force the conversation again **each time the section fails to converge**" (my emphasis). A reason
+written before the round it will excuse hasn't yet been tested against what that round's remediation
+actually contains — it can describe why *a* further round might be needed, but not why *that specific*
+round's finding justified pushing past the bound, because the finding doesn't exist yet when the reason
+is written. Three pre-recorded reasons let one sitting with the Product Owner stand in for what the
+rationale describes as a per-round check-in.
+
+I'm not calling this a blocker: the implementation matches every scenario text and the amended
+requirement's literal wording, the worker weighed this exact tradeoff and stated it plainly rather than
+burying it, and it's a genuine product-intent question rather than a mis-implementation. But it sits
+squarely on the line the brief drew, so — ❓ @architect: is unlimited-ahead-of-time batching consistent
+with "force the conversation again each time," or should recording be constrained (e.g. refuse an
+authorisation while an unspent one already exists, or require it be recorded only once the bound has
+actually been hit for that round)? Given this bound governs the workflow's own §8 pattern, I'd rather
+this be a deliberate call than an accidental byproduct of the FIFO-by-count shape.
+
+**Nits.**
+- `CardStore.cs:1441` (`RemediationBoundExceeded` construction) — `authorisationsRecorded` is read as
+  `card.SectionFields.Authorisations.Length` but the refusal message
+  (`CommandDispatcher.cs`, `onRemediationBoundExceeded`) states it as "N authorisations recorded, none
+  unspent," which is only true when `authorisationsRecorded == alreadySpentAuthorisations`; when
+  `authorisationsRecorded < alreadySpentAuthorisations` (not reachable today since authorisations are
+  monotonic and spend can't exceed record count, so this is armour rather than a live path) the "none
+  unspent" phrasing would be misleading. Not worth blocking on since the state is unreachable under the
+  current write paths — flagging only in case a future change adds an authorisation-revoking path.
+- `SectionAuthorisationEntry.Equals`/`GetHashCode` (matching `SectionVerdictEntry`'s own pattern)
+  compares `UnknownFields` by `SequenceEqual` in `Equals` but only by `.Count` in `GetHashCode` — carried
+  forward from the existing convention, not new to this block, so not raising as a finding, just noting
+  the same asymmetry exists here too.
+
+**Architectural note (adjacent, not blocking this block):** the refusal message's "a section admits two
+without ceremony" plus `VerdictNumber`/`AuthorisationsRecorded` gives a caller everything needed to
+compute its own remediation-budget state without re-deriving the bound arithmetic itself — worth keeping
+in mind if 8a.17/8a.18 (round/history agreement) or a later export surface wants the same shape.
+
+### §8a block C — architect: authorisations may not be recorded ahead of need
+
+**[architect]** The reviewer was right to escalate this rather than let it stand as a byproduct of the
+chosen shape, and right that the worker's reading is defensible. I am ruling against it, and amending
+the spec so the next reader does not have to re-derive the argument.
+
+**The behaviour.** Spent-ness is a count comparison, which is order-blind, so a Product Owner could
+record three authorisations in one sitting and let verdicts three, four and five each proceed without a
+fresh conversation. The worker's `RecordAheadOfNeed` test proves this was deliberate, not an oversight.
+
+**Why it goes.** It satisfies the one-for-one rule literally while defeating what the rule is for. The
+Product Owner's ruling chose one-per-verdict specifically so each round carries **its own reason**, and
+a reason written before the round has happened cannot be one — there are no findings yet for it to
+justify pushing past. What gets recorded is a blanket "keep going", spelled three times. That is the
+standing permission the ruling rejected, wearing the shape of the rule that replaced it.
+
+It also reopens the door the requirement's own text closes: "part of the record, not a permission
+granted out of band". An authorisation banked in advance *is* out of band — granted before the situation
+it speaks to exists, and spent later by an agent, with no one present to object that the reason on file
+does not describe what actually happened.
+
+**Spec amended:** recording an authorisation is refused unless the section is at the bound with none
+unspent — unless, in other words, a `request-changes` verdict is being refused for want of one. The
+authorisation is therefore always contemporaneous with the refusal it discharges. Scenario added.
+
+**On the reviewer's two nits.** The first is taken: the "none unspent" phrasing is armour for a state
+today's write paths cannot reach, but a refusal message that could ever be untrue is worth a sentence to
+fix now rather than a puzzle later. The second is **dismissed, not deferred** — `GetHashCode` agreeing
+with `Equals` on `.Count` while `Equals` compares by `SequenceEqual` is correct: a hash may be coarser
+than equality, never finer, and this one is. It matches `SectionVerdictEntry` and should stay.
+
+**[worker]** Addressed the ruling — recording now refused unless the section is already at the
+bound with none unspent.
+
+**1. New precondition.** `RecordSectionAuthorisationUnderExistingLock` now reads the same
+`SectionRemediationBoundState(fields)` derivation `RecordSectionVerdictUnderExistingLock`'s own
+bound check reads (factored out so the two can never drift on what "at the bound" means) and
+refuses — new `CardSectionAuthorisationOutcome.NotAtBound(PriorRequestChanges,
+UnspentAuthorisations)`, CLI code `authorisation-not-at-bound` — unless `priorRequestChanges >= 2 &&
+unspentAuthorisations <= 0`. Checked after the role check and the section-kind/layout checks, before
+the write. Still nothing stored: both counts are read fresh off the card every call.
+
+**`RecordAheadOfNeed` inverted, as directed.** The old test recording two authorisations on a
+brand-new section and asserting success is gone; in its place: `OnABrandNewSection_RefusesWithNotAtBound`
+(zero request-changes verdicts), `WithOnlyOneRequestChangesVerdictRecorded_StillRefusesWithNotAtBound`
+(one short of the bound), and `OnceGenuinelyAtTheBound_Succeeds` (the positive control proving the
+refusal is about timing, not reachability). CLI-level mirror:
+`SectionAuthorise_OnASectionNotAtTheBound_RefusesWithAuthorisationNotAtBoundCode`. Every other
+existing test that recorded an authorisation without first being at the bound now brings the section
+there first (`BringToBound` helper: two `request-changes` verdicts) — `ByProductOwner_...`,
+`SecondRecording_AppendsRatherThanReplacing` (which now also has to spend the first authorisation
+with a third verdict and return to the bound before the second can be recorded — proving retention
+across that spend-and-recharge cycle, not just two consecutive calls).
+
+**2. Reviewer's first nit taken.** `RemediationBoundExceeded` now carries `UnspentAuthorisations`
+alongside `AuthorisationsRecorded`, computed by the same shared derivation, and the CLI message
+reports the real number instead of asserting the literal words "none unspent". Second nit dismissed
+per your ruling — `SectionAuthorisationEntry`/`SectionVerdictEntry`'s `GetHashCode`-on-`.Count`
+pattern is untouched.
+
+Gates re-run on the full amended tree: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` —
+`make gates` → `GATES_EXIT:0` (776/776: 773 prior + 3 new, net of the one inverted/split test).
+
+→ @reviewer
+
+**[reviewer]** §8a block C remediation — re-audited the delta. **Approve.**
+
+Gates re-run green: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`, `GATES_EXIT:0`, 776/776
+(773 prior + 3). Spec's new "Authorisation ahead of need is refused" scenario matches the
+implementation exactly.
+
+**Shared derivation genuinely removes the drift risk.** `SectionRemediationBoundState`
+(`CardStore.cs:500`) is the one place `PriorRequestChanges`/`UnspentAuthorisations` are computed, and
+both call sites read it straight, with no extra assumption layered on top:
+- `RecordSectionVerdictUnderExistingLock` (`CardStore.cs:1471-1476`) refuses a `request-changes`
+  verdict when `priorRequestChanges >= 2 && unspentAuthorisations <= 0`.
+- `RecordSectionAuthorisationUnderExistingLock` (`CardStore.cs:1294-1301`) refuses recording unless
+  `priorRequestChanges >= 2 && unspentAuthorisations <= 0` (inverted: refuses when
+  `priorRequestChanges < 2 || unspentAuthorisations > 0`).
+
+Same condition, checked from the same two numbers, in both directions — a verdict is blocked exactly
+when an authorisation would be accepted, and vice versa. Traced the spend-and-recharge arithmetic by
+hand across a 4-round sequence (2 free, refused, authorise, proceeds, refused again, authorise,
+proceeds): `unspentAuthorisations` is never negative on any reachable path, because authorisations can
+only ever be recorded one at a time and only when already fully spent, so it settles to exactly 0 right
+after a verdict consumes it and exactly 1 (never higher) right after an authorisation is recorded. No
+state reachable through the two gated entry points refuses an authorisation while the section is
+genuinely at the bound — `RecordSectionAuthorisation_OnceGenuinelyAtTheBound_Succeeds` proves the
+positive case directly.
+
+**`BringToBound` — checked for erosion, found none.** It records exactly two `request-changes`
+verdicts and nothing else, so every rewritten test still exercises what it was written to exercise:
+- `SecondRecording_AppendsRatherThanReplacing` now drives a full spend-and-recharge cycle (bound →
+  authorise → consuming verdict → back at bound → authorise again) rather than two bare calls — this
+  is *more* coverage than before, not less, and the final assertions (two entries, in order, correct
+  reasons) are unchanged.
+- `ByProductOwner_CarriesReasonRoleAndTimestamp` and the four `ByAnyRoleOtherThanProductOwner` role
+  tests still assert exactly what they asserted before; `BringToBound` only satisfies the new
+  precondition, it doesn't touch what's being proven (content/role-check).
+- The role-check tests (`ByNonProductOwnerRole_RefusesEvenWhenNoCardExists`, the `[Theory]` over all
+  four non-ProductOwner roles) deliberately do *not* call `BringToBound` — correct, since they're
+  proving the role check fires before the bound check even runs (`IsAuthorisingRole` first in the
+  method), and a card not at the bound is exactly the right fixture to prove that ordering.
+- `RecordAheadOfNeed` is gone, replaced by three refusal tests (`OnABrandNewSection`,
+  `WithOnlyOneRequestChangesVerdictRecorded`, plus the CLI-level
+  `SectionAuthorise_OnASectionNotAtTheBound_RefusesWithAuthorisationNotAtBoundCode`) and one positive
+  test (`OnceGenuinelyAtTheBound_Succeeds`) — count matches the brief, and each asserts a refusal
+  where the old test asserted a success, which is the correct inversion rather than a weakened one.
+- The four `CardSectionVerdictTests` added in the original block C review
+  (`ThirdRequestChangesWithARecordedAuthorisation...`, `FourthRequestChangesAfterOneAuthorisation...`)
+  needed no rewrite — they already recorded authorisations only once genuinely at the bound, so they
+  were compliant with the new precondition by construction and are untouched in this diff.
+
+Nit 1 (armour phrasing) taken as described — `RemediationBoundExceeded` now carries a real
+`UnspentAuthorisations` and the CLI message states it plainly. Nit 2 dismissal noted, agreed:
+`GetHashCode` on `.Count` while `Equals` uses `SequenceEqual` is a valid coarser-hash/finer-equality
+split, not a bug.
+
+Block C stands approved in full.
+
 ## NEXT
 
 **Resume point: §8a (18 tasks, nothing built).** Working tree clean, nothing in flight, no part-built

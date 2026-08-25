@@ -198,6 +198,24 @@ asked and never stored as a figure. Counting verdicts rather than remediation ca
 bound total: a section may fail to converge by accumulating new findings, by the same finding recurring
 round after round, or by both at once, and only the verdict count sees all three.
 
+An authorisation SHALL discharge exactly one verdict. It is spent by the verdict it permits, so a fourth
+`request-changes` verdict requires a fourth authorisation, and each carries its own reason. A single
+standing permission would let one reason stand in for every round that followed it, and the bound exists
+precisely to force the conversation again each time the section fails to converge.
+
+Recording an authorisation SHALL be refused unless the section is already at the bound with none
+unspent — that is, unless a `request-changes` verdict is being refused for want of one. An authorisation
+is therefore always contemporaneous with the refusal it discharges. Authorisations recorded ahead of
+need would satisfy the one-for-one rule while defeating it: their reasons would be written before the
+findings they are supposed to justify pushing past, and a reason given for a round that has not happened
+yet cannot be a reason at all.
+
+#### Scenario: Authorisation ahead of need is refused
+
+- **WHEN** a Product Owner records an authorisation for a section that is not currently at the bound
+- **THEN** the system refuses and states that an authorisation is recorded against a refused verdict, not
+  in advance of one
+
 The authorisation SHALL be part of the record, not a permission granted out of band. A section that will
 not converge is a signal about the section breakdown or the spec, and the reason it was pushed further
 SHALL be legible later.

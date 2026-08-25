@@ -118,6 +118,7 @@ public sealed class CardCommentImmutabilityTests
             "DispositionNitUnderLocks",              // §8 block B: appends one disposition comment (never edits or drops the nit comment it resolves), and — for defer/decline — create-only writes a second card via AtomicWrite; for fix-before-land, read-decide-write on Frontmatter.Status/BlockFields.Round/Transitions only when the edge actually applies
             "IsApprovingRole",                      // §8 block A: pure predicate over CardOwner (reviewer/supervisor only), shared by RecordApproval; never touches a CardFile
             "IsArchitectRole",                       // §8 block B: pure predicate over CardOwner (architect only), shared by DispositionNit; never touches a CardFile
+            "IsAuthorisingRole",                     // §8a block C: pure predicate over CardOwner (product-owner only), shared by RecordSectionAuthorisation; never touches a CardFile
             "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy/RecordApproval; never touches a CardFile's Comments
             "IsDecisionCard",                       // §7 block C: the IsRegisterCard counterpart narrowed to CardKind.Decision, shared by CommandDispatcher's --owed-by/--supersedes resolution and SupersedeDecisionUnderLocks; never touches a CardFile's Comments
             "IsFindingCard",                        // §6 block C: the IsBlockCard/IsSectionCard counterpart for CardKind.Finding, shared with CommandDispatcher.RunFindingStatus; never touches a CardFile's Comments
@@ -139,6 +140,8 @@ public sealed class CardCommentImmutabilityTests
             "RecordApprovalUnderExistingLock",      // §8 block A: read-decide-write on Frontmatter.Status/BlockFields.ReviewedState/Transitions/Claims/Limits only, in one write with the transition; never touches Comments
             "RecordGateResult",                     // §5 block D: read-modify-write on BlockFields.GateResults only; never touches Frontmatter.Status or Comments — see the structural argument in GateStatus's doc comment
             "RecordGateResultUnderExistingLock",    // same, lock already held
+            "RecordSectionAuthorisation",            // §8a block C: role check, then acquires the section's lock and delegates to RecordSectionAuthorisationUnderExistingLock; never touches a CardFile itself
+            "RecordSectionAuthorisationUnderExistingLock", // §8a block C: role check first, then append-only write on SectionFields.Authorisations only; never touches Frontmatter.Status or Comments
             "RecordSectionVerdict",                 // §5 block E: append-only write on SectionFields.Verdicts only; never touches Frontmatter.Status or Comments
             "RecordSectionVerdictUnderExistingLock", // same, lock already held
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"
@@ -148,6 +151,7 @@ public sealed class CardCommentImmutabilityTests
             "RollbackRaisedCard",                   // §6 block B: best-effort delete of a just-written, brand-new raised card when the finding's own write then fails — never touches an existing card at all
             "RollbackRaisedNitCard",                // §8 block B: the same compare-then-delete rollback applied to DispositionNit's own raised card — never touches an existing card at all
             "ScopeForRaisedCard",                   // §6 block B: pure function from CardKind to its fixed CardScope; never touches a CardFile
+            "SectionRemediationBoundState",          // §8a block C remediation: pure derivation over SectionCardFields.Verdicts/Authorisations, shared by RecordSectionVerdictUnderExistingLock and RecordSectionAuthorisationUnderExistingLock; never touches a CardFile
             "SupersedeDecision",                    // §7 block C: acquires both decisions' locks in a deterministic id-derived path order, then delegates to SupersedeDecisionUnderLocks — never touches a CardFile itself
             "SupersedeDecisionUnderLocks",          // §7 block C: read-decide-write on Frontmatter.Status/RegisterFields.Supersedes/SupersededBy/DischargedBy/DischargedAt for both cards only; never touches Comments on either
             "TransferOwnership",                    // read-modify-write: overwrites Owner/Handovers only; Comments passes through the `success.Card with { ... }` unchanged

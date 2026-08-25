@@ -275,7 +275,7 @@ public sealed class CommandDispatcherFindingStatusTests
         var closedPath = Path.Combine(repo.CardsDirectory, "s-colliding.md");
         var frontmatter = new CardFrontmatter(
             sectionId, CardKind.Section, "Colliding section", "closed", CardOwner.Architect, CardScope.Change, string.Empty, FixedNow, FixedNow);
-        var sectionFields = new SectionCardFields(null, CardOwner.Architect, FixedNow, []);
+        var sectionFields = new SectionCardFields(null, CardOwner.Architect, FixedNow, [], []);
         var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], sectionFields);
         File.WriteAllText(closedPath, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 

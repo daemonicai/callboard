@@ -81,6 +81,142 @@ public sealed class CardSectionVerdictTests : IDisposable
         Assert.Equal(SectionVerdict.Approve, read.SectionFields.Verdicts[1].Verdict);
     }
 
+    // 8a.12 — retain every verdict, never overwrite: a third recording leaves the first two entries
+    // byte-identical and in order, across a write/parse round trip each time. What would have to
+    // break for this to go red: RecordSectionVerdict replacing an earlier entry, reordering the
+    // sequence, or CardFileWriter/CardFileParser dropping or mutating one on a later write.
+    [Fact]
+    public void RecordSectionVerdict_ThirdRecording_RetainsEarlierTwoEntriesByteIdentical()
+    {
+        var path = WriteInitialSectionCard("s-0021", "S-0021");
+
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "commit-1", "commit-2", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []));
+        var afterFirst = AssertParseSuccess(CardStore.ReadCard(path)).SectionFields.Verdicts;
+
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.Approve, "commit-2", "commit-3", CardOwner.Supervisor, Created.AddDays(1), TimeSpan.FromSeconds(5), ChangeName, [], []));
+        var afterSecond = AssertParseSuccess(CardStore.ReadCard(path)).SectionFields.Verdicts;
+        Assert.Equal(afterFirst[0], afterSecond[0]);
+
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "commit-3", "commit-4", CardOwner.Supervisor, Created.AddDays(2), TimeSpan.FromSeconds(5), ChangeName, [], []));
+        var afterThird = AssertParseSuccess(CardStore.ReadCard(path)).SectionFields.Verdicts;
+
+        Assert.Equal(3, afterThird.Length);
+        Assert.Equal(afterFirst[0], afterThird[0]);
+        Assert.Equal(afterSecond[1], afterThird[1]);
+        Assert.Equal(SectionVerdict.RequestChanges, afterThird[0].Verdict);
+        Assert.Equal(SectionVerdict.Approve, afterThird[1].Verdict);
+        Assert.Equal(SectionVerdict.RequestChanges, afterThird[2].Verdict);
+    }
+
+    // 8a.13/8a.14 — two request-changes verdicts land without ceremony; the third is refused. The
+    // count is of request-changes verdicts specifically: an intervening approve does not advance
+    // the bound (work-lifecycle: "an approve is not a remediation round"), and this test proves that
+    // by interleaving one before the refused third.
+    [Fact]
+    public void RecordSectionVerdict_ThirdRequestChangesWithoutAuthorisation_Refuses_AndApproveDoesNotAdvanceTheBound()
+    {
+        var path = WriteInitialSectionCard("s-0022", "S-0022");
+
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c1", "c2", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []));
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c2", "c3", CardOwner.Supervisor, Created.AddDays(1), TimeSpan.FromSeconds(5), ChangeName, [], []));
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.Approve, "c3", "c4", CardOwner.Supervisor, Created.AddDays(2), TimeSpan.FromSeconds(5), ChangeName, [], []));
+
+        var outcome = CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c4", "c5", CardOwner.Supervisor, Created.AddDays(3), TimeSpan.FromSeconds(5), ChangeName, [], []);
+
+        var boundExceeded = Assert.IsType<CardSectionVerdictOutcome.RemediationBoundExceeded>(outcome);
+        Assert.Equal(3, boundExceeded.VerdictNumber);
+        Assert.Equal(0, boundExceeded.AuthorisationsRecorded);
+
+        // Refusal-shaped: nothing was written for the attempt.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(3, read.SectionFields.Verdicts.Length);
+    }
+
+    // work-lifecycle scenario "A recurring finding counts toward the bound": three request-changes
+    // verdicts all reporting the same finding still unresolved (no new card created by any of them)
+    // still hits the bound on the third — the count is of verdicts, not of cards.
+    [Fact]
+    public void RecordSectionVerdict_ThirdRequestChangesReportingOnlyARecurringFinding_StillRefused()
+    {
+        var path = WriteInitialSectionCard("s-0023", "S-0023");
+
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c1", "c2", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []));
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c2", "c3", CardOwner.Supervisor, Created.AddDays(1), TimeSpan.FromSeconds(5), ChangeName, [], []));
+
+        var outcome = CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c3", "c4", CardOwner.Supervisor, Created.AddDays(2), TimeSpan.FromSeconds(5), ChangeName, [], []);
+
+        Assert.IsType<CardSectionVerdictOutcome.RemediationBoundExceeded>(outcome);
+    }
+
+    // 8a.13's "Authorised third verdict proceeds" scenario, plus 8a.15's "readable from the section":
+    // a recorded authorisation permits the third, and it and its reason are on the section card
+    // afterwards.
+    [Fact]
+    public void RecordSectionVerdict_ThirdRequestChangesWithARecordedAuthorisation_ProceedsAndTheAuthorisationRemains()
+    {
+        var path = WriteInitialSectionCard("s-0024", "S-0024");
+
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c1", "c2", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []));
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c2", "c3", CardOwner.Supervisor, Created.AddDays(1), TimeSpan.FromSeconds(5), ChangeName, [], []));
+
+        var authorised = CardStore.RecordSectionAuthorisation(
+            _root, path, "The section breakdown is wrong, not the work — pushing a third round.", CardOwner.ProductOwner, Created.AddDays(1).AddHours(1), TimeSpan.FromSeconds(5), ChangeName);
+        Assert.IsType<CardSectionAuthorisationOutcome.Recorded>(authorised);
+
+        var outcome = CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c3", "c4", CardOwner.Supervisor, Created.AddDays(2), TimeSpan.FromSeconds(5), ChangeName, [], []);
+
+        var recorded = AssertRecorded(outcome);
+        Assert.Equal(SectionVerdict.RequestChanges, recorded.Entry.Verdict);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(3, read.SectionFields.Verdicts.Length);
+        var onlyAuthorisation = Assert.Single(read.SectionFields.Authorisations);
+        Assert.Equal(CardOwner.ProductOwner, onlyAuthorisation.By);
+        Assert.Equal("The section breakdown is wrong, not the work — pushing a third round.", onlyAuthorisation.Reason);
+    }
+
+    // The authorisation discharges exactly one verdict: with one recorded and spent by the third,
+    // a fourth request-changes verdict is refused again until a second is recorded.
+    [Fact]
+    public void RecordSectionVerdict_FourthRequestChangesAfterOneAuthorisationAlreadySpent_RefusesUntilASecondIsRecorded()
+    {
+        var path = WriteInitialSectionCard("s-0025", "S-0025");
+
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c1", "c2", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []));
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c2", "c3", CardOwner.Supervisor, Created.AddDays(1), TimeSpan.FromSeconds(5), ChangeName, [], []));
+        Assert.IsType<CardSectionAuthorisationOutcome.Recorded>(CardStore.RecordSectionAuthorisation(
+            _root, path, "First push.", CardOwner.ProductOwner, Created.AddDays(1).AddHours(1), TimeSpan.FromSeconds(5), ChangeName));
+        AssertRecorded(CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c3", "c4", CardOwner.Supervisor, Created.AddDays(2), TimeSpan.FromSeconds(5), ChangeName, [], []));
+
+        var stillRefused = CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c4", "c5", CardOwner.Supervisor, Created.AddDays(3), TimeSpan.FromSeconds(5), ChangeName, [], []);
+        var boundExceeded = Assert.IsType<CardSectionVerdictOutcome.RemediationBoundExceeded>(stillRefused);
+        Assert.Equal(4, boundExceeded.VerdictNumber);
+        Assert.Equal(1, boundExceeded.AuthorisationsRecorded);
+
+        Assert.IsType<CardSectionAuthorisationOutcome.Recorded>(CardStore.RecordSectionAuthorisation(
+            _root, path, "Second push.", CardOwner.ProductOwner, Created.AddDays(2).AddHours(1), TimeSpan.FromSeconds(5), ChangeName));
+        var nowProceeds = CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "c4", "c5", CardOwner.Supervisor, Created.AddDays(3), TimeSpan.FromSeconds(5), ChangeName, [], []);
+        AssertRecorded(nowProceeds);
+    }
+
     [Fact]
     public void RecordSectionVerdict_TargetIsNotASectionCard_Refuses()
     {
@@ -213,6 +349,7 @@ public sealed class CardSectionVerdictTests : IDisposable
             onRecurringFindingTargetsTaskImplementingBlock: static taskImplementing => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringFindingTargetsTaskImplementingBlock: '{taskImplementing.CardId}'"),
             onFindingAlreadyOwned: static alreadyOwned => throw new Xunit.Sdk.XunitException($"expected Recorded, got FindingAlreadyOwned: '{alreadyOwned.Key}'"),
             onNewFindingCardAlreadyExists: static alreadyExists => throw new Xunit.Sdk.XunitException($"expected Recorded, got NewFindingCardAlreadyExists: '{alreadyExists.FilePath}'"),
+            onRemediationBoundExceeded: static boundExceeded => throw new Xunit.Sdk.XunitException($"expected Recorded, got RemediationBoundExceeded: verdict #{boundExceeded.VerdictNumber}, {boundExceeded.AuthorisationsRecorded} authorisation(s) recorded"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Recorded, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Recorded, got ToolFailure: {toolFailure.Reason}"));
 

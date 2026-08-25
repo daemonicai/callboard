@@ -66,20 +66,39 @@ internal sealed record SectionCardFields
         init => _verdicts = value;
     }
 
-    /// <summary>The three fields, all unset — every card that is not a <c>section</c>, and a
-    /// brand-new section with no verdict and no closure recorded yet.</summary>
-    internal static readonly SectionCardFields Empty = new(null, null, null, []);
+    private readonly ImmutableArray<SectionAuthorisationEntry> _authorisations;
 
-    internal SectionCardFields(string? Base, CardOwner? ClosedBy, DateTimeOffset? ClosedAt, IReadOnlyList<SectionVerdictEntry> Verdicts)
+    /// <summary>The section's recorded Product Owner authorisations (work-lifecycle: "Remediation
+    /// beyond the second round requires recorded authorisation", §8a block C), oldest first — see
+    /// <see cref="SectionAuthorisationEntry"/>'s own doc comment for why this lives here, appended
+    /// the same way <see cref="Verdicts"/> is, rather than as a separate <c>decision</c> card.</summary>
+    internal ImmutableArray<SectionAuthorisationEntry> Authorisations
+    {
+        get => _authorisations;
+        init => _authorisations = value;
+    }
+
+    /// <summary>The four fields, all unset — every card that is not a <c>section</c>, and a
+    /// brand-new section with no verdict, no authorisation and no closure recorded yet.</summary>
+    internal static readonly SectionCardFields Empty = new(null, null, null, [], []);
+
+    internal SectionCardFields(
+        string? Base,
+        CardOwner? ClosedBy,
+        DateTimeOffset? ClosedAt,
+        IReadOnlyList<SectionVerdictEntry> Verdicts,
+        IReadOnlyList<SectionAuthorisationEntry> Authorisations)
     {
         this.Base = Base;
         this.ClosedBy = ClosedBy;
         this.ClosedAt = ClosedAt;
 
-        // .ToImmutableArray() copies Verdicts's current contents now, at construction time — the
-        // same reviewer-closed bypass BlockCardFields.Tasks/BlockedBy's own doc comment explains:
-        // a caller's later mutation of a retained List<T> source cannot reach the value built here.
+        // .ToImmutableArray() copies Verdicts's/Authorisations's current contents now, at
+        // construction time — the same reviewer-closed bypass BlockCardFields.Tasks/BlockedBy's own
+        // doc comment explains: a caller's later mutation of a retained List<T> source cannot reach
+        // the value built here.
         this.Verdicts = Verdicts.ToImmutableArray();
+        this.Authorisations = Authorisations.ToImmutableArray();
     }
 
     // Same reason as BlockCardFields's own override: ImmutableArray<T>'s own Equals compares the
@@ -89,8 +108,9 @@ internal sealed record SectionCardFields
         && Base == other.Base
         && ClosedBy == other.ClosedBy
         && ClosedAt == other.ClosedAt
-        && Verdicts.SequenceEqual(other.Verdicts);
+        && Verdicts.SequenceEqual(other.Verdicts)
+        && Authorisations.SequenceEqual(other.Authorisations);
 
     public override int GetHashCode() =>
-        HashCode.Combine(Base, ClosedBy, ClosedAt, Verdicts.Length);
+        HashCode.Combine(Base, ClosedBy, ClosedAt, Verdicts.Length, Authorisations.Length);
 }

@@ -324,12 +324,24 @@ internal static class CardFileWriter
                 .Append('\n');
         }
 
-        // Claims after verdicts, then limits, before comments — the same fixed, deterministic
-        // layout convention as every other append-only sequence above (§8 block A,
+        // Authorisations after verdicts, before claims — same fixed, deterministic layout
+        // convention (§8a block C, work-lifecycle: "Remediation beyond the second round requires
+        // recorded authorisation"). A section may accumulate more than one, for the same reason
+        // Verdicts is not folded into a scalar.
+        foreach (var authorisation in card.SectionFields.Authorisations)
+        {
+            builder.Append(CardFileFormat.AuthorisationLinePrefix)
+                .Append(BuildAuthorisationFields(authorisation))
+                .Append(CardFileFormat.AuthorisationLineSuffix)
+                .Append('\n');
+        }
+
+        // Claims after verdicts/authorisations, then limits, before comments — the same fixed,
+        // deterministic layout convention as every other append-only sequence above (§8 block A,
         // review-certification: "Certification enumerates its claims"). Mutually exclusive in
-        // practice with Verdicts (a card is either a block or a section, never both), so the
-        // ordering between the two never actually interleaves on one card — this is simply where
-        // the fixed convention places them.
+        // practice with Verdicts/Authorisations (a card is either a block or a section, never
+        // both), so the ordering between the two never actually interleaves on one card — this is
+        // simply where the fixed convention places them.
         foreach (var claim in card.Claims)
         {
             builder.Append(CardFileFormat.ClaimLinePrefix)
@@ -467,6 +479,21 @@ internal static class CardFileWriter
         fields.Append(" timestamp=").Append(FormatTimestamp(verdict.Timestamp));
 
         foreach (var (key, rawValue) in verdict.UnknownFields)
+        {
+            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+        }
+
+        return fields.ToString();
+    }
+
+    private static string BuildAuthorisationFields(SectionAuthorisationEntry authorisation)
+    {
+        var fields = new StringBuilder();
+        fields.Append("by=").Append(authorisation.By.ToWireString());
+        fields.Append(" reason=").Append(CardFileFormat.EscapeCertificationTextValue(authorisation.Reason));
+        fields.Append(" timestamp=").Append(FormatTimestamp(authorisation.Timestamp));
+
+        foreach (var (key, rawValue) in authorisation.UnknownFields)
         {
             fields.Append(' ').Append(key).Append('=').Append(rawValue);
         }

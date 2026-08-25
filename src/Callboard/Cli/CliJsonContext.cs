@@ -24,6 +24,7 @@ namespace Callboard.Cli;
 [JsonSerializable(typeof(BlockApproveResult))]
 [JsonSerializable(typeof(BlockApprovalClaimResult))]
 [JsonSerializable(typeof(SectionVerdictResult))]
+[JsonSerializable(typeof(SectionAuthorisationResult))]
 [JsonSerializable(typeof(SectionCloseResult))]
 [JsonSerializable(typeof(SectionStatusResult))]
 [JsonSerializable(typeof(FindingRecordResult))]

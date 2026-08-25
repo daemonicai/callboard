@@ -262,7 +262,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
             id, CardKind.Section, "Title", closed ? "closed" : "open", CardOwner.Architect, CardScope.Change,
             string.Empty, Recorded, Recorded);
         var sectionFields = closed
-            ? new SectionCardFields(null, CardOwner.Architect, Recorded, [])
+            ? new SectionCardFields(null, CardOwner.Architect, Recorded, [], [])
             : SectionCardFields.Empty;
         var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], sectionFields);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

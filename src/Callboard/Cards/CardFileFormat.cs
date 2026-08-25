@@ -42,6 +42,16 @@ internal static class CardFileFormat
     internal const string VerdictLineSuffix = " -->";
 
     /// <summary>
+    /// A section's Product-Owner-authorisation entry (work-lifecycle: "Remediation beyond the
+    /// second round requires recorded authorisation" — "The authorisation SHALL be part of the
+    /// record", §8a block C): the same self-contained, no-body, no-footer shape as
+    /// <see cref="VerdictLinePrefix"/>, for the same reason — an authorisation carries no prose
+    /// beyond its short <c>reason</c> field, only <c>by</c>/<c>reason</c>/<c>timestamp</c>.
+    /// </summary>
+    internal const string AuthorisationLinePrefix = "<!-- callboard:authorisation ";
+    internal const string AuthorisationLineSuffix = " -->";
+
+    /// <summary>
     /// One enumerated claim of an approval (review-certification: "Certification enumerates its
     /// claims", §8 block A). Self-contained, no body and no footer — the same shape as
     /// <see cref="TransitionLinePrefix"/>/<see cref="VerdictLinePrefix"/> — but, unlike those two,
@@ -79,6 +89,7 @@ internal static class CardFileFormat
             || unescaped.StartsWith(HandoverLinePrefix, StringComparison.Ordinal)
             || unescaped.StartsWith(TransitionLinePrefix, StringComparison.Ordinal)
             || unescaped.StartsWith(VerdictLinePrefix, StringComparison.Ordinal)
+            || unescaped.StartsWith(AuthorisationLinePrefix, StringComparison.Ordinal)
             || unescaped.StartsWith(ClaimLinePrefix, StringComparison.Ordinal)
             || unescaped.StartsWith(LimitLinePrefix, StringComparison.Ordinal);
     }
@@ -129,6 +140,11 @@ internal static class CardFileFormat
     internal static bool IsVerdictLine(string line) =>
         line.StartsWith(VerdictLinePrefix, StringComparison.Ordinal)
             && line.EndsWith(VerdictLineSuffix, StringComparison.Ordinal);
+
+    /// <summary>An unescaped, self-contained section-authorisation entry line.</summary>
+    internal static bool IsAuthorisationLine(string line) =>
+        line.StartsWith(AuthorisationLinePrefix, StringComparison.Ordinal)
+            && line.EndsWith(AuthorisationLineSuffix, StringComparison.Ordinal);
 
     /// <summary>An unescaped, self-contained approval-claim entry line.</summary>
     internal static bool IsClaimLine(string line) =>

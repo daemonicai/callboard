@@ -781,13 +781,16 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'section' requires a subcommand. Known subcommands: create, verdict, close, status."));
+                    "'section' requires a subcommand. Known subcommands: create, verdict, authorise, close, status."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseSectionCreate(context);
             case "verdict":
                 context.Arguments.TryTake();
                 return ParseSectionVerdict(context);
+            case "authorise":
+                context.Arguments.TryTake();
+                return ParseSectionAuthorise(context);
             case "close":
                 context.Arguments.TryTake();
                 return ParseSectionClose(context);
@@ -797,7 +800,7 @@ internal static class CommandParser
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'section' subcommand: '{subcommand}'. Known subcommands: create, verdict, close, status."));
+                    $"no such 'section' subcommand: '{subcommand}'. Known subcommands: create, verdict, authorise, close, status."));
         }
     }
 
@@ -971,6 +974,64 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionVerdict(
             filePath, verdict, rangeFrom, rangeTo, role, changeName, recurringFindingIds, newFindings, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>section authorise</c>'s <see cref="CommandDispatcher.ParsedCommand.SectionAuthorise"/>:
+    /// one positional token (card file path), <c>--reason &lt;text&gt;</c> (required, non-empty/
+    /// whitespace-only checked here — argv-decidable, the same discipline <c>--state</c> follows
+    /// for <c>block approve</c>), plus the <c>--role</c>/<c>--change</c> pair
+    /// <see cref="ParseRoleAndChangeFlags"/> already factors out. Whether <c>--role</c> actually
+    /// names <see cref="CardOwner.ProductOwner"/> is not checked here — that is <see cref="Cards.
+    /// CardStore.RecordSectionAuthorisationUnderExistingLock"/>'s own first decision, the same
+    /// "recorded, not authorised at parse" split every other role-checked write already follows.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseSectionAuthorise(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'section authorise' requires a card file path."));
+        }
+
+        string? reason = null;
+        string? roleText = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--reason"] = value => reason = value,
+            ["--role"] = value => roleText = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "reason-required",
+                "'section authorise' requires '--reason <text>' naming why the bound is being pushed further."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'section authorise' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionAuthorise(
+            filePath, reason, role, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

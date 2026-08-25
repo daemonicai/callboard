@@ -97,10 +97,10 @@
 - [x] 8a.9 Refuse a recurrence that would create a second card for a finding a card already owns
 - [x] 8a.10 Implement one verdict both returning a card for a recurrence and creating one for a new finding
 - [x] 8a.11 Refuse `finding-recurred` targeting a task-implementing block
-- [ ] 8a.12 Retain every supervisor verdict against the section, never overwriting an earlier one
-- [ ] 8a.13 Refuse a third or subsequent `request-changes` verdict absent a recorded Product Owner authorisation
-- [ ] 8a.14 Derive the verdict count from the record at request time, never storing it
-- [ ] 8a.15 Implement recording that authorisation, naming the section and the reason
+- [x] 8a.12 Retain every supervisor verdict against the section, never overwriting an earlier one
+- [x] 8a.13 Refuse a third or subsequent `request-changes` verdict absent a recorded Product Owner authorisation
+- [x] 8a.14 Derive the verdict count from the record at request time, never storing it
+- [x] 8a.15 Implement recording that authorisation, naming the section and the reason
 - [x] 8a.16 Test that `landed` is unreachable except through the block's section closing
 - [ ] 8a.17 Refuse acting on a block whose stored `round` disagrees with its transition history, reconciling neither
 - [ ] 8a.18 Test that every round-incrementing transition advances the field and the history in one write

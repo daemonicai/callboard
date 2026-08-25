@@ -173,6 +173,154 @@ public sealed class CommandDispatcherSectionTests
     }
 
     [Fact]
+    public void SectionAuthorise_ByProductOwner_Succeeds_AndTheEnvelopeReportsWhatWasRecorded()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialSectionCard(repo.Path, "s-0010", "S-0010");
+
+        // Recording an authorisation is only permitted once the section is genuinely at the bound
+        // (§8a block C remediation) — two request-changes verdicts first.
+        AssertSuccess(RunInRepo(
+            ["section", "verdict", path, "--verdict", "request-changes", "--range-from", "c1", "--range-to", "c2", "--role", "supervisor", "--change", ChangeName],
+            new StringWriter(), repo.Path));
+        AssertSuccess(RunInRepo(
+            ["section", "verdict", path, "--verdict", "request-changes", "--range-from", "c2", "--range-to", "c3", "--role", "supervisor", "--change", ChangeName],
+            new StringWriter(), repo.Path));
+
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["section", "authorise", path, "--reason", "Pushing a third round.", "--role", "product-owner", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.Equal("Pushing a third round.", result.GetProperty("reason").GetString());
+        Assert.Equal("product-owner", result.GetProperty("actingRole").GetString());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var only = Assert.Single(read.SectionFields.Authorisations);
+        Assert.Equal("Pushing a third round.", only.Reason);
+    }
+
+    // work-lifecycle: "The authorisation SHALL be part of the record, not a permission granted out
+    // of band" — CardStore.IsAuthorisingRole's own refusal, reached through the CLI, routed through
+    // the shared 'role-not-permitted' code rather than a bespoke one.
+    [Fact]
+    public void SectionAuthorise_ByANonProductOwnerRole_RefusesWithRoleNotPermittedCode()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialSectionCard(repo.Path, "s-0011", "S-0011");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["section", "authorise", path, "--reason", "Attempted self-authorisation.", "--role", "supervisor", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("role-not-permitted", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Empty(read.SectionFields.Authorisations);
+    }
+
+    [Fact]
+    public void SectionAuthorise_EmptyReason_RefusesWithReasonRequiredCode_AndWritesNothing()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialSectionCard(repo.Path, "s-0012", "S-0012");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["section", "authorise", path, "--reason", "   ", "--role", "product-owner", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("reason-required", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // work-lifecycle scenario "Authorisation ahead of need is refused" (§8a block C remediation),
+    // at the CLI boundary: a brand-new section carries no request-changes verdicts at all, so it is
+    // nowhere near the bound.
+    [Fact]
+    public void SectionAuthorise_OnASectionNotAtTheBound_RefusesWithAuthorisationNotAtBoundCode()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialSectionCard(repo.Path, "s-0014", "S-0014");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["section", "authorise", path, "--reason", "Anticipating trouble.", "--role", "product-owner", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("authorisation-not-at-bound", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // Construction site for "wrong-card-kind": section authorise.
+    [Fact]
+    public void SectionAuthorise_TargetIsNotASectionCard_RefusesWithNotASectionCardCode()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialBlockCard(repo.Path, "b-0004", "B-0004");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["section", "authorise", path, "--reason", "Reason.", "--role", "product-owner", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // 8a.13 at the CLI boundary: two request-changes verdicts land, the third is refused with the
+    // rule/count/satisfying-command stated, and an authorisation recorded through the CLI's own
+    // 'section authorise' then lets the third through.
+    [Fact]
+    public void SectionVerdict_ThirdRequestChangesThroughTheCli_RefusesUntilAnAuthorisationIsRecordedThroughTheCli()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialSectionCard(repo.Path, "s-0013", "S-0013");
+
+        AssertSuccess(RunInRepo(
+            ["section", "verdict", path, "--verdict", "request-changes", "--range-from", "c1", "--range-to", "c2", "--role", "supervisor", "--change", ChangeName],
+            new StringWriter(), repo.Path));
+        AssertSuccess(RunInRepo(
+            ["section", "verdict", path, "--verdict", "request-changes", "--range-from", "c2", "--range-to", "c3", "--role", "supervisor", "--change", ChangeName],
+            new StringWriter(), repo.Path));
+
+        var refusedOutput = new StringWriter();
+        var refusedExitCode = RunInRepo(
+            ["section", "verdict", path, "--verdict", "request-changes", "--range-from", "c3", "--range-to", "c4", "--role", "supervisor", "--change", ChangeName],
+            refusedOutput, repo.Path);
+        Assert.Equal(CommandDispatcher.RefusalExitCode, refusedExitCode);
+        using (var doc = JsonDocument.Parse(refusedOutput.ToString()))
+        {
+            var refusal = doc.RootElement.GetProperty("refusal");
+            Assert.Equal("remediation-bound-exceeded", refusal.GetProperty("code").GetString());
+            Assert.Contains("section authorise", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        }
+
+        AssertSuccess(RunInRepo(
+            ["section", "authorise", path, "--reason", "Pushing further.", "--role", "product-owner", "--change", ChangeName],
+            new StringWriter(), repo.Path));
+
+        var proceedsExitCode = RunInRepo(
+            ["section", "verdict", path, "--verdict", "request-changes", "--range-from", "c3", "--range-to", "c4", "--role", "supervisor", "--change", ChangeName],
+            new StringWriter(), repo.Path);
+        Assert.Equal(CommandDispatcher.SuccessExitCode, proceedsExitCode);
+    }
+
+    [Fact]
     public void SectionClose_Closing_Succeeds_AndTheEnvelopeReportsWhoAndWhen()
     {
         using var repo = new TempGitRepo();
