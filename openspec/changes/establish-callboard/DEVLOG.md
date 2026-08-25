@@ -22543,6 +22543,364 @@ new static methods with accurate one-line descriptions.
 Block D stands approved. This closes the last block of §8a; ready for the supervisor's section review
 over `git diff 9dede1f..HEAD`.
 
+---
+
+**[supervisor]** §8a section review — `git diff 9dede1f..HEAD` (blocks A `f0cfeda`, B `469b0d8`,
+C `3aa8489`, D `cd18c17`). Read the whole §8a thread including the four Product Owner rulings and the
+five spec amendments.
+
+## Verdict: Request changes
+
+One blocker, with two consequences that only show when blocks A, B and D are read together. Everything
+else in this section holds — see "What I checked and cleared" below, which is most of it.
+
+### Blocker — `AvailableFrom` was widened into a state predicate, and the generic applier is a second source of truth for the round increment
+
+**Blocks involved: A (the precedent), B (the widening), D (the check that turns it into a brick).**
+
+Three facts, each fine in its own diff:
+
+1. `BlockFlowTransitions.cs:163-164` — `RoundIncrementingTransitionNames` names **three** edges:
+   `changes-requested`, `fix-before-land`, `finding-recurred`. Block D introduced this as the single
+   source of truth, and its own doc comment (`BlockFlowTransitions.cs:156-160`) says a fourth back-edge
+   added later "would still count correctly, closing the exact two-sources-of-truth failure 8a.17
+   exists to catch."
+2. `CardStore.cs:463-467` — `ApplyBlockTransitionUnderExistingLock` increments `round` on the hardcoded
+   string `"changes-requested"` and nothing else. It never reads `RoundIncrementingTransitionNames`.
+   Block D closed the **counting** half of the two-sources-of-truth failure and left the **applying**
+   half exactly as it was.
+3. `BlockFlowTransitions.cs:145-146` — `AvailableFrom(InReview)` contains `fix-before-land`, and block B
+   added `finding-recurred` to `AvailableFrom(Approved)`.
+   `ApplyBlockTransitionUnderExistingLock` resolves a transition name *by looking it up in
+   `AvailableFrom`* (`CardStore.cs:406-411`).
+
+Put together: the generic `block transition` applier can resolve **two of the three round-incrementing
+edges** and will apply neither's increment. The card lands in `briefed` with one more round-incrementing
+entry in `Transitions` and `round` unchanged — so `RoundAgreesWithHistory` (`CardStore.cs:3847`) is
+permanently false for it, and 8a.17 forbids reconciling. That card is then refused by **all ten** writers
+block D wired the check into, with no tool-supported repair. Block D did not create the inconsistency; it
+converted a latent wrong number into an unrecoverable card.
+
+**On reachability.** Today the only thing standing between a caller and that state is a string compare in
+`CommandParser.cs` (`finding-recurred` at :214-220, `fix-before-land` at :172-184). That is not defence
+in depth, and block A already showed what defence in depth looks like here: `land` was *removed* from
+`AvailableFrom(Approved)` and exposed as `LandTransition` instead, so the generic applier structurally
+cannot reach it (`BlockFlowTransitions.cs:102-108`, asserted at `BlockFlowTests.cs:77`). Block B minted
+`FindingRecurredTransition` the same way (`:126-130`) — and then *also* left the edge on `AvailableFrom`,
+the opposite of the precedent block A had set four commits earlier.
+
+**Why block B left it there is the real finding.** `RecordSectionVerdictUnderExistingLock` uses
+`AvailableFrom(recurringState).Any(name == "finding-recurred")` (`CardStore.cs:1631-1637`) as its "is
+this remediation card approved?" test. That is a caller-facing *invocation surface* being reused as a
+*state predicate*, and widening the table to satisfy the second meaning is what broke the first. The
+state predicate wanted here is `recurringState == BlockFlowState.Approved`.
+
+**Second consequence — the refusal message now advertises a door it then refuses.**
+`CardBlockTransitionOutcome.UndefinedTransition(currentState, available)` renders `AvailableFrom`. On an
+`approved` block, an unrecognised transition name is now refused with a message naming `finding-recurred`
+as available — and `block transition … finding-recurred` is then refused by a *different* refusal. Block
+A's own comment on the `land` refusal states the principle it was following: "Names the one door that
+remains, not merely that this one is shut" (`CommandParser.cs:193-196`). Block B reintroduced exactly the
+advertisement block A had just removed. Against process-enforcement's "the response names the refusing
+rule and states what would satisfy it", this states something that would *not* satisfy it.
+
+`approve` on `AvailableFrom(InReview)` has the same shape and predates §8a (§8 block A) — I am not
+reopening §8, but the fix should settle all three consistently rather than leave a table where `land` is
+absent, `finding-recurred` present, and `approve` present, all three being parse-refused.
+
+#### Suggested remediation shape (one block, ticks nothing)
+
+- Make `ApplyBlockTransitionUnderExistingLock` read
+  `BlockFlowTransitions.RoundIncrementingTransitionNames` instead of the `"changes-requested"` literal at
+  `CardStore.cs:463-467`, so applying and counting share the one table. This is the part that actually
+  closes 8a.17's stated failure mode; the rest is defence in depth.
+- Settle `AvailableFrom`'s contract in one place: either it is the caller-invocable set (then
+  `finding-recurred`, `fix-before-land` and `approve` come off it, each keeping its dedicated
+  `…Transition` property the way `LandTransition` does), or it is the raw edge table (then block A's
+  removal of `land` was wrong and the parse refusals are the only door discipline). I lean to the first —
+  it is what block A chose, it is what makes `UndefinedTransition`'s message truthful, and it removes the
+  generic applier's ability to reach any one-door edge at all.
+- Either way, replace `CardStore.cs:1631-1637`'s `AvailableFrom(...).Any(name == "finding-recurred")`
+  with a direct `recurringState == BlockFlowState.Approved` check. The refusal it produces
+  (`recurring-finding-not-approved`) is already worded in terms of the state, not the edge.
+- Add the test 8a.18 is missing: `ApplyBlockTransition` must not be able to append a round-incrementing
+  entry without advancing `round`. The three existing tests (`RoundAgreesWithHistoryTests.cs:53,72,97`)
+  each exercise one edge through its *own* door; none exercises the generic applier against an edge it
+  can resolve but does not increment, which is the only place the disagreement can be minted.
+- While in the file: `BlockFlowTransitions.cs:8-13`'s class-level ASCII table — the one the doc comment
+  calls "the exhaustive, total transition table" — still omits `finding-recurred` and still reads
+  "(round += 1 on both)". Block B updated the prose `<para>` blocks below it and not the diagram, so the
+  type's own headline disagrees with `AvailableFrom` and with work-lifecycle's amended diagram. Line 20's
+  "until block B adds `finding-recurred`" is a spent forward reference.
+
+### What I checked and cleared
+
+**The five spec amendments are mutually consistent.** Cutting `amendment-requested` and process-
+enforcement's "Landing requires a current certification" together is coherent: the §8a block A revision
+brief is right that the certification check had no satisfiable remedy once the reopening edge was gone,
+and review-certification's amended purpose paragraph now says the same thing from the other side without
+contradicting work-lifecycle's "`approved` is terminal". Nothing in §1–§8 depends on either cut construct
+— I grepped `mendment`/`recertif` across `src/` and `tests/`: only rationale references in doc comments
+survive, which is right, and no live code, flag, subcommand or test. 8a.5's `--state` is gone from
+`section close` (`CommandParser.cs:1042` records the removal); the surviving `--state` at `:396` is
+`block approve`'s own, untouched.
+
+One residual wording note, not a blocker: process-enforcement's "Landing requires recorded passing gates"
+still frames its scenarios as "WHEN a card is landed", while work-lifecycle now forbids landing a card
+individually. The code satisfies it correctly through `ValidateBlockForLanding` (`CardStore.cs:2110-2124`
+→ `block-gate-failed` / `block-gate-absent`), so this is a phrasing residue of the amendment, not a
+contradiction. Worth a one-line tidy whenever process-enforcement is next opened.
+
+**`landed` is genuinely unreachable except through section close.** `Land` is off `AvailableFrom`,
+`LandTransition` is named only by `CloseSectionUnderExistingLock`, `block transition … land` is refused
+at parse, and `AvailableFrom(Landed) = [Close]`. `BlockLandUnreachableExceptSectionCloseTests` asserts
+the closure structurally rather than by message. This one is solid.
+
+**The round-agreement guard is complete as a set.** Ten writers, each preceded by its own `IsBlockCard`
+refusal (`CardStore.cs:154, 230, 319, 395, 613, 848, 1118, 1247, 1619, 2104`) — I enumerated every
+`AtomicWrite` call site in `CardStore.cs` and checked which can mutate a block card. The unguarded ones
+(`DischargeRegisterCard`, `PromoteRule`, `SupersedeDecision`, `CompactRules`, `RecordFindingUnderLocks`)
+write register/rule/decision/finding cards only; `RecordFindingUnderLocks` creates cards and never
+mutates a block. `WriteCard` only ever creates, where agreement is trivially true. No gap.
+
+**The bound and its authorisation are coherent end to end.** `SectionRemediationBoundState`
+(`CardStore.cs:536-545`) is one derivation read by both the verdict check and the authorisation
+precondition, so the two cannot drift on what "at the bound" means — this was the right answer to the
+reviewer's block C escalation. I walked the sequence: 2 RC → authorise → 3rd RC spends it → 4th refused
+again. One-for-one holds, nothing is stored, and `authorisation-not-at-bound` closes the
+record-ahead-of-need hole. Counting verdicts rather than cards does make the bound total, as the spec
+argues.
+
+**Refusal coverage is consistent in form.** The four `…-via-transition-refused` codes are one family and
+each names its satisfying command. `remediation-bound-exceeded` names `section authorise --role
+product-owner --reason <text>`; `finding-already-owned` names both `--finding-recurred <id>` and the
+different-key alternative; `block-gate-absent` names `block gate`. The three that name a condition rather
+than a command (`block-not-approved`, `recurring-finding-not-approved`, `round-disagrees-with-history`)
+are right to — no single command satisfies them, and the last is deliberately unsatisfiable by the tool,
+which is the point of 8a.17.
+
+**Multi-card write discipline is uniform between block A's close and block B's verdict** — same shape:
+acquire every lock in sorted order, re-read, validate everything, then write, locks released in
+`finally`, no rollback on a mid-write tool failure. The block B reviewer weighed that window explicitly
+and accepted it on the self-diagnosing-retry argument, and I agree it applies equally to both. I note for
+`## NEXT` only that this is now the *third* multi-card write shape in `CardStore.cs` and the other two
+(`RecordFindingUnderLocks`, `CompactRulesUnderLocks`) do roll back (`RollbackRaisedCard`,
+`RestoreAllAbsorbed`). Not a §8a defect — but if a future section adds a fourth, the file will have two
+incompatible answers to the same question and someone should pick one.
+
+**Index and record do not diverge.** The `cards` table holds generic frontmatter only
+(`IndexSchema.cs:37-47`); `finding_key` and the authorisation lines are block/section-card fields the
+index never claimed, and `src/Callboard/Index/` is untouched in the whole range. Rebuild drops nothing.
+Both new constructs round-trip through `CardFileParser`/`CardFileWriter` as plain text, so a card's state
+stays readable without the tool — the derived verdict count is countable by eye from the retained verdict
+lines, which is exactly why not storing it was the right call.
+
+**Gates.** Every block's DEVLOG entry quotes all five exit lines, worker and reviewer independently, with
+test counts that reconcile across the section (735 → 728 after the `amendment-requested` deletion → 731 →
+747 → 776 → 783). No gate went unverified. No `Makefile` change was needed — §8a added no project.
+
+**Human-in-the-loop.** None of 8a.1–8a.18 required it. 8a.5 was deleted rather than unticked on a
+recorded Product Owner ruling, and `tasks.md` reflects that.
+
+→ `@architect`.
+
+### §8a remediation block — `AvailableFrom` has two contracts; settle it, then read it
+
+**[architect]** → @worker. The supervisor requested changes on §8a. This is a **remediation block**: it
+gets **no new `N.M` numbers and ticks nothing** — every box in §8a is already ticked. The findings and
+the fix live here in the thread; that is the record. Read the `**[supervisor]**` post above in full
+first.
+
+**I verified the blocker myself before carving this.** It is real. `ApplyBlockTransitionUnderExistingLock`
+resolves a transition out of `AvailableFrom(currentState)` and then increments `round` only when the
+name equals the literal `"changes-requested"`. `AvailableFrom(InReview)` carries `fix-before-land` and
+`AvailableFrom(Approved)` carries `finding-recurred`, so two of the three round-incrementing edges are
+resolvable through the generic applier without incrementing. The `else if (transition.To == Briefed &&
+round is null)` arm does not save it: on a card that already has a round, the field stays put while a
+history entry is appended. That is precisely the disagreement 8a.17 refuses — and 8a.17 forbids
+reconciling it, so the card becomes unwritable by all ten guarded writers. Today the only thing standing
+in the way is a string compare in `CommandParser`, and §8a.16's own tests call `CardStore` directly, so
+the domain layer is demonstrably reachable without the parser.
+
+**The root cause is a contract collision, and settling it is my call — here it is.** `AvailableFrom` is
+being asked to be two different things. Block A removed `land` from it to stop the CLI advertising an
+edge nobody may invoke: that reads it as *the invocation surface*. Block B added `finding-recurred` to it
+so a predicate could ask "is this card approved?": that reads it as *the legal-edge table*. Both are
+reasonable; together they are a defect, and the `UndefinedTransition` refusal on an `approved` block now
+advertises `finding-recurred` and then refuses it — reintroducing exactly the dishonest advertisement
+block A removed for `land` four commits earlier, with a comment stating the principle.
+
+**Split it in two:**
+
+- **`AvailableFrom(state)` — every legal edge from that state**, whichever door drives it. This is what
+  the round-counting derivation, the diagram and any "is this edge legal here" question read.
+- **A second query — the subset `block transition` may itself drive.** On today's table that is
+  `brief`, `claim`, `submit-for-review`, `changes-requested` and `close`. The one-door edges —
+  `approve`, `fix-before-land`, `finding-recurred`, and `land`, which no caller invokes at all — are
+  legal but not generically invocable. Name it whatever reads best; `UndefinedTransition` must report
+  **this** set, so the refusal never again advertises something it will then refuse.
+
+**Then the four consequences:**
+
+1. **The applier reads the table for the increment.** Drive it from
+   `RoundIncrementingTransitionNames`, not a name literal. Block D closed the counting half of this
+   two-sources-of-truth problem and left the applying half open; that is the actual finding.
+2. **Replace the predicate** at the `finding-recurred` site with a direct state comparison
+   (`recurringState == BlockFlowState.Approved`). A membership test against a transition table was never
+   the honest way to ask whether a card is approved.
+3. **Add the missing 8a.18 coverage.** All three existing per-edge tests drive each edge through its own
+   door and never through the generic applier — which is why this survived a block review. Cover the
+   generic path.
+4. **Fix the stale class-level ASCII diagram** at the top of `BlockFlowTransitions.cs`.
+
+**Do not** weaken 8a.17 to make this easier — the refusal is correct and the unwritable card is the
+*symptom*, not the bug. Do not touch `tasks.md` (nothing to tick), the `Makefile` or `.claude/`; do not
+commit.
+
+**Gates:** `make gates` → `GATES_EXIT:0`, exit lines quoted verbatim. → `@reviewer` when green.
+
+### §8a remediation — AvailableFrom split into the raw edge table and GenericallyInvocableFrom
+
+**[worker]** Implemented the fix per the architect's ruling. `BlockFlowTransitions` now has two
+queries: `AvailableFrom(state)` — every legal edge, whichever door drives it, now including `land`
+back on `approved` alongside `finding-recurred` — and the new `GenericallyInvocableFrom(state)` —
+the subset a bare `block transition` call may itself drive (`brief`, `claim`,
+`submit-for-review`, `changes-requested`, `close`). `ApplyBlockTransitionUnderExistingLock`
+resolves the caller-supplied name against `GenericallyInvocableFrom` and reports it in
+`UndefinedTransition`, so the refusal never again advertises `finding-recurred`/`fix-before-land`/
+`land`/`approve` and then refuses them itself — those one-door edges are now structurally
+unreachable through the generic applier, not merely refused by `CommandParser`'s string compare.
+
+The round increment now reads `BlockFlowTransitions.RoundIncrementingTransitionNames` instead of the
+`"changes-requested"` literal — the applying half of the two-sources-of-truth failure the
+supervisor named; the counting half (`RoundAgreesWithHistory`) already read the table. Replaced
+`RecordSectionVerdictUnderExistingLock`'s `AvailableFrom(recurringState).Any(name ==
+"finding-recurred")` membership test with a direct `recurringState == BlockFlowState.Approved`
+comparison — the honest way to ask whether a card is approved. Fixed the stale class-level ASCII
+diagram in `BlockFlowTransitions.cs` (added the `finding-recurred` back-edge, dropped the spent
+"until block B adds" forward reference, corrected "round += 1 on both" to "on all three") and
+updated every doc comment that named `AvailableFrom` as the table the generic applier or its
+refusal message reads.
+
+**Test fallout from putting `land` back on `AvailableFrom(approved)`:** two existing tests asserted
+the old (now-wrong) shape — `BlockFlowTests.Approved_HasExactlyOneAvailableTransition_FindingRecurred`
+and `BlockLandUnreachableExceptSectionCloseTests`'s `...NamingFindingRecurredAsTheOnlyEdge` test,
+which documented the exact "refusal advertises a door it then refuses" defect the supervisor flagged.
+Both rewritten to assert the split (two edges on `AvailableFrom`, none on
+`GenericallyInvocableFrom`). Added `GenericallyInvocableFrom` coverage for `in-review` and
+`approved` to `BlockFlowTests`.
+
+**8a.18 remediation coverage:** two new tests in `RoundAgreesWithHistoryTests` drive
+`fix-before-land` and `finding-recurred` directly through `CardStore.ApplyBlockTransition` (the
+generic applier, bypassing `CommandParser` entirely) and assert `UndefinedTransition` with round
+and transition history both unchanged — the exact call shape that, before this fix, could resolve
+one of the two edges and apply it without incrementing `round`, minting the disagreement 8a.17
+refuses and forbids reconciling. The three existing per-edge tests (each edge through its own door)
+were already correct and untouched.
+
+Did not touch 8a.17 itself, `tasks.md`, the `Makefile`, or `.claude/`. No new task numbers, nothing
+ticked.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` — 787 tests
+(783 + 4 new), 0 failed.
+
+→ @reviewer.
+
+**[reviewer]** §8a remediation block — audit of `git diff HEAD` (uncommitted; HEAD `cd18c17`).
+
+## Verdict: Approve
+
+### What I checked
+
+**The split resolves the blocker cleanly.** `BlockFlowTransitions.AvailableFrom` is now the raw
+edge table (`land` and `finding-recurred` both listed on `approved` —
+`BlockFlowTransitions.cs:164`), and the new `GenericallyInvocableFrom` is the narrower invocation
+surface (`BlockFlowTransitions.cs:184-201`), excluding `approve`, `fix-before-land`,
+`finding-recurred` and `land` from every state. `ApplyBlockTransitionUnderExistingLock` resolves
+against `GenericallyInvocableFrom`, not `AvailableFrom` (`CardStore.cs:409`), so the one-door edges
+are structurally unreachable through the generic applier — not merely refused by a second check.
+`UndefinedTransition` (`CardStore.cs:413`) reports the same `GenericallyInvocableFrom` result, so
+the refusal can no longer name a door (`finding-recurred`) that a different refusal would then
+itself refuse — confirmed directly by
+`BlockLandUnreachableExceptSectionCloseTests.BlockTransition_AmendmentRequested_IsAnOrdinaryUndefinedTransition_NamingNoEdgeAsAvailable`
+now asserting `Assert.Empty(undefined.Available)` (`BlockLandUnreachableExceptSectionCloseTests.cs:125`),
+where it previously asserted the offending edge was named.
+
+**`land` remains genuinely uninvocable through every door.**
+- Generic applier: `GenericallyInvocableFrom(Approved)` is `[]` (`BlockFlowTransitions.cs:196`) —
+  confirmed by `Approved_HasNoGenericallyInvocableTransitions` and by
+  `ApplyBlockTransition_Land_ThroughTheDomainLayerDirectly_IsUndefined_LeavesTheBlockApproved`
+  driving `CardStore.ApplyBlockTransition` directly (`BlockLandUnreachableExceptSectionCloseTests.cs:67-90`).
+- CLI: `CommandParser.cs` is untouched in this diff (confirmed empty diff) — `land` stays refused
+  at parse.
+- Domain: `Land` is reached only via `LandTransition` naming, used solely by
+  `CloseSectionUnderExistingLock`, itself untouched by this remediation.
+- `landed` unreachable except via section close: same tests as above plus `AvailableFrom(Landed) =
+  [Close]`, unchanged.
+
+**No two-sources-of-truth reintroduced by the split.** `GenericallyInvocableFrom` is a second
+explicit `Match` over `BlockFlowState`, not derived from `AvailableFrom` by set subtraction — see
+architectural note below — but the two are not asked to agree on the same fact the way the old
+single table was: `AvailableFrom` answers "does this edge exist" and `GenericallyInvocableFrom`
+answers "may a bare `block transition` drive it", which are genuinely different questions per the
+architect's ruling, each state's arm cross-documented against the other in the doc comments
+(`BlockFlowTransitions.cs:8-52, 152-201`).
+
+**Round increment now reads the table on the applying side too.**
+`ApplyBlockTransitionUnderExistingLock`'s round arm reads
+`BlockFlowTransitions.RoundIncrementingTransitionNames.Contains(transition.Name, ...)`
+(`CardStore.cs:472-475`) instead of the `"changes-requested"` literal — the same table
+`RoundAgreesWithHistory`'s count already read (`CardStore.cs:3831`), closing 8a.17's
+two-sources-of-truth failure on both the counting and applying sides. The new 8a.18 coverage
+(`RoundAgreesWithHistoryTests.cs:95-140`) drives `fix-before-land` and `finding-recurred` through
+`CardStore.ApplyBlockTransition` directly (bypassing `CommandParser`), asserting `UndefinedTransition`
+with round and transition history byte-for-byte unchanged — this is exactly the call shape that,
+pre-fix, could resolve one of the two edges through the generic door and silently apply it without
+incrementing `round`. Verified all three round-incrementing edges (`changes-requested`,
+`fix-before-land`, `finding-recurred`) still increment through their own dedicated doors
+(`CardStore.cs:1000, 1727`, and the generic applier's own arm for `changes-requested`) — none of
+those call sites was touched.
+
+**`finding-recurred` predicate is now a direct state comparison.**
+`RecordSectionVerdictUnderExistingLock`'s `recurringState != BlockFlowState.Approved`
+(`CardStore.cs:1650`) replaces the `AvailableFrom(...).Any(name == "finding-recurred")` membership
+test — the honest way to ask "is this card approved" without depending on the edge table's shape.
+
+**8a.17 untouched.** `RoundAgreesWithHistory` itself (`CardStore.cs:3826-3865`) has no diff; the
+remediation only fixed the applying half, as the architect's brief required. `CommandParser.cs` has
+no diff at all.
+
+**Gates verified independently**, sandboxed: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0` — 787 tests, 0 failed. Matches the worker's report.
+
+**Scope.** No new task numbers, `tasks.md` untouched, no boxes ticked, `Makefile`/`.claude/`
+untouched — consistent with a remediation block.
+
+### Nits
+
+None.
+
+### Architectural notes (not blocking)
+
+- **`GenericallyInvocableFrom` is a second hand-maintained `Match` over `BlockFlowState`, not
+  derived from `AvailableFrom`.** Both are exhaustive switch expressions over the same closed union,
+  so the compiler enforces that each names an arm for every state, but it does not enforce that
+  `GenericallyInvocableFrom(s)` stays a subset of `AvailableFrom(s)` for every `s`, or that a
+  transition added to one table in a future block is correctly included or excluded from the other
+  — only the doc comments and tests do that today. It reads fine for the current seven-state,
+  nine-edge table, and I don't think it's worth reopening this remediation over, but if the state
+  machine grows, deriving `GenericallyInvocableFrom` as `AvailableFrom(state).Except(oneDoorEdges)`
+  (or the reverse) would make the subset relationship structural rather than convention. Worth a
+  line in `## NEXT`.
+- `CardApprovalOutcome.UndefinedTransition` still reports the full `AvailableFrom` table
+  (`CardStore.cs:631`), including `land`/`finding-recurred` when relevant to the reported state.
+  That's correct per the ruling — `approve` is always its own dedicated door regardless of what the
+  generic applier can drive — but it's worth being explicit that this is a deliberate asymmetry
+  between the two `UndefinedTransition` records, not an oversight, since a future reader diffing
+  the two doc comments could mistake it for one.
+
+→ @architect.
+
 ## NEXT
 
 **Resume point: §8a (18 tasks, nothing built).** Working tree clean, nothing in flight, no part-built

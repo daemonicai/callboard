@@ -8,40 +8,59 @@ namespace Callboard.Cards;
 /// drafting ──▶ briefed ──▶ building ──▶ in-review ──┬──▶ approved ──▶ landed ──▶ closed
 ///                   ▲                               │        │
 ///                   ├──── changes-requested ◀───────┤        │
-///                   └──── fix-before-land ◀──────────┘        │
-///                       (round += 1 on both)
+///                   ├──── fix-before-land ◀──────────┘        │
+///                   └──── finding-recurred ◀───────────────────┘
+///                       (round += 1 on all three)
 /// </code>
 ///
-/// <see cref="AvailableFrom"/> is the first-class query the brief asks for: what a caller — block
-/// B's transition-applying code, or its refusal message — reads instead of restating the table.
+/// <b>Two distinct queries read this table (§8a remediation, supervisor finding: "`AvailableFrom`
+/// was widened into a state predicate, and the generic applier is a second source of truth for the
+/// round increment").</b> <see cref="AvailableFrom"/> answers "what edges exist from this state, on
+/// this diagram, whichever door drives them" — the round-counting derivation
+/// (<see cref="RoundIncrementingTransitionNames"/>), the "is this card approved?" question
+/// (<see cref="CardStore.RecordSectionVerdictUnderExistingLock"/>, which now asks it as a state
+/// comparison rather than a membership test against this table), and any other "is this edge legal
+/// here" question read it. <see cref="GenericallyInvocableFrom"/> answers a narrower question — "what
+/// may a bare <c>block transition</c> call itself drive from this state" — and is what <see cref="
+/// CardStore.ApplyBlockTransitionUnderExistingLock"/> resolves a caller-supplied transition name
+/// against, and what its <c>UndefinedTransition</c> refusal reports. The two used to be one table:
+/// widening <see cref="AvailableFrom"/> to carry <c>finding-recurred</c> so the state-comparison
+/// question above could be asked (§8a block B) made the generic applier able to resolve — but not
+/// correctly apply — an edge its own <c>CommandParser</c> refuses by name at parse, producing
+/// exactly the round/history disagreement "Stored round agrees with the transition history" (8a.17)
+/// exists to refuse and forbids reconciling. Splitting the two questions apart removes that
+/// possibility structurally: a one-door edge is no longer resolvable through the generic applier at
+/// all, not merely refused by a second, separate check.
+///
 /// It is total over every <see cref="BlockFlowState"/> because it is built with
 /// <see cref="BlockFlowState.Match{TResult}"/>: every one of the seven cases supplies an arm, so
-/// a case with no legal transitions (<c>closed</c>, and — until block B adds `finding-recurred` —
-/// <c>approved</c>) has to say so explicitly (an empty list) rather than the query silently falling
-/// through. Round application (the <c>round += 1</c> on <c>changes-requested</c>/
-/// <c>fix-before-land</c>) is applied by their own callers — this table only says which edges exist
-/// and where each one lands.
+/// a case with no legal transitions (<c>closed</c>) has to say so explicitly (an empty list) rather
+/// than the query silently falling through. Round application (the <c>round += 1</c> on
+/// <c>changes-requested</c>/<c>fix-before-land</c>/<c>finding-recurred</c>) is applied by their own
+/// callers, driven by <see cref="RoundIncrementingTransitionNames"/> rather than restated per
+/// caller — this table only says which edges exist and where each one lands.
 ///
 /// <para>
-/// <b><c>land</c> is on this diagram but not on <see cref="AvailableFrom"/>'s <c>approved</c>
-/// entry (§8a block A, work-lifecycle: "Approval is provisional until the section closes" —
-/// "<c>land</c> SHALL NOT be individually invocable"). <see cref="Land"/> still exists as a
-/// value</b> — it is what <see cref="CardStore.CloseSectionUnderExistingLock"/> applies directly,
-/// via <see cref="LandTransition"/>, to every approved block a section closes over — but no caller
-/// can reach it by naming a transition: <c>AvailableFrom</c> never offers it, and
-/// <c>block transition … land</c> is refused outright at parse (<see cref="Callboard.Cli.
-/// CommandParser.ParseBlockTransition"/>), the same "one door" discipline <c>fix-before-land</c>
-/// already established. It is the *invocation* that is gone, not the edge: a block reaches
-/// <c>landed</c> only as the consequence of its whole section closing, never as an act performed on
-/// that one card alone.
+/// <b><c>land</c> is on this diagram, and on <see cref="AvailableFrom"/>'s <c>approved</c> entry, but
+/// not on <see cref="GenericallyInvocableFrom"/>'s (§8a block A, work-lifecycle: "Approval is
+/// provisional until the section closes" — "<c>land</c> SHALL NOT be individually invocable").
+/// <see cref="Land"/> still exists as a value</b> — it is what <see cref="CardStore.
+/// CloseSectionUnderExistingLock"/> applies directly, via <see cref="LandTransition"/>, to every
+/// approved block a section closes over — but no caller can reach it by naming a transition:
+/// <c>GenericallyInvocableFrom</c> never offers it, and <c>block transition … land</c> is refused
+/// outright at parse (<see cref="Callboard.Cli.CommandParser.ParseBlockTransition"/>), the same "one
+/// door" discipline <c>fix-before-land</c> already established. It is the *invocation* that is gone,
+/// not the edge: a block reaches <c>landed</c> only as the consequence of its whole section closing,
+/// never as an act performed on that one card alone.
 /// </para>
 ///
 /// <para>
 /// <b><c>approved</c> is terminal for a task-implementing block (§8a block A revision, Product
 /// Owner ruling: "an approved block never goes back to work").</b> `AvailableFrom(Approved)` holds
-/// exactly one edge — <see cref="FindingRecurred"/> (§8a block B) — reached only through
-/// <see cref="CardStore.RecordSectionVerdictUnderExistingLock"/>, and refused at parse the same
-/// "one door" way <c>approve</c>/<c>fix-before-land</c>/<c>land</c> already are
+/// exactly two edges — <see cref="Land"/> and <see cref="FindingRecurred"/> (§8a block B) — and
+/// <c>GenericallyInvocableFrom(Approved)</c> holds neither: <see cref="FindingRecurred"/> is
+/// reached only through <see cref="CardStore.RecordSectionVerdictUnderExistingLock"/>, and refused
+/// at parse the same "one door" way <c>approve</c>/<c>fix-before-land</c>/<c>land</c> already are
 /// (<see cref="Callboard.Cli.CommandParser.ParseBlockTransition"/>): a supervisor drives it
 /// directly against a **remediation card**, never against a block that implements tasks (checked
 /// independently of this table — see <see cref="CardStore.
@@ -101,10 +120,11 @@ internal static class BlockFlowTransitions
 
     private static readonly BlockFlowTransition Land = new("land", BlockFlowState.Approved, BlockFlowState.Landed);
 
-    /// <summary>The one way <see cref="Land"/> is ever reached — not through <see cref="AvailableFrom"/>
-    /// (it no longer lists it for <c>approved</c>), but by <see cref="CardStore.
-    /// CloseSectionUnderExistingLock"/> naming this property directly, the same way a section close
-    /// is the one act permitted to move a block onto <see cref="BlockFlowState.Landed"/>.</summary>
+    /// <summary>The one way <see cref="Land"/> is ever reached — not through <see cref="
+    /// GenericallyInvocableFrom"/> (it never lists it for <c>approved</c>, though <see cref="
+    /// AvailableFrom"/> does), but by <see cref="CardStore.CloseSectionUnderExistingLock"/> naming
+    /// this property directly, the same way a section close is the one act permitted to move a
+    /// block onto <see cref="BlockFlowState.Landed"/>.</summary>
     internal static BlockFlowTransition LandTransition => Land;
 
     private static readonly BlockFlowTransition Close = new("close", BlockFlowState.Landed, BlockFlowState.Closed);
@@ -130,20 +150,55 @@ internal static class BlockFlowTransitions
     internal static BlockFlowTransition FindingRecurredTransition => FindingRecurred;
 
     /// <summary>
-    /// The transitions legally available from <paramref name="state"/> — empty for <c>closed</c>,
-    /// the flow's one terminal state, and exactly <see cref="FindingRecurred"/> for <c>approved</c>
-    /// (§8a block B): a task-implementing block that reaches <c>approved</c> has no caller-facing
-    /// edge back to work — only a remediation card does, and only through this one edge — see this
-    /// type's own doc comment. <c>in-review</c> is the one state with three: <c>approve</c>,
-    /// <c>changes-requested</c> and <c>fix-before-land</c> (§8 block B), the latter two landing on
-    /// the same <c>briefed</c> destination as distinct named edges.
+    /// Every transition legally available from <paramref name="state"/> — empty for <c>closed</c>,
+    /// the flow's one terminal state, and exactly <see cref="Land"/> and <see cref="FindingRecurred"/>
+    /// for <c>approved</c> (§8a block B, widened further by the §8a remediation to include
+    /// <see cref="Land"/> — see this type's own doc comment): a task-implementing block that reaches
+    /// <c>approved</c> has no caller-facing edge back to work, but the edge to <c>landed</c> is real
+    /// and this query says so, the way it says so for every other state. <c>in-review</c> is the one
+    /// state with three: <c>approve</c>, <c>changes-requested</c> and <c>fix-before-land</c> (§8
+    /// block B), the latter two landing on the same <c>briefed</c> destination as distinct named
+    /// edges.
+    ///
+    /// <b>This is the raw edge table, not the invocation surface (§8a remediation).</b> A caller
+    /// deciding what a bare <c>block transition</c> call may itself drive reads
+    /// <see cref="GenericallyInvocableFrom"/> instead — this query includes one-door edges
+    /// (<c>approve</c>, <c>fix-before-land</c>, <c>finding-recurred</c>, <c>land</c>) that exist and
+    /// are legal but are reached only through their own dedicated write, never through the generic
+    /// applier.
     /// </summary>
     internal static IReadOnlyList<BlockFlowTransition> AvailableFrom(BlockFlowState state) => state.Match(
         onDrafting: static () => (IReadOnlyList<BlockFlowTransition>)[Brief],
         onBriefed: static () => [Claim],
         onBuilding: static () => [SubmitForReview],
         onInReview: static () => [Approve, ChangesRequested, FixBeforeLand],
-        onApproved: static () => [FindingRecurred],
+        onApproved: static () => [Land, FindingRecurred],
+        onLanded: static () => [Close],
+        onClosed: static () => []);
+
+    /// <summary>
+    /// The subset of <see cref="AvailableFrom"/>'s edges a bare <c>block transition</c> call may
+    /// itself drive (§8a remediation, settling the contract collision the supervisor's §8a section
+    /// review found: <see cref="AvailableFrom"/> was being read both as "the invocation surface" and
+    /// as "the legal-edge table", and widening it for the second reading broke the first). Every
+    /// one-door edge — <c>approve</c> (<see cref="CardStore.RecordApprovalUnderExistingLock"/>'s own
+    /// door), <c>fix-before-land</c> (<see cref="CardStore.DispositionNitUnderLocks"/>'s),
+    /// <c>finding-recurred</c> (<see cref="CardStore.RecordSectionVerdictUnderExistingLock"/>'s) and
+    /// <c>land</c> (<see cref="CardStore.CloseSectionUnderExistingLock"/>'s) — is legal (it is still
+    /// on <see cref="AvailableFrom"/>) but excluded here, because each already has its own dedicated
+    /// write that applies its own certification/disposition/verdict/section-close side effects a
+    /// bare transition could never supply. <see cref="CardStore.
+    /// ApplyBlockTransitionUnderExistingLock"/> resolves a caller-supplied transition name against
+    /// this query, not <see cref="AvailableFrom"/>, and its <c>UndefinedTransition</c> refusal
+    /// reports this query's result — so the refusal never advertises a door it would then itself
+    /// refuse (the second consequence the supervisor's finding named).
+    /// </summary>
+    internal static IReadOnlyList<BlockFlowTransition> GenericallyInvocableFrom(BlockFlowState state) => state.Match(
+        onDrafting: static () => (IReadOnlyList<BlockFlowTransition>)[Brief],
+        onBriefed: static () => [Claim],
+        onBuilding: static () => [SubmitForReview],
+        onInReview: static () => [ChangesRequested],
+        onApproved: static () => [],
         onLanded: static () => [Close],
         onClosed: static () => []);
 

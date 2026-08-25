@@ -64,10 +64,11 @@ public sealed class BlockLandUnreachableExceptSectionCloseTests
     }
 
     // The generic domain-level door, bypassing the CLI's own parse-time refusal entirely
-    // (CardStore.ApplyBlockTransition, called the way ApplyBlockTransitionUnderExistingLock's own
-    // AvailableFrom(approved) lookup would be reached if 'land' were still on that list) — proves
-    // the closure is structural (BlockFlowTransitions.AvailableFrom no longer offers the edge at
-    // all), not merely a CLI-layer refusal a caller bypassing the CLI could route around.
+    // (CardStore.ApplyBlockTransition, exercising ApplyBlockTransitionUnderExistingLock's own
+    // GenericallyInvocableFrom(approved) lookup directly) — proves the closure is structural
+    // (BlockFlowTransitions.GenericallyInvocableFrom never offers the edge at all, even though
+    // AvailableFrom does — §8a remediation), not merely a CLI-layer refusal a caller bypassing the
+    // CLI could route around.
     [Fact]
     public void ApplyBlockTransition_Land_ThroughTheDomainLayerDirectly_IsUndefined_LeavesTheBlockApproved()
     {
@@ -99,12 +100,14 @@ public sealed class BlockLandUnreachableExceptSectionCloseTests
     // 'block transition <path> amendment-requested' — no longer a special-cased parse refusal
     // either (that door does not exist to guard any more): it reaches ApplyBlockTransition like
     // any other unrecognised name and is refused as an ordinary undefined-transition. §8a block B
-    // gives 'approved' its one real edge — 'finding-recurred' — but that edge is reached only
-    // through CardStore.RecordSectionVerdictUnderExistingLock, never through this generic path
-    // (refused at parse, see the sibling test below): a task-implementing block still has no
-    // caller-facing route back to work through 'block transition', for any name.
+    // gives 'approved' two real edges on the raw table — 'land' and 'finding-recurred' — but
+    // neither is generically invocable (§8a remediation: ApplyBlockTransitionUnderExistingLock
+    // resolves against GenericallyInvocableFrom, not AvailableFrom), so the refusal names none —
+    // never advertising a door ('finding-recurred') that a second, separate refusal would then
+    // itself refuse: a task-implementing block still has no caller-facing route back to work
+    // through 'block transition', for any name.
     [Fact]
-    public void BlockTransition_AmendmentRequested_IsAnOrdinaryUndefinedTransition_NamingFindingRecurredAsTheOnlyEdge()
+    public void BlockTransition_AmendmentRequested_IsAnOrdinaryUndefinedTransition_NamingNoEdgeAsAvailable()
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialApprovedBlockCard(repo.Path, "b-0009", "B-0009", "S-0009");
@@ -119,8 +122,7 @@ public sealed class BlockLandUnreachableExceptSectionCloseTests
             repo.Path, path, "amendment-requested", CardOwner.Architect, FixedNow, baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
         var undefined = Assert.IsType<CardBlockTransitionOutcome.UndefinedTransition>(outcome);
         Assert.Equal(BlockFlowState.Approved, undefined.CurrentState);
-        var onlyAvailable = Assert.Single(undefined.Available);
-        Assert.Equal("finding-recurred", onlyAvailable.Name);
+        Assert.Empty(undefined.Available);
     }
 
     // 'block transition <path> finding-recurred' is refused at parse — the "one door" discipline

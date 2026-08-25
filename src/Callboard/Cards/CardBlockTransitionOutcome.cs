@@ -57,9 +57,12 @@ internal abstract record CardBlockTransitionOutcome
 
     /// <param name="CurrentState">The state the card was actually in when the transition was
     /// attempted.</param>
-    /// <param name="Available">The transitions legally available from <paramref name="CurrentState"/>
-    /// — read from <see cref="BlockFlowTransitions.AvailableFrom"/>, the one table this type and
-    /// every caller of it reads rather than a second hand-maintained list of the same facts.</param>
+    /// <param name="Available">The transitions a bare <c>block transition</c> call may itself drive
+    /// from <paramref name="CurrentState"/> — read from <see cref="BlockFlowTransitions.
+    /// GenericallyInvocableFrom"/>, not <see cref="BlockFlowTransitions.AvailableFrom"/> (§8a
+    /// remediation): the wider table can carry an edge (e.g. <c>finding-recurred</c>) that is legal
+    /// from this state but reached only through its own dedicated door, and naming it here would
+    /// advertise a door this same refusal would then itself refuse.</param>
     internal sealed record UndefinedTransition(BlockFlowState CurrentState, IReadOnlyList<BlockFlowTransition> Available) : CardBlockTransitionOutcome
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,

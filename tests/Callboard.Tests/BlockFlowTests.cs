@@ -56,31 +56,59 @@ public sealed class BlockFlowTests
         Assert.Same(BlockFlowState.Briefed, fixBeforeLand.To);
     }
 
-    // §8a block B: 'approved' has exactly one caller-facing edge — 'finding-recurred', reached
-    // only through CardStore.RecordSectionVerdictUnderExistingLock, never through 'block
-    // transition' (refused at parse). 'land' is still not individually invocable (see
-    // BlockFlowTransitions.LandTransition for where it lives), and 'amendment-requested' no longer
-    // exists as an edge on this table at all.
+    // §8a remediation: 'in-review' carries three edges on the raw table but only one is
+    // generically invocable — 'changes-requested'; 'approve' and 'fix-before-land' are each their
+    // own dedicated door.
     [Fact]
-    public void Approved_HasExactlyOneAvailableTransition_FindingRecurred()
+    public void InReview_HasExactlyOneGenericallyInvocableTransition_ChangesRequested()
+    {
+        var only = Assert.Single(BlockFlowTransitions.GenericallyInvocableFrom(BlockFlowState.InReview));
+
+        Assert.Equal("changes-requested", only.Name);
+        Assert.Same(BlockFlowState.Briefed, only.To);
+    }
+
+    // §8a remediation: 'approved' carries two edges on the raw table — 'land' and
+    // 'finding-recurred' — both legal, both one-door (reached only through
+    // CardStore.CloseSectionUnderExistingLock and CardStore.RecordSectionVerdictUnderExistingLock
+    // respectively, never through 'block transition', refused at parse either way).
+    // GenericallyInvocableFrom(approved) is the query that reports neither — see the sibling test
+    // below.
+    [Fact]
+    public void Approved_HasExactlyTwoAvailableTransitions_LandAndFindingRecurred()
     {
         var available = BlockFlowTransitions.AvailableFrom(BlockFlowState.Approved);
 
-        var findingRecurred = Assert.Single(available);
-        Assert.Equal("finding-recurred", findingRecurred.Name);
+        Assert.Equal(2, available.Count);
+
+        var land = Assert.Single(available, t => t.Name == "land");
+        Assert.Same(BlockFlowState.Landed, land.To);
+
+        var findingRecurred = Assert.Single(available, t => t.Name == "finding-recurred");
         Assert.Same(BlockFlowState.Briefed, findingRecurred.To);
     }
 
-    // §8a block A: 'land' still exists as a value — the thing CloseSectionUnderExistingLock
-    // applies directly — it is only the AvailableFrom(approved) invocation surface that lost it.
+    // §8a remediation: neither of 'approved's two edges is generically invocable — both are
+    // one-door edges, each reached only through its own dedicated write.
     [Fact]
-    public void LandTransition_StillExists_ApprovedToLanded_ButIsNotOnAvailableFrom()
+    public void Approved_HasNoGenericallyInvocableTransitions()
+    {
+        Assert.Empty(BlockFlowTransitions.GenericallyInvocableFrom(BlockFlowState.Approved));
+    }
+
+    // §8a block A: 'land' still exists as a value — the thing CloseSectionUnderExistingLock
+    // applies directly — it is only the GenericallyInvocableFrom(approved) invocation surface that
+    // never lists it (§8a remediation: AvailableFrom(approved) lists it now, alongside
+    // 'finding-recurred' — see the sibling test above).
+    [Fact]
+    public void LandTransition_StillExists_ApprovedToLanded_ButIsNotGenericallyInvocable()
     {
         var land = BlockFlowTransitions.LandTransition;
 
         Assert.Equal("land", land.Name);
         Assert.Same(BlockFlowState.Approved, land.From);
         Assert.Same(BlockFlowState.Landed, land.To);
+        Assert.DoesNotContain(BlockFlowTransitions.GenericallyInvocableFrom(BlockFlowState.Approved), t => t.Name == "land");
     }
 
     [Fact]

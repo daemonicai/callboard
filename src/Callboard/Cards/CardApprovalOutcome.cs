@@ -57,8 +57,12 @@ internal abstract record CardApprovalOutcome
     /// <param name="CurrentState">The state the card was actually in when the approval was
     /// attempted — <c>approve</c> is only a legal edge from <c>in-review</c>.</param>
     /// <param name="Available">The transitions legally available from <paramref name="CurrentState"/>
-    /// — read from <see cref="BlockFlowTransitions.AvailableFrom"/>, the same table
-    /// <see cref="CardBlockTransitionOutcome.UndefinedTransition"/> reads.</param>
+    /// — read from <see cref="BlockFlowTransitions.AvailableFrom"/>, the raw edge table (unlike
+    /// <see cref="CardBlockTransitionOutcome.UndefinedTransition"/>, which since the §8a remediation
+    /// reads <see cref="BlockFlowTransitions.GenericallyInvocableFrom"/> instead): <c>approve</c> is
+    /// always this card's own dedicated door regardless of which edges a generic <c>block
+    /// transition</c> could itself drive, so the full table is the honest answer to "what else is
+    /// legal from here" here.</param>
     internal sealed record UndefinedTransition(BlockFlowState CurrentState, IReadOnlyList<BlockFlowTransition> Available) : CardApprovalOutcome
     {
         internal override TResult Match<TResult>(Func<Approved, TResult> onApproved, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,

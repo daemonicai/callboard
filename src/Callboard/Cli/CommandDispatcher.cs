@@ -869,8 +869,10 @@ internal static class CommandDispatcher
     /// <see cref="CardStore.ApplyBlockTransition"/> and maps its closed-union outcome to a
     /// <see cref="CommandOutcome"/> — an undefined transition, a missing or immutable
     /// <c>base</c>, and a target that isn't a block card each get their own refusal code, read
-    /// from <see cref="BlockFlowTransitions.AvailableFrom"/> for the undefined-transition case
-    /// rather than a second hand-maintained list of the same edges. <see langword="private"/>:
+    /// from <see cref="BlockFlowTransitions.GenericallyInvocableFrom"/> for the undefined-transition
+    /// case (§8a remediation — never <see cref="BlockFlowTransitions.AvailableFrom"/>, the wider
+    /// table this method must not resolve one-door edges against) rather than a second
+    /// hand-maintained list of the same edges. <see langword="private"/>:
     /// <see cref="CommandParser"/> cannot name this method (see the class doc comment).
     /// </summary>
     private static CommandOutcome RunBlockTransition(ParsedCommand.BlockTransition parsed, TimeSpan lockTimeout)

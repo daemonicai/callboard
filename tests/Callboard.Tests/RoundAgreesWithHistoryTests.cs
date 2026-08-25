@@ -92,6 +92,55 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
         Assert.Single(read.Transitions);
     }
 
+    // 8a.18 remediation — the missing coverage the supervisor's §8a section review named: all
+    // three round-incrementing edges above are each driven through their own dedicated door, never
+    // through the generic block-transition applier. This is the generic path itself: before the
+    // §8a remediation, ApplyBlockTransitionUnderExistingLock resolved a transition name against
+    // BlockFlowTransitions.AvailableFrom, which by then also carried 'fix-before-land' and
+    // 'finding-recurred' — so this exact call could reach one of them, apply the transition, and
+    // leave 'round' unchanged, producing the very disagreement 8a.17 refuses and forbids
+    // reconciling. The fix (resolving against GenericallyInvocableFrom instead) makes this
+    // structurally impossible: neither edge is even resolvable through this door any more, not
+    // merely refused by a second, separate check.
+    [Fact]
+    public void ApplyBlockTransition_FixBeforeLand_ThroughTheGenericApplierDirectly_IsUndefined_RoundAndHistoryUnchanged()
+    {
+        var path = WriteBlockCard("b-0008", "B-0008", BlockFlowState.InReview, round: 1, transitions: []);
+        var before = File.ReadAllBytes(path);
+
+        var outcome = CardStore.ApplyBlockTransition(
+            _root, path, "fix-before-land", CardOwner.Architect, Created.AddHours(1), baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
+
+        var undefined = Assert.IsType<CardBlockTransitionOutcome.UndefinedTransition>(outcome);
+        Assert.Equal(BlockFlowState.InReview, undefined.CurrentState);
+        Assert.DoesNotContain(undefined.Available, t => t.Name == "fix-before-land");
+        Assert.Equal(before, File.ReadAllBytes(path));
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(1, read.BlockFields.Round);
+        Assert.Empty(read.Transitions);
+    }
+
+    // 8a.18 remediation — same shape as the test above, for 'finding-recurred' from 'approved'.
+    [Fact]
+    public void ApplyBlockTransition_FindingRecurred_ThroughTheGenericApplierDirectly_IsUndefined_RoundAndHistoryUnchanged()
+    {
+        var path = WriteApprovedRemediationCard("b-0009", "B-0009", "S-0001", "finding-y001", round: 1, transitions: []);
+        var before = File.ReadAllBytes(path);
+
+        var outcome = CardStore.ApplyBlockTransition(
+            _root, path, "finding-recurred", CardOwner.Supervisor, Created.AddHours(1), baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
+
+        var undefined = Assert.IsType<CardBlockTransitionOutcome.UndefinedTransition>(outcome);
+        Assert.Equal(BlockFlowState.Approved, undefined.CurrentState);
+        Assert.Empty(undefined.Available);
+        Assert.Equal(before, File.ReadAllBytes(path));
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(1, read.BlockFields.Round);
+        Assert.Empty(read.Transitions);
+    }
+
     // 8a.18 — finding-recurred advances round and history in the same write.
     [Fact]
     public void RecordSectionVerdict_FindingRecurred_ReturnsOwningCardToBriefed_IncrementsRound_HistoryAgrees()

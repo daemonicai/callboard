@@ -345,12 +345,15 @@ internal static class CardStore
     /// Applies one legal <see cref="BlockFlowState"/> edge to the block card at
     /// <paramref name="filePath"/> (work-lifecycle "Block cards move through a defined flow", §5
     /// block C): reads the current card, decides whether <paramref name="transitionName"/> is
-    /// legal from its current status by reading <see cref="BlockFlowTransitions.AvailableFrom"/>
-    /// (never a second hand-maintained list), and only if it is legal writes the new status, the
-    /// possibly-newly-recorded <c>base</c>, the possibly-incremented <c>round</c>, and an appended
-    /// <see cref="CardBlockTransitionEntry"/> — all under the card's lock, so the refusal and the
-    /// write share one read (obligation O-3: a refusal must prevent the side effect it refuses,
-    /// not merely follow it).
+    /// legal from its current status by reading <see cref="BlockFlowTransitions.
+    /// GenericallyInvocableFrom"/> (never a second hand-maintained list, and never <see cref="
+    /// BlockFlowTransitions.AvailableFrom"/> — §8a remediation: that wider table carries one-door
+    /// edges this generic applier must never resolve), and only if it is legal writes the new
+    /// status, the possibly-newly-recorded <c>base</c>, the possibly-incremented <c>round</c> —
+    /// driven by <see cref="BlockFlowTransitions.RoundIncrementingTransitionNames"/>, not a name
+    /// literal — and an appended <see cref="CardBlockTransitionEntry"/> — all under the card's
+    /// lock, so the refusal and the write share one read (obligation O-3: a refusal must prevent
+    /// the side effect it refuses, not merely follow it).
     /// </summary>
     /// <param name="baseCommit">The commit to record as <c>base</c> if the card does not already
     /// have one recorded. Ignored (but still checked for a mismatch — see
@@ -403,7 +406,7 @@ internal static class CardStore
                         filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
                 }
 
-                var available = BlockFlowTransitions.AvailableFrom(currentState);
+                var available = BlockFlowTransitions.GenericallyInvocableFrom(currentState);
                 var transition = available.FirstOrDefault(candidate => string.Equals(candidate.Name, transitionName, StringComparison.Ordinal));
                 if (transition is null)
                 {
@@ -459,8 +462,15 @@ internal static class CardStore
                 // finding-recurred's site), which would land round 1 off a card seeded straight
                 // into in-review with no round set, disagreeing with its own one-entry transition
                 // history the moment 8a.17's check was added. Fixed to agree.
+                // §8a remediation (supervisor finding: "the generic applier is a second source of
+                // truth for the round increment"): reads BlockFlowTransitions.
+                // RoundIncrementingTransitionNames — the same table RoundAgreesWithHistory's own
+                // count reads — rather than the "changes-requested" literal this arm used to test
+                // for, which is the only edge GenericallyInvocableFrom can ever hand this method
+                // anyway, but a second name added to that table later must count here without a
+                // matching edit to this arm, not merely without one to the checker.
                 var round = card.BlockFields.Round;
-                if (string.Equals(transition.Name, "changes-requested", StringComparison.Ordinal))
+                if (BlockFlowTransitions.RoundIncrementingTransitionNames.Contains(transition.Name, StringComparer.Ordinal))
                 {
                     round = (round ?? 1) + 1;
                 }
@@ -1632,9 +1642,13 @@ internal static class CardStore
                                 recurringPath, $"unrecognised status: '{rereadCard.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
                         }
 
-                        var findingRecurredAvailable = BlockFlowTransitions.AvailableFrom(recurringState)
-                            .Any(static candidate => string.Equals(candidate.Name, "finding-recurred", StringComparison.Ordinal));
-                        if (!findingRecurredAvailable)
+                        // §8a remediation: a direct state comparison, not a membership test against
+                        // BlockFlowTransitions.AvailableFrom — "is this card approved?" was never
+                        // honestly an "is finding-recurred on the edge table?" question, and asking
+                        // it that way is what let AvailableFrom's own widening (§8a block B) turn
+                        // into a state predicate in the first place (supervisor finding, §8a section
+                        // review).
+                        if (recurringState != BlockFlowState.Approved)
                         {
                             return new CardSectionVerdictOutcome.RecurringFindingNotApproved(rereadCard.Frontmatter.Id, recurringPath, recurringState);
                         }
