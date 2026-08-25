@@ -84,6 +84,11 @@ internal static class CardFileWriter
             {
                 builder.Append("blocked_by: ").Append(CardFileFormat.JoinFrontmatterList(blockFields.BlockedBy)).Append('\n');
             }
+
+            if (blockFields.FindingKey is { } findingKey)
+            {
+                builder.Append("finding_key: ").Append(CardFileFormat.EscapeFrontmatterValue(findingKey)).Append('\n');
+            }
         }
 
         // §5 block E's three section-only scalar fields — same "present only when set" convention

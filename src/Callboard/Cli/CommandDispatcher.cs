@@ -282,8 +282,24 @@ internal static class CommandDispatcher
         /// <param name="RangeFrom">The commit range's start the supervisor is recording a verdict
         /// against — data on the entity, never re-derived from git (§5 block E brief).</param>
         /// <param name="RangeTo">The commit range's end.</param>
+        /// <param name="RecurringFindingCardIds">The <c>--finding-recurred</c> occurrences, in argv
+        /// order (§8a block B) — each resolved through <see cref="Cards.CardIdentityResolver"/> at
+        /// execute time, never here (identity resolution needs the record on disk).</param>
+        /// <param name="NewFindings">One entry per <c>--finding-new &lt;manifest-file&gt;</c>
+        /// occurrence, in argv order, already parsed (§8a block B revision — see <see cref="Cards.
+        /// NewFindingCardManifest"/> for the manifest format and why one self-describing file per
+        /// finding replaced an earlier positionally-zipped quartet).</param>
         internal sealed record SectionVerdict(
-            string FilePath, Callboard.Cards.SectionVerdict Verdict, string RangeFrom, string RangeTo, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string FilePath,
+            Callboard.Cards.SectionVerdict Verdict,
+            string RangeFrom,
+            string RangeTo,
+            CardOwner ActingRole,
+            string? ChangeName,
+            IReadOnlyList<string> RecurringFindingCardIds,
+            IReadOnlyList<Callboard.Cards.NewFindingCardRequest> NewFindings,
+            string WorkingDirectory,
+            DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution, Func<BlockApprove, TResult> onBlockApprove, Func<NitRaise, TResult> onNitRaise, Func<NitDisposition, TResult> onNitDisposition) =>
                 onSectionVerdict(this);
@@ -1227,10 +1243,14 @@ internal static class CommandDispatcher
     }
 
     /// <summary>
-    /// <c>section verdict</c> (§5 block E, work-lifecycle: "Sections are entities" — "the verdict,
-    /// the range and the acting role are recorded against that section entity"): appends one
-    /// supervisor verdict via <see cref="CardStore.RecordSectionVerdict"/>. Same three-way
-    /// refusal/tool-failure/reported-failure split every §5 write verb already applies.
+    /// <c>section verdict</c> (§5 block E / §8a block B, work-lifecycle: "Sections are entities" —
+    /// "the verdict, the range and the acting role are recorded against that section entity";
+    /// "Section remediation follows the finding, not the verdict"): resolves every
+    /// <c>--finding-recurred</c> id to a file path — the same "resolve at the CLI layer, pass a
+    /// path" shape <c>block approve --id</c> already established — then appends the verdict, moves
+    /// every recurring card and creates the first-time finding's card (if any), all in one call to
+    /// <see cref="CardStore.RecordSectionVerdict"/>. Same three-way refusal/tool-failure/reported-
+    /// failure split every §5 write verb already applies, plus §8a block B's own routing refusals.
     /// <see langword="private"/>: <see cref="CommandParser"/> cannot name this method.
     /// </summary>
     private static CommandOutcome RunSectionVerdict(ParsedCommand.SectionVerdict parsed, TimeSpan lockTimeout)
@@ -1243,9 +1263,27 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
+        var recurringFindingCardPaths = new List<string>(parsed.RecurringFindingCardIds.Count);
+        foreach (var recurringId in parsed.RecurringFindingCardIds)
+        {
+            var resolved = ResolveCardReference(
+                repoRoot, recurringId, CardKind.Block, CardStore.IsBlockCard, "'--finding-recurred'",
+                "raise it as a new finding instead, with '--finding-new'");
+            if (resolved.Refusal is not null)
+            {
+                return resolved.Refusal;
+            }
+
+            recurringFindingCardPaths.Add(resolved.FilePath!);
+        }
+
         var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        var newFindings = parsed.NewFindings
+            .Select(request => request with { FilePath = ResolveFilePath(parsed.WorkingDirectory, request.FilePath) })
+            .ToList();
         var outcome = CardStore.RecordSectionVerdict(
-            repoRoot, filePath, parsed.Verdict, parsed.RangeFrom, parsed.RangeTo, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+            repoRoot, filePath, parsed.Verdict, parsed.RangeFrom, parsed.RangeTo, parsed.ActingRole, parsed.Timestamp, lockTimeout,
+            parsed.ChangeName, recurringFindingCardPaths, newFindings);
 
         return outcome.Match<CommandOutcome>(
             onRecorded: recorded => new CommandOutcome.Success(new SectionVerdictResult
@@ -1256,6 +1294,8 @@ internal static class CommandDispatcher
                 RangeTo = recorded.Entry.RangeTo,
                 ActingRole = recorded.Entry.By.ToWireString(),
                 Timestamp = recorded.Entry.Timestamp,
+                RecurredCardIds = [.. recorded.RecurredCards.Select(static c => c.Frontmatter.Id)],
+                NewCardIds = [.. recorded.NewCards.Select(static c => c.Frontmatter.Id)],
             }),
             onNotASectionCard: notASection => WrongCardKind(filePath, CardKind.Section, notASection.Kind, "verdicts only apply to a section card"),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
@@ -1263,8 +1303,26 @@ internal static class CommandDispatcher
                 $"no card file exists at '{notFound.FilePath}' to record a verdict on."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
+            onRecurringFindingNotApproved: notApproved => new CommandOutcome.Refusal(
+                "recurring-finding-not-approved",
+                $"'{notApproved.CardId}' ('{notApproved.FilePath}') is not 'approved' (it is " +
+                $"'{notApproved.CurrentState.ToWireString()}') — 'finding-recurred' only returns a remediation " +
+                "card that is currently approved."),
+            onRecurringFindingTargetsTaskImplementingBlock: taskImplementing => new CommandOutcome.Refusal(
+                "recurring-finding-targets-task-implementing-block",
+                $"'{taskImplementing.CardId}' ('{taskImplementing.FilePath}') carries tasks — it is a task-" +
+                "implementing block, not a remediation card, and 'finding-recurred' never targets one. Raise the " +
+                "finding as new instead, with '--finding-new'."),
+            onFindingAlreadyOwned: alreadyOwned => new CommandOutcome.Refusal(
+                "finding-already-owned",
+                $"finding '{alreadyOwned.Key}' is already owned by '{alreadyOwned.OwningCardId}' " +
+                $"('{alreadyOwned.OwningCardFilePath}') — a recurrence SHALL NOT create a second card for a " +
+                $"finding a card already owns. Use '--finding-recurred {alreadyOwned.OwningCardId}' instead, or " +
+                "give the new finding a different '--finding-new' key."),
+            onNewFindingCardAlreadyExists: alreadyExists => new CommandOutcome.Refusal(
+                "card-already-exists", $"a card already exists at '{alreadyExists.FilePath}'."),
             onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a section card: {corrupt.Reason}"),
+                $"card '{corrupt.FilePath}' could not be read: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 

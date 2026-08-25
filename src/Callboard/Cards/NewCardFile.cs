@@ -45,4 +45,16 @@ namespace Callboard.Cards;
 /// for <see cref="FindingFields"/>: "not a register kind, or no register fields to carry".
 /// </para>
 /// </summary>
-internal sealed record NewCardFile(CardFrontmatter Frontmatter, string Body, FindingCardFields? FindingFields = null, RegisterCardFields? RegisterFields = null);
+/// <param name="BlockFields">
+/// <b>§8a block B's addition:</b> the one <c>block</c>-specific field this type carries at creation
+/// time — specifically <see cref="BlockCardFields.FindingKey"/>, so a remediation card created by
+/// <see cref="CardStore.RecordSectionVerdictUnderExistingLock"/> for a first-time finding
+/// (work-lifecycle: "A first-time finding becomes a new block") owns its key from the moment it
+/// exists, rather than through a follow-up write nothing in this codebase's flow provides for a
+/// brand-new card. <see langword="null"/> (the default) means the same thing it does for
+/// <see cref="FindingFields"/>/<see cref="RegisterFields"/>: "not a block, or no block fields to
+/// carry at creation" — every other block-card field (<c>base</c>, <c>tasks</c>, gate results,
+/// <c>blocked_by</c>) is still filled in afterward, through its own dedicated write verb, exactly
+/// as before this parameter existed.
+/// </param>
+internal sealed record NewCardFile(CardFrontmatter Frontmatter, string Body, FindingCardFields? FindingFields = null, RegisterCardFields? RegisterFields = null, BlockCardFields? BlockFields = null);

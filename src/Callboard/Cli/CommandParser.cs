@@ -204,6 +204,21 @@ internal static class CommandParser
                 "approved block in the section as one operation."));
         }
 
+        // §8a block B (Architect ruling, same reasoning as 'approve'/'fix-before-land'/'land'
+        // above): 'finding-recurred' is a supervisor returning a remediation card it already owns —
+        // raised only through 'section verdict --finding-recurred', in the same write as the
+        // verdict entry itself. A bare transition through this path would move a card to 'briefed'
+        // with no verdict recorded at all, and could not tell a remediation card from a
+        // task-implementing block the way 'section verdict' does. Argv-decidable, so refused here.
+        if (string.Equals(transitionName, "finding-recurred", StringComparison.Ordinal))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "finding-recurred-via-transition-refused",
+                "'finding-recurred' cannot be applied through 'block transition' — it is only raised as the " +
+                "effect of a supervisor's verdict on the finding this card owns. Use " +
+                "'section verdict --finding-recurred <card-id>' instead."));
+        }
+
         string? roleText = null;
         string? baseCommit = null;
         string? changeName = null;
@@ -804,6 +819,30 @@ internal static class CommandParser
     /// <c>--range-to</c> (all required), <c>--role</c> (required) and the optional <c>--change</c>
     /// flag. <c>--verdict</c>'s wire-format validity is argv-decidable, the same O-3 discipline
     /// <see cref="ParseBlockTransition"/> already applies to <c>--role</c>.
+    ///
+    /// <para>
+    /// <b>§8a block B's additions: <c>--finding-recurred</c> and <c>--finding-new</c>, both
+    /// repeatable, both file/argv-decidable at parse.</b> <c>--finding-recurred &lt;card-id&gt;</c>
+    /// follows the same repeatable, one-flag-occurrence-per-item shape <c>--claims</c>/
+    /// <c>--limits</c>/<c>nit raise --site</c> already established (§8 remediation blocker 3's
+    /// ruling: free text routed through a single comma-joined value silently splits on a comma
+    /// inside the text itself) — each occurrence is one card id, resolved through <see cref="Cards.
+    /// CardIdentityResolver"/> at execute time. <c>--finding-new &lt;manifest-file&gt;</c> is also
+    /// repeatable — any number of first-time findings in one verdict (Architect ruling, DEVLOG "§8a
+    /// block B — architect: accept the design, reject the one-new-finding cap": a section with
+    /// several new findings on its first pass is the ordinary case, not a corner one) — but each
+    /// occurrence is <b>one self-contained manifest file</b>, parsed by <see cref="Cards.
+    /// NewFindingCardManifest"/>, not a slot in a positionally-zipped set of flags: see that type's
+    /// own doc comment for why a quartet of repeatable flags (key/file/title/body-file, occurrence
+    /// <em>n</em> across all four naming one finding) was rejected — it can silently attach one
+    /// finding's body to another finding's key, a failure no count-mismatch refusal can see. A
+    /// manifest's own body is read from the manifest file, never as a quoted argument (ADR-0001) and
+    /// never from stdin (unlike <c>section create</c>'s single body) — the same "read a value from a
+    /// file, not an argument" discipline <c>--blind-spot-body-file</c> established, reused inside
+    /// <see cref="Cards.NewFindingCardManifest.Parse"/> rather than re-invented, including its
+    /// argv-decidable-first/environmental-second split between "no readable file" and "exists but
+    /// unreadable" for the manifest file itself.
+    /// </para>
     /// </summary>
     private static CommandDispatcher.ParseResult ParseSectionVerdict(CommandDispatcher.CommandContext context)
     {
@@ -820,75 +859,22 @@ internal static class CommandParser
         string? rangeTo = null;
         string? roleText = null;
         string? changeName = null;
+        var recurringFindingIds = new List<string>();
+        var newFindingManifestPaths = new List<string>();
 
-        while (context.Arguments.Peek() is { } flag)
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
-            if (flag == "--verdict")
-            {
-                context.Arguments.TryTake();
-                verdictText = context.Arguments.TryTake();
-                if (verdictText is null)
-                {
-                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                        "missing-flag-value", "'--verdict' requires a value."));
-                }
-
-                continue;
-            }
-
-            if (flag == "--range-from")
-            {
-                context.Arguments.TryTake();
-                rangeFrom = context.Arguments.TryTake();
-                if (rangeFrom is null)
-                {
-                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                        "missing-flag-value", "'--range-from' requires a value."));
-                }
-
-                continue;
-            }
-
-            if (flag == "--range-to")
-            {
-                context.Arguments.TryTake();
-                rangeTo = context.Arguments.TryTake();
-                if (rangeTo is null)
-                {
-                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                        "missing-flag-value", "'--range-to' requires a value."));
-                }
-
-                continue;
-            }
-
-            if (flag == "--role")
-            {
-                context.Arguments.TryTake();
-                roleText = context.Arguments.TryTake();
-                if (roleText is null)
-                {
-                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                        "missing-flag-value", "'--role' requires a value."));
-                }
-
-                continue;
-            }
-
-            if (flag == "--change")
-            {
-                context.Arguments.TryTake();
-                changeName = context.Arguments.TryTake();
-                if (changeName is null)
-                {
-                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                        "missing-flag-value", "'--change' requires a value."));
-                }
-
-                continue;
-            }
-
-            break;
+            ["--verdict"] = value => verdictText = value,
+            ["--range-from"] = value => rangeFrom = value,
+            ["--range-to"] = value => rangeTo = value,
+            ["--role"] = value => roleText = value,
+            ["--change"] = value => changeName = value,
+            ["--finding-recurred"] = value => recurringFindingIds.Add(value),
+            ["--finding-new"] = value => newFindingManifestPaths.Add(value),
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
         }
 
         if (verdictText is null)
@@ -939,8 +925,52 @@ internal static class CommandParser
                 "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
         }
 
+        foreach (var recurringId in recurringFindingIds)
+        {
+            if (string.IsNullOrWhiteSpace(recurringId))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "invalid-finding-recurred", "'--finding-recurred' cannot name an empty or whitespace-only card id."));
+            }
+        }
+
+        var newFindings = new List<Callboard.Cards.NewFindingCardRequest>(newFindingManifestPaths.Count);
+        foreach (var manifestPath in newFindingManifestPaths)
+        {
+            // §6 remediation's own precedent (--blind-spot-body-file): argv-decidable first (no
+            // readable file at all is the caller's own mistake to fix here), environmental second
+            // (a file that exists but cannot be read is not something the caller typo'd).
+            if (!File.Exists(manifestPath))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "finding-new-manifest-not-found",
+                    $"'--finding-new' names a path with no readable file: '{manifestPath}'."));
+            }
+
+            string manifestContent;
+            try
+            {
+                manifestContent = File.ReadAllText(manifestPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "finding-new-manifest-unreadable",
+                    $"'--finding-new' names a file that exists but could not be read: '{manifestPath}' ({ex.Message})"));
+            }
+
+            var (request, manifestFailure) = Callboard.Cards.NewFindingCardManifest.Parse(manifestPath, manifestContent);
+            if (manifestFailure is not null)
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "finding-new-manifest-malformed", manifestFailure));
+            }
+
+            newFindings.Add(request!);
+        }
+
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionVerdict(
-            filePath, verdict, rangeFrom, rangeTo, role, changeName, context.WorkingDirectory, context.Clock()));
+            filePath, verdict, rangeFrom, rangeTo, role, changeName, recurringFindingIds, newFindings, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

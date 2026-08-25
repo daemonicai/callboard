@@ -29,5 +29,15 @@ internal sealed class SectionVerdictResult : ICommandResult
     [JsonPropertyName("timestamp")]
     public required DateTimeOffset Timestamp { get; init; }
 
+    /// <summary>The ids of every card <c>--finding-recurred</c> returned to <c>briefed</c> this
+    /// call, in the order named (§8a block B).</summary>
+    [JsonPropertyName("recurredCardIds")]
+    public required IReadOnlyList<string> RecurredCardIds { get; init; }
+
+    /// <summary>The ids of every card created for a first-time finding this call, in
+    /// <c>--finding-new</c> argv order (§8a block B).</summary>
+    [JsonPropertyName("newCardIds")]
+    public required IReadOnlyList<string> NewCardIds { get; init; }
+
     public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CliJsonContext.Default.SectionVerdictResult);
 }

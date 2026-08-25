@@ -34,6 +34,9 @@ internal static class CardFileParser
     private static readonly HashSet<string> BlockOnlyFrontmatterKeys = new(StringComparer.Ordinal)
     {
         "base", "reviewed_state", "tasks", "gate_results", "round", "blocked_by",
+        // §8a block B's addition: the key of the finding this card is remediating (BlockCardFields.
+        // FindingKey), unset for a task-implementing block.
+        "finding_key",
     };
 
     // §5 block E's three fields — known only when the card's own kind is section, the same
@@ -637,7 +640,9 @@ internal static class CardFileParser
             return (null, gateResultsFailure);
         }
 
-        return (new BlockCardFields(baseCommit, reviewedState, tasks, round, blockedBy, gateResults!), null);
+        var findingKey = ParseOptionalFrontmatterValue(fields, "finding_key");
+
+        return (new BlockCardFields(baseCommit, reviewedState, tasks, round, blockedBy, gateResults!, findingKey), null);
     }
 
     /// <summary>

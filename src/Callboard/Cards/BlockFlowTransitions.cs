@@ -38,17 +38,23 @@ namespace Callboard.Cards;
 ///
 /// <para>
 /// <b><c>approved</c> is terminal for a task-implementing block (§8a block A revision, Product
-/// Owner ruling: "an approved block never goes back to work").</b> `AvailableFrom(Approved)` is
-/// empty on this table until block B lands, and even then it holds exactly one edge —
-/// <c>finding-recurred</c> — which a supervisor drives against a **remediation card**, never
-/// against a block that implements tasks. A task-implementing block reviewed and found wanting is
-/// not reopened: the fix becomes a new remediation block the section carries, and the original
-/// stays exactly as approved. This table used to carry a second edge here, <c>amendment-requested</c>
-/// — the architect deliberately reopening an approved block for a fresh review — but it depended on
-/// closing comparing each block's certified state against the repository at close time, a check
-/// that turned out to have no satisfiable remedy of its own (see <see cref="CardStore.
-/// ValidateBlockForLanding"/>'s doc comment) and was cut along with it. There is no route from
-/// <c>approved</c> back to <c>briefed</c> for a task-implementing block at all.
+/// Owner ruling: "an approved block never goes back to work").</b> `AvailableFrom(Approved)` holds
+/// exactly one edge — <see cref="FindingRecurred"/> (§8a block B) — reached only through
+/// <see cref="CardStore.RecordSectionVerdictUnderExistingLock"/>, and refused at parse the same
+/// "one door" way <c>approve</c>/<c>fix-before-land</c>/<c>land</c> already are
+/// (<see cref="Callboard.Cli.CommandParser.ParseBlockTransition"/>): a supervisor drives it
+/// directly against a **remediation card**, never against a block that implements tasks (checked
+/// independently of this table — see <see cref="CardStore.
+/// RecordSectionVerdictUnderExistingLock"/>'s own "targets a task-implementing block" refusal,
+/// which reads <see cref="BlockCardFields.Tasks"/>, not this edge's existence). A task-implementing
+/// block reviewed and found wanting is not reopened: the fix becomes a new remediation block the
+/// section carries, and the original stays exactly as approved. This table used to carry a second
+/// edge here, <c>amendment-requested</c> — the architect deliberately reopening an approved block
+/// for a fresh review — but it depended on closing comparing each block's certified state against
+/// the repository at close time, a check that turned out to have no satisfiable remedy of its own
+/// (see <see cref="CardStore.ValidateBlockForLanding"/>'s doc comment) and was cut along with it.
+/// There is no route from <c>approved</c> back to <c>briefed</c> for a task-implementing block at
+/// all — only for a remediation card, and only through <see cref="FindingRecurred"/>.
 /// </para>
 /// </summary>
 internal static class BlockFlowTransitions
@@ -104,19 +110,40 @@ internal static class BlockFlowTransitions
     private static readonly BlockFlowTransition Close = new("close", BlockFlowState.Landed, BlockFlowState.Closed);
 
     /// <summary>
+    /// work-lifecycle's own name for the one edge <c>approved</c> carries (§8a block B, "Section
+    /// remediation follows the finding, not the verdict" — "A finding the supervisor reports as
+    /// still unresolved SHALL return the card that owns it to <c>briefed</c> with <c>round</c>
+    /// incremented, by the <c>finding-recurred</c> transition"). Reached only through
+    /// <see cref="CardStore.RecordSectionVerdictUnderExistingLock"/>, which applies <see
+    /// cref="Match(BlockFlowState)"/>-style round incrementing itself (work-lifecycle: "round += 1
+    /// on all three") rather than through <see cref="CardStore.ApplyBlockTransitionUnderExistingLock"/>
+    /// — the same "one door, its own dedicated write" shape <see cref="Land"/> and <c>approve</c>
+    /// already established, not the generic <c>block transition</c> path. <c>block transition …
+    /// finding-recurred</c> is refused outright at parse (<see cref="Callboard.Cli.
+    /// CommandParser.ParseBlockTransition"/>), naming <c>section verdict --finding-recurred</c> as
+    /// the door.
+    /// </summary>
+    private static readonly BlockFlowTransition FindingRecurred = new("finding-recurred", BlockFlowState.Approved, BlockFlowState.Briefed);
+
+    /// <summary>The one way <see cref="FindingRecurred"/> is ever reached — see this field's own
+    /// doc comment.</summary>
+    internal static BlockFlowTransition FindingRecurredTransition => FindingRecurred;
+
+    /// <summary>
     /// The transitions legally available from <paramref name="state"/> — empty for <c>closed</c>,
-    /// the flow's one terminal state, and empty for <c>approved</c> too (§8a block A revision):
-    /// a task-implementing block that reaches <c>approved</c> has no caller-facing edge back to work
-    /// at all — see this type's own doc comment. <c>in-review</c> is the one state with three:
-    /// <c>approve</c>, <c>changes-requested</c> and <c>fix-before-land</c> (§8 block B), the latter
-    /// two landing on the same <c>briefed</c> destination as distinct named edges.
+    /// the flow's one terminal state, and exactly <see cref="FindingRecurred"/> for <c>approved</c>
+    /// (§8a block B): a task-implementing block that reaches <c>approved</c> has no caller-facing
+    /// edge back to work — only a remediation card does, and only through this one edge — see this
+    /// type's own doc comment. <c>in-review</c> is the one state with three: <c>approve</c>,
+    /// <c>changes-requested</c> and <c>fix-before-land</c> (§8 block B), the latter two landing on
+    /// the same <c>briefed</c> destination as distinct named edges.
     /// </summary>
     internal static IReadOnlyList<BlockFlowTransition> AvailableFrom(BlockFlowState state) => state.Match(
         onDrafting: static () => (IReadOnlyList<BlockFlowTransition>)[Brief],
         onBriefed: static () => [Claim],
         onBuilding: static () => [SubmitForReview],
         onInReview: static () => [Approve, ChangesRequested, FixBeforeLand],
-        onApproved: static () => [],
+        onApproved: static () => [FindingRecurred],
         onLanded: static () => [Close],
         onClosed: static () => []);
 }

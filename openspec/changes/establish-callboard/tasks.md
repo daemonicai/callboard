@@ -92,11 +92,11 @@
 - [x] 8a.3 Implement section close landing every block in the section as one write, or landing none
 - [x] 8a.4 Refuse section close where any block is not `approved`
 - [x] 8a.6 Refuse section close on any block carrying a non-zero or absent expected gate
-- [ ] 8a.7 Implement a first-time supervisor finding creating a new remediation block card, ticking nothing
-- [ ] 8a.8 Implement `finding-recurred` returning the owning card to `briefed` at a higher round
-- [ ] 8a.9 Refuse a recurrence that would create a second card for a finding a card already owns
-- [ ] 8a.10 Implement one verdict both returning a card for a recurrence and creating one for a new finding
-- [ ] 8a.11 Refuse `finding-recurred` targeting a task-implementing block
+- [x] 8a.7 Implement a first-time supervisor finding creating a new remediation block card, ticking nothing
+- [x] 8a.8 Implement `finding-recurred` returning the owning card to `briefed` at a higher round
+- [x] 8a.9 Refuse a recurrence that would create a second card for a finding a card already owns
+- [x] 8a.10 Implement one verdict both returning a card for a recurrence and creating one for a new finding
+- [x] 8a.11 Refuse `finding-recurred` targeting a task-implementing block
 - [ ] 8a.12 Retain every supervisor verdict against the section, never overwriting an earlier one
 - [ ] 8a.13 Refuse a third or subsequent `request-changes` verdict absent a recorded Product Owner authorisation
 - [ ] 8a.14 Derive the verdict count from the record at request time, never storing it

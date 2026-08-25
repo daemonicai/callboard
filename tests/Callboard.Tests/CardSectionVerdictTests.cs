@@ -44,7 +44,7 @@ public sealed class CardSectionVerdictTests : IDisposable
         var path = WriteInitialSectionCard("s-0001", "S-0001");
 
         var outcome = CardStore.RecordSectionVerdict(
-            _root, path, SectionVerdict.RequestChanges, "e055e5b", "a52cd7a", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName);
+            _root, path, SectionVerdict.RequestChanges, "e055e5b", "a52cd7a", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []);
 
         var recorded = AssertRecorded(outcome);
         Assert.Equal(SectionVerdict.RequestChanges, recorded.Entry.Verdict);
@@ -71,9 +71,9 @@ public sealed class CardSectionVerdictTests : IDisposable
         var path = WriteInitialSectionCard("s-0002", "S-0002");
 
         AssertRecorded(CardStore.RecordSectionVerdict(
-            _root, path, SectionVerdict.RequestChanges, "e055e5b", "cdcd6fa", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName));
+            _root, path, SectionVerdict.RequestChanges, "e055e5b", "cdcd6fa", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []));
         AssertRecorded(CardStore.RecordSectionVerdict(
-            _root, path, SectionVerdict.Approve, "e055e5b", "a52cd7a", CardOwner.Supervisor, Created.AddDays(1), TimeSpan.FromSeconds(5), ChangeName));
+            _root, path, SectionVerdict.Approve, "e055e5b", "a52cd7a", CardOwner.Supervisor, Created.AddDays(1), TimeSpan.FromSeconds(5), ChangeName, [], []));
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(2, read.SectionFields.Verdicts.Length);
@@ -90,7 +90,7 @@ public sealed class CardSectionVerdictTests : IDisposable
         AssertWriteSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName));
 
         var outcome = CardStore.RecordSectionVerdict(
-            _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName);
+            _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []);
 
         var notASection = Assert.IsType<CardSectionVerdictOutcome.NotASectionCard>(outcome);
         Assert.Equal(CardKind.Question, notASection.Kind);
@@ -102,7 +102,7 @@ public sealed class CardSectionVerdictTests : IDisposable
         var path = Path.Combine(_directory, "missing.md");
 
         var outcome = CardStore.RecordSectionVerdict(
-            _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName);
+            _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []);
 
         var notFound = Assert.IsType<CardSectionVerdictOutcome.CardNotFound>(outcome);
         Assert.Equal(path, notFound.FilePath);
@@ -114,7 +114,7 @@ public sealed class CardSectionVerdictTests : IDisposable
         var path = WriteInitialSectionCard("s-0003", "S-0003");
 
         var outcome = CardStore.RecordSectionVerdict(
-            _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), "a-different-change");
+            _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), "a-different-change", [], []);
 
         Assert.IsType<CardSectionVerdictOutcome.LayoutMismatch>(outcome);
     }
@@ -126,7 +126,7 @@ public sealed class CardSectionVerdictTests : IDisposable
         File.WriteAllText(path, "not a card file at all");
 
         var outcome = CardStore.RecordSectionVerdict(
-            _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName);
+            _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName, [], []);
 
         var corrupt = Assert.IsType<CardSectionVerdictOutcome.CardCorrupt>(outcome);
         Assert.Equal(path, corrupt.FilePath);
@@ -141,7 +141,7 @@ public sealed class CardSectionVerdictTests : IDisposable
         try
         {
             var outcome = CardStore.RecordSectionVerdict(
-                _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromMilliseconds(200), ChangeName);
+                _root, path, SectionVerdict.Approve, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromMilliseconds(200), ChangeName, [], []);
 
             Assert.IsType<CardSectionVerdictOutcome.ToolFailure>(outcome);
         }
@@ -209,6 +209,10 @@ public sealed class CardSectionVerdictTests : IDisposable
             onNotASectionCard: static n => throw new Xunit.Sdk.XunitException($"expected Recorded, got NotASectionCard({n.Kind.ToWireString()})"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Recorded, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Recorded, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onRecurringFindingNotApproved: static notApproved => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringFindingNotApproved: '{notApproved.CardId}'"),
+            onRecurringFindingTargetsTaskImplementingBlock: static taskImplementing => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringFindingTargetsTaskImplementingBlock: '{taskImplementing.CardId}'"),
+            onFindingAlreadyOwned: static alreadyOwned => throw new Xunit.Sdk.XunitException($"expected Recorded, got FindingAlreadyOwned: '{alreadyOwned.Key}'"),
+            onNewFindingCardAlreadyExists: static alreadyExists => throw new Xunit.Sdk.XunitException($"expected Recorded, got NewFindingCardAlreadyExists: '{alreadyExists.FilePath}'"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Recorded, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Recorded, got ToolFailure: {toolFailure.Reason}"));
 

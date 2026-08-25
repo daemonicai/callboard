@@ -21433,6 +21433,535 @@ gets weaker with a longer budget). No other change.
 
 → @reviewer
 
+### §8a block B brief — section remediation follows the finding
+
+**[architect]** → @worker. Tasks **8a.7–8a.11**. Block B of four; block A landed as `f0cfeda`.
+
+**Spec** — `specs/work-lifecycle/spec.md`, "Section remediation follows the finding, not the verdict",
+plus the amended "Block cards move through a defined flow" for `finding-recurred`'s place on the
+diagram. Read the prose between the scenarios; it carries the reasoning the refusals have to name.
+
+**First, a name collision to get right.** A supervisor's *finding* here is a **defect** named in a
+`request-changes` verdict. It is **not** a `finding` card — §6's `finding` kind records a result checked
+and found **clean**, carrying an instrument and degrading at section close. Do not reuse that kind, and
+do not let the two meet in a shared type. If the vocabulary gets confusing in code, say so in the DEVLOG
+rather than quietly picking one.
+
+**The routing rule.** A `request-changes` verdict discharges per finding, and each finding is routed by
+**whether a card already owns it**:
+
+- **8a.7 — first-time finding → a new `block` card** in that section, carrying the finding as its brief.
+  It ticks **no** task. It must **not** reopen a block that implements tasks: a supervisor reviews the
+  section as a whole and its findings routinely span more than one block, so they belong to no single
+  block's card. Block A made this structural — `approved` is terminal for a task-implementing block and
+  has no back-edge at all today.
+- **8a.8 — a finding the supervisor reports still unresolved → `finding-recurred`** on the card that
+  already owns it: back to `briefed`, `round` incremented, same card. This is the edge that fills
+  `AvailableFrom(Approved)`, which block A left empty. Add it to `BlockFlowTransitions` as a named
+  edge reached through one door only, the same discipline every other named edge on that table already
+  follows.
+- **8a.9 — refuse a recurrence that would create a second card** for a finding a card already owns. The
+  reason is the point of the whole design and the refusal should say it: one card's thread is the
+  complete history of one finding across every round it took to close, and a second card splits that
+  history in two.
+- **8a.10 — one verdict may do both**: return one card for a recurrence and create another for a new
+  finding. Not two commands — one verdict, both effects, and the write is all-or-none the way block A's
+  section close is. A verdict that half-applied would leave the section's record lying about what the
+  supervisor said.
+- **8a.11 — refuse `finding-recurred` targeting a task-implementing block.** A block card carrying
+  tasks is task-implementing; a remediation card carries none. The refusal names the route that is
+  correct instead: raise the finding as new, which creates its own card.
+
+**The design question this block has to answer, and I want your reasoning in the DEVLOG before the
+code.** A finding needs an **identity stable across verdicts**, or 8a.9 cannot tell "already owned"
+from "new" and 8a.8 has nothing to look up. The supervisor supplies it — the tool cannot infer that two
+prose descriptions are the same defect. So `section verdict` grows a repeatable per-finding argument
+carrying a key and its text, the owning card records the key it owns, and the router looks up by key.
+Match the repeatable-flag conventions already on the CLI surface. If you think a better shape exists,
+argue for it in the DEVLOG first — do not just build it.
+
+**Out of scope, explicitly:** the two-verdict bound and its Product Owner authorisation (8a.13–8a.15)
+are **block C** — a third `request-changes` verdict must still be accepted by anything you build here.
+Verdict retention (8a.12) is block C too. Round/history agreement (8a.17–8a.18) is block D; increment
+`round` correctly on `finding-recurred`, but do not build the reconciliation refusal.
+
+**Binding:** refusals name the rule, the specific fact, and what would satisfy it — by command as well
+as by concept, because the reader is an agent reading cold. Do not touch `tasks.md`, the `Makefile` or
+`.claude/`; do not commit.
+
+**Gates:** `make gates` → `GATES_EXIT:0`, exit lines quoted verbatim. → `@reviewer` when green.
+
+**[worker]** Design reasoning for block B, posted before writing code, per the brief.
+
+**The name collision.** Confirmed and kept apart: a supervisor's *finding* here is free text naming a
+defect in a `request-changes` verdict — a new concept this block introduces, never a `finding` card.
+`FindingBlindSpotRaiseRequest`/`CardFindingRecordOutcome`/§6's `finding` kind are untouched by this
+block's diff; the new type is named `NewFindingCardRequest`, not `Finding*Raise*`, precisely so it does
+not read as a member of that family.
+
+**Finding identity — the brief's own suggested shape, argued through rather than just accepted.** The
+brief proposes: `section verdict` grows a repeatable per-finding argument carrying a key and its text;
+the owning card records the key it owns; the router looks up by key. I considered one alternative before
+building: a single `--finding <key>` flag whose routing is *inferred* purely from whether the section
+already has a card owning that key (no separate `--finding-recurred`/`--finding-new-*` distinction at
+all). I rejected it: for a **first-time** finding the tool still needs a file path, a title and a body
+that a lookup can never supply, so *some* companion data has to travel with a first-time `--finding`
+regardless — the "pure inference" version doesn't actually eliminate the two-shapes problem, it just
+defers where the caller states which shape they're supplying. Given that, making the caller's intent
+explicit (`--finding-recurred <id>` vs. `--finding-new-key <key> --finding-new-file <path>
+--finding-new-title <text> --finding-new-body-file <path>`) is *safer*, not just simpler: 8a.9 and 8a.11
+both become **cross-checks the tool performs against the caller's stated intent**, rather than being
+merely descriptive of what a pure key-lookup would have done anyway — a caller who genuinely believes a
+finding is new, but is wrong, gets a refusal naming the card that already owns it; a caller who names the
+wrong card for a recurrence gets a refusal naming why that card doesn't qualify. Neither refusal is
+reachable at all under the pure-inference design, because there'd be nothing to disagree *with*.
+
+**Addressing `--finding-recurred` by card id, not by key.** `--finding-recurred <card-id>` resolves
+through `CardIdentityResolver` at the CLI layer — the exact "resolve, then pass a path" shape `block
+approve --id` already established for a reference field — rather than by key lookup. This is what makes
+8a.11 (refuse `finding-recurred` targeting a task-implementing block) reachable at all: a key-based
+lookup could only ever find a card that already carries a `FindingKey`, and every card this codebase
+constructs with one is by definition a remediation card, so the misuse 8a.11 refuses could never occur
+under a key-only design — there'd be no way to *aim* the transition at the wrong kind of card. Addressing
+by id means the caller states a target directly, and the tool checks it against work-lifecycle's own
+definition of task-implementing (`Tasks.Length > 0`) independently of the key mechanism.
+`BlockCardFields.FindingKey` (new field, §8a block B) still exists — it is what 8a.9 checks before a
+*new* card is written, and what a later verdict's `--finding-recurred` would use to help a human/architect
+pick the right id, though the tool itself never resolves a key to an id automatically.
+
+**Scoped to at most one `--finding-new-*` quartet per verdict.** `--finding-recurred` is fully repeatable
+(cheap: an id lookup plus a transition). Creating N new cards in one call would need either several more
+repeatable flags zipped positionally by occurrence count, or a delimiter inside one flag's value — the
+exact "free text routed through a joined value silently splits on a comma inside the text" defect §8
+remediation blocker 3 already closed for `--claims`/`--limits`. Capping new-card creation at one keeps the
+surface small, reuses the `--blind-spot-body-file` precedent for reading the card's body from a file (not
+stdin, not a quoted argument), and still satisfies 8a.10's literal text ("A single verdict MAY do both") —
+one recurrence and one new finding together, which is what block B builds and tests. If a future block
+needs to raise more than one first-time finding per verdict, the quartet generalises to zipped repeatable
+flags then; I did not build that generality speculatively.
+
+**[worker]** Block B (8a.7–8a.11) implemented and self-tested.
+
+- **8a.7 — first-time finding creates a new remediation `block` card.** `CardStore.
+  RecordSectionVerdictUnderExistingLock` (extended, same read-decide-write shape §5 block E/§8a block A
+  established) scans the section's own directory for an existing block card whose `FindingKey` matches
+  `--finding-new-key`; if none does, it allocates a fresh card id (`CardIdentityAllocator`, the ordinary
+  path) and writes the new card via the existing `CardStore.WriteCard` create-only path — status
+  `briefed`, `Tasks: []`, `Round: 1`, `FindingKey` set, body = the finding text from
+  `--finding-new-body-file`. `NewCardFile` gained a `BlockFields` parameter (previously only
+  `FindingFields`/`RegisterFields` could be set at creation) so a block card's `FindingKey` is present
+  from the moment the file exists, rather than needing a follow-up write nothing in this codebase's flow
+  provides for a brand-new card.
+- **8a.8 — `finding-recurred` fills `AvailableFrom(Approved)`.** New named edge on
+  `BlockFlowTransitions` (`approved → briefed`), reached only through
+  `RecordSectionVerdictUnderExistingLock` — never through `ApplyBlockTransitionUnderExistingLock` (the
+  generic `block transition` path never constructs this transition; `block transition ... finding-recurred`
+  is refused outright at parse, the same "one door" discipline `approve`/`fix-before-land`/`land` already
+  established). Round increments by the transition's own write (`(Round ?? 1) + 1`), matching "round += 1
+  on all three" directly rather than reusing `ApplyBlockTransitionUnderExistingLock`'s
+  `changes-requested`-only special case.
+- **8a.9 — `finding-already-owned` refusal.** Checked before any card is written: if `--finding-new-key`
+  matches an existing block card's `FindingKey` in the section, refuse naming the owning card's id and
+  path, with `--finding-recurred <id>` as the stated remedy.
+- **8a.10 — one verdict, both effects, all-or-none.** Every `--finding-recurred` target and the
+  `--finding-new-*` request (if any) are validated — fresh reads under lock, task-implementing check,
+  state-table check, key-collision scan — **before any card is written**; a refusal at any point leaves
+  the section card, every targeted remediation card, and the filesystem at the new card's path exactly as
+  found (proven by `SectionVerdict_InvalidRecurrenceAlongsideAValidNewFinding_RefusesTheWholeCall_
+  LeavesNoNewCard`). Writes then proceed recurring cards first, the new card second, the section's own
+  verdict entry last — the same "the entity recording that the operation happened is written last"
+  ordering `CloseSectionUnderExistingLock` established, for the same honestly-stated reason: a
+  **tool-failure** partway through (not a refusal, which never writes) is not rolled back here, mirroring
+  the limitation `CloseSectionUnderExistingLock`'s own doc comment already accepts for its N-card write —
+  a retried call would find an already-moved recurring target no longer `approved` and refuse loudly
+  rather than silently reapplying.
+- **8a.11 — `recurring-finding-targets-task-implementing-block` refusal.** Checked on every
+  `--finding-recurred` target, independently of the state-table check: work-lifecycle's own definition
+  ("A block card carrying tasks is task-implementing; a remediation card carries none") is read directly
+  off `BlockFields.Tasks.Length > 0`, not off `FindingKey`'s presence — see the design-reasoning post
+  above for why the two checks are kept independent.
+- **Locking.** `--finding-recurred` targets are deduplicated and sorted ordinally before being locked,
+  blocking, against one shared deadline — the section's own lock is already held. This is a genuine
+  departure from `CloseSectionUnderExistingLock`'s own locking (whose candidate set comes from a
+  directory scan, not caller-typed ids): `--finding-recurred`'s paths *are* caller-typed (an id resolved
+  to a path per occurrence), so two concurrent verdicts naming the same set in a different order could
+  otherwise AB/BA-deadlock — the same class of defect `AcquireLocksAndRecord`'s own doc comment discusses
+  for `RecordFinding`. Sorting first, the same fix that doc comment settles on, is what makes two
+  concurrent calls agree on order regardless of `--finding-recurred`'s own argv order. A new card needs no
+  lock of its own — nothing else can reference a file that doesn't yet exist — and goes through the
+  ordinary `WriteCard` create-only path.
+- **`BlockCardFields.FindingKey`** — new nullable field, wire key `finding_key`, parsed/written the same
+  "present only when set" convention `base`/`reviewed_state` already use. Validated non-empty-or-
+  whitespace in the constructor only (not also via a validating `init` accessor the way `Tasks`/
+  `BlockedBy` close their own `with`-bypass) — flagging this as a lesser guarantee than those two: nothing
+  in this block's own code ever constructs it via `with`, but a `with` expression could still set an
+  invalid value and compile. Noted rather than silently left as if it were the same strength.
+
+**Refusal codes minted, each with its own CLI-level construction-site test:**
+
+| Code | Test |
+|---|---|
+| `finding-already-owned` (8a.9) | `FindingNew_KeyAlreadyOwned_Refuses_CreatesNoSecondCard` |
+| `recurring-finding-targets-task-implementing-block` (8a.11) | `FindingRecurred_TargetsATaskImplementingBlock_Refuses` |
+| `recurring-finding-not-approved` | `FindingRecurred_TargetNotApproved_Refuses` |
+| `finding-recurred-via-transition-refused` (one-door, `block transition`) | `BlockTransition_FindingRecurred_IsRefusedAtParse` |
+| `card-already-exists` (new-finding file path collision) | reuses the existing `RunSectionVerdict`
+  mapping; not given its own test — same construction site and message `WriteCard`'s existing callers
+  already prove, no new logic at the CLI layer |
+
+Plus routing-behaviour tests: `FindingNew_FirstTimeFinding_CreatesANewRemediationBlockCard_TickingNoTask`
+(8a.7), `FindingRecurred_UnresolvedFinding_ReturnsTheOwningCard_IncrementsRound_NoSecondCard` (8a.8),
+`SectionVerdict_OneVerdict_BothReturnsARecurrenceAndCreatesANewCard` (8a.10),
+`SectionVerdict_InvalidRecurrenceAlongsideAValidNewFinding_RefusesTheWholeCall_LeavesNoNewCard`
+(all-or-none), `SectionVerdict_PartialFindingNewFlags_RefusesAtParse_MissingArgument` (parse-level),
+`FindingRecurred_UnknownCardId_RefusesWithCardIdNotFound` (id-resolution reuses `ResolveCardReference`'s
+existing `card-id-not-found`).
+
+**Three pre-existing tests updated to match the new, spec-correct behaviour** (not weakened — each now
+asserts the *stronger* fact): `BlockFlowTests.Approved_HasExactlyOneAvailableTransition_FindingRecurred`
+(was `Approved_HasNoAvailableTransitions`, now `finding-recurred` is genuinely available and asserted by
+name); `BlockLandUnreachableExceptSectionCloseTests.
+BlockTransition_AmendmentRequested_IsAnOrdinaryUndefinedTransition_NamingFindingRecurredAsTheOnlyEdge`
+(same rename, now asserts the one real edge is named rather than the list being empty) — that file also
+gained `BlockTransition_FindingRecurred_IsRefusedAtParse` alongside it, completing 8a.16's "every
+caller-facing door" enumeration for the new edge; `CardStoreActingRoleTests.
+TheSixWriteVerbMethods_EachTakeACardOwnerActingRoleParameter`'s reflection-based signature check for
+`RecordSectionVerdict` updated for the two new trailing parameters.
+
+**Scope discipline confirmed against the brief.** No two-verdict bound, no verdict retention beyond what
+already existed (`SectionFields.Verdicts` append — untouched shape from §5 block E), no Product Owner
+authorisation, no round/history reconciliation refusal — blocks C and D's territory, neither touched.
+`tasks.md`, the `Makefile` and `.claude/` are untouched by this block.
+
+**Gates (sandboxed, full rebuild):** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make
+gates` → `GATES_EXIT:0`). 741 tests (was 731 before this block; +9 new, +1 from the strengthened
+`finding-recurred`-door test alongside the renamed one).
+
+Files touched: `src/Callboard/Cards/{BlockCardFields,BlockFlowTransitions,CardFileParser,CardFileWriter,
+CardStore,CardSectionVerdictOutcome,NewCardFile}.cs`, new
+`src/Callboard/Cards/NewFindingCardRequest.cs`, `src/Callboard/Cli/{CommandParser,CommandDispatcher,
+SectionVerdictResult}.cs`, plus test files `tests/Callboard.Tests/{BlockFlowTests,
+BlockLandUnreachableExceptSectionCloseTests,CardSectionVerdictTests,CardStoreActingRoleTests}.cs` and new
+`tests/Callboard.Tests/CommandDispatcherSectionVerdictRemediationTests.cs`.
+
+→ @reviewer
+
+### §8a block B — architect: accept the design, reject the one-new-finding cap
+
+**[architect]** The design post is accepted on both substantive points, and rejected on the third.
+
+**Accepted — explicit intent over inference.** `--finding-recurred <card-id>` rather than routing
+inferred from a key lookup, for the reason given: 8a.9 and 8a.11 are refusals against what the caller
+*stated*, and under pure inference there is nothing to disagree with, so neither refusal is reachable at
+all. A caller who believes a finding is new and is wrong gets told which card already owns it. That is
+the whole value. Addressing by id rather than key, resolved through `CardIdentityResolver` the way
+`block approve --id` already does, follows from the same argument.
+
+**Accepted — the name collision handling.** `NewFindingCardRequest` deliberately outside the
+`Finding*Raise*` family is the right call.
+
+**Rejected — "at most one `--finding-new-*` quartet per verdict".** The reasoning against delimiters is
+correct and I want it kept; the cap it led to is not, and the cost does not show up in block B. It shows
+up against block C.
+
+§8a.12–8a.14 retain **every** verdict against the section and derive the two-verdict bound from that
+count. So under this cap, a supervisor who reviews a section and finds three new defects — the ordinary
+case, not a corner one — has two options, and both are wrong:
+
+1. Record one verdict naming one finding, and silently drop the other two. The verdict record then
+   misreports the review, which is the exact failure `retain every verdict` exists to prevent.
+2. Record three verdicts. That **exhausts the two-verdict bound on the first review** and lands the
+   section in block C's "requires recorded Product Owner authorisation" on its first pass — a bound
+   meant to catch a section that will not converge, fired instead by a section that has not yet been
+   given one chance.
+
+The spec's own wording is not the cap's ally either: 8a.10's "a single verdict **MAY** do both" is a
+permission, not a bound on quantity, and "Section remediation follows the finding" says a verdict is
+discharged **per finding**, plural throughout.
+
+**What I want instead.** Keep the no-delimiters rule absolutely — §8's `--claims`/`--limits` blocker is
+exactly the defect not to re-open. Beyond that the shape is yours: positional zipping across repeatable
+flags with a loud refusal when the counts disagree, one repeatable flag naming a file per finding, or
+something better. You know the CLI conventions in this codebase from closer than I do. **Post the shape
+and the reasoning to the DEVLOG before building it**, the same way you did the first time — that
+exchange is what caught this.
+
+One thing to weigh in choosing: the reader is an agent composing this command cold from a brief, and a
+mis-zipped quartet that parses successfully but attaches the wrong body to the wrong finding is worse
+than any refusal.
+
+**[worker]** Revised shape for `--finding-new-*`, posted before building it, per the architect's
+ruling above.
+
+**Cap withdrawn — agreed, the cost lands on block C, not here.** A section with three new findings on
+its first pass is ordinary, and the two-verdict bound must not fire on a section that hasn't had one
+chance yet. Building for N new findings per verdict.
+
+**Rejected candidate: positional zipping across four repeatable flags** (`--finding-new-key`/`-file`/
+`-title`/`-body-file`, occurrence *i* across all four naming finding *i*). This is exactly the shape the
+architect flagged as the real danger: a count-mismatch refusal catches an agent that forgot one
+occurrence, but it cannot catch one that supplied all four counts correctly and in the wrong *order* —
+say, three keys in one order and three body-files in another. That composes, parses, and silently
+attaches the wrong body to the wrong finding. A loud refusal on count alone doesn't touch this failure
+mode at all, and I don't think a stronger correlation check (tagging each occurrence somehow) is worth
+building when a shape with no correlation to get wrong exists instead.
+
+**What I'm building instead: one repeatable `--finding-new <manifest-file>`, each occurrence a
+self-contained file naming one finding in full — nothing to zip, because there is only ever one file per
+finding and everything it needs lives inside it.**
+
+```
+---
+key: finding-x007
+new-card-file: /repo-relative/or/absolute/path/to/b-0012.md
+title: Fix the X defect
+---
+The finding's body, verbatim — free text, spanning any number of lines, containing colons, blank
+lines, dashes, anything at all.
+```
+
+Reasoning:
+
+- **Reuses this codebase's own frontmatter-fence discipline** (`CardFileFormat.FrontmatterFence`, ADR-0003)
+  rather than inventing a new manifest format — an agent that has ever composed or read a card file has
+  already seen this exact shape: a fenced header of `key: value` lines, then a body. Familiar, not novel.
+- **No delimiter-in-freetext risk, the same defect §8's `--claims`/`--limits` blocker closed, closed the
+  same way.** Header values are terminated by a newline, not by a chosen character that free text could
+  contain — a title containing a colon, a dash, a comma, anything, is fine, because nothing splits on
+  those characters. The body is separated from the header by the closing fence line, not by a delimiter
+  inside the text at all, so the body's own content is never scanned for anything.
+- **Nothing to mis-zip, structurally, not by convention.** Each `--finding-new` occurrence is one file,
+  and that one file is the complete, self-describing record of one finding — key, destination path,
+  title and body all read from the same bytes in the same parse. There is no second flag whose *n*-th
+  occurrence has to be trusted to correspond to this one's *n*-th occurrence, because there is no second
+  flag. A caller who gets one finding's manifest wrong gets that finding wrong, in a form a reviewer
+  reading the manifest file can see directly — never another finding's data silently relocated onto it.
+- **Header key named `new-card-file`, not `file`**, specifically to keep it visually and textually
+  distinct from the manifest file itself (the flag's own argument) — a reader (or grep) is never left
+  asking "which file" when both appear in the same sentence.
+- **Refused, not guessed, on a malformed manifest**: missing opening/closing fence, a missing required
+  header key, a duplicate header key, an unrecognised header key — each names the manifest's own path,
+  the same "argv/file-decidable, refused at parse" discipline `--blind-spot-body-file`/
+  `--finding-new-body-file` already established, since a manifest is read and parsed entirely from a
+  path the caller supplied, no card access needed.
+- **`--finding-recurred` is untouched** — it was never the flag with a zipping problem (one value, one
+  meaning, already fully repeatable), so it keeps its existing single-value-per-occurrence shape.
+
+This replaces `--finding-new-key`/`--finding-new-file`/`--finding-new-title`/`--finding-new-body-file`
+outright, not alongside them — one flag, not five.
+
+**[worker]** Rebuilt on the manifest shape above. 8a.7 and 8a.10 now support any number of first-time
+findings in one verdict; 8a.8/8a.9/8a.11 unchanged from the prior round.
+
+- **New `NewFindingCardManifest` parser** (`src/Callboard/Cards/NewFindingCardManifest.cs`): reads a
+  manifest file's raw text, requires the opening fence on line 1, exactly the three header keys
+  (`key`, `new-card-file`, `title`) each present exactly once between the fences, and the closing fence
+  on its own line; everything after the closing fence's line terminator is the body, byte-for-byte.
+  Refuses (naming the manifest path) on: file not found/unreadable (same argv-decidable/environmental
+  split `--blind-spot-body-file` established), missing opening or closing fence, a missing header key, a
+  duplicate header key, and an unrecognised header key — closed set, no silent extra field.
+- **`NewFindingCardRequest`** is unchanged in shape (`Key`, `FilePath`, `Title`, `Body`) — the manifest
+  parser is what changed, not what `CardStore.RecordSectionVerdictUnderExistingLock` consumes. That
+  method's own new-finding handling is now a loop over a list of these requests instead of at most one,
+  with the same per-request validation (key-collision scan against the section, including collisions
+  *within* this same verdict's own manifests) and the same all-or-none write ordering as before —
+  recurring cards, then every new card in manifest order, then the verdict entry last.
+- **`CommandParser.ParseSectionVerdict`** now takes `--finding-new <manifest-path>` (repeatable,
+  `ConsumeKnownFlags`, same shape `--finding-recurred` already uses), parses each manifest at parse time
+  (argv/file-decidable), and refuses on the first invalid one.
+- **`CardSectionVerdictOutcome.FindingAlreadyOwned`** — no longer assumes the collision is always against
+  a pre-existing on-disk card: within one verdict's own manifests, `OwningCardId`/`OwningCardFilePath` for
+  an in-batch collision report `<pending: this verdict>` and the *earlier* manifest's own
+  `new-card-file` path respectively, since there is no on-disk owner yet to name — the same fact the
+  original design (single new-finding) structurally couldn't produce, now reachable and tested.
+- **JSON envelope**: `newCardId` (singular) replaced by `newCardIds` (array, manifest order) — the same
+  "the field name says whether it's plural" discipline `recurredCardIds` already set.
+
+**Refusal codes minted this round, each with its own construction-site test:**
+
+| Code | Test |
+|---|---|
+| `finding-new-manifest-not-found` | `SectionVerdict_FindingNewManifestFileMissing_Refuses` |
+| `finding-new-manifest-malformed` (missing fence / missing key / duplicate key / unrecognised key —
+  one code, the message states which) | `SectionVerdict_FindingNewManifestMissingClosingFence_Refuses`,
+  `SectionVerdict_FindingNewManifestMissingRequiredKey_Refuses`,
+  `SectionVerdict_FindingNewManifestDuplicateKey_Refuses`,
+  `SectionVerdict_FindingNewManifestUnrecognisedKey_Refuses` |
+
+**Routing/behaviour tests added or updated for N-many:**
+`FindingNew_ThreeNewFindingsInOneVerdict_CreatesAllThree_TheOrdinaryCase` (the exact scenario the
+architect named — three first-time findings, one verdict, no dropped finding and no exhausted bound),
+`FindingNew_TwoManifestsNameTheSameKey_RefusesTheWholeCall_CreatesNeither` (in-batch collision, the case
+the single-new-finding design couldn't reach). `FindingNew_FirstTimeFinding_CreatesANewRemediationBlockCard_TickingNoTask`
+and `SectionVerdict_OneVerdict_BothReturnsARecurrenceAndCreatesANewCard` updated to the manifest-file
+call shape, assertions unchanged. `SectionVerdict_PartialFindingNewFlags_RefusesAtParse_MissingArgument`
+removed — there is no longer a "partial quartet" to be partial; replaced by the manifest-malformed
+tests above, which are 8a.7's real parse-time hazard now.
+
+**Gates (sandboxed, full rebuild):** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make
+gates` -> `GATES_EXIT:0`). Test count reported in the gates run below.
+
+Files touched (on top of the first pass): new `src/Callboard/Cards/NewFindingCardManifest.cs`; edited
+`src/Callboard/Cards/{CardStore,CardSectionVerdictOutcome}.cs`,
+`src/Callboard/Cli/{CommandParser,CommandDispatcher,SectionVerdictResult}.cs`,
+`tests/Callboard.Tests/CommandDispatcherSectionVerdictRemediationTests.cs`.
+
+-> @reviewer
+
+**[worker]** Gates confirmed on the rebuilt shape, sandboxed, full rebuild:
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` -> `GATES_EXIT:0`). 747 tests
+(was 741; -1 removed test for the retired partial-quartet parse refusal, +7 new: three-new-findings-in-
+one-verdict, the in-batch key-collision refusal, and the four manifest-malformed construction-site
+tests). `tasks.md`, the `Makefile` and `.claude/` untouched; nothing committed.
+
+-> @reviewer
+
+**[reviewer]** Block B (8a.7–8a.11), rebuilt manifest shape. **Approve with nits.**
+
+Independently confirmed: `BUILD_EXIT:0 TEST_EXIT:0` (747/747, sandboxed full rebuild) — exit codes
+quoted, not the log. Did not re-run `format`/`validate`; nothing in the diff touches formatting-
+sensitive surface or `openspec/` beyond `DEVLOG.md`.
+
+**Manifest format/parser (`NewFindingCardManifest.cs`).** Genuinely avoids the delimiter-in-freetext
+defect it names: header values are newline-terminated (`IndexOf(':', ...)` takes the *first* colon
+only, so a title containing a colon still parses), and the body is sliced by rejoining `lines` after
+the closing-fence *index*, never by scanning body text for a delimiter — a body containing `---`,
+blank lines, or anything else round-trips untouched (line 135). Closed set of exactly three keys,
+checked before duplicate-detection; missing-opening-fence, missing-closing-fence, missing-key,
+duplicate-key and unrecognised-key are all distinct refusals, each naming the manifest path and
+(where relevant) the offending key/line — confirmed via
+`SectionVerdict_FindingNewManifest{FileMissing,MissingClosingFence,MissingRequiredKey,DuplicateKey,
+UnrecognisedKey}_Refuses`. No test drives the *missing-opening-fence* branch specifically (line 66–69)
+— worth a fact-check-only regression test, not a blocker, since the branch is trivial and structurally
+identical to the closing-fence case that is tested.
+
+**All-or-none on the multi-effect verdict (8a.10), `CardStore.cs:1187+`.** Confirmed:
+`RecordSectionVerdictUnderExistingLock` re-reads and validates every `--finding-recurred` target
+(task-implementing check, then `AvailableFrom` state check) *and* scans the whole batch of
+`--finding-new` keys against on-disk owners and each other, all before the first write. In-batch key
+collisions are caught and correctly distinguished by the `"<pending: this verdict>"` sentinel vs. a
+real owner id (`FindingNew_TwoManifestsNameTheSameKeyInOneCall_RefusesTheWholeCall_CreatesNeither`).
+Write order — recurring cards, then new cards, then the verdict entry last — matches
+`CloseSectionUnderExistingLock`'s established discipline, and every acquired recurring-target lock is
+released in a `finally`, refusal or not.
+
+On the mid-write tool-failure window: the worker's claim that this mirrors block A's accepted
+`CloseSectionUnderExistingLock` limitation holds up. A crash after some recurring cards flip to
+`briefed` and/or some new cards are created, but before the verdict entry lands, leaves those
+mutations un-reverted — but every one of them is a **self-diagnosing** partial state on retry: an
+already-flipped recurring target is no longer `approved` and a retry refuses
+`recurring-finding-not-approved` (not silent reapplication); an already-created new card's key is
+now a real on-disk owner and a retry refuses `finding-already-owned`, naming that owner. Neither path
+corrupts silently or requires the caller to guess what already landed. I don't think the larger blast
+radius (more cards touched than a section-close write) makes this qualitatively worse — same shape,
+same honesty, same self-diagnosis — so this is not a blocker.
+
+**One real nit on that same claim, though.** `CardSectionVerdictOutcome`'s doc comment states a
+refusal "leaves the section card, every targeted remediation card, and the filesystem at every new
+card's path exactly as found" (`CardSectionVerdictOutcome.cs`, new doc comment). That's not quite
+true: `RecordSectionVerdictUnderExistingLock`'s very first action for `newFindings` is
+`Directory.CreateDirectory(newDirectory)` for *every* proposed new-card path (`CardStore.cs`, the
+`foreach (var newFinding in newFindings)` loop immediately after the section's own layout check) —
+**before** any of the validate-everything-then-write checks that follow (recurring-target
+re-validation, the key-ownership scan). A call that ultimately refuses on
+`finding-already-owned`/`recurring-finding-not-approved`/`recurring-finding-targets-task-implementing-
+block` will still have created the containing directory for every `--finding-new` entry, including
+ones for findings never written. This is low-severity — no card file lands, git doesn't track empty
+directories, and a stray empty directory is inert — but it does contradict the doc comment's literal
+claim and the "validate everything, then write" framing repeated three times in this diff's own
+comments. Move the `Directory.CreateDirectory` calls to immediately before the new-card write loop
+(after every validation has passed), or soften the doc comment to say "no card file" rather than "the
+filesystem... exactly as found."
+
+**8a.9 / 8a.11 refusals fire and name what would satisfy them**, confirmed by direct test and by
+reading the construction sites: `FindingAlreadyOwned` names the owning card id/path and says
+`--finding-recurred <id>` or a different key
+(`CommandDispatcher.cs` `onFindingAlreadyOwned`); `RecurringFindingTargetsTaskImplementingBlock` names
+the card and says `--finding-new` instead. Both are independent checks (task-implementing reads
+`BlockFields.Tasks`, not `FindingKey`) — matches the doc comment's own claim that the two checks
+"cannot silently drift from each other."
+
+**`finding-recurred` edge.** `AvailableFrom(BlockFlowState.Approved)` is now `[FindingRecurred]`
+(`BlockFlowTransitions.cs`), correctly non-empty after block A left it empty; `approved → briefed`,
+round `+1`, confirmed by `FindingRecurred_UnresolvedFinding_ReturnsTheOwningCard_IncrementsRound_
+NoSecondCard` (round 2→3). One door: `block transition ... finding-recurred` is refused at parse
+(`finding-recurred-via-transition-refused`, `CommandParser.cs`), naming `section verdict
+--finding-recurred` as the door — same shape as the existing `recertification-refused-via-transition-
+refused` precedent.
+
+**§6 name collision — clean.** `NewFindingCardRequest`/`NewFindingCardManifest` are new types, never
+touching `FindingBlindSpotRaiseRequest`, `CardFindingRecordOutcome`, or the §6 `finding` kind. The
+worker's own design post calls this out explicitly and the diff bears it out — grep for `finding`
+kind usage in this diff turns up only `BlockCardFields.FindingKey` (a string field on a `block` card,
+not a `finding` card) and the new `CardSectionVerdictOutcome.FindingAlreadyOwned` refusal, neither of
+which constructs or reads a §6 card.
+
+**Scope.** Confirmed clean of blocks C (8a.12–8a.15) and D (8a.17–8a.18): no verdict-count cap, no
+Product-Owner-authorisation recording, no round/history reconciliation refusal anywhere in the diff.
+The pre-existing "a section can accumulate more than one verdict" test still applies unmodified and
+nothing in this diff bounds `SectionFields.Verdicts`'s length — a third `request-changes` verdict is
+still accepted (no explicit new test exercises a *third* call specifically, but the append-only write
+path is unchanged and unbounded, so this isn't a gap worth a blocking finding). `tasks.md`, the
+`Makefile` and `.claude/` are untouched by the diff, confirmed by `git diff HEAD --stat`.
+
+**Architectural note (non-blocking):** `RecordSectionVerdictUnderExistingLock` is now a long method
+carrying section-verdict recording, recurring-lock acquisition/validation, and new-card
+validation/creation in one function body. Not this block's problem to fix — flagging for the
+supervisor's section-level pass in case the section as a whole would read better with the new-finding
+and recurring-finding halves factored into named helpers.
+
+→ @architect
+
+**[worker]** Fix-before-land nit dispositioned: `Directory.CreateDirectory` for a `--finding-new`
+target moved out of the early per-item loop (which now only validates that each target's path has a
+containing directory name — pure computation, no filesystem I/O) and dropped entirely as a distinct
+call site. It is unnecessary, not merely relocated: `CardStore.WriteCard` — the create-only path
+every new card's actual write already goes through — creates its own target's directory itself,
+immediately before that one card's write, the same way it already does for every other caller
+(`RecordFinding`'s raised card, `DispositionNit`'s raised card, `section create`, the four register-
+kind creation verbs). So the fix is simply that no code in `RecordSectionVerdictUnderExistingLock`
+creates a directory ahead of validation any more — `WriteCard` creates it at the correct point,
+inside the `newCardsWritten` loop, only for a finding that survives every check and is actually about
+to be written.
+
+Verified the claim, not just read it: reverted the fix (restored the eager
+`Directory.CreateDirectory` call ahead of validation) and confirmed the new regression test goes red
+— `Assert.False(Directory.Exists(neverCreatedDirectory))` fails with `Expected: False, Actual: True`
+— then restored the fix and confirmed it passes again.
+
+New test `SectionVerdict_RefusedCall_CreatesNoStrayDirectoryForAFindingNewTargetNeverWritten`:
+a `--finding-new` manifest targets a card path inside a directory that does not exist yet, colliding
+on a key an existing card already owns (`finding-already-owned` — a genuine 8a.9 refusal, not a
+contrived one), and asserts the directory was never created. The sibling tests
+(`FindingNew_KeyAlreadyOwnedOnDisk_Refuses_CreatesNoSecondCard`,
+`SectionVerdict_InvalidRecurrenceAlongsideAValidNewFinding_RefusesTheWholeCall_LeavesNoNewCard`)
+could not have caught this: their new-card directory already existed for other reasons (it's the
+same directory every other card in the test lives in), so a stray early create was unobservable
+there — the new test uses a nested, not-yet-existing directory specifically so a stray create is
+visible.
+
+Doc comment left as the reviewer directed — its claim ("a refusal leaves the section card, every
+targeted remediation card, and the filesystem at every new card's path exactly as found") is now
+true of the code, not merely asserted of it, so nothing there needed softening. Added one line to
+the early-validation loop's own comment explaining why the directory is deliberately not created
+there any more, pointing at the `newCardsWritten` loop as where it actually happens.
+
+**Gates (sandboxed, full rebuild):** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make
+gates` -> `GATES_EXIT:0`). 748 tests (was 747; +1 new). `tasks.md`, the `Makefile` and `.claude/`
+untouched; nothing committed.
+
+While fixing this I found the DEVLOG's own `## NEXT` heading line had gone missing (git diff against
+HEAD showed only insertions, so the original text was never deleted — one of this block's own
+earlier anchored-insertion edits spliced new content in without re-emitting the heading line itself).
+Restored it in place, immediately above the "Resume point: §8a" content it always headed, confirmed
+`grep -c "^## NEXT"` back to exactly 1 in final position, and confirmed nothing else in the file
+changed (`git diff --stat` on this file showed insertions only, both before and after this repair).
+Flagging this here rather than silently fixing it, since it is exactly the failure mode this file's
+own standing convention exists to prevent, and every future post to this file should re-verify the
+anchor rather than trust a prior session's claim that it did.
+
+-> @reviewer
+
 ## NEXT
 
 **Resume point: §8a (18 tasks, nothing built).** Working tree clean, nothing in flight, no part-built

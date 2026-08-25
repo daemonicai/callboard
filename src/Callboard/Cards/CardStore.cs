@@ -100,7 +100,7 @@ internal static class CardStore
         return WithLock(filePath, lockTimeout, _ =>
             File.Exists(filePath)
                 ? new CardWriteResult.AlreadyExists(filePath)
-                : AtomicWrite(anchored, CardFileWriter.Serialize(new CardFile(card.Frontmatter, card.Body, [], [], FindingFields: card.FindingFields, RegisterFields: card.RegisterFields))));
+                : AtomicWrite(anchored, CardFileWriter.Serialize(new CardFile(card.Frontmatter, card.Body, [], [], FindingFields: card.FindingFields, RegisterFields: card.RegisterFields, BlockFields: card.BlockFields))));
     }
 
     /// <summary>
@@ -1187,22 +1187,112 @@ internal static class CardStore
     /// <see cref="ApplyBlockTransition"/> established. A second verdict for the same section is a
     /// second entry, not an upsert — see <see cref="SectionVerdictEntry"/>'s own doc comment for
     /// why (unlike <see cref="RecordGateResult"/>'s label-keyed upsert).
+    ///
+    /// <para>
+    /// <b>§8a block B's addition: section remediation is discharged in the same write (work-lifecycle:
+    /// "Section remediation follows the finding, not the verdict").</b> <paramref name="
+    /// recurringFindingCardPaths"/> names every card (resolved from a caller's <c>--finding-recurred
+    /// &lt;id&gt;</c>, at the CLI layer, before this call — the same "resolve, then pass a path"
+    /// shape <c>block approve --id</c> already established) that this verdict reports as still
+    /// unresolved: each is returned to <c>briefed</c> via <see cref="BlockFlowTransitions.
+    /// FindingRecurredTransition"/>, with <c>round</c> incremented (work-lifecycle: "round += 1 on
+    /// all three"). <paramref name="newFindings"/> names every first-time finding this verdict
+    /// raises — any number of them (§8a block B revision, Architect ruling: a section with several
+    /// new findings on its first review is the ordinary case, not a corner one; see the DEVLOG "§8a
+    /// block B — architect: accept the design, reject the one-new-finding cap"): one brand-new
+    /// <c>block</c> card is created per entry, in order, each carrying <see cref="
+    /// NewFindingCardRequest.Body"/> as its brief and <see cref="NewFindingCardRequest.Key"/> as its
+    /// <see cref="BlockCardFields.FindingKey"/>. A single call can carry both recurrences and new
+    /// findings together (work-lifecycle: "A single verdict MAY do both") — see <see cref="
+    /// RecordSectionVerdictUnderExistingLock"/>'s own doc comment for the locking and write-ordering
+    /// this needs.
+    /// </para>
     /// </summary>
     internal static CardSectionVerdictOutcome RecordSectionVerdict(
-        string cardsRoot, string filePath, SectionVerdict verdict, string rangeFrom, string rangeTo, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        string cardsRoot,
+        string filePath,
+        SectionVerdict verdict,
+        string rangeFrom,
+        string rangeTo,
+        CardOwner actingRole,
+        DateTimeOffset timestamp,
+        TimeSpan lockTimeout,
+        string? changeName,
+        IReadOnlyList<string> recurringFindingCardPaths,
+        IReadOnlyList<NewFindingCardRequest> newFindings) =>
         WithLock(
             filePath,
             lockTimeout,
-            heldLock => RecordSectionVerdictUnderExistingLock(heldLock, cardsRoot, verdict, rangeFrom, rangeTo, actingRole, timestamp, changeName),
+            heldLock => RecordSectionVerdictUnderExistingLock(
+                heldLock, cardsRoot, verdict, rangeFrom, rangeTo, actingRole, timestamp, lockTimeout, changeName, recurringFindingCardPaths, newFindings),
             onTimedOut: timedOut => new CardSectionVerdictOutcome.ToolFailure(timedOut.Message));
 
     /// <summary>
     /// The read-decide-write step of <see cref="RecordSectionVerdict"/>. Same structural lock
     /// precondition as every other <c>*UnderExistingLock</c> method on this type — the target is
     /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>.
+    ///
+    /// <para>
+    /// <b>Locking shape (§8a block B, same reasoning as <see cref="CloseSectionUnderExistingLock"/>'s
+    /// own "N cards is not two").</b> The section's own lock is already held (<paramref name="
+    /// heldLock"/>). <paramref name="recurringFindingCardPaths"/> is deduplicated and sorted
+    /// ordinally, then locked in that order, <em>blocking</em>, against one shared deadline computed
+    /// from <paramref name="lockTimeout"/> — the same "sort first, so two concurrent invocations
+    /// naming the same set always compute the identical order" fix <see
+    /// cref="CloseSectionUnderExistingLock"/>'s own doc comment explains, needed here because
+    /// (unlike that method's directory-scan-derived candidate set) these paths are caller-typed:
+    /// two invocations naming the same physical files in a different <c>--finding-recurred</c>
+    /// order would otherwise risk an AB/BA deadlock, the same class of defect <see
+    /// cref="AcquireLocksAndRecord"/>'s own doc comment discusses at length for <see
+    /// cref="RecordFinding"/>. No other writer on this type ever holds a block's lock while
+    /// blocking on a section's, so this fixed order cannot cycle against a concurrent writer either
+    /// (the same argument <see cref="CloseSectionUnderExistingLock"/> already makes). Every brand-new
+    /// card in <paramref name="newFindings"/> needs no lock of its own here — nothing else can
+    /// reference a file that does not yet exist — and is written through the ordinary <see
+    /// cref="WriteCard"/> create-only path, which acquires and releases its own lock for that one
+    /// call.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Validate everything, then write (work-lifecycle: "A single verdict MAY do both" — 8a.10:
+    /// "the write is all-or-none").</b> Every recurring target is re-read fresh once its lock is
+    /// held and checked — task-implementing (work-lifecycle's own definition: "A block card
+    /// carrying tasks is task-implementing; a remediation card carries none") and current-state —
+    /// before any card is written. Every entry in <paramref name="newFindings"/> is checked against
+    /// one key-ownership scan of the section's own directory, taken once, before any card is
+    /// written: an entry whose key already names an owner (whether an existing on-disk card, or an
+    /// <em>earlier</em> entry in this same call — §8a block B revision's own addition, since a
+    /// single verdict can now name more than one new finding) is refused, the two cases
+    /// distinguished only by whether <see cref="CardSectionVerdictOutcome.FindingAlreadyOwned.
+    /// OwningCardId"/> names a real card id or the literal <c>"&lt;pending: this verdict&gt;"</c>
+    /// sentinel, since an in-batch collision has no on-disk owner yet to name honestly. A refusal
+    /// found at any point leaves the section card, every targeted remediation card, and the
+    /// filesystem at every new card's path exactly as found. Writes then proceed recurring cards
+    /// first, every new card second (in <paramref name="newFindings"/> order), the section's own
+    /// verdict entry last — the same "the entity recording that the operation happened is written
+    /// last" ordering <see cref="CloseSectionUnderExistingLock"/> already established, for the same
+    /// reason: a crash after some writes land still leaves an honest, inspectable partial state
+    /// rather than a section claiming a verdict it has not fully discharged. <b>Stated honestly,
+    /// not claimed as atomic</b> (the same limitation <see cref="CloseSectionUnderExistingLock"/>'s
+    /// own doc comment accepts for its own N-card write): a tool-failure partway through — as
+    /// opposed to a refusal, which never writes anything — is not rolled back here. A retried call
+    /// naming the same recurring targets would find them no longer <c>approved</c> and refuse
+    /// loudly, rather than silently reapplying; that refusal is itself the record that the retry
+    /// needs different arguments, not a corruption.
+    /// </para>
     /// </summary>
     internal static CardSectionVerdictOutcome RecordSectionVerdictUnderExistingLock(
-        CardLock heldLock, string cardsRoot, SectionVerdict verdict, string rangeFrom, string rangeTo, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+        CardLock heldLock,
+        string cardsRoot,
+        SectionVerdict verdict,
+        string rangeFrom,
+        string rangeTo,
+        CardOwner actingRole,
+        DateTimeOffset timestamp,
+        TimeSpan lockTimeout,
+        string? changeName,
+        IReadOnlyList<string> recurringFindingCardPaths,
+        IReadOnlyList<NewFindingCardRequest> newFindings)
     {
         ArgumentNullException.ThrowIfNull(heldLock);
         var filePath = heldLock.CardPath;
@@ -1228,22 +1318,243 @@ internal static class CardStore
                     return new CardSectionVerdictOutcome.LayoutMismatch(layoutFailure!.Reason);
                 }
 
-                var entry = new SectionVerdictEntry(actingRole, verdict, rangeFrom, rangeTo, timestamp, []);
-                var updated = card with
+                // Validated here, before anything else — pure computation, no filesystem side
+                // effect — but the directory itself is deliberately NOT created yet (reviewer
+                // finding, block B nit): creating it this early would let a call that goes on to
+                // refuse (recurring-target validation, the key-ownership scan below) still leave a
+                // stray empty directory behind for a finding that was never written. Each
+                // survivor's directory is created inside WriteCard itself, immediately before that
+                // one card's own write — see the newCardsWritten loop below — so nothing touches
+                // the filesystem until the whole call is known to be going ahead.
+                foreach (var newFinding in newFindings)
                 {
-                    Frontmatter = card.Frontmatter with { Updated = timestamp },
-                    SectionFields = card.SectionFields with { Verdicts = [.. card.SectionFields.Verdicts, entry] },
-                };
+                    if (string.IsNullOrEmpty(Path.GetDirectoryName(newFinding.FilePath)))
+                    {
+                        return new CardSectionVerdictOutcome.LayoutMismatch($"'{newFinding.FilePath}' has no containing directory to write into.");
+                    }
+                }
 
-                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
-                return writeResult.Match<CardSectionVerdictOutcome>(
-                    onSuccess: _ => new CardSectionVerdictOutcome.Recorded(updated, entry),
-                    onNotFound: notFound => new CardSectionVerdictOutcome.CardNotFound(notFound.FilePath),
-                    onAlreadyExists: alreadyExists => new CardSectionVerdictOutcome.LayoutMismatch(
-                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
-                    onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
-                    onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason));
+                var sortedRecurringPaths = recurringFindingCardPaths
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(static path => path, StringComparer.Ordinal)
+                    .ToList();
+
+                var acquiredLocks = new List<CardLock>(sortedRecurringPaths.Count);
+                try
+                {
+                    var deadline = DateTimeOffset.UtcNow + lockTimeout;
+                    foreach (var recurringPath in sortedRecurringPaths)
+                    {
+                        var remaining = deadline - DateTimeOffset.UtcNow;
+                        if (remaining < TimeSpan.Zero)
+                        {
+                            remaining = TimeSpan.Zero;
+                        }
+
+                        var lockResult = CardLock.Acquire(recurringPath, remaining);
+                        var acquireFailure = lockResult.Match<CardSectionVerdictOutcome?>(
+                            onAcquired: acquired =>
+                            {
+                                acquiredLocks.Add(acquired.Lock);
+                                return null;
+                            },
+                            onTimedOut: timedOut => new CardSectionVerdictOutcome.ToolFailure(timedOut.Message));
+                        if (acquireFailure is not null)
+                        {
+                            return acquireFailure;
+                        }
+                    }
+
+                    var recurringCards = new List<(string FilePath, CardFile Card)>(sortedRecurringPaths.Count);
+                    foreach (var recurringPath in sortedRecurringPaths)
+                    {
+                        if (!File.Exists(recurringPath))
+                        {
+                            return new CardSectionVerdictOutcome.CardNotFound(recurringPath);
+                        }
+
+                        var reread = ReadCard(recurringPath);
+                        var rereadCard = reread.Match<CardFile?>(onSuccess: static s => s.Card, onFailure: static _ => null);
+                        if (rereadCard is null)
+                        {
+                            var reason = reread.Match(onSuccess: static _ => string.Empty, onFailure: static failure => failure.Reason);
+                            return new CardSectionVerdictOutcome.CardCorrupt(recurringPath, reason);
+                        }
+
+                        if (!IsBlockCard(rereadCard))
+                        {
+                            // The CLI layer's own ResolveCardReference already refused any
+                            // --finding-recurred id that does not name a block card before this
+                            // method was ever called — defensive-unreachable, not a live path (the
+                            // same discipline ValidateBlockForLanding's own guard follows).
+                            throw new InvalidOperationException($"'{recurringPath}' is not a block card; the caller must resolve --finding-recurred ids against block cards only.");
+                        }
+
+                        if (rereadCard.BlockFields.Tasks.Length > 0)
+                        {
+                            return new CardSectionVerdictOutcome.RecurringFindingTargetsTaskImplementingBlock(rereadCard.Frontmatter.Id, recurringPath);
+                        }
+
+                        if (!BlockFlowStateWireFormat.TryParse(rereadCard.Frontmatter.Status, out var recurringState))
+                        {
+                            return new CardSectionVerdictOutcome.CardCorrupt(
+                                recurringPath, $"unrecognised status: '{rereadCard.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
+                        }
+
+                        var findingRecurredAvailable = BlockFlowTransitions.AvailableFrom(recurringState)
+                            .Any(static candidate => string.Equals(candidate.Name, "finding-recurred", StringComparison.Ordinal));
+                        if (!findingRecurredAvailable)
+                        {
+                            return new CardSectionVerdictOutcome.RecurringFindingNotApproved(rereadCard.Frontmatter.Id, recurringPath, recurringState);
+                        }
+
+                        recurringCards.Add((recurringPath, rereadCard));
+                    }
+
+                    if (newFindings.Count > 0)
+                    {
+                        // One scan of the section, seeding every existing owner (key -> (id, path));
+                        // grown below as each newFindings entry is validated, so a later entry in
+                        // this same call sees an earlier entry's key too (§8a block B revision).
+                        var ownedKeys = new Dictionary<string, (string OwnerId, string OwnerFilePath)>(StringComparer.Ordinal);
+                        var sectionDirectory = Path.GetDirectoryName(filePath)!;
+                        foreach (var (candidatePath, parseResult) in ReadAllCards(sectionDirectory))
+                        {
+                            var corruptReason = parseResult.Match<string?>(onSuccess: static _ => null, onFailure: static failure => failure.Reason);
+                            if (corruptReason is not null)
+                            {
+                                // Conservative by construction, same reason CloseSectionUnderExistingLock
+                                // refuses on an unreadable candidate: an unreadable card's finding_key
+                                // cannot be checked, so it cannot be ruled out as this key's owner.
+                                return new CardSectionVerdictOutcome.CardCorrupt(candidatePath, corruptReason);
+                            }
+
+                            var parsedCard = parseResult.Match(onSuccess: static s => s.Card, onFailure: static _ => throw new InvalidOperationException("unreachable: corruptReason above already returned on failure."));
+                            if (IsBlockCard(parsedCard)
+                                && string.Equals(parsedCard.Frontmatter.Section, card.Frontmatter.Id, StringComparison.Ordinal)
+                                && parsedCard.BlockFields.FindingKey is { } existingKey)
+                            {
+                                ownedKeys[existingKey] = (parsedCard.Frontmatter.Id, candidatePath);
+                            }
+                        }
+
+                        var usedNewFindingFilePaths = new HashSet<string>(StringComparer.Ordinal);
+                        foreach (var newFinding in newFindings)
+                        {
+                            if (ownedKeys.TryGetValue(newFinding.Key, out var owner))
+                            {
+                                return new CardSectionVerdictOutcome.FindingAlreadyOwned(newFinding.Key, owner.OwnerId, owner.OwnerFilePath);
+                            }
+
+                            if (File.Exists(newFinding.FilePath) || !usedNewFindingFilePaths.Add(newFinding.FilePath))
+                            {
+                                return new CardSectionVerdictOutcome.NewFindingCardAlreadyExists(newFinding.FilePath);
+                            }
+
+                            var newAnchored = AnchoredCardPath.TryCreate(cardsRoot, newFinding.FilePath, CardScope.Change, changeName, out var newLayoutFailure);
+                            if (newAnchored is null)
+                            {
+                                return new CardSectionVerdictOutcome.LayoutMismatch(newLayoutFailure!.Reason);
+                            }
+
+                            // In-batch dedupe: a later entry in this same call naming the same key
+                            // is caught above too, and reports this manifest's own path, not an
+                            // on-disk card — there is none yet.
+                            ownedKeys[newFinding.Key] = ("<pending: this verdict>", newFinding.FilePath);
+                        }
+                    }
+
+                    var recurredWritten = new List<CardFile>(recurringCards.Count);
+                    var findingRecurredTransition = BlockFlowTransitions.FindingRecurredTransition;
+                    foreach (var (recurringPath, recurringCard) in recurringCards)
+                    {
+                        var recurringAnchored = AnchoredCardPath.TryCreate(cardsRoot, recurringPath, recurringCard.Frontmatter.Scope, changeName, out var recurringLayoutFailure);
+                        if (recurringAnchored is null)
+                        {
+                            return new CardSectionVerdictOutcome.LayoutMismatch(recurringLayoutFailure!.Reason);
+                        }
+
+                        var recurringEntry = new CardBlockTransitionEntry(
+                            actingRole, findingRecurredTransition.Name, findingRecurredTransition.From, findingRecurredTransition.To, timestamp, []);
+                        var recurringUpdated = recurringCard with
+                        {
+                            Frontmatter = recurringCard.Frontmatter with { Status = findingRecurredTransition.To.ToWireString(), Updated = timestamp },
+                            BlockFields = recurringCard.BlockFields with { Round = (recurringCard.BlockFields.Round ?? 1) + 1 },
+                            Transitions = [.. recurringCard.Transitions, recurringEntry],
+                        };
+
+                        var recurringWriteResult = AtomicWrite(recurringAnchored, CardFileWriter.Serialize(recurringUpdated));
+                        var recurringWriteFailure = recurringWriteResult.Match<CardSectionVerdictOutcome?>(
+                            onSuccess: static _ => null,
+                            onNotFound: notFound => new CardSectionVerdictOutcome.CardNotFound(notFound.FilePath),
+                            onAlreadyExists: alreadyExists => new CardSectionVerdictOutcome.LayoutMismatch(
+                                $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                            onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
+                            onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                            onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason));
+                        if (recurringWriteFailure is not null)
+                        {
+                            return recurringWriteFailure;
+                        }
+
+                        recurredWritten.Add(recurringUpdated);
+                    }
+
+                    var newCardsWritten = new List<CardFile>(newFindings.Count);
+                    foreach (var newFinding in newFindings)
+                    {
+                        var (newId, allocationFailure) = AllocateIdentity(cardsRoot, CardKind.Block, lockTimeout);
+                        if (allocationFailure is not null)
+                        {
+                            return new CardSectionVerdictOutcome.ToolFailure(allocationFailure);
+                        }
+
+                        var newFrontmatter = new CardFrontmatter(
+                            newId!, CardKind.Block, newFinding.Title, BlockFlowState.Briefed.ToWireString(), actingRole,
+                            CardScope.Change, card.Frontmatter.Id, timestamp, timestamp);
+                        var newBlockFields = new BlockCardFields(null, null, [], 1, [], [], newFinding.Key);
+
+                        var newWriteResult = WriteCard(
+                            cardsRoot, newFinding.FilePath, new NewCardFile(newFrontmatter, newFinding.Body, BlockFields: newBlockFields), lockTimeout, changeName);
+                        var newWriteFailure = newWriteResult.Match<CardSectionVerdictOutcome?>(
+                            onSuccess: static _ => null,
+                            onNotFound: notFound => new CardSectionVerdictOutcome.CardNotFound(notFound.FilePath),
+                            onAlreadyExists: alreadyExists => new CardSectionVerdictOutcome.NewFindingCardAlreadyExists(alreadyExists.FilePath),
+                            onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
+                            onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                            onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason));
+                        if (newWriteFailure is not null)
+                        {
+                            return newWriteFailure;
+                        }
+
+                        newCardsWritten.Add(new CardFile(newFrontmatter, newFinding.Body, [], [], BlockFields: newBlockFields));
+                    }
+
+                    var entry = new SectionVerdictEntry(actingRole, verdict, rangeFrom, rangeTo, timestamp, []);
+                    var updated = card with
+                    {
+                        Frontmatter = card.Frontmatter with { Updated = timestamp },
+                        SectionFields = card.SectionFields with { Verdicts = [.. card.SectionFields.Verdicts, entry] },
+                    };
+
+                    var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                    return writeResult.Match<CardSectionVerdictOutcome>(
+                        onSuccess: _ => new CardSectionVerdictOutcome.Recorded(updated, entry, recurredWritten, newCardsWritten),
+                        onNotFound: notFound => new CardSectionVerdictOutcome.CardNotFound(notFound.FilePath),
+                        onAlreadyExists: alreadyExists => new CardSectionVerdictOutcome.LayoutMismatch(
+                            $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                        onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
+                        onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                        onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason));
+                }
+                finally
+                {
+                    foreach (var acquiredLock in acquiredLocks)
+                    {
+                        acquiredLock.Dispose();
+                    }
+                }
             },
             onFailure: failure =>
                 new CardSectionVerdictOutcome.CardCorrupt(filePath, failure.Reason));

@@ -56,16 +56,19 @@ public sealed class BlockFlowTests
         Assert.Same(BlockFlowState.Briefed, fixBeforeLand.To);
     }
 
-    // §8a block A revision (Product Owner ruling: "approved is terminal", amendment-requested cut
-    // entirely): 'approved' has no caller-facing edge at all — 'land' is not individually
-    // invocable (see BlockFlowTransitions.LandTransition for where it still lives), and
-    // 'amendment-requested' no longer exists as an edge on this table.
+    // §8a block B: 'approved' has exactly one caller-facing edge — 'finding-recurred', reached
+    // only through CardStore.RecordSectionVerdictUnderExistingLock, never through 'block
+    // transition' (refused at parse). 'land' is still not individually invocable (see
+    // BlockFlowTransitions.LandTransition for where it lives), and 'amendment-requested' no longer
+    // exists as an edge on this table at all.
     [Fact]
-    public void Approved_HasNoAvailableTransitions()
+    public void Approved_HasExactlyOneAvailableTransition_FindingRecurred()
     {
         var available = BlockFlowTransitions.AvailableFrom(BlockFlowState.Approved);
 
-        Assert.Empty(available);
+        var findingRecurred = Assert.Single(available);
+        Assert.Equal("finding-recurred", findingRecurred.Name);
+        Assert.Same(BlockFlowState.Briefed, findingRecurred.To);
     }
 
     // §8a block A: 'land' still exists as a value — the thing CloseSectionUnderExistingLock

@@ -128,15 +128,36 @@ internal sealed record BlockCardFields
         init => _gateResults = RequireValidGateResults(value);
     }
 
-    /// <summary>The six fields, all unset — every card that is not a <c>block</c>, and a
+    /// <summary>The key of the finding this card is remediating (§8a block B, work-lifecycle:
+    /// "Section remediation follows the finding, not the verdict"), or <see langword="null"/> for
+    /// a task-implementing block. Set once, at creation, by <see cref="CardStore.
+    /// RecordSectionVerdictUnderExistingLock"/> — never mutated afterward, the same "recorded once,
+    /// immutable thereafter" discipline <see cref="Base"/> already follows. This is the field a
+    /// section verdict's <c>--finding-new-key</c> checks before creating a second card for a key
+    /// a card already owns (work-lifecycle: "A recurrence SHALL NOT create a second card for the
+    /// same finding"); it is deliberately <b>not</b> what distinguishes a remediation card from a
+    /// task-implementing one for the purpose of refusing <c>finding-recurred</c> against the
+    /// latter — that check reads <see cref="Tasks"/> instead, exactly the spec's own words
+    /// ("A block card carrying tasks is task-implementing; a remediation card carries none"), so
+    /// the two checks cannot silently drift from each other by drifting from this field
+    /// independently.</summary>
+    internal string? FindingKey { get; init; }
+
+    /// <summary>The seven fields, all unset — every card that is not a <c>block</c>, and a
     /// brand-new block with no brief context recorded yet.</summary>
-    internal static readonly BlockCardFields Empty = new(null, null, [], null, [], []);
+    internal static readonly BlockCardFields Empty = new(null, null, [], null, [], [], null);
 
     internal BlockCardFields(
-        string? Base, string? ReviewedState, IReadOnlyList<string> Tasks, int? Round, IReadOnlyList<string> BlockedBy, IReadOnlyList<GateResult> GateResults)
+        string? Base, string? ReviewedState, IReadOnlyList<string> Tasks, int? Round, IReadOnlyList<string> BlockedBy, IReadOnlyList<GateResult> GateResults, string? FindingKey = null)
     {
+        if (FindingKey is not null && string.IsNullOrWhiteSpace(FindingKey))
+        {
+            throw new ArgumentException("'FindingKey' cannot be empty or whitespace-only when set.", nameof(FindingKey));
+        }
+
         this.Base = Base;
         this.ReviewedState = ReviewedState;
+        this.FindingKey = FindingKey;
 
         // .ToImmutableArray() copies Tasks/BlockedBy/GateResults's current contents now, at
         // construction time — this is what makes a caller's later mutation of the source list (if

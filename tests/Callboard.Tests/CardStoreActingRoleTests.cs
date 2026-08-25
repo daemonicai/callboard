@@ -68,7 +68,8 @@ public sealed class CardStoreActingRoleTests
         nameof(CardStore.AddBlockedBy) or nameof(CardStore.RemoveBlockedBy) =>
             [typeof(string), typeof(CardOwner), typeof(DateTimeOffset), typeof(TimeSpan), typeof(string)],
         nameof(CardStore.RecordSectionVerdict) =>
-            [typeof(SectionVerdict), typeof(string), typeof(string), typeof(CardOwner), typeof(DateTimeOffset), typeof(TimeSpan), typeof(string)],
+            [typeof(SectionVerdict), typeof(string), typeof(string), typeof(CardOwner), typeof(DateTimeOffset), typeof(TimeSpan), typeof(string),
+                typeof(IReadOnlyList<string>), typeof(IReadOnlyList<NewFindingCardRequest>)],
         nameof(CardStore.CloseSection) =>
             [typeof(CardOwner), typeof(DateTimeOffset), typeof(TimeSpan), typeof(string)],
         _ => throw new ArgumentOutOfRangeException(nameof(methodName), methodName, "unaccounted-for method name — add its parameter shape above."),

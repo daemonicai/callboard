@@ -98,12 +98,13 @@ public sealed class BlockLandUnreachableExceptSectionCloseTests
 
     // 'block transition <path> amendment-requested' — no longer a special-cased parse refusal
     // either (that door does not exist to guard any more): it reaches ApplyBlockTransition like
-    // any other unrecognised name and is refused as an ordinary undefined-transition, naming
-    // 'approved' as having no available transitions at all — the stronger statement 8a.16 makes
-    // once 'amendment-requested' is cut: an approved block has no caller-facing route back to
-    // work, full stop.
+    // any other unrecognised name and is refused as an ordinary undefined-transition. §8a block B
+    // gives 'approved' its one real edge — 'finding-recurred' — but that edge is reached only
+    // through CardStore.RecordSectionVerdictUnderExistingLock, never through this generic path
+    // (refused at parse, see the sibling test below): a task-implementing block still has no
+    // caller-facing route back to work through 'block transition', for any name.
     [Fact]
-    public void BlockTransition_AmendmentRequested_IsAnOrdinaryUndefinedTransition_NamingNoAvailableEdges()
+    public void BlockTransition_AmendmentRequested_IsAnOrdinaryUndefinedTransition_NamingFindingRecurredAsTheOnlyEdge()
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialApprovedBlockCard(repo.Path, "b-0009", "B-0009", "S-0009");
@@ -118,7 +119,26 @@ public sealed class BlockLandUnreachableExceptSectionCloseTests
             repo.Path, path, "amendment-requested", CardOwner.Architect, FixedNow, baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
         var undefined = Assert.IsType<CardBlockTransitionOutcome.UndefinedTransition>(outcome);
         Assert.Equal(BlockFlowState.Approved, undefined.CurrentState);
-        Assert.Empty(undefined.Available);
+        var onlyAvailable = Assert.Single(undefined.Available);
+        Assert.Equal("finding-recurred", onlyAvailable.Name);
+    }
+
+    // 'block transition <path> finding-recurred' is refused at parse — the "one door" discipline
+    // §8a block B applies to this edge, the same way 'approve'/'fix-before-land'/'land' already are.
+    [Fact]
+    public void BlockTransition_FindingRecurred_IsRefusedAtParse()
+    {
+        using var repo = new TempGitRepo();
+        var path = WriteInitialApprovedBlockCard(repo.Path, "b-0010", "B-0010", "S-0010");
+
+        var writer = new StringWriter();
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "finding-recurred", "--role", "supervisor", "--change", ChangeName], writer, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = System.Text.Json.JsonDocument.Parse(writer.ToString());
+        Assert.Equal("finding-recurred-via-transition-refused", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal("approved", AssertParseSuccess(CardStore.ReadCard(path)).Frontmatter.Status);
     }
 
     // The one door that does land it: 'section close'.
