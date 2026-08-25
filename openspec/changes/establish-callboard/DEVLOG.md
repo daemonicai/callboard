@@ -24000,13 +24000,85 @@ touches.
 
 → @architect
 
+**[architect]** A3 landed as `397c1c4` — `[reviewer]` `Approve` first round, `GATES_EXIT:0`, 808/808.
+**The retrofit is finished.** Every outcome union §9 does not itself rewrite is in the refusal
+reporting format, and the reviewer verified the two unions declared empty case by case rather than on
+the claim. A3 also closed a §8-carried supervisor note early: `NotUnderReview`'s remedy now names
+`obligation create` instead of describing it.
+
+From here §9 builds new refusals rather than reformatting old ones. The standing rule from the carve
+holds: **each of B–E retrofits its own outcome union entire, as a done-gate on the block.**
+
+**[architect]** Brief — **block B (9.2, 9.3)**: the certification refusals. → @worker
+
+**Tasks in scope:** `9.2` and `9.3`. Both tick.
+
+**`9.2` — refuse approval from a role other than `reviewer` or `supervisor`.** This is already
+implemented as `CardApprovalOutcome.RoleNotPermitted` (§8). Your job is not to reimplement it: bring
+it into the refusal reporting format along with the rest of its union, and give it the test `9.10`
+requires — that it fires, and that the line lands on the card. Spec: `process-enforcement`,
+"Approval is refused from the wrong role".
+
+**`9.3` — refuse leaving `in-review` while a comment addressed to the acting role is unresolved.**
+Spec: `process-enforcement`, "A verdict cannot leave threads unanswered":
+
+> The system SHALL refuse to move a card out of `in-review` while any comment addressed to the acting
+> role on that card remains unresolved.
+
+Scenario: *when a reviewer records a verdict while a comment addressed to it on that card is
+unresolved, the system refuses and lists the unresolved threads.*
+
+`CardCommentRouting.HasLiveThreadAddressedTo(comments, role)` is the predicate and already exists —
+a comment is live exactly when no later comment `Resolves` it. The refusal must **list** the
+unresolved threads, so you need their ids, not just the boolean; add the query beside it rather than
+recomputing resolution anywhere new.
+
+**The hazard in this task, stated plainly because it is the one that will bite.** `in-review` has
+**three** exits, and only one of them is a generic `block transition`:
+
+- `changes-requested` — the generic transition path (`ApplyBlockTransitionUnderExistingLock`);
+- `approve` — a one-door edge with its own write (`RecordApprovalUnderExistingLock`);
+- `fix-before-land` — a one-door edge with its own write (`DispositionNitUnderLocks`).
+
+**The refusal must fire at all three.** Enforcing it on the generic transition alone leaves the two
+doors that actually carry a verdict wide open, and it will look correct in every test that goes
+through `block transition`. This is the same shape as A2's `--change`: a guarantee that holds
+everywhere except the door callers use. Test each of the three exits separately and by name.
+
+**Also in scope — your own two unions, entire**, per the standing rule: `CardApprovalOutcome` and
+`CardSectionVerdictOutcome` onto the refusal reporting format. The pattern is `5caa2c4`, `4b40f01`,
+`397c1c4`. Cases that never resolve a card do not record; `CardNotFound`, `CardCorrupt`,
+`LayoutMismatch` and every `ToolFailure` do not record. A case that is card-addressed on some paths
+and not others gets **split**, not blanket-disposed.
+
+**The four standing instructions from A3's brief still apply** — read them there. In particular: a
+test per rule asserting the line landed on the card (the suite is at 808 and is expected to move),
+follow any threaded value to the door a real caller comes through, and insert DEVLOG posts by matching
+the `## NEXT` heading as a whole anchored line, never as a bare substring.
+
+**One question I want answered in the thread, not decided in the code.** `9.3` says "addressed to the
+acting role". A comment addressed to a *different* role, still unresolved, does not block that role's
+verdict — so a block can leave `in-review` carrying live threads addressed to someone else. I believe
+that is correct and deliberate (the reviewer is not the architect's postbox), but say what you find
+when you implement it, and if the spec's wording forces the other reading, stop and post rather than
+choosing.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`; `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim. Do not commit,
+do not tick, do not touch the Makefile or `CLAUDE.md`. Stop and post if a Product Owner call appears.
+
 ## NEXT
 
-**Resume point: §9 "Process enforcement", block A3 — briefed, worker running.** §9 is open at base
-`ec2d99b`. Block A landed as `5caa2c4` and A2 as `4b40f01` (both reviewer `Approve`, both `GATES_EXIT:0`, suite
-at 801); `9.1` is the only box ticked in §9, and A2/A3 tick nothing — they finish 9.1's reach.
-**A2 took three review rounds**; the two causes (a retrofit that added no tests, and a fix that was
-real everywhere except the door callers use) are written into A3's brief as standing instructions. The retrofit question is **answered** — §9 is now **seven** blocks, A, A2, A3, B–E; the
+**Resume point: §9 "Process enforcement", block B (9.2, 9.3) — briefed, worker running.** §9 is open at base
+`ec2d99b`. **The retrofit is finished**: A (`5caa2c4`), A2 (`4b40f01`), A3 (`397c1c4`), all reviewer `Approve`,
+all `GATES_EXIT:0`, suite at 808. `9.1` is the only box ticked in §9 — A2 and A3 tick nothing, they
+finish 9.1's reach. From B onward §9 builds new refusals rather than reformatting old ones, and each
+of B–E retrofits **its own union entire** as a done-gate on the block.
+
+**A2's three review rounds are written into every later brief as standing instructions** — a test per
+rule asserting the line landed on the card, split rather than blanket-dispose a case that is
+card-addressed on only some paths, follow a threaded value to the door callers actually use, and
+insert DEVLOG posts by anchored heading match rather than bare substring. The retrofit question is **answered** — §9 is now **seven** blocks, A, A2, A3, B–E; the
 ruling and the A2 brief are under `## 9.` above. §8a closed with a supervisor `Approve` at `2561cef`.
 
 **Standing for the rest of §9:** each of B–E retrofits **its own outcome union, entire**, onto the
