@@ -25316,13 +25316,97 @@ Clean. Land it — `9.7` only.
 
 → @architect
 
+**[architect]** Block D landed as `41983a4` — `[reviewer]` `Approve` on the second round,
+`GATES_EXIT:0`, 842/842. **`9.7` ticked; `9.8` deliberately not.** The reviewer simulated both failure
+modes against the new negative tests and confirmed neither would pass against the bug it is meant to
+catch, and checked the round-trip file against the real convention rather than the filename it mirrors
+(it is a superset — all four properties in one file, where the kind it mirrors splits them across two).
+
+**[architect]** Brief — **block E (9.4, 9.5, 9.6, and 9.8's carried arm)**: the section-close gates.
+This is the block that decides when a section may close. → @worker
+
+**Tasks in scope:** `9.4`, `9.5`, `9.6` — and **`9.8`'s remaining arm**, which ticks `9.8` when it
+lands. Four boxes tick on this block.
+
+**Start with the carried arm; it is the smallest and it unblocks a tick.** Since §8a, landing is
+section-driven: the sole write of `BlockFlowState.Landed` is `CloseSectionUnderExistingLock`'s
+per-block loop, via `ValidateBlockForLanding` — an all-or-nothing choke point the reviewer has already
+traced, with no second unguarded path. Block D built `CardStore.FindBlockingOpenProductOwnerQuestion`
+and left it reusable for exactly this. **A section close that would land a block blocked by an open
+Product Owner question is refused**, naming the block and the question. Without this, 9.8's guard on
+the generic transitions and `approve` is a fence with a gate left open beside it.
+
+**`9.4` — refuse section close over open obligations owed by that section.** Spec:
+`process-enforcement`, "Section close settles its obligations". Each obligation SHALL be discharged,
+promoted to a wider scope, or declined with a recorded reason — **so the refusal lists the obligations
+*and* the dispositions available**, not just the count. Obligation cards are `CardScope.Change` and
+carry the owing section; note that block D renamed that flag to `--section` on `obligation create`.
+
+**`9.5` — refuse section close over open undeferred questions.** Spec: "Section close settles its
+questions" — a question deferred to a *named target* permits the close and stays open against that
+target. Block D built the `open`/`answered`/`deferred` vocabulary and `question defer --target`, so
+the vocabulary you need exists.
+
+**But there is a gap you must close first, and I am ruling on it now rather than letting you discover
+it.** `question create` does **not** record the section that raised the question — `ParsedCommand.
+QuestionCreate` carries `FilePath, Title, ActingRole, OwedByRole, Body, WorkingDirectory, Timestamp`
+and nothing else. A question is `CardScope.Repository`, so its *scope* deliberately outlives any one
+section; but "which section raised it" is a different fact from "what is its lifetime", and `9.5`
+cannot mean anything without it. `CardFrontmatter.Section` already exists and is documented as exactly
+this — *"the section a card was raised within, or empty when the card is not tied to one"*.
+
+**Ruling: add `--section` to `question create` and record it.** Do not widen `9.5` to "every open
+question anywhere blocks every section close" to route around the missing field — that would be a
+refusal that fires on unrelated work, which is worse than one that does not fire at all, because it
+teaches the caller to route around the tool. A question raised outside any section carries an empty
+section and blocks no section's close.
+
+**`9.6` — two halves, and they are not the same kind of thing.** Spec: "Section close settles its
+addressed threads".
+
+- **The refusal**: an unresolved comment addressed to a role within the section blocks the close, and
+  the refusal lists **the dispositions available for it** — resolve, promote to a `question`, promote
+  to a `decision`, or decline with a recorded reason.
+- **The prompt**: a comment left unresolved for longer than one round is surfaced to the addressed
+  role **without refusing anything**. The spec says why in its own words — *"to keep this gate from
+  becoming a formality discharged in bulk at the moment of closing"*. **Do not implement the prompt as
+  a refusal.** A prompt that refuses is just an earlier refusal, and the requirement's entire point is
+  that it is not one.
+
+**Decide in the thread, not in code: what "longer than one round" means.** Rounds are a block's
+(`round` on `BlockCardFields`), threads live on cards, and a section spans several blocks. Say what you
+conclude and why before you build it. If the honest answer is that the spec's wording does not
+determine it, **stop and post rather than choosing** — that is a Product Owner call and I will take it.
+
+**The standing line from block D applies to every refusal you add here**: a refusal records when it
+asserts something about the record, and reports without recording when it asserts only that the
+invocation was malformed. All four of this block's refusals assert things about the record.
+
+**The coverage gate is live** — every new case registered in `RefusalCoverageGateTests.cs` with a test
+that proves it fires *and* records; a registered test whose `.Refusals` assertions are all
+`Assert.Empty` is rejected. **`CardSectionCloseOutcome` is your union and goes onto the refusal
+reporting format entire**, per the standing rule.
+
+**One hazard specific to this block.** `CloseSectionUnderExistingLock` already holds the section's lock
+and acquires each candidate block's lock in ordinal order (§8a block A's shape). Your new checks read
+*other* cards — obligations, questions, threads. **Do not extend the lock set casually**: say in the
+thread what you read, under which locks, and why the ordering cannot deadlock against the existing
+acquisition. A close that deadlocks is worse than a close that refuses.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`; `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim. Do not commit,
+do not tick, do not touch the Makefile or `CLAUDE.md`.
+
 ## NEXT
 
-**Resume point: §9 "Process enforcement", block D (9.7, 9.8) — briefed, worker running.** §9 is open at base
+**Resume point: §9 "Process enforcement", block E (9.4, 9.5, 9.6 + 9.8's carried arm) — briefed,
+worker running.** §9 is open at base
 `ec2d99b`. **§9 is re-carved: `9.10` moved ahead of the remaining rules as block C**, so the coverage
 instruction that failed in A2, A3 and B becomes a gate the later blocks must pass rather than a
 paragraph asking them to. Order is now C (9.10), D (9.7, 9.8), E (9.4-9.6), F (9.9); no task numbers
-changed. Ticked so far: 9.1, 9.2, 9.3, 9.10.
+changed. Ticked so far: 9.1, 9.2, 9.3, 9.7, 9.10. **9.8 is implemented but deliberately unticked** — its
+guard covers the generic transitions and `approve`, but section-driven landing is unguarded until
+block E adds the arm in `CloseSectionUnderExistingLock`. Only F (9.9) follows E.
 
 **The coverage gate is live** (`tests/Callboard.Tests/RefusalCoverageGateTests.cs`, block C,
 `768aa1d`): every refusal case must be registered with a test proving it fires and records, and a
