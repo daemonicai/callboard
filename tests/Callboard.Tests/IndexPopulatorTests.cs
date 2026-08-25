@@ -291,7 +291,8 @@ public sealed class IndexPopulatorTests : IDisposable
             onAlreadyExists: alreadyExists => throw new Xunit.Sdk.XunitException($"setup write failed: already exists at '{alreadyExists.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"setup write failed: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"setup write failed: {corrupt.Reason}"),
-            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"setup write failed: {toolFailure.Reason}"));
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"setup write failed: {toolFailure.Reason}"),
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"setup write failed: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
 
         foreach (var comment in comments ?? [])
         {
@@ -302,7 +303,8 @@ public sealed class IndexPopulatorTests : IDisposable
                 onAlreadyExists: alreadyExists => throw new Xunit.Sdk.XunitException($"setup append failed: already exists at '{alreadyExists.FilePath}'"),
                 onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"setup append failed: {layoutMismatch.Reason}"),
                 onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"setup append failed: {corrupt.Reason}"),
-                onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"setup append failed: {toolFailure.Reason}"));
+                onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"setup append failed: {toolFailure.Reason}"),
+                onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"setup append failed: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
         }
     }
 

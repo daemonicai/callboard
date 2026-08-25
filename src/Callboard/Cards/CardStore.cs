@@ -147,6 +147,15 @@ internal static class CardStore
         return current.Match<CardWriteResult>(
             onSuccess: success =>
             {
+                // A comment appends to any card kind, but a block card's own round has to agree
+                // with its own history before this call is allowed to mutate it further (Architect
+                // ruling, §8a block D brief: "act on that card" covers every writer that mutates a
+                // block card).
+                if (IsBlockCard(success.Card) && !RoundAgreesWithHistory(success.Card, out var storedRound, out var expectedRound))
+                {
+                    return new CardWriteResult.RoundDisagreesWithHistory(storedRound, expectedRound);
+                }
+
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, success.Card.Frontmatter.Scope, changeName, out var layoutFailure);
                 if (anchored is null)
                 {
@@ -218,6 +227,11 @@ internal static class CardStore
                     return new CardNitRaiseOutcome.NotABlockCard(card.Frontmatter.Kind);
                 }
 
+                if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
+                {
+                    return new CardNitRaiseOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                }
+
                 if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
                 {
                     return new CardNitRaiseOutcome.CardCorrupt(
@@ -244,7 +258,8 @@ internal static class CardStore
                         $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                     onLayoutMismatch: layoutMismatch => new CardNitRaiseOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardNitRaiseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardNitRaiseOutcome.ToolFailure(toolFailure.Reason));
+                    onToolFailure: toolFailure => new CardNitRaiseOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure =>
                 new CardNitRaiseOutcome.CardCorrupt(filePath, failure.Reason));
@@ -298,6 +313,14 @@ internal static class CardStore
         return current.Match<CardWriteResult>(
             onSuccess: success =>
             {
+                // Same bound AppendCommentUnderExistingLock applies, for the same reason: this
+                // surface is generic over any card kind, but a block card's own round has to agree
+                // with its history before this call is allowed to mutate it further.
+                if (IsBlockCard(success.Card) && !RoundAgreesWithHistory(success.Card, out var storedRound, out var expectedRound))
+                {
+                    return new CardWriteResult.RoundDisagreesWithHistory(storedRound, expectedRound);
+                }
+
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, success.Card.Frontmatter.Scope, changeName, out var layoutFailure);
                 if (anchored is null)
                 {
@@ -369,6 +392,11 @@ internal static class CardStore
                     return new CardBlockTransitionOutcome.NotABlockCard(card.Frontmatter.Kind);
                 }
 
+                if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
+                {
+                    return new CardBlockTransitionOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                }
+
                 if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
                 {
                     return new CardBlockTransitionOutcome.CardCorrupt(
@@ -423,11 +451,18 @@ internal static class CardStore
 
                 // "changes-requested" is work-lifecycle's own named increment; any other
                 // transition that lands the card on Briefed for the first time (the initial
-                // "brief") starts the round at 1 rather than leaving it unset.
+                // "brief") starts the round at 1 rather than leaving it unset. Unset reads as round
+                // 1 (the same default RecordApprovalUnderExistingLock and
+                // RecordGateResultUnderExistingLock apply, and the one RoundAgreesWithHistory
+                // assumes) — §8a block D found this arm and DispositionNitUnderLocks's own
+                // fix-before-land arm disagreeing on the unset default (`?? 0` here, `?? 1` at
+                // finding-recurred's site), which would land round 1 off a card seeded straight
+                // into in-review with no round set, disagreeing with its own one-entry transition
+                // history the moment 8a.17's check was added. Fixed to agree.
                 var round = card.BlockFields.Round;
                 if (string.Equals(transition.Name, "changes-requested", StringComparison.Ordinal))
                 {
-                    round = (round ?? 0) + 1;
+                    round = (round ?? 1) + 1;
                 }
                 else if (transition.To == BlockFlowState.Briefed && round is null)
                 {
@@ -450,7 +485,8 @@ internal static class CardStore
                         $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                     onLayoutMismatch: layoutMismatch => new CardBlockTransitionOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardBlockTransitionOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardBlockTransitionOutcome.ToolFailure(toolFailure.Reason));
+                    onToolFailure: toolFailure => new CardBlockTransitionOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure =>
                 new CardBlockTransitionOutcome.CardCorrupt(filePath, failure.Reason));
@@ -574,6 +610,11 @@ internal static class CardStore
                     return new CardApprovalOutcome.NotABlockCard(card.Frontmatter.Kind);
                 }
 
+                if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
+                {
+                    return new CardApprovalOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                }
+
                 if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
                 {
                     return new CardApprovalOutcome.CardCorrupt(
@@ -633,7 +674,8 @@ internal static class CardStore
                         $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                     onLayoutMismatch: layoutMismatch => new CardApprovalOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardApprovalOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardApprovalOutcome.ToolFailure(toolFailure.Reason));
+                    onToolFailure: toolFailure => new CardApprovalOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure =>
                 new CardApprovalOutcome.CardCorrupt(filePath, failure.Reason));
@@ -803,6 +845,11 @@ internal static class CardStore
                     return new CardNitDispositionOutcome.NotABlockCard(card.Frontmatter.Kind);
                 }
 
+                if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
+                {
+                    return new CardNitDispositionOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                }
+
                 var nitIndex = -1;
                 for (var i = 0; i < card.Comments.Count; i++)
                 {
@@ -869,7 +916,8 @@ internal static class CardStore
                         onLayoutMismatch: static layoutMismatch => new CardNitDispositionOutcome.RaisedCardLayoutMismatch(layoutMismatch.Reason),
                         onCorrupt: static corrupt => new CardNitDispositionOutcome.ToolFailure(
                             $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
-                        onToolFailure: static toolFailure => new CardNitDispositionOutcome.ToolFailure(toolFailure.Reason));
+                        onToolFailure: static toolFailure => new CardNitDispositionOutcome.ToolFailure(toolFailure.Reason),
+                        onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
                     if (raisedFailure is not null)
                     {
                         return raisedFailure;
@@ -934,7 +982,12 @@ internal static class CardStore
                             var transition = BlockFlowTransitions.AvailableFrom(currentState)
                                 .First(candidate => string.Equals(candidate.Name, "fix-before-land", StringComparison.Ordinal));
                             updatedFrontmatter = updatedFrontmatter with { Status = transition.To.ToWireString() };
-                            updatedBlockFields = updatedBlockFields with { Round = (updatedBlockFields.Round ?? 0) + 1 };
+                            // Unset reads as round 1, the same default every other increment site
+                            // applies (§8a block D: this arm and ApplyBlockTransitionUnderExistingLock's
+                            // changes-requested arm both read `?? 0` before this fix, disagreeing with
+                            // RecordSectionVerdictUnderExistingLock's finding-recurred arm's `?? 1` —
+                            // fixed to agree, see the DEVLOG post for this block).
+                            updatedBlockFields = updatedBlockFields with { Round = (updatedBlockFields.Round ?? 1) + 1 };
                             updatedTransitions = [.. updatedTransitions, new CardBlockTransitionEntry(actingRole, transition.Name, transition.From, transition.To, timestamp, [])];
                             transitioned = true;
                         }
@@ -977,7 +1030,8 @@ internal static class CardStore
                     {
                         RollbackRaisedNitCard(raiseRequest, raisedContent);
                         return new CardNitDispositionOutcome.ToolFailure(toolFailure.Reason);
-                    });
+                    },
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure =>
                 new CardNitDispositionOutcome.CardCorrupt(nitFilePath, failure.Reason));
@@ -1061,6 +1115,11 @@ internal static class CardStore
                     return new CardGateResultOutcome.NotABlockCard(card.Frontmatter.Kind);
                 }
 
+                if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
+                {
+                    return new CardGateResultOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                }
+
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
                 if (anchored is null)
                 {
@@ -1090,7 +1149,8 @@ internal static class CardStore
                         $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                     onLayoutMismatch: layoutMismatch => new CardGateResultOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardGateResultOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardGateResultOutcome.ToolFailure(toolFailure.Reason));
+                    onToolFailure: toolFailure => new CardGateResultOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure =>
                 new CardGateResultOutcome.CardCorrupt(filePath, failure.Reason));
@@ -1184,6 +1244,11 @@ internal static class CardStore
                     return new CardBlockedByOutcome.NotABlockCard(card.Frontmatter.Kind);
                 }
 
+                if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
+                {
+                    return new CardBlockedByOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                }
+
                 var (updated, newBlockedBy) = apply(card.BlockFields.BlockedBy, blockingCardId);
                 if (!updated)
                 {
@@ -1210,7 +1275,8 @@ internal static class CardStore
                         $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                     onLayoutMismatch: layoutMismatch => new CardBlockedByOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardBlockedByOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardBlockedByOutcome.ToolFailure(toolFailure.Reason));
+                    onToolFailure: toolFailure => new CardBlockedByOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure =>
                 new CardBlockedByOutcome.CardCorrupt(filePath, failure.Reason));
@@ -1316,7 +1382,8 @@ internal static class CardStore
                         $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                     onLayoutMismatch: layoutMismatch => new CardSectionAuthorisationOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardSectionAuthorisationOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardSectionAuthorisationOutcome.ToolFailure(toolFailure.Reason));
+                    onToolFailure: toolFailure => new CardSectionAuthorisationOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure =>
                 new CardSectionAuthorisationOutcome.CardCorrupt(filePath, failure.Reason));
@@ -1549,6 +1616,11 @@ internal static class CardStore
                             throw new InvalidOperationException($"'{recurringPath}' is not a block card; the caller must resolve --finding-recurred ids against block cards only.");
                         }
 
+                        if (!RoundAgreesWithHistory(rereadCard, out var recurringStoredRound, out var recurringExpectedRound))
+                        {
+                            return new CardSectionVerdictOutcome.RoundDisagreesWithHistory(recurringPath, recurringStoredRound, recurringExpectedRound);
+                        }
+
                         if (rereadCard.BlockFields.Tasks.Length > 0)
                         {
                             return new CardSectionVerdictOutcome.RecurringFindingTargetsTaskImplementingBlock(rereadCard.Frontmatter.Id, recurringPath);
@@ -1650,7 +1722,8 @@ internal static class CardStore
                                 $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                             onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
                             onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                            onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason));
+                            onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason),
+                            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
                         if (recurringWriteFailure is not null)
                         {
                             return recurringWriteFailure;
@@ -1681,7 +1754,8 @@ internal static class CardStore
                             onAlreadyExists: alreadyExists => new CardSectionVerdictOutcome.NewFindingCardAlreadyExists(alreadyExists.FilePath),
                             onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
                             onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                            onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason));
+                            onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason),
+                            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
                         if (newWriteFailure is not null)
                         {
                             return newWriteFailure;
@@ -1705,7 +1779,8 @@ internal static class CardStore
                             $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                         onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
                         onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                        onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason));
+                        onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason),
+                        onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
                 }
                 finally
                 {
@@ -1937,7 +2012,8 @@ internal static class CardStore
                                 $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                             onLayoutMismatch: layoutMismatch => new CardSectionCloseOutcome.LayoutMismatch(layoutMismatch.Reason),
                             onCorrupt: corrupt => new CardSectionCloseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                            onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason));
+                            onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason),
+                            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
                         if (blockWriteFailure is not null)
                         {
                             return blockWriteFailure;
@@ -1960,7 +2036,8 @@ internal static class CardStore
                             $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                         onLayoutMismatch: layoutMismatch => new CardSectionCloseOutcome.LayoutMismatch(layoutMismatch.Reason),
                         onCorrupt: corrupt => new CardSectionCloseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                        onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason));
+                        onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason),
+                        onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
                 }
                 finally
                 {
@@ -2012,12 +2089,21 @@ internal static class CardStore
 
         if (state == BlockFlowState.Landed)
         {
+            // Already landed, so this call is not about to write it (work-lifecycle: "a block
+            // already landed is skipped rather than refused") — nothing here mutates it, so the
+            // round check does not apply (Architect ruling, §8a block D brief: the round check
+            // binds writers, not this read-only skip).
             return null;
         }
 
         if (state != BlockFlowState.Approved)
         {
             return new CardSectionCloseOutcome.BlockNotApproved(blockCard.Frontmatter.Id, blockFilePath, state);
+        }
+
+        if (!RoundAgreesWithHistory(blockCard, out var storedRound, out var expectedRound))
+        {
+            return new CardSectionCloseOutcome.RoundDisagreesWithHistory(blockFilePath, storedRound, expectedRound);
         }
 
         foreach (var label in blockCard.BlockFields.GateResults.Select(static result => result.Label).Distinct(StringComparer.Ordinal))
@@ -2091,7 +2177,8 @@ internal static class CardStore
             onLayoutMismatch: layoutMismatch => new CardCreateOutcome.LayoutMismatch(layoutMismatch.Reason),
             onCorrupt: corrupt => new CardCreateOutcome.ToolFailure(
                 $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
-            onToolFailure: toolFailure => new CardCreateOutcome.ToolFailure(toolFailure.Reason));
+            onToolFailure: toolFailure => new CardCreateOutcome.ToolFailure(toolFailure.Reason),
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
     }
 
     /// <summary>
@@ -2168,7 +2255,8 @@ internal static class CardStore
                         $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                     onLayoutMismatch: layoutMismatch => new CardRegisterDischargeOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardRegisterDischargeOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardRegisterDischargeOutcome.ToolFailure(toolFailure.Reason));
+                    onToolFailure: toolFailure => new CardRegisterDischargeOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure =>
                 new CardRegisterDischargeOutcome.CardCorrupt(filePath, failure.Reason));
@@ -2350,7 +2438,8 @@ internal static class CardStore
                         $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                     onLayoutMismatch: layoutMismatch => new CardRulePromoteOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardRulePromoteOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardRulePromoteOutcome.ToolFailure(toolFailure.Reason));
+                    onToolFailure: toolFailure => new CardRulePromoteOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure => new CardRulePromoteOutcome.CardCorrupt(originalFilePath, failure.Reason));
     }
@@ -2755,7 +2844,8 @@ internal static class CardStore
                 $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
             onLayoutMismatch: static layoutMismatch => new CardDecisionSupersedeOutcome.LayoutMismatch(layoutMismatch.Reason),
             onCorrupt: static corrupt => new CardDecisionSupersedeOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-            onToolFailure: static toolFailure => new CardDecisionSupersedeOutcome.ToolFailure(toolFailure.Reason));
+            onToolFailure: static toolFailure => new CardDecisionSupersedeOutcome.ToolFailure(toolFailure.Reason),
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
         if (supersededFailure is not null)
         {
             return supersededFailure;
@@ -2795,7 +2885,8 @@ internal static class CardStore
             {
                 RestoreCardContent(supersededAnchored, originalSupersededContent);
                 return new CardDecisionSupersedeOutcome.ToolFailure(toolFailure.Reason);
-            });
+            },
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
     }
 
     /// <summary>All-or-nothing's other half for a multi-card write that has already written one or
@@ -3081,7 +3172,8 @@ internal static class CardStore
                     $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
                 onLayoutMismatch: layoutMismatch => new CardRuleCompactOutcome.LayoutMismatch(layoutMismatch.Reason),
                 onCorrupt: corrupt => new CardRuleCompactOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                onToolFailure: toolFailure => new CardRuleCompactOutcome.ToolFailure(toolFailure.Reason));
+                onToolFailure: toolFailure => new CardRuleCompactOutcome.ToolFailure(toolFailure.Reason),
+                onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
 
             if (writeFailure is not null)
             {
@@ -3133,7 +3225,8 @@ internal static class CardStore
             {
                 RestoreAllAbsorbed(absorbedAnchors, originalContents);
                 return new CardRuleCompactOutcome.ToolFailure(toolFailure.Reason);
-            });
+            },
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
     }
 
     /// <summary>All-or-nothing's other half for <see cref="CompactRulesUnderLocks"/>'s own final
@@ -3566,7 +3659,8 @@ internal static class CardStore
                 onLayoutMismatch: static layoutMismatch => new CardFindingRecordOutcome.BlindSpotLayoutMismatch(layoutMismatch.Reason),
                 onCorrupt: static corrupt => new CardFindingRecordOutcome.ToolFailure(
                     $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
-                onToolFailure: static toolFailure => new CardFindingRecordOutcome.ToolFailure(toolFailure.Reason));
+                onToolFailure: static toolFailure => new CardFindingRecordOutcome.ToolFailure(toolFailure.Reason),
+                onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             if (raisedFailure is not null)
             {
                 return raisedFailure;
@@ -3627,7 +3721,8 @@ internal static class CardStore
             {
                 RollbackRaisedCard(raiseRequest, raisedContent);
                 return new CardFindingRecordOutcome.ToolFailure(toolFailure.Reason);
-            });
+            },
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
     }
 
     /// <summary>
@@ -3711,6 +3806,51 @@ internal static class CardStore
     /// <see cref="Callboard.Cli.CommandDispatcher.RunBlockApprove"/> can pass this to
     /// <see cref="Callboard.Cli.CommandDispatcher.ResolveCardReference"/> instead of re-implementing
     /// the same eight-arm match a second time.</summary>
+    /// <summary>work-lifecycle: "Stored round agrees with the transition history" (8a.17) — the
+    /// count this checks a block card's stored <see cref="BlockCardFields.Round"/> (unset reading
+    /// as round 1, the same default every increment site applies) against. Reads
+    /// <see cref="BlockFlowTransitions.RoundIncrementingTransitionNames"/> rather than restating the
+    /// three-name set here, so a transition added to that table later is picked up without this
+    /// method changing.</summary>
+    private static int CountRoundIncrementingTransitions(IReadOnlyList<CardBlockTransitionEntry> transitions)
+    {
+        var roundIncrementingNames = BlockFlowTransitions.RoundIncrementingTransitionNames;
+        var count = 0;
+        foreach (var entry in transitions)
+        {
+            foreach (var name in roundIncrementingNames)
+            {
+                if (string.Equals(entry.Name, name, StringComparison.Ordinal))
+                {
+                    count++;
+                    break;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>The one check every writer that mutates a block card applies before touching it
+    /// (work-lifecycle: "Stored round agrees with the transition history", 8a.17; Architect ruling,
+    /// §8a block D brief — "act on that card" covers every writer that mutates a block card; reads
+    /// are unaffected, since a card the tool refuses to describe is one nobody can diagnose).
+    /// <see langword="false"/> when <paramref name="card"/>'s stored <c>round</c> (unset reading as
+    /// round 1, <see cref="RecordApprovalUnderExistingLock"/>'s own comment for why that default is
+    /// shared) does not equal one plus <see cref="CountRoundIncrementingTransitions"/> of its own
+    /// <see cref="CardFile.Transitions"/> — with both figures out so the caller can name them without
+    /// recomputing either, and without this method reconciling or altering the disagreement itself.
+    /// Callers of this method are expected to have already established <paramref name="card"/> is a
+    /// block card (<see cref="IsBlockCard"/>) — it is meaningless, not merely unchecked, against any
+    /// other kind, since only a block card carries <see cref="CardFile.BlockFields"/> or
+    /// <see cref="CardFile.Transitions"/>.</summary>
+    private static bool RoundAgreesWithHistory(CardFile card, out int storedRound, out int expectedRound)
+    {
+        storedRound = card.BlockFields.Round ?? 1;
+        expectedRound = 1 + CountRoundIncrementingTransitions(card.Transitions);
+        return storedRound == expectedRound;
+    }
+
     internal static bool IsBlockCard(CardFile card) => card.Frontmatter.Kind.Match(
         onBlock: static () => true,
         onQuestion: static () => false,

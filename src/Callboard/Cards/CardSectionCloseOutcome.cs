@@ -49,7 +49,8 @@ internal abstract record CardSectionCloseOutcome
         Func<CardNotFound, TResult> onCardNotFound,
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
-        Func<ToolFailure, TResult> onToolFailure);
+        Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory);
 
     /// <param name="Card">The section card as written, now carrying <c>status: closed</c> and its
     /// <c>closed_by</c>/<c>closed_at</c> fields.</param>
@@ -64,7 +65,8 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onClosed(this);
     }
 
@@ -75,7 +77,8 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onAlreadyClosed(this);
     }
 
@@ -86,7 +89,8 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onNotASectionCard(this);
     }
 
@@ -101,7 +105,8 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onBlockNotApproved(this);
     }
 
@@ -116,7 +121,8 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onBlockGateFailed(this);
     }
 
@@ -132,7 +138,8 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onBlockGateAbsent(this);
     }
 
@@ -143,7 +150,8 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onCardNotFound(this);
     }
 
@@ -155,7 +163,8 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onLayoutMismatch(this);
     }
 
@@ -171,8 +180,25 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onCardCorrupt(this);
+    }
+
+    /// <summary>work-lifecycle: "Stored round agrees with the transition history" (8a.17) — the
+    /// <paramref name="BlockFilePath"/> block's stored <c>round</c> does not equal one plus the
+    /// number of round-incrementing transitions (<see cref="BlockFlowTransitions.
+    /// RoundIncrementingTransitionNames"/>) in its own <see cref="CardFile.Transitions"/> history.
+    /// Carries its own <paramref name="BlockFilePath"/>, the same reason <see
+    /// cref="BlockNotApproved"/> does — this verb's own target is the section, so the refusal has
+    /// to say which of the blocks it is closing over disagrees. Refusal-shaped: neither figure is
+    /// privileged and neither is altered — a stored count ahead of the history and a history ahead
+    /// of the count are different failures, and guessing which is right would silently destroy the
+    /// evidence of whichever was correct.</summary>
+    internal sealed record RoundDisagreesWithHistory(string BlockFilePath, int StoredRound, int ExpectedRound) : CardSectionCloseOutcome
+    {
+        internal override TResult Match<TResult>(Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard, Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+            onRoundDisagreesWithHistory(this);
     }
 
     /// <summary>Enforcement itself is unavailable: a card's lock could not be acquired within its
@@ -183,7 +209,8 @@ internal abstract record CardSectionCloseOutcome
         internal override TResult Match<TResult>(
             Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
             Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
-            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onToolFailure(this);
     }
 }

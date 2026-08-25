@@ -116,10 +116,14 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         var updated = AssertParseSuccess(CardStore.ReadCard(owningPath));
         Assert.Equal("briefed", updated.Frontmatter.Status);
         Assert.Equal(3, updated.BlockFields.Round);
-        var onlyTransition = Assert.Single(updated.Transitions);
-        Assert.Equal("finding-recurred", onlyTransition.Name);
-        Assert.Equal(BlockFlowState.Approved, onlyTransition.From);
-        Assert.Equal(BlockFlowState.Briefed, onlyTransition.To);
+        // The fixture's own round: 2 is only consistent with its history (8a.17) carrying one
+        // prior round-incrementing transition; this call appends the finding-recurred edge on top
+        // of that, so two, not one, is now the round's own honest count.
+        Assert.Equal(2, updated.Transitions.Count);
+        var lastTransition = updated.Transitions[^1];
+        Assert.Equal("finding-recurred", lastTransition.Name);
+        Assert.Equal(BlockFlowState.Approved, lastTransition.From);
+        Assert.Equal(BlockFlowState.Briefed, lastTransition.To);
 
         Assert.Equal(filesBefore, Directory.GetFiles(directory).Length);
     }
@@ -490,7 +494,13 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         var frontmatter = new CardFrontmatter(
             id, CardKind.Block, "Title", "approved", CardOwner.Architect, CardScope.Change, sectionId, FixedNow, FixedNow);
         var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: [], Round: round, BlockedBy: [], GateResults: [], FindingKey: findingKey);
-        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
+        // 8a.17, "Stored round agrees with the transition history" — CardStore now refuses to act
+        // on a block card whose stored round disagrees with its own history, so round > 1 needs
+        // matching synthetic changes-requested transitions to keep this fixture consistent.
+        var transitions = Enumerable.Range(0, round - 1)
+            .Select(_ => new CardBlockTransitionEntry(CardOwner.Reviewer, "changes-requested", BlockFlowState.InReview, BlockFlowState.Briefed, FixedNow, []))
+            .ToList();
+        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, transitions);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
     }

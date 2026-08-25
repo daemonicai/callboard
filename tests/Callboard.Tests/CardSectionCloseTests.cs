@@ -325,7 +325,15 @@ public sealed class CardSectionCloseTests : IDisposable
             id, CardKind.Block, "A block", status, CardOwner.Architect, CardScope.Change, sectionId, Created, Created);
         var blockFields = new BlockCardFields(
             Base: "base-commit", ReviewedState: reviewedState, Tasks: ["5.1"], Round: round, BlockedBy: [], GateResults: gateResults ?? []);
-        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, [], SectionCardFields.Empty);
+        // 8a.17, "Stored round agrees with the transition history" — CardStore now refuses to act
+        // on a block card whose stored round disagrees with its own history, so a fixture asking
+        // for round > 1 has to carry matching synthetic changes-requested transitions too.
+        var transitions = round is > 1
+            ? Enumerable.Range(0, round.Value - 1)
+                .Select(_ => new CardBlockTransitionEntry(CardOwner.Reviewer, "changes-requested", BlockFlowState.InReview, BlockFlowState.Briefed, Created, []))
+                .ToList()
+            : [];
+        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, transitions, SectionCardFields.Empty);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
     }
@@ -344,7 +352,8 @@ public sealed class CardSectionCloseTests : IDisposable
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Closed, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Closed, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Closed, got CardCorrupt: {corrupt.Reason}"),
-            onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Closed, got ToolFailure: {toolFailure.Reason}"));
+            onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Closed, got ToolFailure: {toolFailure.Reason}"),
+            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Closed, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
 
     private static CardLock AssertAcquired(CardLockResult result) =>
         result.Match(
@@ -358,7 +367,8 @@ public sealed class CardSectionCloseTests : IDisposable
             onAlreadyExists: alreadyExists => throw new Xunit.Sdk.XunitException($"expected write success, got AlreadyExists: '{alreadyExists.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
-            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"));
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"),
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

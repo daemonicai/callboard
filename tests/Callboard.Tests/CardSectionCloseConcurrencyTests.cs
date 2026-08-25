@@ -225,7 +225,8 @@ public sealed class CardSectionCloseConcurrencyTests : IDisposable
                     onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"round {round}: unexpected CardNotFound('{notFound.FilePath}')"),
                     onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"round {round}: unexpected LayoutMismatch: {layoutMismatch.Reason}"),
                     onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"round {round}: unexpected CardCorrupt: {corrupt.Reason}"),
-                    onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"round {round}: unexpected ToolFailure (looks like a deadlock or lost race): {toolFailure.Reason}"));
+                    onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"round {round}: unexpected ToolFailure (looks like a deadlock or lost race): {toolFailure.Reason}"),
+                    onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"round {round}: unexpected RoundDisagreesWithHistory (looks like a deadlock or lost race): (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
 
                 Assert.Equal(blocksPerSection, closed.LandedBlocks.Count);
                 Assert.All(closed.LandedBlocks, block => Assert.Equal("landed", block.Frontmatter.Status));
@@ -287,7 +288,8 @@ public sealed class CardSectionCloseConcurrencyTests : IDisposable
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Closed, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Closed, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Closed, got CardCorrupt: {corrupt.Reason}"),
-            onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Closed, got ToolFailure: {toolFailure.Reason}"));
+            onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Closed, got ToolFailure: {toolFailure.Reason}"),
+            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Closed, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

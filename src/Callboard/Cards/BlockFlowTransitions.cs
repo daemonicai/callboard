@@ -146,4 +146,20 @@ internal static class BlockFlowTransitions
         onApproved: static () => [FindingRecurred],
         onLanded: static () => [Close],
         onClosed: static () => []);
+
+    /// <summary>
+    /// The transition names work-lifecycle's "Stored round agrees with the transition history"
+    /// (8a.17) counts as round-incrementing — <see cref="ChangesRequested"/>,
+    /// <see cref="FixBeforeLand"/> and <see cref="FindingRecurred"/>, the three edges this type's
+    /// own doc comment diagrams as <c>round += 1</c>. Derived here, from this table's own three
+    /// named fields, rather than restated as a second hand-maintained list in the checker
+    /// (<see cref="CardStore.CountRoundIncrementingTransitions"/>) — a fourth back-edge added later
+    /// to this table without updating <em>this</em> property would still count correctly, closing
+    /// the exact two-sources-of-truth failure 8a.17 exists to catch. <see cref="Land"/>,
+    /// <see cref="Brief"/>, <see cref="Claim"/>, <see cref="SubmitForReview"/>, <see cref="Approve"/>
+    /// and <see cref="Close"/> never increment <c>round</c> — work-lifecycle only ever names the
+    /// three edges here.
+    /// </summary>
+    internal static IReadOnlyList<string> RoundIncrementingTransitionNames { get; } =
+        [ChangesRequested.Name, FixBeforeLand.Name, FindingRecurred.Name];
 }

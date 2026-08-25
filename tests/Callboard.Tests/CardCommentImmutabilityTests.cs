@@ -110,6 +110,7 @@ public sealed class CardCommentImmutabilityTests
             "CloseSectionUnderExistingLock",        // same, lock already held
             "CompactRules",                         // §7 block F: dedupes/self-checks on paths, then acquires N+1 locks in ordinal path order and delegates to CompactRulesUnderLocks — never touches a CardFile itself
             "CompactRulesUnderLocks",               // §7 block F: read-decide-write on Frontmatter.Status/RegisterFields.SupersededBy/DischargedBy/DischargedAt for every absorbed rule, and RegisterFields.Absorbs for the family only; never touches Comments on any of them
+            "CountRoundIncrementingTransitions",     // 8a.17: pure count over a block card's Transitions against BlockFlowTransitions.RoundIncrementingTransitionNames; never touches a CardFile
             "CreateCard",                           // §7 block A: allocates an identity, validates scope, writes one brand-new card via WriteCard — never touches an existing card's Comments, it only ever creates
             "DescribeUnexpectedDischargeOutcome",   // §7 block D: pure string formatter over a CardRegisterDischargeOutcome for ArchiveChange's tool-failure message; never touches a CardFile
             "DischargeRegisterCard",                // §7 block A: read-decide-write on Frontmatter.Status/RegisterFields.DischargedBy/DischargedAt only; never touches Comments
@@ -147,6 +148,7 @@ public sealed class CardCommentImmutabilityTests
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"
             "RemoveBlockedByUnderExistingLock",     // same, lock already held
             "RestoreAllAbsorbed",                   // §7 block F: loops RestoreCardContent over every absorbed rule already written in a CompactRulesUnderLocks call when the family's own write then fails; touches only what RestoreCardContent itself touches
+            "RoundAgreesWithHistory",               // 8a.17: pure predicate — a block card's stored round equals one plus CountRoundIncrementingTransitions of its own Transitions; every writer that mutates a block card checks this before writing, never touches a CardFile itself
             "RestoreCardContent",                   // §7 block C/F (renamed from RestoreSupersededCard when block F's own multi-card write needed the identical restore): best-effort re-write of a card's pre-mutation bytes when a later write in the same multi-card operation fails — never touches an existing card's Comments, it restores exactly what it read
             "RollbackRaisedCard",                   // §6 block B: best-effort delete of a just-written, brand-new raised card when the finding's own write then fails — never touches an existing card at all
             "RollbackRaisedNitCard",                // §8 block B: the same compare-then-delete rollback applied to DispositionNit's own raised card — never touches an existing card at all
@@ -223,7 +225,8 @@ public sealed class CardCommentImmutabilityTests
             onAlreadyExists: alreadyExists => throw new Xunit.Sdk.XunitException($"expected write success, got AlreadyExists: '{alreadyExists.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
-            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"));
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"),
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
 
     private static void AssertFailure(CardWriteResult result) =>
         result.Match<object?>(
@@ -232,7 +235,8 @@ public sealed class CardCommentImmutabilityTests
             onAlreadyExists: static _ => null,
             onLayoutMismatch: static _ => null,
             onCorrupt: static _ => null,
-            onToolFailure: static _ => null);
+            onToolFailure: static _ => null,
+            onRoundDisagreesWithHistory: static disagreement => null);
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

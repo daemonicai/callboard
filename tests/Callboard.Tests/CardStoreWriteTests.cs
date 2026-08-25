@@ -369,7 +369,8 @@ public sealed class CardStoreWriteTests : IDisposable
             onAlreadyExists: alreadyExists => throw new Xunit.Sdk.XunitException($"expected write success, got AlreadyExists: '{alreadyExists.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
-            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"));
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"),
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
 
     private static string AssertFailure(CardWriteResult result) =>
         result.Match(
@@ -378,7 +379,8 @@ public sealed class CardStoreWriteTests : IDisposable
             onAlreadyExists: alreadyExists => $"a card already exists at '{alreadyExists.FilePath}'.",
             onLayoutMismatch: layoutMismatch => layoutMismatch.Reason,
             onCorrupt: corrupt => $"the card file is corrupt: {corrupt.Reason}",
-            onToolFailure: toolFailure => toolFailure.Reason);
+            onToolFailure: toolFailure => toolFailure.Reason,
+            onRoundDisagreesWithHistory: disagreement => $"stored round {disagreement.StoredRound}, but history implies round {disagreement.ExpectedRound}.");
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

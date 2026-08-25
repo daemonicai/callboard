@@ -22323,6 +22323,226 @@ split, not a bug.
 
 Block C stands approved in full.
 
+### §8a block D brief — stored `round` agrees with the transition history
+
+**[architect]** → @worker. Tasks **8a.17–8a.18**, the last block of §8a. Block C landed as `3aa8489`.
+
+**Spec** — `specs/work-lifecycle/spec.md`, "Stored round agrees with the transition history". Short, and
+every sentence of it is doing work. `round` is stored *because* gate evidence is pinned to the round it
+was recorded in and that pin must survive on the wire — so this is not a case where the derived value
+should simply replace the stored one.
+
+**8a.17 — refuse, reconcile neither.** Where a card's stored `round` does not equal one plus the number
+of round-incrementing transitions in its own history, refuse to act on that card, name **both** figures,
+and alter neither. The spec's reasoning is the part to get right: a stored count ahead of the history and
+a history ahead of the count are *different failures*, and guessing which is right silently destroys the
+evidence of whichever was correct. So no repair, no "self-healing", no preferring one side.
+
+Decide and state in the DEVLOG **which operations "act on" covers.** My position: every writer that
+mutates a block card refuses. Reads should still work — a corrupt card the tool refuses to describe is a
+card nobody can diagnose, and this failure is one a human has to look at.
+
+**Three round-incrementing transitions**, per the amended diagram: `changes-requested`,
+`fix-before-land`, `finding-recurred`. **Derive that set from `BlockFlowTransitions`, do not restate it
+in the checker.** A fourth edge added later must not be able to land while a hand-maintained list in the
+validator silently disagrees — that is precisely the two-sources-of-truth failure this task exists to
+catch, and rebuilding it inside the fix would be an embarrassing way to close it.
+
+**8a.18 — every round-incrementing transition advances the field and the history in one write.** Test it
+per transition, not once generically. All three currently increment at different call sites:
+`changes-requested` and `fix-before-land` in their own paths, `finding-recurred` in
+`RecordSectionVerdictUnderExistingLock` (block B). A test per edge is what stops one of them drifting.
+
+**Check this before you build — I think it may be a live defect, but verify rather than trust me.** The
+increment sites do not agree on their default for an unset `round`. `CardStore.cs:937` reads
+`(… .Round ?? 0) + 1`; `CardStore.cs:1641` reads `(… .Round ?? 1) + 1`. Elsewhere this codebase
+consistently documents "unset reads as round 1". If that is right, `?? 0` produces 1 where it should
+produce 2 — and a card that increments from unset would then land with a stored `round` disagreeing with
+its own one-entry history, which is exactly the state 8a.17 refuses. Establish what the correct default
+is, make every site agree, and if it *is* a defect, say so plainly in the DEVLOG and cover it with a
+test. If I have misread it, say that instead — I would rather be corrected than have you build to a
+wrong premise.
+
+**Binding:** refusals name the rule, both figures, and what would satisfy it. Do not touch `tasks.md`,
+the `Makefile` or `.claude/`; do not commit. This is the last block before the section review, so leave
+the tree in the state you would want a supervisor reading `git diff 9dede1f..HEAD` to find.
+
+**Gates:** `make gates` → `GATES_EXIT:0`, exit lines quoted verbatim. → `@reviewer` when green.
+
+**[worker]** Implemented block D (8a.17–8a.18), the last block of §8a.
+
+**Confirmed the suspected defect — it was real.** `CardStore.cs`'s `?? 0` default appeared at **two**
+sites, not one: `ApplyBlockTransitionUnderExistingLock`'s own `changes-requested` arm (then line 440) and
+`DispositionNitUnderLocks`'s `fix-before-land` arm (then line 964) — `RecordSectionVerdictUnderExistingLock`'s
+`finding-recurred` arm already read `?? 1`. `BlockCardFields.CurrentRound` (line 191: `Round ?? 1`) is
+where this codebase documents "unset reads as round 1" — `RecordApprovalUnderExistingLock`'s and
+`RecordGateResultUnderExistingLock`'s own `currentRound` derivations already agree with that, in comments
+that say so explicitly. A card that reaches `in-review` with `Round` still unset (seeded directly there,
+which `DispositionNitUnderLocks`'s own doc comment says tests do) and then takes `changes-requested` or
+`fix-before-land` would land `round: 1` off a history that just grew its first entry — disagreeing with
+its own history the moment 8a.17's check went live. Fixed both sites to `?? 1`, so all three
+round-incrementing arms now agree.
+
+**"Act on that card" = every writer that mutates a block card refuses; reads are unaffected** — the
+Architect's proposed reading, adopted as stated. Wired into: `ApplyBlockTransitionUnderExistingLock`,
+`RecordApprovalUnderExistingLock`, `RecordGateResultUnderExistingLock`, `UpdateBlockedByUnderExistingLock`
+(both `AddBlockedBy`/`RemoveBlockedBy`), `DispositionNitUnderLocks`, `RaiseNitUnderExistingLock`,
+`RecordSectionVerdictUnderExistingLock` (checked against each `--finding-recurred` target, not the
+section card itself), `CloseSectionUnderExistingLock`'s own `ValidateBlockForLanding` (checked before a
+block is landed; a block already `landed` is skipped, not re-written, so the check does not apply there —
+nothing mutates it), and the two generic surfaces `AppendCommentUnderExistingLock`/
+`TransferOwnershipUnderExistingLock` (gated on `IsBlockCard`, since both operate on any card kind).
+`ReadCard`/`ReadAllCards` are untouched — a corrupt card the tool refuses to describe is one nobody can
+diagnose.
+
+**Derived from `BlockFlowTransitions`, not restated.** New
+`BlockFlowTransitions.RoundIncrementingTransitionNames` reads the table's own three named fields
+(`ChangesRequested`, `FixBeforeLand`, `FindingRecurred`) — a fourth back-edge added to the table later is
+picked up here without this file changing. `CardStore.CountRoundIncrementingTransitions` counts a card's
+own `Transitions` against that list; `CardStore.RoundAgreesWithHistory` is the one check every writer
+above calls: `stored round (unset reads as 1) == 1 + CountRoundIncrementingTransitions`.
+
+**The refusal itself.** `RoundDisagreesWithHistory(StoredRound, ExpectedRound)` added to every
+block-card-mutating outcome union (`CardBlockTransitionOutcome`, `CardApprovalOutcome`,
+`CardGateResultOutcome`, `CardBlockedByOutcome`, `CardNitDispositionOutcome`, `CardNitRaiseOutcome`,
+`CardWriteResult`) plus the two section-scoped ones that mutate a *different* card than the one they're
+called against (`CardSectionVerdictOutcome`, `CardSectionCloseOutcome` — both carry their own `FilePath`/
+`BlockFilePath` on this case specifically, since their own target is the section, not the disagreeing
+block). CLI maps every one to `round-disagrees-with-history`, naming both figures and the file, altering
+neither — new shared `CommandDispatcher.RoundDisagreesWithHistory` helper, same shape as `WrongCardKind`.
+`CardWriteResult`'s new case is unreachable from every internal `AtomicWrite`-mapping call site (that case
+is only ever constructed by the pre-write guard, never by `AtomicWrite` itself) — each of those ~22
+mapping sites gets a `throw new InvalidOperationException("unreachable: …")` arm, the same discipline this
+codebase already applies to other structurally-unreachable arms.
+
+**8a.18, one test per edge, not once generically** (`RoundAgreesWithHistoryTests.cs`, new file): round and
+history advance together in the same write for `changes-requested` (`ApplyBlockTransition`),
+`fix-before-land` (`DispositionNit`), and `finding-recurred` (`RecordSectionVerdict`) — each asserts the
+written card *and* a fresh re-read agree. **8a.17**: both disagreement directions (stored ahead of
+history; history ahead of stored) refuse, name both figures, and leave the file's bytes untouched; a
+non-round-incrementing writer (`RecordGateResult`) refuses on a mismatched card too, proving the bound
+isn't scoped to the three edges that move `round` themselves; a plain `ReadCard` still succeeds against
+the same mismatched card.
+
+**Fixture fallout from turning this on repo-wide:** four pre-existing tests built block cards with
+`round > 1` and no matching transition history (the exact shape 8a.17 now refuses) —
+`CardGateResultTests.RecordGateResult_ForADifferentRound_...`'s `SetRoundOnDisk` helper,
+`CardSectionCloseTests.WriteBlockCard`'s `round` parameter, and
+`CommandDispatcherSectionVerdictRemediationTests.WriteApprovedRemediationCard` all now emit matching
+synthetic `changes-requested` transitions for `round - 1`. The remediation-round test's own
+`Assert.Single(updated.Transitions)` became `Assert.Equal(2, ...)` — its round-2 fixture is only honest
+with one prior transition on it now, and this call appends a second (`finding-recurred`). Mechanical
+inventory test (`CardStore_EntireStaticMethodSurface_IsExplicitlyAccountedFor`) updated for
+`CountRoundIncrementingTransitions`/`RoundAgreesWithHistory`.
+
+**Refusal code added: `round-disagrees-with-history`** (one new code; no existing code changed or
+removed).
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (783 tests: 776 existing + 7
+new, all green).
+
+→ @reviewer
+
+**[reviewer]** Block D (8a.17–8a.18) audited against the working tree (`git diff HEAD`, plus the new
+untracked `RoundAgreesWithHistoryTests.cs`). Re-ran `make gates` myself: `BUILD_EXIT:0 TEST_EXIT:0
+FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 783/783 passed — matches the worker's report exactly.
+
+**Verdict: Approve.**
+
+**The round-default fix, confirmed correct and complete.** `BlockCardFields.CurrentRound` (line 191)
+reads `Round ?? 1`, and that is the codebase's own documented default. Before this block,
+`ApplyBlockTransitionUnderExistingLock`'s `changes-requested` arm and `DispositionNitUnderLocks`'s
+`fix-before-land` arm both read `(Round ?? 0) + 1`, while `RecordSectionVerdictUnderExistingLock`'s
+`finding-recurred` arm already read `?? 1`. The worker's diagnosis is right: a card seeded straight
+into `in-review` with `Round` unset (which `DispositionNitUnderLocks`'s own fixtures do) would take
+`changes-requested` or `fix-before-land` and land `round: 1` against a one-entry history — exactly the
+disagreement 8a.17 now refuses. Both sites are now `?? 1` (`CardStore.cs`, the `changes-requested` arm
+and the `fix-before-land` arm), so all three round-incrementing arms agree with `CurrentRound`'s own
+default. I could not find a card shape that the old `?? 0` behaviour would have produced and that the
+new check now refuses without a way forward — the defect never shipped (this is the same DEVLOG,
+uncommitted since block C), so there is no pre-existing corrupted card in the repo to strand. The
+`RecordApprovalUnderExistingLock`/`RecordGateResultUnderExistingLock` comments documenting the shared
+default are consistent with the fix.
+
+**`RoundIncrementingTransitionNames` is genuinely derived, not restated.** `BlockFlowTransitions.cs`'s
+new property reads `[ChangesRequested.Name, FixBeforeLand.Name, FindingRecurred.Name]` — the table's
+own three named fields, not hand-typed strings. `CardStore.CountRoundIncrementingTransitions` consumes
+that list rather than its own copy. A fourth round-incrementing edge added to the table later is picked
+up here without this file changing, closing the two-sources-of-truth failure the task exists to
+prevent.
+
+**Blast radius — all ten writers checked, correctly ordered.** Confirmed by direct diff read (not the
+worker's inventory alone): `AppendCommentUnderExistingLock` and `TransferOwnershipUnderExistingLock`
+(both gated on `IsBlockCard`, sharing `CardWriteResult.RoundDisagreesWithHistory`),
+`RaiseNitUnderExistingLock`, `ApplyBlockTransitionUnderExistingLock`, `RecordApprovalUnderExistingLock`,
+`DispositionNitUnderLocks`, `RecordGateResultUnderExistingLock`, `UpdateBlockedByUnderExistingLock`
+(one check shared by both `AddBlockedBy`/`RemoveBlockedBy` via `MapBlockedByOutcome`),
+`RecordSectionVerdictUnderExistingLock` (checked against the re-read `--finding-recurred` target before
+that card is mutated, not against the section card itself — correct, since the section card is not a
+block card), and `CloseSectionUnderExistingLock`'s `ValidateBlockForLanding` (checked after the
+`Landed`-skip and the `BlockNotApproved` check, before the gate-result loop — a block already `landed`
+is skipped without a round check, which is right, since nothing mutates it). Every check runs against
+the card's pre-mutation state, before any increment or write logic executes. Every non-pre-write-guard
+`AtomicWrite`-mapping call site (~22, matches the worker's count) gets the same
+`throw new InvalidOperationException("unreachable: …")` arm this codebase already uses for other
+structurally-unreachable cases — correct, since `RoundDisagreesWithHistory` can only be constructed by
+the pre-write guard.
+
+CLI wiring: 9 `onRoundDisagreesWithHistory` arms in `CommandDispatcher.cs`, one per CLI verb that
+reaches a checked writer (block-transition, gate-result, blocked-by add/remove sharing one
+`MapBlockedByOutcome`, block-approve, nit-raise, nit-disposition, section-verdict, section-close, and
+the rule-promotion-refusal comment — currently the only CLI path that reaches `AppendComment` at all).
+`TransferOwnership` has no CLI verb yet, so it has no dispatcher arm; the `CardStore`-level check is
+still in place for whenever one lands, which is the right way to leave it. The message helper
+(`RoundDisagreesWithHistory` in `CommandDispatcher.cs`) names the file, both figures, and states neither
+is altered — matches the binding requirement.
+
+**On `AppendCommentUnderExistingLock`/`TransferOwnershipUnderExistingLock` refusing on a corrupt-round
+card — correct-and-intended, not a usability trap, for three reasons.** First, this is the Architect's
+own explicit ruling in the brief ("act on that card" = every writer that mutates a block card refuses),
+not a worker inference — implemented faithfully. Second, reads are unaffected
+(`ReadCard_CardWithDisagreeingRound_StillReads`): anyone diagnosing a disagreeing card can still read
+its stored round and its full transition history and see exactly what disagrees, they just cannot
+append a comment onto *that* card while it disagrees. Third, and concretely: right now the only CLI
+path that reaches `AppendComment` at all is the rule-promotion-refusal comment (a system-generated
+comment, not a human diagnosis write) — there is no general-purpose "comment on a card" verb in this
+codebase yet that a human would use to record a diagnosis directly on the disagreeing block card. A
+human who wants to record what's wrong with a corrupt-round block card today raises a finding/hazard
+card against it (a different card, a different writer, ungated on this block card's round) rather than
+commenting on the corrupt card itself, so the diagnosis is not actually blocked, just relocated to
+where this codebase already puts findings. Flagging as an **architectural note, not a blocker**: if a
+general "append a diagnosis comment to this exact card" verb is added later, `CardWriteResult`'s
+exhaustive `Match` will force it through the same refusal (compiler-enforced), and the Architect may
+want to revisit then whether a plain, non-nit comment append — which does not touch `round` or
+`Transitions` at all — should be exempted from this bound, since append-only text cannot make the
+disagreement worse. Not resolving that now; the brief settled it explicitly and the implementation
+matches the ruling.
+
+**8a.18 per-edge coverage confirmed** — `RoundAgreesWithHistoryTests.cs` has one test per
+round-incrementing edge, not one generic test:
+`ApplyBlockTransition_ChangesRequested_ReturnsToBriefed_IncrementsRound_HistoryAgrees`,
+`DispositionNit_FixBeforeLand_ReturnsToBriefed_IncrementsRound_HistoryAgrees`,
+`RecordSectionVerdict_FindingRecurred_ReturnsOwningCardToBriefed_IncrementsRound_HistoryAgrees` — each
+asserts the written card *and* a fresh re-read agree, which is right, since 8a.18 is about the field and
+the history landing together in one write. Both 8a.17 disagreement directions are covered
+(`ApplyBlockTransition_StoredRoundAheadOfHistory_Refuses_NamesBothFigures_AltersNeither`,
+`ApplyBlockTransition_HistoryAheadOfStoredRound_Refuses_NamesBothFigures_AltersNeither`), each asserting
+the file's bytes are byte-identical before and after the refused call — proving "alters neither" rather
+than merely asserting the refusal type. `RecordGateResult_CardWithDisagreeingRound_Refuses_...` proves
+the bound is not scoped to the three round-incrementing edges themselves. Fixture fallout
+(`CardGateResultTests`, `CardSectionCloseTests`, `CommandDispatcherSectionVerdictRemediationTests`) is
+honestly handled: pre-existing fixtures asking for `round > 1` with no history now carry matching
+synthetic `changes-requested` transitions, and the remediation test's own `Assert.Single` → `Assert.Equal(2,
+...)` change is correctly explained (the fixture's round-2 card needed one prior transition to be
+honest with itself, and the call under test appends the second). The mechanical inventory test
+(`CardCommentImmutabilityTests`'s `EntireStaticMethodSurface_IsExplicitlyAccountedFor`) picked up both
+new static methods with accurate one-line descriptions.
+
+**Nits.** None worth raising — this block is clean.
+
+Block D stands approved. This closes the last block of §8a; ready for the supervisor's section review
+over `git diff 9dede1f..HEAD`.
+
 ## NEXT
 
 **Resume point: §8a (18 tasks, nothing built).** Working tree clean, nothing in flight, no part-built

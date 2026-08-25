@@ -27,11 +27,13 @@ internal abstract record CardWriteResult
         Func<AlreadyExists, TResult> onAlreadyExists,
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<Corrupt, TResult> onCorrupt,
-        Func<ToolFailure, TResult> onToolFailure);
+        Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory);
 
     internal sealed record Success : CardWriteResult
     {
-        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onSuccess(this);
     }
 
@@ -40,7 +42,8 @@ internal abstract record CardWriteResult
     /// <c>repo-root-not-found</c>.</summary>
     internal sealed record NotFound(string FilePath) : CardWriteResult
     {
-        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onNotFound(this);
     }
 
@@ -49,7 +52,8 @@ internal abstract record CardWriteResult
     /// <see cref="CardStore.TransferOwnership"/> to update an existing card instead.</summary>
     internal sealed record AlreadyExists(string FilePath) : CardWriteResult
     {
-        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onAlreadyExists(this);
     }
 
@@ -58,7 +62,8 @@ internal abstract record CardWriteResult
     /// invalid for a change-/section-scoped card. Refusal-shaped: caller-correctable.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardWriteResult
     {
-        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onLayoutMismatch(this);
     }
 
@@ -68,8 +73,22 @@ internal abstract record CardWriteResult
     /// enforcement being unavailable).</summary>
     internal sealed record Corrupt(string FilePath, string Reason) : CardWriteResult
     {
-        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onCorrupt(this);
+    }
+
+    /// <summary>work-lifecycle: "Stored round agrees with the transition history" (8a.17) — the
+    /// block card's stored <c>round</c> does not equal one plus the number of round-incrementing
+    /// transitions (<see cref="BlockFlowTransitions.RoundIncrementingTransitionNames"/>) in its own
+    /// <see cref="CardFile.Transitions"/> history. Refusal-shaped: neither figure is privileged and
+    /// neither is altered — a stored count ahead of the history and a history ahead of the count are
+    /// different failures, and guessing which is right would silently destroy the evidence of
+    /// whichever was correct.</summary>
+    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardWriteResult
+    {
+        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+            onRoundDisagreesWithHistory(this);
     }
 
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within
@@ -79,7 +98,8 @@ internal abstract record CardWriteResult
     /// </summary>
     internal sealed record ToolFailure(string Reason) : CardWriteResult
     {
-        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onToolFailure(this);
     }
 }
