@@ -25670,6 +25670,88 @@ Clean. Land it.
 
 → @architect
 
+**[architect]** Block E landed as `d8d3457` — `[reviewer]` `Approve`, `GATES_EXIT:0`, 858/858.
+**`9.4`, `9.5`, `9.6` and `9.8` ticked; nine of ten boxes are done.** The reviewer confirmed no age
+exemption survives the 9.6 rework, traced the carried arm's block-targeted recording to a lock already
+held, and checked all four retargeted tests individually for weakening.
+
+On optional `--section`: the reviewer's analysis is that this is **not** A2's defect structurally —
+A2's `--change` had no legitimate omission case, while `--section` genuinely has two legitimate classes
+of question, so "make it required" is not available without breaking the spec's own protected case. The
+residual risk is real but different: `question create`'s response carries no `section` field at all, so
+a caller who forgets gets no signal. **Carried into block F as a small item** (below). Inferring the
+section from ambient context is explicitly rejected — it would break this CLI's anti-inference
+discipline.
+
+**[architect]** Brief — **block F (9.9)**: the archive gate. The last block of §9. → @worker
+
+**Task in scope:** `9.9`. It ticks, and it is the tenth of ten.
+
+**Spec**: `process-enforcement`, "Archive settles orphaned obligations":
+
+> The system SHALL refuse to archive a change while any change-scoped obligation owed by no remaining
+> section is open. Each SHALL be discharged, promoted to a wider scope, or declined with a recorded
+> reason.
+>
+> This gate exists because obligations owed by no section that remains have been observed to surface
+> at archive time or not at all.
+
+Two scenarios: an open orphaned obligation refuses the archive and the response lists the obligations
+and the dispositions available; and **promotion to a wider scope satisfies the gate**, with the
+obligation staying live at its new scope.
+
+**Read this next part before you plan the block. There are two problems here that are bigger than the
+refusal itself, and I want them established and reported before you build.**
+
+**Problem 1 — archive currently does the opposite of what 9.9 requires.** `ArchiveChange` today
+*silently discharges every open obligation in the change* on its way to moving the directory
+(`DischargeRegisterCard` per obligation, around `CardStore.cs:3262`), and its own doc comment says so.
+That behaviour was written when §9's refusal did not exist. **9.9 replaces it**: an orphaned open
+obligation must refuse the archive, not be quietly settled by it. Silently discharging the exact cards
+the spec says to stop on is the "recording a violation instead of preventing it" failure this whole
+capability exists to close.
+
+What I want established, not assumed: at archive time, is *every* open change-scoped obligation
+necessarily orphaned (its owing section closed), or can one be owed by a section that is still open —
+and if so, what should happen to it? 9.4 guards a *section's* close; archive is a different gate.
+**Work out the real answer from the code and the spec and post it before you change the behaviour.**
+
+**Problem 2 — the refusals name dispositions that may have no command.** The spec's three dispositions
+for an orphaned obligation are discharge, **promote to a wider scope**, and **decline with a recorded
+reason**. `promote` exists only for `rule` (`rule promote`); `obligation` has only `create` and
+`discharge`. As far as I can tell there is no way to promote an obligation and no way to decline one
+with a recorded reason.
+
+If that is right, then 9.9's second scenario — *"promotion satisfies the archive gate"* — cannot be
+satisfied at all, and block E's own 9.4 refusal may already be listing routes a caller cannot take.
+That is the §8 supervisor note in its worst form: a refusal that names a remedy which does not exist
+is worse than one that names nothing, because the caller burns a cycle looking for the verb.
+
+**So: establish exactly which of the three dispositions have commands today, and post that in the
+thread before building anything.** Check `obligation`'s subcommands, check what block E's 9.4 refusal
+actually names as available, and say plainly what is missing.
+
+**Then stop and hand back to me.** If the honest answer is that 9.9 needs `obligation promote` and a
+decline-with-reason path built first, that is a scope judgement about whether §9 grows two verbs — my
+call, and possibly the Product Owner's, not yours. **Do not start building verbs on your own
+initiative, and do not narrow 9.9 to fit what exists.** Post the finding; I will rule and re-brief.
+
+If it turns out the dispositions do exist and I have missed them, say so just as plainly and carry on
+with the refusal itself.
+
+**Small carried item, from E's review.** `question create`'s response omits the recorded section — the
+same gap `owedBy` had before block D closed it. Add `section` to the response so a caller who omitted
+`--section` can see that they did. One field; do it alongside whatever else this block ends up being.
+
+**Standing rules all apply**: the coverage gate (every new case registered with a test proving it
+fires *and* records); `ChangeArchiveOutcome` is your union and goes onto the refusal reporting format
+entire; a refusal records when it asserts something about the record and reports without recording
+when it asserts only that the invocation was malformed; the four standing instructions from A3.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`; `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report exit lines verbatim. Do not commit, do
+not tick, do not touch the Makefile or `CLAUDE.md`.
+
 ## NEXT
 
 **Carried to §10:** `CardStore.FindAgeingAddressedThreads` (§9 block E) computes exactly the
@@ -25678,14 +25760,19 @@ already routes on unresolved addressed threads — when it builds, it should con
 rediscovering the computation. Not done here: `section status` is the only reader so far.
 
 
-**Resume point: §9 "Process enforcement", block E (9.4, 9.5, 9.6 + 9.8's carried arm) — briefed,
-worker running.** §9 is open at base
+**Resume point: §9 "Process enforcement", block F (9.9) — briefed, worker scoping.** §9 is open at base
 `ec2d99b`. **§9 is re-carved: `9.10` moved ahead of the remaining rules as block C**, so the coverage
 instruction that failed in A2, A3 and B becomes a gate the later blocks must pass rather than a
 paragraph asking them to. Order is now C (9.10), D (9.7, 9.8), E (9.4-9.6), F (9.9); no task numbers
-changed. Ticked so far: 9.1, 9.2, 9.3, 9.7, 9.10. **9.8 is implemented but deliberately unticked** — its
-guard covers the generic transitions and `approve`, but section-driven landing is unguarded until
-block E adds the arm in `CloseSectionUnderExistingLock`. Only F (9.9) follows E.
+changed. **Nine of ten ticked** — 9.1-9.8 and 9.10. Only **9.9** (block F, the archive gate) remains, then
+the supervisor's section review.
+
+**F is briefed as a scoping question first, not as implementation.** Two things need establishing
+before anything is built: archive currently *silently discharges* every open obligation, which is the
+opposite of what 9.9 requires; and the spec's three dispositions for an orphaned obligation include
+promotion and decline-with-reason, neither of which appears to have a command (`promote` exists only
+for `rule`). If 9.9 needs two new verbs, that is a scope judgement for the Architect and possibly the
+Product Owner. The worker reports and hands back rather than building.
 
 **The coverage gate is live** (`tests/Callboard.Tests/RefusalCoverageGateTests.cs`, block C,
 `768aa1d`): every refusal case must be registered with a test proving it fires and records, and a
