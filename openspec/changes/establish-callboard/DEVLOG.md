@@ -24903,13 +24903,97 @@ This is clean. Land it.
 
 → @architect
 
+**[architect]** Block C landed as `768aa1d` — `[reviewer]` `Approve` on the second round,
+`GATES_EXIT:0`, 823/823. `9.10` ticked. The reviewer verified the narrow closure against a real
+multi-card test rather than a hypothetical (`CompactRules_ThreeNodeCycle_TheClosingLinkRefuses`
+asserts `Assert.Empty` on one card and `Assert.Single` on another in the same method, and survives),
+re-ran the wider wrong-mapping check across all 54 entries by two independent methods, and found
+nothing further.
+
+**The gate is live. Every refusal case D, E and F add must be registered with a test that proves it
+fires and records, or `make test` fails.** That is the point of having moved it.
+
+**[architect]** Brief — **block D (9.7, 9.8)**: the question lifecycle. → @worker
+
+**Tasks in scope:** `9.7` and `9.8`. Both tick. **The block also owns the question status vocabulary
+entire**, including `deferred` — block E's `9.5` refuses section close over *undeferred* questions, and
+that word has no meaning until you give it one. Do not leave E to invent it.
+
+**Where the surface stands today.** `question create` exists (§7) and is the only verb: a question card
+is `CardScope.Repository`, its `owner` is whoever owes the answer (not the raiser), and its status is
+the plain literal `"open"`. §7's own note says so explicitly — *"§9 is where a question's actual status
+vocabulary (open/answered/deferred) gets decided, not here"*. That is this block.
+
+**`9.7` — refuse marking a question answered with no recorded answer.** Spec: `process-enforcement`,
+"An answer must be written down":
+
+> The system SHALL refuse to mark a question answered unless it names the `decision` card recording the
+> answer, or records the answer inline where it is trivial.
+
+Scenario: *a question marked answered with neither a decision reference nor an inline answer is
+refused, and the response states what is required.* Both routes are legitimate — a named `decision`
+card, or an inline answer for the trivial case. The refusal fires only when neither is supplied.
+
+**`9.8` — refuse advancing a card blocked by an open Product Owner question.** Spec:
+`process-enforcement`, "Work cannot proceed past a stop-and-ask":
+
+> The system SHALL refuse to advance a card blocked by an open question owned by the Product Owner.
+
+Scenario: *advancing a card blocked by an open Product Owner question is refused, naming the question
+awaiting an answer.*
+
+The mechanics you will need: a block card carries `blocked_by` (a list of card ids,
+`BlockCardFields.BlockedBy`); question cards are repository-scoped, so resolving those ids reaches
+outside the change directory. **Note carried item C from §7 — anything reading live record directories
+uses `ResolveLiveRecordDirectories`; do not hand-roll a second path resolution.**
+
+**Two things about `9.8` I want decided in the thread, not silently in code:**
+
+1. **What counts as "advancing".** Every forward transition, plainly — but say what you conclude about
+   the back-edges (`changes-requested`, `fix-before-land`, `finding-recurred`) and about `land`, which
+   is section-driven rather than caller-driven since §8a. A card blocked on a Product Owner question
+   that can still be *landed* by closing its section would be a hole of exactly the shape this section
+   keeps finding.
+2. **Only Product Owner questions halt.** A question owned by any other role does not stop the card —
+   it is surfaced, not enforced. That asymmetry is deliberate and `10.10` restates it. Confirm the
+   implementation actually keys on ownership rather than on "is a question".
+
+**Also in scope — two items carried from §7's close**, both on the surface you are already touching:
+
+- **F.** `--owed-by` means a *section id* on `obligation create` and a *role* on `question create`. Same
+  flag name, two types, on a CLI an agent reads cold. Fix it on the question side if that is the right
+  half to move, or report why the obligation side is the one that should change — but do not leave the
+  collision standing while you are the block that owns this surface.
+- **G.** `question create`'s response omits the owner — the one field that determines who must act on
+  it. Add it.
+
+**Standing instructions apply** (the four in A3's brief). One is now mechanical: **the coverage gate
+landed in block C**, so every refusal case you add must be registered in
+`RefusalCoverageGateTests.cs` with a test that proves it fires *and* records. The gate rejects a
+registered test whose `.Refusals` assertions are all `Assert.Empty` — a proof of absence is not
+coverage. Read the gate before you add your first case; it is `tests/Callboard.Tests/RefusalCoverageGateTests.cs`.
+
+**Also: any outcome union you create or touch goes onto the refusal reporting format entire** — the
+standing rule from the carve. A new union for the question verbs is expected; build it in the format
+from the start rather than retrofitting it at the end.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`; `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim. Do not commit,
+do not tick, do not touch the Makefile or `CLAUDE.md`. **Stop and post rather than improvising** if the
+spec's two routes for an answer (decision reference vs inline) turn out to need a Product Owner call on
+what "trivial" means — I would rather rule on that than discover a threshold invented in code.
+
 ## NEXT
 
-**Resume point: §9 "Process enforcement", block C (9.10) — briefed, worker running.** §9 is open at base
+**Resume point: §9 "Process enforcement", block D (9.7, 9.8) — briefed, worker running.** §9 is open at base
 `ec2d99b`. **§9 is re-carved: `9.10` moved ahead of the remaining rules as block C**, so the coverage
 instruction that failed in A2, A3 and B becomes a gate the later blocks must pass rather than a
 paragraph asking them to. Order is now C (9.10), D (9.7, 9.8), E (9.4-9.6), F (9.9); no task numbers
-changed. Ticked so far: 9.1, 9.2, 9.3.
+changed. Ticked so far: 9.1, 9.2, 9.3, 9.10.
+
+**The coverage gate is live** (`tests/Callboard.Tests/RefusalCoverageGateTests.cs`, block C,
+`768aa1d`): every refusal case must be registered with a test proving it fires and records, and a
+registered proof that asserts absence is rejected. D, E and F land against it.
 
 **The retrofit is finished**: A (`5caa2c4`), A2 (`4b40f01`), A3 (`397c1c4`), all reviewer `Approve`,
 all `GATES_EXIT:0`, suite at 808. `9.1` is the only box ticked in §9 — A2 and A3 tick nothing, they
