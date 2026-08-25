@@ -24440,10 +24440,101 @@ Worth a line in a future block if this file gets touched again; not worth a four
 
 → @architect
 
+**[architect]** Block B landed as `1e4a918` — `[reviewer]` `Approve` on the second round,
+`GATES_EXIT:0`, 817/817. `9.2` and `9.3` ticked. The reviewer verified all eleven cases individually
+against test bodies rather than against the summary, confirmed the `NotABlockCard` unreachability is a
+genuine TOCTOU race (resolution is unlocked, the approval's own read is locked and fresh) rather than
+dead code, and confirmed the nit-test move lost nothing.
+
+**[architect]** **Re-carving §9: `9.10` moves ahead of the remaining rules, as block C.** I flagged
+this when ruling on B and said E's brief would settle it. It should not wait that long.
+
+The reason is in the thread three times over. "A test per rule, asserting the line landed on the card"
+has now been a brief instruction (A2), a numbered standing instruction (A3), and a repeated ruling
+(B) — and it failed at increasing scale each time, ending with all eight cases of a union arriving
+untested. That is not three workers failing to read the same sentence. **It is a rule that exists only
+as prose, in a section whose entire thesis is that a rule which exists only as prose is one that gets
+broken under deadline.** `CLAUDE.md` says exactly this about the boundary hooks: "a rule that only
+exists as prose is one an agent under pressure to finish a block will eventually break." We wrote that
+down and then spent four blocks proving it on ourselves.
+
+`9.10` is the mechanical form of that instruction, and it is far more valuable as a **gate the
+remaining rules must pass** than as an audit run after they have all landed. Running it last measures
+the backlog; running it now prevents one.
+
+**Revised block order.** No task numbers change; only the order they are built in:
+
+- **C — `9.10`**, now: the enumeration gate over `ICardRefusalReason`.
+- **D — `9.7`, `9.8`**: the question lifecycle (was C).
+- **E — `9.4`, `9.5`, `9.6`**: the section-close gates (was D).
+- **F — `9.9`**: the archive orphan-obligation gate (was E).
+
+Every later block then lands against a gate that fails when a rule arrives untested, instead of
+against a paragraph asking it not to.
+
+**[architect]** Brief — **block C (9.10)**: the refusal coverage gate. → @worker
+
+**Task in scope:** `9.10`. It ticks.
+
+**What the task says**, and what the amended S5 behind it says: *add a test per refusal rule
+demonstrating it fires* — S5 having been amended (proposal.md, "S5 becomes: R1–R8 each have a test")
+so that dogfooding validates `callboard` without gating its completion. The risk this discharges is
+named in `design.md`: *"A refusal rule that fails open is invisible until it matters → the refusal set
+is modelled as a closed union so an unhandled case is a compile error, and every rule carries a test
+per the amended S5."* The closed union half is built. This is the other half.
+
+**Build the gate, not the audit.** A test that enumerates every `ICardRefusalReason` implementor in
+the product assembly and fails when one has no test proving it fires and records. Concretely, it needs
+to answer, mechanically: *for each refusal-shaped case, is there a test that provokes it and asserts a
+`CardRefusalEntry` landed on the card?* Get the enumeration from the assembly — the test project runs
+on the ordinary runtime, so reflection is available to it even though the product is NativeAOT and must
+stay reflection-free. **Do not add reflection to the product to make the test easier.**
+
+How you establish the "has a test" side is yours to design, and it is the interesting part of this
+block. Options include an explicit registry the gate cross-checks against the enumerated set, or
+observing recorded entries across the suite. Pick one and **argue for it in the DEVLOG before you
+build it** — a gate that is easy to satisfy without testing anything is worse than no gate, because it
+reports the coverage we have been failing to actually have.
+
+**The gate must fail loudly and namefully.** When a future block adds a refusal case and no test, the
+failure message names the case and says what would satisfy it — the same standard we hold the
+product's own refusals to. A gate whose failure requires an investigation to interpret is a gate that
+gets suppressed.
+
+**Expect it to find real gaps in what is already landed, and report them rather than quietly filling
+them.** Blocks A through B were reviewed case by case, but they were reviewed by a reader, and this is
+the first mechanical check. If it turns up an uncovered case, post it here with the case named. If it
+turns up many, stop and post before writing thirty tests — that changes the block's size and is my
+call, not yours.
+
+**Two known dispositions the gate must handle without special-casing them away:** a case genuinely
+unreachable from the CLI but reachable via `CardStore` under a TOCTOU race (`NotABlockCard`, block B),
+and a case whose only live CLI path targets one card kind so it is currently unreachable there
+(`CardWriteResult.RoundDisagreesWithHistory`, block A3). Both are legitimately tested by direct
+`CardStore` calls. The gate must count those as covered without being made so permissive that it
+counts everything as covered.
+
+**One small carried item, from B's review.** No test pins `CardNotFound` beating `RoleNotPermitted`
+when both conditions hold. It is a direct consequence of the method's sequence — and that sequence is
+one I ruled on this section, so it is worth a test that fails if someone reorders it back. Add it.
+
+**Standing instructions still apply** — the four in A3's brief, and DEVLOG posts inserted by anchored
+heading match.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`; `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim. Do not commit,
+do not tick, do not touch the Makefile or `CLAUDE.md` — **if this gate needs a new make target, stop
+and tell me; the Makefile is mine.** Stop and post if a Product Owner call appears.
+
 ## NEXT
 
-**Resume point: §9 "Process enforcement", block B (9.2, 9.3) — briefed, worker running.** §9 is open at base
-`ec2d99b`. **The retrofit is finished**: A (`5caa2c4`), A2 (`4b40f01`), A3 (`397c1c4`), all reviewer `Approve`,
+**Resume point: §9 "Process enforcement", block C (9.10) — briefed, worker running.** §9 is open at base
+`ec2d99b`. **§9 is re-carved: `9.10` moved ahead of the remaining rules as block C**, so the coverage
+instruction that failed in A2, A3 and B becomes a gate the later blocks must pass rather than a
+paragraph asking them to. Order is now C (9.10), D (9.7, 9.8), E (9.4-9.6), F (9.9); no task numbers
+changed. Ticked so far: 9.1, 9.2, 9.3.
+
+**The retrofit is finished**: A (`5caa2c4`), A2 (`4b40f01`), A3 (`397c1c4`), all reviewer `Approve`,
 all `GATES_EXIT:0`, suite at 808. `9.1` is the only box ticked in §9 — A2 and A3 tick nothing, they
 finish 9.1's reach. From B onward §9 builds new refusals rather than reformatting old ones, and each
 of B–E retrofits **its own union entire** as a done-gate on the block.
