@@ -22901,65 +22901,184 @@ None.
 
 → @architect.
 
+---
+
+**[supervisor]** §8a section re-review, round two — `git diff 9dede1f..HEAD`, HEAD now `2561cef`
+(blocks A `f0cfeda`, B `469b0d8`, C `3aa8489`, D `cd18c17`, remediation `2561cef`). Read the
+remediation brief, the worker's post and the reviewer's approval, and re-read the section as a whole
+rather than the delta.
+
+## Verdict: Approve
+
+§8a is closed. The blocker is gone, and gone structurally rather than by a second check.
+
+### The split resolves the collision; it does not relocate it
+
+The contract collision I found was one query answering two questions, where widening it for the second
+broke the first. The remediation names both questions and gives each its own query
+(`BlockFlowTransitions.cs:180-207`), and every reader now asks the one it means:
+
+- `CardStore.cs:409` — the generic applier resolves against `GenericallyInvocableFrom`, which holds no
+  one-door edge in any arm. The four one-door edges are no longer *resolvable* through that door, not
+  merely refused by a parse-time string compare downstream of it.
+- `CardStore.cs:1650` — the "is this card approved?" question is now
+  `recurringState != BlockFlowState.Approved`. This is the fix that matters most: it removes the
+  *reason* the widening happened, so the pressure that produced the collision is gone rather than
+  redirected.
+- `CardStore.cs:471-473` — the round increment reads `RoundIncrementingTransitionNames`. The applying
+  half of the two-sources-of-truth failure is closed, which is what 8a.17's own doc comment had
+  already claimed.
+- `CardStore.cs:992` — `DispositionNitUnderLocks` resolves `fix-before-land` from `AvailableFrom`, and
+  is *right* to. That call is the clearest evidence the split is real and not cosmetic: the raw table
+  has to keep one-door edges precisely so their dedicated doors can name them, which is exactly the
+  fact the single table could not express.
+
+I checked every live reader of both queries in `src/` — there are three, and each reads the correct
+one. The bricking path is now closed twice over, independently: an edge cannot reach the generic
+applier, and if one somehow did, the applier would increment it correctly.
+
+### On the reviewer's question — is `GenericallyInvocableFrom` the same defect in a new shape?
+
+**No, and I want to be precise about why, because the distinction is the whole lesson of this
+section.**
+
+The defect I found was two constructs disagreeing about **one fact** (which edges increment `round`),
+where the disagreement was silent, harmful and irreversible. `AvailableFrom` and
+`GenericallyInvocableFrom` encode **two different facts** — edge legality and invocation permission.
+Neither is derivable from the other without a third input, the one-door set. Writing it as
+`AvailableFrom(state).Except(oneDoorEdges)` would hand-maintain `oneDoorEdges` instead: it relocates
+the hand-maintenance, it does not remove it. The reviewer's instinct is sound but the derivation it
+reaches for does not exist.
+
+What actually settles it is the **direction of the failure**, which nobody has stated yet:
+
+- **Omission** — add an edge to `AvailableFrom`, forget `GenericallyInvocableFrom`. The edge is simply
+  not generically invocable. **Fails closed**, and it is the direction that actually occurs, because
+  you add an edge *because* a new dedicated door needs it.
+- **Commission** — put an edge under the wrong state's arm, or one absent from `AvailableFrom`. That
+  would permit an illegal transition, because the applier trusts the resolved edge's `To` and never
+  checks `transition.From == currentState` (`CardStore.cs:409-420`).
+
+The original defect was a *commission* failure disguised as an omission — which is exactly why it was
+harmful. The new shape's likely failure is a genuine omission that fails closed. That is a different
+and much better defect profile, and it is acceptable at nine edges and seven states.
+
+The one thing I would fence, for `## NEXT` rather than now: nothing asserts
+`GenericallyInvocableFrom(s) ⊆ AvailableFrom(s)`, nor `transition.From == s`, for all seven states.
+The new tests pin each arm individually (`BlockFlowTests.cs`), which makes them a *third* hand-written
+restatement of the same table rather than an invariant over it. Roughly ten lines — one loop over the
+seven states asserting the subset relation and the `From` agreement — converts the convention into
+something the build enforces, and would fence the commission direction that is currently fenced by
+nothing. Not a blocker: reaching it needs an active mistake in a file whose every arm is one line, and
+today's arms are all correct.
+
+### One residual on the CLI surface, for `## NEXT`
+
+`block approve` against a card already in `approved` now refuses with `Available: land,
+finding-recurred` (`CardStore.cs:634`, rendered at `CommandDispatcher.cs:1112-1114`) — two edges no
+caller can invoke by name. The ruling that `approve` is its own door regardless of what the generic
+applier can drive is defensible, and the reviewer flagged the asymmetry, so this is deliberate. But
+the word rendered to the agent is `Available:`, and two refusals in the same CLI now use that word for
+two different sets — one invocable, one not. An agent reading the `block approve` refusal will try
+`block transition … land` next and get a second refusal, where before the remediation it would have
+tried one un-invocable edge and now tries two. It is self-correcting and the second refusal is
+excellent, so this is a wording debt, not a defect: process-enforcement's "states what would satisfy
+it" is still met by the refusing rule itself. I considered blocking on it and decided the cost of a
+third round is not proportionate to a two-step discovery path. Worth settling whenever that message
+is next touched — either report `GenericallyInvocableFrom` there too, or rename the field so the two
+meanings are not both called "Available".
+
+### The section as a whole
+
+Re-read against the requirements, not the tasks. "Block cards move through a defined flow" now has a
+transition table whose diagram, whose two queries, whose round-incrementing set and whose applier all
+agree — which was not true at any point during §8a until this commit. "Approval is provisional until
+the section closes" holds: `landed` is reachable only through `CloseSectionUnderExistingLock`, and the
+closure is asserted through the store rather than the CLI. "Section remediation follows the finding"
+holds, and its availability predicate no longer borrows a table that meant something else. "Stored
+round agrees with the transition history" holds through all three doors *and* through the generic
+applier, with 8a.18's missing coverage supplied — the two new tests assert the card's bytes are
+unchanged and that `round` and `Transitions` both stayed put, which is the right assertion for a
+refusal that must prevent a side effect rather than follow it. The bound and its authorisation are
+untouched and still single-sourced. Nothing in §1–§8 reads either query. No dead scaffolding.
+
+My two earlier `## NEXT` notes stand as noted. Nothing further from me on §8a.
+
+→ `@architect`.
+
 ## NEXT
 
-**Resume point: §8a (18 tasks, nothing built).** Working tree clean, nothing in flight, no part-built
-block, no agent running. §8 closed with a supervisor `Approve` at `615bc21` + the spec correction
-following it.
+**Resume point: §9 "Process enforcement" (10 tasks, nothing built).** Working tree clean, nothing in
+flight, no part-built block, no agent running. §8a closed with a supervisor `Approve` at `2561cef`.
 
-### §8 closed — 8/8, supervisor `Approve` on the third pass
+### §8a closed — 17/17, supervisor `Approve` on the second pass
 
-Base was **`afaad73`**. Blocks A–C landed as `7b995a0`, `9fe9f5a`, `3065e27`; block D as `81ac358` and
-was then **cut in its entirety**, with `recertify`, when the Product Owner ruled that a nit fix takes a
-fresh review. Remediation landed as `8efa015` and `615bc21`; spec amendments as `d797c6b`, `c8835e5` and
-the correction above. Tasks 8.8–8.12 are deleted, not unticked.
+Base was **`9dede1f`**. Blocks A–D landed as `f0cfeda`, `469b0d8`, `3aa8489`, `cd18c17`; the supervisor
+remediation as `2561cef`. **8a.5 is deleted, not unticked**, the same disposition §8 gave 8.8–8.12.
 
-### §8a "Provisional approval and section-driven landing" — 18 tasks, nothing built
+**Four Product Owner rulings and six spec amendments landed mid-section.** Read the `[architect]` posts
+under `## 8a.` in order before touching anything downstream of them — the ground moved more here than in
+any section so far:
 
-**Read before briefing anything:** the `[architect]` posts under `## 8.` recording the Product Owner
-rulings, in order. §8a's model is unchanged by this session's rulings but its *ground* moved twice —
-`recertify` no longer exists, and `work-lifecycle` now carries **four** back-edges, not five
-(`changes-requested`, `fix-before-land`, `amendment-requested`, `finding-recurred`).
+1. **`approved` is terminal for a block that implements tasks.** It never goes back to work; it waits and
+   lands when its section closes. `amendment-requested` is **deleted entire** — `work-lifecycle` now
+   carries **three** back-edges (`changes-requested`, `fix-before-land`, `finding-recurred`), not four.
+2. **8a.5 deleted with it.** Comparing `reviewed_state` against the repository at close would refuse
+   every multi-block section with no remedy available, once nothing may reopen an approved block.
+   `work-lifecycle` says so as an explicit SHALL NOT; process-enforcement's duplicate requirement
+   **"Landing requires a current certification" is deleted**.
+3. **An authorisation discharges exactly one verdict**, and **may not be recorded ahead of need** — it is
+   refused unless the section is at the bound with none unspent, so it is always contemporaneous with
+   the refusal it discharges.
+4. **`finding-recurred` survives** the `approved`-is-terminal ruling, for remediation cards only.
 
-**What is built today still contradicts the model**, which is the work: `CloseSection` touches only the
-section card and never looks at a block, and `land` is an individually invocable per-block edge. A
-supervisor can currently request changes on a section whose blocks have all already landed.
+### Carried from §8a's close — two supervisor notes, both for §9 or later
 
-**§8a is strengthened by the cut.** Its stale-`reviewed_state` refusal at section close had "recertify
-it" as an implicit answer; the only remedy now is `amendment-requested` and a fresh review, and
-`work-lifecycle` says so explicitly.
+1. **Nothing asserts `GenericallyInvocableFrom(s) ⊆ AvailableFrom(s)`, or `transition.From == s`, across
+   the seven states.** The tests pin each arm individually, which makes them a *third* hand-written
+   restatement rather than an invariant over the table. About ten lines — one loop. The supervisor's
+   analysis is that the split's likely failure (omission) fails closed, while the **commission**
+   direction — a one-door edge landing in the wrong state's arm — is fenced by nothing, and commission
+   is what bricked cards the first time. **Do this early in §9.**
+2. **`block approve` on an `approved` card refuses with `Available: land, finding-recurred`** — two edges
+   no caller can invoke. Two refusals in the same CLI now use "Available:" for two different sets.
+   Self-correcting (the second refusal is good), judged not worth a third round.
+
+Also parked: the **third divergent multi-card write shape** in `CardStore.cs`, and
+**process-enforcement's stale per-card framing of landing** now that landing is section-driven — §9
+touches process-enforcement directly and should settle the second.
 
 ### Carried from §8's close — two supervisor notes
 
 1. **Refusals name the route by concept, not by verb.** `nit raise`'s refusal says "record it as an
    obligation naming the section expected to discharge it" where §8 elsewhere names the command. The
-   reader is an agent that must infer `obligation create … --owed-by`. The route was verified real and
-   followable — `--owed-by` is required, so it cannot even produce an obligation owed by nobody — this is
-   about naming it. **§13.**
+   reader is an agent that must infer `obligation create … --owed-by`. **§13.**
 2. **`--claims`/`--limits` are plural while `--site` is singular-repeatable**, now that all three are
    repeatable flags. Cosmetic, but it is the CLI surface an agent reads cold. **§13.**
 
-Also parked: `ParsedCommand.Match` at 29 delegates; claims/limits live in HTML comments, which a fresh
-review makes the *normal* cold-read case rather than an edge one.
+Also parked from §8: `ParsedCommand.Match` at 29 delegates; claims/limits live in HTML comments, which a
+fresh review makes the *normal* cold-read case rather than an edge one.
 
 ### Carried to §13.4 — `CLAUDE.md` and the agent prompts are downstream of all this
 
 1. **The `reviewer` agent's verdict vocabulary still permits "Approve with nits"** — the verdict §8
-   deletes from the product.
+   deletes from the product. It was used twice more during §8a.
 2. **`CLAUDE.md` still describes supervisor pushback** as carving a remediation block without saying it
    is a new card, and says nothing about recurrence returning the owning card.
-3. **`CLAUDE.md` still states the two-round cap as a prohibition**, which §8a makes an authorisation.
-   §8's own close is the evidence: the second `Request changes` was handed up as a question under §3c.4
-   rather than carved into a third block, and the ruling closed a class instead of patching two
-   symptoms.
+3. **`CLAUDE.md` still states the two-round cap as a prohibition**, which §8a makes an authorisation —
+   and §8a's own close is now a second worked example: one `Request changes`, one remediation block, one
+   `Approve`.
+4. **`CLAUDE.md` still says an approved block may be reopened.** §8a's ruling makes `approved` terminal;
+   the agent prompts and the workflow doc both need to stop implying otherwise.
 
 ### Carried from §7 — still open, unchanged by this session
 
 **A.** The writer/parser wire-key guard: `CardFrontmatter`, `BlockCardFields`, `SectionCardFields` and
-`FindingCardFields` still lack a shared key declaration. Close it before the next section that adds a
-field to those four. **B.** `RuleCitations`'s register-size review has no CLI surface; §10 owes it one.
-**C.** §10 must use `ResolveLiveRecordDirectories` for anything live. **D.** `CountCitations` is
-O(rules × cards) and must not go on a per-brief path. **E.** Attribution assertions should root on a
-non-default role. **F.** `--owed-by` means a section id on `obligation create` and a role on
-`question create`. **G.** `question create`'s response omits the owner. **H.** Repository-scoped
-compaction has no closing move.
+`FindingCardFields` still lack a shared key declaration — and §8a added `finding_key` to
+`BlockCardFields` and an authorisation line to `SectionCardFields`, so the gap is wider than it was.
+Close it before the next section that adds a field to those four. **B.** `RuleCitations`'s register-size
+review has no CLI surface; §10 owes it one. **C.** §10 must use `ResolveLiveRecordDirectories` for
+anything live. **D.** `CountCitations` is O(rules × cards) and must not go on a per-brief path. **E.**
+Attribution assertions should root on a non-default role. **F.** `--owed-by` means a section id on
+`obligation create` and a role on `question create`. **G.** `question create`'s response omits the owner.
+**H.** Repository-scoped compaction has no closing move.
