@@ -23239,17 +23239,91 @@ Re-ran the gates myself rather than trusting the reported line:
 the remaining ~130-site retrofit now or fold it into B–E/9.10) is a real decision the architect should
 close before B starts — worth resolving in `## NEXT` rather than left implicit.
 
+**[architect]** Answering the worker's `❓` on the retrofit, and re-carving §9 from five blocks to
+seven. Block A landed as `5caa2c4` with a `[reviewer]` `Approve` and `GATES_EXIT:0`; `9.1` is ticked.
+
+**The ruling: split the retrofit by whether §9 itself later touches the union.** Neither of the two
+options as posed is right. Opportunistic-and-sweep leaves the refusal surface diverging for the whole
+of §9 — blocks B–E would spend the section adding *new* refusals to a shape that is uniform in one
+union out of seventeen, and 9.10 would become a cleanup rather than a completeness check. But one
+retrofit block over ~90 remaining card-addressed cases is not reviewable, and retrofitting a union
+that a later block is about to rewrite is double work reviewed twice.
+
+So:
+
+1. **Six unions belong to blocks B–E anyway** — `CardApprovalOutcome`, `CardSectionVerdictOutcome`,
+   `CardSectionCloseOutcome`, `CardBlockedByOutcome`, `ChangeArchiveOutcome`, and the question
+   creation path. Each of those blocks retrofits **its own union, entire**, as part of its own work.
+   That is a done-gate on B, C, D and E, not a later sweep: a block of §9 does not get to leave a
+   refusal in its own union on the old shape.
+2. **The eleven unions §9 never touches** get two dedicated retrofit blocks, carved by family and run
+   **before** B, so that B–E write into a surface that has already converged:
+   - **A2 — the register and rules family**: `CardRuleCompactOutcome`, `CardRulePromoteOutcome`,
+     `CardRegisterDischargeOutcome`, `CardDecisionSupersedeOutcome`, `CardSectionAuthorisationOutcome`.
+   - **A3 — the card and review family**: `CardNitRaiseOutcome`, `CardNitDispositionOutcome`,
+     `CardFindingRecordOutcome`, `CardGateResultOutcome`, `CardCreateOutcome`, `CardWriteResult`.
+3. **9.10 therefore stops being a sweep and becomes what it was written to be**: an enumeration over
+   `ICardRefusalReason`'s implementors proving every refusal-shaped case is in the format and fires in
+   a test — with nothing left to retrofit by the time it runs, so what it measures is coverage rather
+   than backlog.
+
+Neither A2 nor A3 ticks a task. `9.1` is ticked; these two finish applying what it delivered, and the
+record of them is this thread. They commit as `fix(...)`-shaped work under `9.1`'s heading.
+
+**[architect]** Brief — **block A2**: retrofit the register and rules family onto the refusal
+reporting format. → @worker
+
+**Tasks in scope:** none to tick. This completes `9.1`'s reach across five unions.
+
+**The five unions**, all in `src/Callboard/Cards/`: `CardRuleCompactOutcome`,
+`CardRulePromoteOutcome`, `CardRegisterDischargeOutcome`, `CardDecisionSupersedeOutcome`,
+`CardSectionAuthorisationOutcome`.
+
+**The pattern is block A's, already reviewed and landed** — read `CardBlockTransitionOutcome` and
+`CardStore.RefuseAndRecord` (commit `5caa2c4`) and follow them. For each case in each union: decide
+whether it is card-addressed, and if it is, implement `ICardRefusalReason` naming the rule it enforces
+and what would satisfy it, and route its return through `RefuseAndRecord` under the lock the refusing
+read already holds.
+
+**What is *not* card-addressed, and must not record** — the same dispositions block A settled:
+`CardNotFound`, `CardCorrupt`, `LayoutMismatch`, and every `ToolFailure`. A tool-failure is
+enforcement being unavailable (ADR-0001), not the board saying no; do not drag one into the set.
+
+**The rule and the remedy are the deliverable, not the plumbing.** Each string is read cold by an
+agent that has just been refused and must work out what to do next. Name the rule as the spec names
+it, and state the remedy as a route the reader can actually take. §8's supervisor already parked a
+finding on exactly this — `nit raise` refuses with "record it as an obligation naming the section
+expected to discharge it", leaving the reader to infer `obligation create … --owed-by`. Do not add
+five unions' worth of the same. Where the route is a command, name the command.
+
+**Two things to watch specifically in this family:**
+
+- `CardRuleCompactOutcome` has a repository-scoped path, and `CardStore.CompactRules` has its own
+  multi-card write shape. Check the lock actually held at the point of refusal before assuming
+  `RefuseAndRecord`'s precondition holds — if a refusal there has no single card to anchor to, say so
+  in this thread rather than anchoring it to an arbitrary one.
+- `CardSectionAuthorisationOutcome`'s `NotAtBound` case (§8a: an authorisation may not be recorded
+  ahead of need) already reports the counts the refusal is decided from. Keep that in the message;
+  the rule/remedy split must not lose the *fact* in favour of the rule.
+
+**Add a test per rule you bring into the format** — that it fires, and that the line lands on the
+card. That is `9.10`'s standard, applied as you go rather than owed to block E.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`; `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim. Do not commit,
+do not tick, do not touch the Makefile or `CLAUDE.md`. Stop and post here if a Product Owner call
+appears rather than improvising.
+
 ## NEXT
 
-**Resume point: §9 "Process enforcement", block A (9.1) — implemented, gates green, awaiting
-reviewer.** §9 is open at base `ec2d99b`; the five-block carve and the two format rulings are posted
-under `## 9.` above. Nothing is ticked and nothing is committed for §9 yet — block A's diff is
-uncommitted in the tree, pending review. §8a closed with a supervisor `Approve` at `2561cef`.
+**Resume point: §9 "Process enforcement", block A2 — briefed, worker running.** §9 is open at base
+`ec2d99b`. Block A landed as `5caa2c4` (reviewer `Approve`, `GATES_EXIT:0`); `9.1` is the only box
+ticked in §9. The retrofit question is **answered** — §9 is now **seven** blocks, A, A2, A3, B–E; the
+ruling and the A2 brief are under `## 9.` above. §8a closed with a supervisor `Approve` at `2561cef`.
 
-**Open question for the architect:** block A's worker post asks whether the retrofit of the ~130
-remaining `CommandOutcome.Refusal` sites (across a dozen pre-existing outcome unions block A didn't
-touch) should be carved as its own block(s) now, or picked up opportunistically as blocks B–E
-(9.2–9.9) touch the unions they own and swept at 9.10. Needs an answer before B's brief.
+**Standing for the rest of §9:** each of B–E retrofits **its own outcome union, entire**, onto the
+refusal reporting format as part of its own work — that is a done-gate on the block, not a sweep owed
+to 9.10.
 
 ### §8a closed — 17/17, supervisor `Approve` on the second pass
 
