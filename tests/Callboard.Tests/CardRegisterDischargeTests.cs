@@ -92,6 +92,14 @@ public sealed class CardRegisterDischargeTests : IDisposable
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(CardOwner.Architect, read.RegisterFields.DischargedBy);
         Assert.Equal(Created.AddDays(1), read.RegisterFields.DischargedAt);
+
+        // process-enforcement (§9 block A2): the refusal is card-addressed — recorded against this
+        // same card under the acting role and the time of the refused (second) attempt.
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(Created.AddDays(2), recorded.Timestamp);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     [Fact]
@@ -114,6 +122,13 @@ public sealed class CardRegisterDischargeTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got ToolFailure: {toolFailure.Reason}"));
+
+        // process-enforcement (§9 block A2): recorded against the (block) card the refusal named.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     // register: "SHALL NOT occupy flow states" — a hand-edited register card carrying a
@@ -141,9 +156,13 @@ public sealed class CardRegisterDischargeTests : IDisposable
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
 
-        // Never rewritten — the file on disk is exactly what was there before the refused attempt.
+        // Status is never touched by a refusal — only a CardRefusalEntry is appended (§9 block A2).
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("briefed", read.Frontmatter.Status);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     private string WriteRegisterCard(string fileStem, string id, CardKind kind, CardScope scope, RegisterCardFields fields)

@@ -37,27 +37,41 @@ internal abstract record CardRegisterDischargeOutcome
 
     /// <summary>The target register card is already discharged. Refusal-shaped — discharging does
     /// not re-record a new acting role/time over the one already recorded.</summary>
-    internal sealed record AlreadyDischarged(string FilePath) : CardRegisterDischargeOutcome
+    internal sealed record AlreadyDischarged(string FilePath) : CardRegisterDischargeOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onAlreadyDischarged(this);
+
+        public string RefusingRule => "register: discharging a card records the acting role and the time exactly once";
+
+        public string Remedy => $"'{FilePath}' is already discharged; there is nothing left to discharge.";
     }
 
     /// <summary>The target card's own <c>status</c> does not parse as <see cref="RegisterLifecycleState"/>
     /// — register: "SHALL NOT occupy flow states", enforced here as a real, exercised refusal rather
     /// than a documented intention. Refusal-shaped.</summary>
-    internal sealed record InvalidStatus(string FilePath, string Status) : CardRegisterDischargeOutcome
+    internal sealed record InvalidStatus(string FilePath, string Status) : CardRegisterDischargeOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onInvalidStatus(this);
+
+        public string RefusingRule => "register: register cards SHALL NOT occupy flow states";
+
+        public string Remedy =>
+            $"'{FilePath}' has status '{Status}', which is not a recognised register lifecycle state " +
+            $"({RegisterLifecycleStateWireFormat.RecognisedValues}); correct the card's own 'status' field before discharging it.";
     }
 
     /// <summary>The target card exists and parses, but its <c>kind</c> is not one of the four
     /// register kinds. Refusal-shaped.</summary>
-    internal sealed record NotARegisterCard(CardKind Kind) : CardRegisterDischargeOutcome
+    internal sealed record NotARegisterCard(CardKind Kind) : CardRegisterDischargeOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotARegisterCard(this);
+
+        public string RefusingRule => "register: discharge applies only to a register card";
+
+        public string Remedy => "target a card whose kind is one of the four register kinds.";
     }
 
     /// <summary>No card exists at the target path. Refusal-shaped.</summary>

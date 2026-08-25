@@ -556,7 +556,7 @@ internal static class CommandDispatcher
         /// caller-supplied path.
         /// </summary>
         internal sealed record RulePromote(
-            string Id, CardOwner ActingRole, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Id, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Match<TResult>(Func<Version, TResult> onVersion, Func<IndexRebuild, TResult> onIndexRebuild, Func<BlockTransition, TResult> onBlockTransition, Func<BlockGate, TResult> onBlockGate, Func<BlockAddBlocker, TResult> onBlockAddBlocker, Func<BlockRemoveBlocker, TResult> onBlockRemoveBlocker, Func<SectionVerdict, TResult> onSectionVerdict, Func<SectionClose, TResult> onSectionClose, Func<SectionAuthorise, TResult> onSectionAuthorise, Func<SectionStatus, TResult> onSectionStatus, Func<FindingRecord, TResult> onFindingRecord, Func<FindingStatus, TResult> onFindingStatus, Func<RuleCreate, TResult> onRuleCreate, Func<HazardCreate, TResult> onHazardCreate, Func<ObligationCreate, TResult> onObligationCreate, Func<DecisionCreate, TResult> onDecisionCreate, Func<SectionCreate, TResult> onSectionCreate, Func<QuestionCreate, TResult> onQuestionCreate, Func<RegisterDischarge, TResult> onRegisterDischarge, Func<DecisionSupersede, TResult> onDecisionSupersede, Func<ChangeArchive, TResult> onChangeArchive, Func<RulePromote, TResult> onRulePromote, Func<RuleAuthor, TResult> onRuleAuthor, Func<RuleCompact, TResult> onRuleCompact, Func<RuleProposeCompact, TResult> onRuleProposeCompact, Func<RulePromoteConstitution, TResult> onRulePromoteConstitution, Func<BlockApprove, TResult> onBlockApprove, Func<NitRaise, TResult> onNitRaise, Func<NitDisposition, TResult> onNitDisposition) =>
                 onRulePromote(this);
@@ -1465,7 +1465,11 @@ internal static class CommandDispatcher
             }),
             onRoleNotPermitted: roleNotPermitted => RoleNotPermitted(
                 "recording a section authorisation", roleNotPermitted.AttemptedRole, CardOwner.ProductOwner),
-            onNotASectionCard: notASection => WrongCardKind(filePath, CardKind.Section, notASection.Kind, "authorisations only apply to a section card"),
+            onNotASectionCard: notASection => WrongCardKind(filePath, CardKind.Section, notASection.Kind, "authorisations only apply to a section card") with
+            {
+                Rule = notASection.RefusingRule,
+                Remedy = notASection.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to record an authorisation on."),
@@ -1477,7 +1481,8 @@ internal static class CommandDispatcher
                 $"— the section carries {notAtBound.PriorRequestChanges} 'request-changes' verdict" +
                 $"{(notAtBound.PriorRequestChanges == 1 ? "" : "s")} and {notAtBound.UnspentAuthorisations} unspent " +
                 $"authorisation{(notAtBound.UnspentAuthorisations == 1 ? "" : "s")}, so it is not currently at the " +
-                "bound. Record this once 'section verdict' has actually refused a verdict for want of one."),
+                "bound. Record this once 'section verdict' has actually refused a verdict for want of one.",
+                notAtBound.RefusingRule, notAtBound.Remedy),
             onCardCorrupt: corrupt => throw new InvalidOperationException(
                 $"card '{corrupt.FilePath}' could not be read: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
@@ -1950,15 +1955,17 @@ internal static class CommandDispatcher
                 DischargedAt = discharged.Card.RegisterFields.DischargedAt ?? parsed.Timestamp,
             }),
             onAlreadyDischarged: already => new CommandOutcome.Refusal(
-                "already-discharged", $"'{already.FilePath}' is already discharged."),
+                "already-discharged", $"'{already.FilePath}' is already discharged.", already.RefusingRule, already.Remedy),
             onInvalidStatus: invalid => new CommandOutcome.Refusal(
                 "invalid-register-status",
                 $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states."),
+                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
+                invalid.RefusingRule, invalid.Remedy),
             onNotARegisterCard: notARegister => new CommandOutcome.Refusal(
                 "not-a-register-card",
                 $"'{filePath}' is a '{notARegister.Kind.ToWireString()}' card, not one of the register kinds " +
-                "(rule, hazard, obligation, decision); discharge only applies to a register card."),
+                "(rule, hazard, obligation, decision); discharge only applies to a register card.",
+                notARegister.RefusingRule, notARegister.Remedy),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to discharge."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
@@ -2133,20 +2140,31 @@ internal static class CommandDispatcher
             onSelfSupersession: selfSupersession => new CommandOutcome.Refusal(
                 "self-supersession",
                 $"'{selfSupersession.Id}' cannot supersede itself; a decision superseding itself is not a coherent record."),
+            onResolvedSelfSupersession: resolvedSelfSupersession => new CommandOutcome.Refusal(
+                "self-supersession",
+                $"'{resolvedSelfSupersession.Id}' cannot supersede itself; a decision superseding itself is not a coherent record.",
+                resolvedSelfSupersession.RefusingRule, resolvedSelfSupersession.Remedy),
             onSupersededAlreadyDischarged: alreadyDischarged => new CommandOutcome.Refusal(
                 "already-discharged",
                 $"'{alreadyDischarged.FilePath}' is already discharged; superseding an already-discharged decision " +
-                "is a refusal, not a re-supersession."),
+                "is a refusal, not a re-supersession.",
+                alreadyDischarged.RefusingRule, alreadyDischarged.Remedy),
             onSupersedingAlreadyDischarged: alreadyDischarged => new CommandOutcome.Refusal(
                 "already-discharged",
                 $"'{alreadyDischarged.FilePath}' is already discharged (already superseded by something else); " +
-                "a discharged decision cannot newly become another decision's successor."),
+                "a discharged decision cannot newly become another decision's successor.",
+                alreadyDischarged.RefusingRule, alreadyDischarged.Remedy),
             onInvalidStatus: invalid => new CommandOutcome.Refusal(
                 "invalid-register-status",
                 $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states."),
+                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
+                invalid.RefusingRule, invalid.Remedy),
             onNotADecisionCard: notADecision => WrongCardKind(
-                notADecision.FilePath, CardKind.Decision, notADecision.Kind, "'decision supersede' only applies to decision cards"),
+                notADecision.FilePath, CardKind.Decision, notADecision.Kind, "'decision supersede' only applies to decision cards") with
+            {
+                Rule = notADecision.RefusingRule,
+                Remedy = notADecision.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to supersede."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
@@ -2181,7 +2199,7 @@ internal static class CommandDispatcher
             return rule.Refusal;
         }
 
-        var outcome = CardStore.PromoteRule(repoRoot, rule.FilePath!, parsed.ActingRole, parsed.Timestamp, lockTimeout);
+        var outcome = CardStore.PromoteRule(repoRoot, rule.FilePath!, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return outcome.Match<CommandOutcome>(
             onPromoted: promoted => new CommandOutcome.Success(new RulePromoteResult
@@ -2194,19 +2212,27 @@ internal static class CommandDispatcher
                 PromotedAt = promoted.Card.Frontmatter.Updated,
             }),
             onAlreadyRepositoryScoped: already => new CommandOutcome.Refusal(
-                "already-repository-scoped", $"'{already.FilePath}' is already repository-scoped; there is nothing to promote."),
+                "already-repository-scoped", $"'{already.FilePath}' is already repository-scoped; there is nothing to promote.",
+                already.RefusingRule, already.Remedy),
             onNotChangeScoped: notChangeScoped => new CommandOutcome.Refusal(
                 "rule-not-change-scoped",
                 $"'{notChangeScoped.FilePath}' is '{notChangeScoped.Scope.ToWireString()}'-scoped; only a " +
-                "'change'-scoped rule can be promoted to 'repository' scope."),
+                "'change'-scoped rule can be promoted to 'repository' scope.",
+                notChangeScoped.RefusingRule, notChangeScoped.Remedy),
             onInvalidStatus: invalid => new CommandOutcome.Refusal(
                 "invalid-register-status",
                 $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states."),
+                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
+                invalid.RefusingRule, invalid.Remedy),
             onNotARuleCard: notARule => WrongCardKind(
-                rule.FilePath!, CardKind.Rule, notARule.Kind, "'rule promote' only applies to rule cards"),
+                rule.FilePath!, CardKind.Rule, notARule.Kind, "'rule promote' only applies to rule cards") with
+            {
+                Rule = notARule.RefusingRule,
+                Remedy = notARule.Remedy,
+            },
             onTargetAlreadyExists: targetAlreadyExists => new CommandOutcome.Refusal(
-                "card-already-exists", $"a card already exists at '{targetAlreadyExists.FilePath}'."),
+                "card-already-exists", $"a card already exists at '{targetAlreadyExists.FilePath}'.",
+                targetAlreadyExists.RefusingRule, targetAlreadyExists.Remedy),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to promote."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
@@ -2649,20 +2675,33 @@ internal static class CommandDispatcher
                 "empty-absorb-set", "compaction requires at least one rule to absorb; a family with no members is not a family."), null),
             onSelfAbsorption: selfAbsorption => (new CommandOutcome.Refusal(
                 "self-absorption", $"'{selfAbsorption.Id}' cannot absorb itself; a family absorbing itself is not a coherent record."), null),
+            onResolvedSelfAbsorption: resolvedSelfAbsorption => (new CommandOutcome.Refusal(
+                "self-absorption", $"'{resolvedSelfAbsorption.Id}' cannot absorb itself; a family absorbing itself is not a coherent record.",
+                resolvedSelfAbsorption.RefusingRule, resolvedSelfAbsorption.Remedy), null),
             onDuplicateAbsorbedRule: duplicate => (new CommandOutcome.Refusal(
                 "duplicate-absorbed-rule", $"'{duplicate.Id}' was named more than once in the absorb set."), null),
+            onResolvedDuplicateAbsorbedRule: resolvedDuplicate => (new CommandOutcome.Refusal(
+                "duplicate-absorbed-rule", $"'{resolvedDuplicate.Id}' was named more than once in the absorb set.",
+                resolvedDuplicate.RefusingRule, resolvedDuplicate.Remedy), null),
             onFamilyAlreadyDischarged: already => (new CommandOutcome.Refusal(
                 "already-discharged",
-                $"'{already.FilePath}' is already discharged; it cannot newly act as a family."), null),
+                $"'{already.FilePath}' is already discharged; it cannot newly act as a family.",
+                already.RefusingRule, already.Remedy), null),
             onAbsorbedAlreadyDischarged: already => (new CommandOutcome.Refusal(
                 "already-discharged",
-                $"'{already.FilePath}' is already discharged; absorbing an already-discharged rule is a refusal, not a re-absorption."), null),
+                $"'{already.FilePath}' is already discharged; absorbing an already-discharged rule is a refusal, not a re-absorption.",
+                already.RefusingRule, already.Remedy), null),
             onInvalidStatus: invalid => (new CommandOutcome.Refusal(
                 "invalid-register-status",
                 $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states."), null),
+                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
+                invalid.RefusingRule, invalid.Remedy), null),
             onNotARuleCard: notARule => (WrongCardKind(
-                notARule.FilePath, CardKind.Rule, notARule.Kind, "compaction only applies to rule cards"), null),
+                notARule.FilePath, CardKind.Rule, notARule.Kind, "compaction only applies to rule cards") with
+            {
+                Rule = notARule.RefusingRule,
+                Remedy = notARule.Remedy,
+            }, null),
             onCardNotFound: notFound => (new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to compact."), null),
             onLayoutMismatch: layoutMismatch => (new CommandOutcome.Refusal(

@@ -47,10 +47,14 @@ internal abstract record CardSectionAuthorisationOutcome
 
     /// <summary>The target card exists and parses, but its <c>kind</c> is not <c>section</c> —
     /// authorisations are only recorded on a section card. Refusal-shaped.</summary>
-    internal sealed record NotASectionCard(CardKind Kind) : CardSectionAuthorisationOutcome
+    internal sealed record NotASectionCard(CardKind Kind) : CardSectionAuthorisationOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotASectionCard(this);
+
+        public string RefusingRule => "work-lifecycle: authorisations are recorded only on a section card";
+
+        public string Remedy => "target a card whose kind is 'section'.";
     }
 
     /// <summary>No card exists at the target path. Refusal-shaped.</summary>
@@ -75,10 +79,17 @@ internal abstract record CardSectionAuthorisationOutcome
     /// round). <see cref="PriorRequestChanges"/> and <see cref="UnspentAuthorisations"/> are the two
     /// counts the refusal is decided from, reported so the message states the fact, not just the
     /// rule. Refusal-shaped.</summary>
-    internal sealed record NotAtBound(int PriorRequestChanges, int UnspentAuthorisations) : CardSectionAuthorisationOutcome
+    internal sealed record NotAtBound(int PriorRequestChanges, int UnspentAuthorisations) : CardSectionAuthorisationOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotAtBound(this);
+
+        public string RefusingRule => "work-lifecycle: an authorisation is recorded against a refused request-changes verdict, not in advance of one";
+
+        public string Remedy =>
+            $"the section carries {PriorRequestChanges} 'request-changes' verdict{(PriorRequestChanges == 1 ? "" : "s")} and " +
+            $"{UnspentAuthorisations} unspent authorisation{(UnspentAuthorisations == 1 ? "" : "s")}, so it is not currently at the bound; " +
+            "record this once 'section verdict' has actually refused a verdict for want of one.";
     }
 
     /// <summary>The card exists but could not be parsed. Neither refusal nor tool-failure — a

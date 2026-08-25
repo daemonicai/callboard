@@ -130,7 +130,9 @@ public sealed class CardRuleCompactTests : IDisposable
             },
             onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected RoleNotPermitted, got EmptyAbsorbSet — the role check must run first."),
             onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got ResolvedSelfAbsorption: '{id.Id}'"),
             onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
             onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got FamilyAlreadyDischarged: '{already.FilePath}'"),
             onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
             onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got InvalidStatus: {invalid.Status}"),
@@ -154,7 +156,9 @@ public sealed class CardRuleCompactTests : IDisposable
             onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
             onEmptyAbsorbSet: static _ => null,
             onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got ResolvedSelfAbsorption: '{id.Id}'"),
             onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
             onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got FamilyAlreadyDischarged: '{already.FilePath}'"),
             onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
             onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got InvalidStatus: {invalid.Status}"),
@@ -178,7 +182,9 @@ public sealed class CardRuleCompactTests : IDisposable
             onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
             onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected SelfAbsorption, got EmptyAbsorbSet"),
             onSelfAbsorption: static _ => null,
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected Compacted, got ResolvedSelfAbsorption: '{id.Id}'"),
             onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
             onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got FamilyAlreadyDischarged: '{already.FilePath}'"),
             onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
             onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got InvalidStatus: {invalid.Status}"),
@@ -203,7 +209,9 @@ public sealed class CardRuleCompactTests : IDisposable
             onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
             onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected DuplicateAbsorbedRule, got EmptyAbsorbSet"),
             onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got ResolvedSelfAbsorption: '{id.Id}'"),
             onDuplicateAbsorbedRule: static _ => null,
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected Compacted, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
             onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got FamilyAlreadyDischarged: '{already.FilePath}'"),
             onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
             onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got InvalidStatus: {invalid.Status}"),
@@ -212,6 +220,96 @@ public sealed class CardRuleCompactTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got ToolFailure: {toolFailure.Reason}"));
+    }
+
+    // §9 block A2 remediation, reviewer finding: the resolved (post-lock) branches were
+    // unexercised. Two different absorbed-set path strings — CompactRules's own pre-lock
+    // path-string checks cannot catch this — resolving to cards that share an id (a duplicate id
+    // across two files, or one colliding with the family's own) reach the id-based recheck in
+    // CompactRulesUnderLocks once every card is read and every lock is held.
+    [Fact]
+    public void CompactRules_AbsorbedCardSharesTheFamilysId_RefusesAsResolvedSelfAbsorption_AndRecords()
+    {
+        var familyPath = WriteRuleCard("r-0020", "R-0020", RegisterLifecycleState.Open, RegisterCardFields.Empty);
+        var absorbedPath = Path.Combine(_changeDirectory, "r-0021.md");
+        var absorbedFrontmatter = new CardFrontmatter(
+            "R-0020", CardKind.Rule, "Title", RegisterLifecycleState.Open.ToWireString(), CardOwner.Architect,
+            CardScope.Change, string.Empty, Created, Created);
+        File.WriteAllText(
+            absorbedPath,
+            CardFileWriter.Serialize(new CardFile(absorbedFrontmatter, "Body.", [], [], RegisterFields: RegisterCardFields.Empty)),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CompactRules(
+            _root, familyPath, [absorbedPath], ChangeName, CardOwner.Architect, CompactedAt, TimeSpan.FromSeconds(5));
+
+        outcome.Match<object?>(
+            onCompacted: static _ => throw new Xunit.Sdk.XunitException("expected ResolvedSelfAbsorption, got Compacted"),
+            onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
+            onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected ResolvedSelfAbsorption, got EmptyAbsorbSet"),
+            onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: static id => { Assert.Equal("R-0020", id.Id); return null; },
+            onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
+            onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got FamilyAlreadyDischarged: '{already.FilePath}'"),
+            onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
+            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got InvalidStatus: {invalid.Status}"),
+            onNotARuleCard: n => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got NotARuleCard({n.Kind.ToWireString()})"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got ToolFailure: {toolFailure.Reason}"));
+
+        // process-enforcement (§9 block A2 remediation): recorded against the absorbed card that
+        // actually collided, not the family.
+        var read = AssertParseSuccess(CardStore.ReadCard(absorbedPath));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
+    }
+
+    [Fact]
+    public void CompactRules_TwoAbsorbedPathsShareAnId_RefusesAsResolvedDuplicateAbsorbedRule_AndRecords()
+    {
+        var familyPath = WriteRuleCard("r-0022", "R-0022", RegisterLifecycleState.Open, RegisterCardFields.Empty);
+        var firstAbsorbedPath = WriteRuleCard("r-0023", "R-0023", RegisterLifecycleState.Open, RegisterCardFields.Empty);
+        var secondAbsorbedPath = Path.Combine(_changeDirectory, "r-0024.md");
+        var secondAbsorbedFrontmatter = new CardFrontmatter(
+            "R-0023", CardKind.Rule, "Title", RegisterLifecycleState.Open.ToWireString(), CardOwner.Architect,
+            CardScope.Change, string.Empty, Created, Created);
+        File.WriteAllText(
+            secondAbsorbedPath,
+            CardFileWriter.Serialize(new CardFile(secondAbsorbedFrontmatter, "Body.", [], [], RegisterFields: RegisterCardFields.Empty)),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CompactRules(
+            _root, familyPath, [firstAbsorbedPath, secondAbsorbedPath], ChangeName, CardOwner.Architect, CompactedAt, TimeSpan.FromSeconds(5));
+
+        outcome.Match<object?>(
+            onCompacted: static _ => throw new Xunit.Sdk.XunitException("expected ResolvedDuplicateAbsorbedRule, got Compacted"),
+            onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
+            onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected ResolvedDuplicateAbsorbedRule, got EmptyAbsorbSet"),
+            onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got ResolvedSelfAbsorption: '{id.Id}'"),
+            onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: static id => { Assert.Equal("R-0023", id.Id); return null; },
+            onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got FamilyAlreadyDischarged: '{already.FilePath}'"),
+            onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
+            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got InvalidStatus: {invalid.Status}"),
+            onNotARuleCard: n => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got NotARuleCard({n.Kind.ToWireString()})"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got ToolFailure: {toolFailure.Reason}"));
+
+        // process-enforcement (§9 block A2 remediation): recorded against the second-seen absorbed
+        // card — the one whose id collided with one already accepted into the set.
+        var read = AssertParseSuccess(CardStore.ReadCard(secondAbsorbedPath));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     [Fact]
@@ -232,7 +330,9 @@ public sealed class CardRuleCompactTests : IDisposable
             onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
             onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected AbsorbedAlreadyDischarged, got EmptyAbsorbSet"),
             onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got ResolvedSelfAbsorption: '{id.Id}'"),
             onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
             onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got FamilyAlreadyDischarged: '{already.FilePath}'"),
             onAbsorbedAlreadyDischarged: static _ => null,
             onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got InvalidStatus: {invalid.Status}"),
@@ -241,6 +341,13 @@ public sealed class CardRuleCompactTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got ToolFailure: {toolFailure.Reason}"));
+
+        // process-enforcement (§9 block A2): recorded against the member card the refusal names.
+        var read = AssertParseSuccess(CardStore.ReadCard(memberPath));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     // The check that closes the cycle: node B was discharged by A's own compaction above; B cannot
@@ -269,7 +376,9 @@ public sealed class CardRuleCompactTests : IDisposable
             onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
             onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected FamilyAlreadyDischarged, got EmptyAbsorbSet"),
             onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got ResolvedSelfAbsorption: '{id.Id}'"),
             onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
             onFamilyAlreadyDischarged: static _ => null,
             onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
             onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got InvalidStatus: {invalid.Status}"),
@@ -283,6 +392,15 @@ public sealed class CardRuleCompactTests : IDisposable
         var cRead = AssertParseSuccess(CardStore.ReadCard(c));
         Assert.Equal("open", cRead.Frontmatter.Status);
         Assert.Null(cRead.RegisterFields.SupersededBy);
+        Assert.Empty(cRead.Refusals);
+
+        // process-enforcement (§9 block A2): recorded against B — the acting (already-discharged)
+        // family side the refusal is actually about.
+        var bRead = AssertParseSuccess(CardStore.ReadCard(b));
+        var recorded = Assert.Single(bRead.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     [Fact]
@@ -307,7 +425,9 @@ public sealed class CardRuleCompactTests : IDisposable
             onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
             onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected NotARuleCard, got EmptyAbsorbSet"),
             onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got ResolvedSelfAbsorption: '{id.Id}'"),
             onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
             onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got FamilyAlreadyDischarged: '{already.FilePath}'"),
             onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
             onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got InvalidStatus: {invalid.Status}"),
@@ -316,6 +436,57 @@ public sealed class CardRuleCompactTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got ToolFailure: {toolFailure.Reason}"));
+
+        // process-enforcement (§9 block A2): recorded against the wrongly-named family side.
+        var read = AssertParseSuccess(CardStore.ReadCard(obligationPath));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
+    }
+
+    // register: "SHALL NOT occupy flow states" — the same exercised refusal every other register
+    // mutation enforces, here on the family side (§9 block A2 remediation: this case had no test
+    // at all before this).
+    [Fact]
+    public void CompactRules_FamilyStatusIsAFlowState_Refuses_AndRecords()
+    {
+        var familyPath = Path.Combine(_changeDirectory, "r-0018.md");
+        var familyFrontmatter = new CardFrontmatter(
+            "R-0018", CardKind.Rule, "Title", "briefed", CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
+        File.WriteAllText(
+            familyPath,
+            CardFileWriter.Serialize(new CardFile(familyFrontmatter, "Body.", [], [], RegisterFields: RegisterCardFields.Empty)),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var memberPath = WriteRuleCard("r-0019", "R-0019", RegisterLifecycleState.Open, RegisterCardFields.Empty);
+
+        var outcome = CardStore.CompactRules(
+            _root, familyPath, [memberPath], ChangeName, CardOwner.Architect, CompactedAt, TimeSpan.FromSeconds(5));
+
+        outcome.Match<object?>(
+            onCompacted: static _ => throw new Xunit.Sdk.XunitException("expected InvalidStatus, got Compacted"),
+            onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
+            onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected InvalidStatus, got EmptyAbsorbSet"),
+            onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ResolvedSelfAbsorption: '{id.Id}'"),
+            onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
+            onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got FamilyAlreadyDischarged: '{already.FilePath}'"),
+            onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
+            onInvalidStatus: static invalid => { Assert.Equal("briefed", invalid.Status); return null; },
+            onNotARuleCard: n => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got NotARuleCard({n.Kind.ToWireString()})"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
+
+        // process-enforcement (§9 block A2 remediation): recorded against the family card.
+        var read2 = AssertParseSuccess(CardStore.ReadCard(familyPath));
+        var recorded2 = Assert.Single(read2.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded2.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded2.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded2.Remedy));
     }
 
     // This block's own scope restriction (brief item 6/register: repository-scoped compaction is
@@ -394,7 +565,9 @@ public sealed class CardRuleCompactTests : IDisposable
                 onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
                 onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected ToolFailure, got EmptyAbsorbSet"),
                 onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got SelfAbsorption: '{id.Id}'"),
+                onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got ResolvedSelfAbsorption: '{id.Id}'"),
                 onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got DuplicateAbsorbedRule: '{id.Id}'"),
+                onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
                 onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got FamilyAlreadyDischarged: '{already.FilePath}'"),
                 onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
                 onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got InvalidStatus: {invalid.Status}"),
@@ -484,7 +657,9 @@ public sealed class CardRuleCompactTests : IDisposable
             onRoleNotPermitted: static roleNotPermitted => throw new Xunit.Sdk.XunitException($"expected Compacted, got RoleNotPermitted: '{roleNotPermitted.AttemptedRole.ToWireString()}'"),
             onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected Compacted, got EmptyAbsorbSet"),
             onSelfAbsorption: static id => throw new Xunit.Sdk.XunitException($"expected Compacted, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected Compacted, got ResolvedSelfAbsorption: '{id.Id}'"),
             onDuplicateAbsorbedRule: static id => throw new Xunit.Sdk.XunitException($"expected Compacted, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected Compacted, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
             onFamilyAlreadyDischarged: static already => throw new Xunit.Sdk.XunitException($"expected Compacted, got FamilyAlreadyDischarged: '{already.FilePath}'"),
             onAbsorbedAlreadyDischarged: static already => throw new Xunit.Sdk.XunitException($"expected Compacted, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
             onInvalidStatus: static invalid => throw new Xunit.Sdk.XunitException($"expected Compacted, got InvalidStatus: {invalid.Status}"),
@@ -500,7 +675,9 @@ public sealed class CardRuleCompactTests : IDisposable
             onRoleNotPermitted: id => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got RoleNotPermitted: '{id.AttemptedRole.ToWireString()}'"),
             onEmptyAbsorbSet: static _ => throw new Xunit.Sdk.XunitException("expected LayoutMismatch, got EmptyAbsorbSet"),
             onSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got SelfAbsorption: '{id.Id}'"),
+            onResolvedSelfAbsorption: id => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got ResolvedSelfAbsorption: '{id.Id}'"),
             onDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got DuplicateAbsorbedRule: '{id.Id}'"),
+            onResolvedDuplicateAbsorbedRule: id => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got ResolvedDuplicateAbsorbedRule: '{id.Id}'"),
             onFamilyAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got FamilyAlreadyDischarged: '{already.FilePath}'"),
             onAbsorbedAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got AbsorbedAlreadyDischarged: '{already.FilePath}'"),
             onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got InvalidStatus: {invalid.Status}"),

@@ -1408,11 +1408,13 @@ internal static class CommandParser
     {
         string? id = null;
         string? roleText = null;
+        string? changeName = null;
 
         var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
             ["--id"] = value => id = value,
             ["--role"] = value => roleText = value,
+            ["--change"] = value => changeName = value,
         });
         if (flagRefusal is not null)
         {
@@ -1437,8 +1439,23 @@ internal static class CommandParser
                 "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
         }
 
+        // §9 block A2 remediation round two, Architect ruling: required unconditionally, not only
+        // when the target happens to be change-scoped. The verb exists to promote a change-scoped
+        // rule to repository scope, so the caller always knows the change; making the flag optional
+        // left the ordinary invocation ('rule promote --id X --role Y', no '--change') anchoring
+        // with changeName: null and silently failing to record for exactly the common case this
+        // fix was for — "worse than one that records nowhere: it reads as complete." A refusal on
+        // an already-repository-scoped rule ignores changeName entirely (CardLayout.DirectoryFor),
+        // so requiring the flag costs that path nothing — the same reasoning ParseRoleAndChangeFlags'
+        // own requireChange:true callers already rely on.
+        if (changeName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'rule promote' requires '--change <name>'."));
+        }
+
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RulePromote(
-            id, role, context.WorkingDirectory, context.Clock()));
+            id, role, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

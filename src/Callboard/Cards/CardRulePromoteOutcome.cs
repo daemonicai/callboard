@@ -39,10 +39,14 @@ internal abstract record CardRulePromoteOutcome
     /// <summary>The rule is already <see cref="CardScope.Repository"/>-scoped — "promoting an
     /// already-repository-scoped rule is a refusal too" (§7 block E brief item 3). Refusal-shaped.
     /// </summary>
-    internal sealed record AlreadyRepositoryScoped(string FilePath) : CardRulePromoteOutcome
+    internal sealed record AlreadyRepositoryScoped(string FilePath) : CardRulePromoteOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onAlreadyRepositoryScoped(this);
+
+        public string RefusingRule => "register: promoting an already-repository-scoped rule is a refusal too";
+
+        public string Remedy => $"'{FilePath}' is already repository-scoped; there is nothing to promote.";
     }
 
     /// <summary>The rule carries a <see cref="CardScope"/> other than <see cref="CardScope.Change"/>
@@ -51,38 +55,56 @@ internal abstract record CardRulePromoteOutcome
     /// or <see cref="CardScope.Capability"/>), but a hand-edited file can still say it, and this
     /// method never treats a case <see cref="CardScopeRules"/> forbids as if it were the one
     /// scope promotion actually knows how to move from. Refusal-shaped.</summary>
-    internal sealed record NotChangeScoped(CardScope Scope, string FilePath) : CardRulePromoteOutcome
+    internal sealed record NotChangeScoped(CardScope Scope, string FilePath) : CardRulePromoteOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotChangeScoped(this);
+
+        public string RefusingRule => "register: promotion moves a change-scoped rule to repository scope, nothing else";
+
+        public string Remedy => $"'{FilePath}' is '{Scope.ToWireString()}'-scoped; only a 'change'-scoped rule can be promoted.";
     }
 
     /// <summary>The rule's own <c>status</c> does not parse as <see cref="RegisterLifecycleState"/>
     /// — register: "SHALL NOT occupy flow states", the same exercised refusal every other register
     /// mutation in this codebase already enforces. Refusal-shaped.</summary>
-    internal sealed record InvalidStatus(string FilePath, string Status) : CardRulePromoteOutcome
+    internal sealed record InvalidStatus(string FilePath, string Status) : CardRulePromoteOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onInvalidStatus(this);
+
+        public string RefusingRule => "register: register cards SHALL NOT occupy flow states";
+
+        public string Remedy =>
+            $"'{FilePath}' has status '{Status}', which is not a recognised register lifecycle state " +
+            $"({RegisterLifecycleStateWireFormat.RecognisedValues}); correct the card's own 'status' field before promoting it.";
     }
 
     /// <summary>The resolved card is not a <c>rule</c> — "promotion applies to rules" (§7 block E
     /// brief item 3): every other register kind has exactly one legal scope, so promoting it would
     /// be meaningless, not merely unsupported. Refusal-shaped.</summary>
-    internal sealed record NotARuleCard(CardKind Kind) : CardRulePromoteOutcome
+    internal sealed record NotARuleCard(CardKind Kind) : CardRulePromoteOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotARuleCard(this);
+
+        public string RefusingRule => "register: promotion applies to rule cards";
+
+        public string Remedy => "target a card whose kind is 'rule'.";
     }
 
     /// <summary>A file already occupies the exact path this rule would move to inside
     /// <see cref="CardLayout.RegisterDirectory"/> (its own basename, unchanged by promotion, already
     /// claimed by an unrelated card). Refusal-shaped — checked before <see cref="File.Move(string,
     /// string)"/> is attempted, so a collision never partially moves anything.</summary>
-    internal sealed record TargetAlreadyExists(string FilePath) : CardRulePromoteOutcome
+    internal sealed record TargetAlreadyExists(string FilePath) : CardRulePromoteOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onTargetAlreadyExists(this);
+
+        public string RefusingRule => "card-model: identities are never recycled, and a promotion must not overwrite an unrelated card";
+
+        public string Remedy => $"'{FilePath}' already exists at the promotion target; resolve the collision before retrying.";
     }
 
     /// <summary>No card file exists at the resolved path (a race between resolution and locking).

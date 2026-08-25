@@ -22,12 +22,15 @@ public sealed class CardRulePromoteTests : IDisposable
 
     private readonly string _changeDirectory;
     private readonly string _registerDirectory;
+    private readonly string _decisionsDirectory;
 
     public CardRulePromoteTests()
     {
         _changeDirectory = Path.Combine(_root, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
         _registerDirectory = Path.Combine(_root, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        _decisionsDirectory = Path.Combine(_root, CardLayout.DecisionsDirectory.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(_changeDirectory);
+        Directory.CreateDirectory(_decisionsDirectory);
     }
 
     public void Dispose()
@@ -143,6 +146,51 @@ public sealed class CardRulePromoteTests : IDisposable
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got ToolFailure: {toolFailure.Reason}"));
 
         Assert.True(File.Exists(path), "an already-repository-scoped rule must stay exactly where it was.");
+
+        // process-enforcement (§9 block A2): repository-scoped, so it anchors with no changeName
+        // needed — the refusal is card-addressed and recorded against this same card.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
+    }
+
+    // register: "promoting an already-repository-scoped rule is a refusal too" (brief item 3) has
+    // its own mirror for the other illegal scope pair — a rule that is neither change- nor
+    // repository-scoped. Capability-scoped, physically living in CardLayout.DecisionsDirectory (the
+    // one other scope AnchoredCardPath.TryCreate can anchor without a changeName), so this is also
+    // the reviewer's requested proof that NotChangeScoped records like any other case (§9 block A2
+    // remediation) rather than an unverified guess.
+    [Fact]
+    public void PromoteRule_CapabilityScoped_Refuses_AsNotChangeScoped_AndRecords()
+    {
+        var path = Path.Combine(_decisionsDirectory, "r-0017.md");
+        WriteRuleCardAt(path, "R-0017", CardScope.Capability, RegisterLifecycleState.Open, RegisterCardFields.Empty, []);
+
+        var outcome = CardStore.PromoteRule(_root, path, CardOwner.Architect, PromotedAt, TimeSpan.FromSeconds(5));
+
+        outcome.Match<object?>(
+            onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected NotChangeScoped, got Promoted"),
+            onAlreadyRepositoryScoped: already => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got AlreadyRepositoryScoped: '{already.FilePath}'"),
+            onNotChangeScoped: static n => { Assert.Equal(CardScope.Capability, n.Scope); return null; },
+            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got InvalidStatus: {invalid.Status}"),
+            onNotARuleCard: notARule => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got NotARuleCard({notARule.Kind.ToWireString()})"),
+            onTargetAlreadyExists: already => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got TargetAlreadyExists: '{already.FilePath}'"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got ToolFailure: {toolFailure.Reason}"));
+
+        Assert.True(File.Exists(path), "a wrongly-scoped rule must stay exactly where it was.");
+
+        // process-enforcement (§9 block A2 remediation): Capability scope needs no changeName to
+        // anchor, so this records regardless of whether one was supplied — confirmed here with none.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     [Fact]
@@ -155,7 +203,7 @@ public sealed class CardRulePromoteTests : IDisposable
         var card = new CardFile(frontmatter, "Body.", [], [], RegisterFields: new RegisterCardFields(null, null, null, null, OwedBy: "S-0001"));
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var outcome = CardStore.PromoteRule(_root, path, CardOwner.Architect, PromotedAt, TimeSpan.FromSeconds(5));
+        var outcome = CardStore.PromoteRule(_root, path, CardOwner.Architect, PromotedAt, TimeSpan.FromSeconds(5), ChangeName);
 
         outcome.Match<object?>(
             onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected NotARuleCard, got Promoted"),
@@ -170,6 +218,14 @@ public sealed class CardRulePromoteTests : IDisposable
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got ToolFailure: {toolFailure.Reason}"));
 
         Assert.True(File.Exists(path));
+
+        // process-enforcement (§9 block A2 remediation): PromoteRule now takes the changeName its
+        // siblings already do, so this change-scoped card anchors and the refusal records.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     // register: "SHALL NOT occupy flow states" — the same exercised refusal every other register
@@ -183,7 +239,7 @@ public sealed class CardRulePromoteTests : IDisposable
         var card = new CardFile(frontmatter, "Body.", [], [], RegisterFields: RegisterCardFields.Empty);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var outcome = CardStore.PromoteRule(_root, path, CardOwner.Architect, PromotedAt, TimeSpan.FromSeconds(5));
+        var outcome = CardStore.PromoteRule(_root, path, CardOwner.Architect, PromotedAt, TimeSpan.FromSeconds(5), ChangeName);
 
         outcome.Match<object?>(
             onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected InvalidStatus, got Promoted"),
@@ -196,6 +252,13 @@ public sealed class CardRulePromoteTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
+
+        // process-enforcement (§9 block A2 remediation): recorded now that changeName anchors.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     // Phase one's own failure guarantee: a file already occupies the target basename in
@@ -204,13 +267,12 @@ public sealed class CardRulePromoteTests : IDisposable
     public void PromoteRule_TargetBasenameAlreadyClaimedInRegister_Refuses_WithNothingMoved()
     {
         var path = WriteRuleCard("r-0004", "R-0004", RegisterLifecycleState.Open, RegisterCardFields.Empty, []);
-        var beforeBytes = File.ReadAllBytes(path);
 
         Directory.CreateDirectory(_registerDirectory);
         var collisionPath = Path.Combine(_registerDirectory, "r-0004.md");
         File.WriteAllText(collisionPath, "not this rule at all — an unrelated file at the same basename.");
 
-        var outcome = CardStore.PromoteRule(_root, path, CardOwner.Architect, PromotedAt, TimeSpan.FromSeconds(5));
+        var outcome = CardStore.PromoteRule(_root, path, CardOwner.Architect, PromotedAt, TimeSpan.FromSeconds(5), ChangeName);
 
         outcome.Match<object?>(
             onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected TargetAlreadyExists, got Promoted"),
@@ -225,8 +287,16 @@ public sealed class CardRulePromoteTests : IDisposable
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got ToolFailure: {toolFailure.Reason}"));
 
         Assert.True(File.Exists(path), "phase one must not run at all once the target collision is detected.");
-        Assert.Equal(beforeBytes, File.ReadAllBytes(path));
         Assert.Equal("not this rule at all — an unrelated file at the same basename.", File.ReadAllText(collisionPath));
+
+        // process-enforcement (§9 block A2 remediation): the card moved nowhere, but it is
+        // change-scoped and this call now carries changeName, so the refusal is recorded against
+        // it in place — an appended CardRefusalEntry, nothing else.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     // The two-step mutation's honest failure shape (brief item 9): phase two (the frontmatter

@@ -252,7 +252,6 @@ public sealed class CommandDispatcherSectionTests
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialSectionCard(repo.Path, "s-0014", "S-0014");
-        var before = File.ReadAllBytes(path);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -261,8 +260,23 @@ public sealed class CommandDispatcherSectionTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("authorisation-not-at-bound", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
-        Assert.Equal(before, File.ReadAllBytes(path));
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("authorisation-not-at-bound", refusal.GetProperty("code").GetString());
+
+        // process-enforcement (§9 block A2): this refusal is card-addressed — recorded against the
+        // section card under the acting role and the time, with the same rule/remedy the envelope
+        // carries. No other field on the card changes (no authorisation is appended).
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.ProductOwner, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+        Assert.Empty(read.SectionFields.Authorisations);
     }
 
     // Construction site for "wrong-card-kind": section authorise.

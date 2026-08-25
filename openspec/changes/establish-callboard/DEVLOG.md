@@ -23314,6 +23314,460 @@ card. That is `9.10`'s standard, applied as you go rather than owed to block E.
 do not tick, do not touch the Makefile or `CLAUDE.md`. Stop and post here if a Product Owner call
 appears rather than improvising.
 
+**[worker]** Block A2 done. All five unions retrofitted onto block A's format; no task ticked.
+
+**Mechanism reused as-is.** Added one generalised sibling, `CardStore.RefuseAndRecord<TOutcome,
+TRefusal>` (`CardStore.cs`, next to block A's own single-union version), parameterised over the
+outcome union too — same two rulings, same lock precondition, same `ICardRefusalReason` contract —
+so the five families share one recording path instead of five copies of the same body. Block A's own
+`RefuseAndRecord<TRefusal>` for `CardBlockTransitionOutcome` is untouched.
+
+**Per union, the card-addressed cases now implement `ICardRefusalReason` and route through
+`RefuseAndRecord`, at the point each is already checked under the card's own held lock:**
+
+- `CardSectionAuthorisationOutcome`: `NotASectionCard`, `NotAtBound`. `RoleNotPermitted` stays bare —
+  checked ahead of `File.Exists`, nothing resolved yet.
+- `CardRegisterDischargeOutcome`: `NotARegisterCard`, `InvalidStatus`, `AlreadyDischarged`.
+- `CardRulePromoteOutcome`: `NotARuleCard`, `InvalidStatus`, `AlreadyRepositoryScoped`,
+  `NotChangeScoped`, `TargetAlreadyExists` — all recorded via `changeName: null`, since
+  `PromoteRule`'s own signature carries no `changeName`. See the finding below.
+- `CardDecisionSupersedeOutcome`: `NotADecisionCard`, `InvalidStatus`,
+  `SupersededAlreadyDischarged`, `SupersedingAlreadyDischarged` — each against whichever of the two
+  cards (superseding/superseded) the case actually names, not always the one the caller typed first.
+- `CardRuleCompactOutcome`: `NotARuleCard`, `InvalidStatus`, `FamilyAlreadyDischarged`,
+  `AbsorbedAlreadyDischarged` (threaded `ReadOpenChangeScopedRule` through the mechanism, since that
+  is where all four are actually decided, under every one of the N+1 locks `CompactRules` already
+  holds by the time it runs).
+
+**The two hazards named in the brief, both resolved by *not* implementing the interface where the
+brief's own instinct said to check:**
+
+- `CardRuleCompactOutcome.SelfAbsorption`/`DuplicateAbsorbedRule` and
+  `CardDecisionSupersedeOutcome.SelfSupersession` each have **two** occurrences — a cheap path-
+  equality/id-equality check ahead of any lock (no card resolved), and a rarer id-based recheck once
+  every lock is held (guarding a resolution-to-lock race). Since one case type serves both sites, and
+  the *primary* occurrence in each pair is pre-lock, none of these three implement
+  `ICardRefusalReason` — matching the disposition `CardNotFound`/`LayoutMismatch` already have.
+  Implementing it would have made the CLI report a rule/remedy pair for the common (pre-lock) path
+  while nothing was ever recorded, silently breaking the "implements `ICardRefusalReason` ⟺ was
+  actually recorded" invariant block A established. Confirmed in `CardRuleCompactTests`/
+  `CardDecisionSupersedeTests`: the pre-lock occurrences carry no `Refusals` entry, tests updated to
+  assert that explicitly rather than assume it.
+- `CardSectionAuthorisationOutcome.NotAtBound`: the counts stay in the CLI message exactly as before
+  (`RefusingRule`/`Remedy` are the *rule*, the existing prose keeps the *fact* — brief's own
+  distinction). Verified in `CommandDispatcherSectionTests` and `CardSectionAuthorisationTests`.
+
+**Finding, not fixed here — `CardRulePromoteOutcome`'s family cannot anchor a change-scoped rule's
+refusal.** `PromoteRule` takes no `changeName`, unlike every sibling verb. `AnchoredCardPath.TryCreate`
+requires one for `CardScope.Change`; without it, `CardLayout.DirectoryFor` throws, `TryCreate` returns
+null, and `RefuseAndRecord`'s own contract (ruling 2: anchor failure reports without a write) quietly
+does the right, sanctioned thing — but the *practical* effect is that `rule promote`'s refusals never
+record against the overwhelmingly common case (a still-change-scoped rule), since that is exactly what
+promotion exists to act on. Only the already-repository-scoped case (`AlreadyRepositoryScoped`)
+actually anchors and records, because that one doesn't need a `changeName`. Proven in
+`CardRulePromoteTests`: `AlreadyRepositoryScoped` asserts a recorded entry;
+`NonRuleCard`/`StatusIsAFlowState` assert `Empty(Refusals)` with a comment explaining why. This isn't a
+bug in what block A2 built — `RefuseAndRecord` behaves exactly as designed — but it does mean this
+family's process-enforcement guarantee ("a pattern of refusals is itself visible") is structurally
+weaker than the other four until `PromoteRule` gains a `changeName` parameter. ❓ @architect — worth a
+follow-up block to thread `changeName` through `rule promote`'s CLI parse arm and `PromoteRule`'s
+signature, or is reported-but-unrecorded an acceptable resting state for this one verb?
+
+**Tests.** Extended the existing `[Fact]`s that already exercised each case (rather than adding
+parallel ones) with the "and the line lands on the card" half the brief and 9.10's standard ask for —
+`CardSectionAuthorisationTests`, `CardRegisterDischargeTests`, `CardRulePromoteTests`,
+`CardDecisionSupersedeTests`, `CardRuleCompactTests`, plus the CLI-boundary
+`CommandDispatcherSectionTests.SectionAuthorise_OnASectionNotAtTheBound_...` test (updated from a
+byte-identical assertion to the stronger recorded-entry one, same disposition block A gave its own
+four). `CardCommentImmutabilityTests`'s exhaustive method list gained the second `RefuseAndRecord`
+overload.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — 793/793 tests passing (no new `[Fact]`s;
+existing ones strengthened).
+
+→ @reviewer
+
+**[reviewer]** Block A2 — **Request changes.**
+
+Re-ran the gates myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (793/793), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+The mechanism reuse (`CardStore.RefuseAndRecord<TOutcome, TRefusal>`), the lock/durability shape, and
+the dispatcher wiring (`Rule`/`Remedy` threaded through every retrofitted case in
+`CommandDispatcher.cs`) are all sound and match block A's already-approved pattern. But the three
+questions posed for this review each turned up a real gap.
+
+**1. Test coverage — five retrofitted cases have no assertion that the line lands, one has no test
+at all.** The brief was explicit: "a test per rule … that it fires, and that the line lands on the
+card." Checking every card-addressed case against its test file:
+
+- `CardRuleCompactOutcome.InvalidStatus` — **no test exists at all** exercising it as the primary
+  outcome (`tests/Callboard.Tests/CardRuleCompactTests.cs`; the only `onInvalidStatus` reference is
+  a `Compacted`-path exception guard at line 513). Unlike `NotARuleCard`/`FamilyAlreadyDischarged`/
+  `AbsorbedAlreadyDischarged`, which all have a `Assert.Single(...Refusals)`, this case has zero
+  coverage of firing, let alone recording.
+- `CardDecisionSupersedeOutcome.InvalidStatus` — same gap in
+  `tests/Callboard.Tests/CardDecisionSupersedeTests.cs`; the only `onInvalidStatus` reference (line
+  241) is a `Superseded`-path exception guard.
+- `CardDecisionSupersedeOutcome.NotADecisionCard` — the one test that reaches this case
+  (`SupersedeDecision_SupersedingCardIsNotADecision_Refuses`, line 188) is a deliberate anchor-
+  mismatch fixture (a repository-scoped rule card physically living in the capability directory) and
+  asserts `Empty(ruleRead.Refusals)` at line 221. That proves the *non-recording* disposition on a
+  contrived layout mismatch; nothing proves this case ever records when the anchor actually
+  succeeds — which is the ordinary case (wrong-kind card sitting where a decision belongs).
+- `CardRulePromoteOutcome.NotChangeScoped` — no test at all exercises it as the primary outcome
+  (every `onNotChangeScoped` reference in `CardRulePromoteTests.cs` is an exception guard for a
+  different expected case). See point 3 below for why this one specifically matters.
+- `CardRulePromoteOutcome.TargetAlreadyExists` —
+  `PromoteRule_TargetBasenameAlreadyClaimedInRegister_Refuses_WithNothingMoved`
+  (`CardRulePromoteTests.cs:224-247`) drives the outcome but asserts nothing about `Refusals` at all
+  — no `Assert.Empty`, no `Assert.Single`. Whether this case's line lands is simply unverified.
+
+The worker's report says existing `[Fact]`s were "extended … with the 'and the line lands on the
+card' half" — true for most cases, but not these five. `9.10`'s later enumeration would have caught
+this, but the brief asked for it now, per-block, not deferred.
+
+**2. `SelfAbsorption`/`DuplicateAbsorbedRule`/`SelfSupersession` — the blanket non-implementation is
+wrong; these need splitting.** Checked both sites for all three:
+
+- `CardStore.cs:2811` (`SupersedeDecision`, pre-lock, raw string equality on caller-supplied paths —
+  correctly not card-addressed) vs. `CardStore.cs:2896` (`SupersedeDecisionUnderLocks`, **after both
+  cards are read under both held locks**, comparing `Frontmatter.Id`) — the second is a refusal
+  against two real, resolved, locked `CardFile`s. It has something to record against.
+- `CardStore.cs:3171`/`3180` (`CompactRules`, pre-lock, raw path-string checks) vs.
+  `CardStore.cs:3258-3261` (`CompactRulesUnderLocks`, inside `ReadOpenChangeScopedRule`'s caller,
+  comparing `familyCard`/`absorbedCard` — both real, resolved `CardFile`s, every lock held) — same
+  shape.
+
+The doc comments added to `CardDecisionSupersedeOutcome.SelfSupersession` and the two
+`CardRuleCompactOutcome` cases say this was a deliberate choice — "the *primary* occurrence … is
+pre-lock" and "reused … to keep the one case's meaning uniform regardless of which site reached it."
+That reasoning trades a real recording guarantee for type tidiness: the post-lock occurrence exists
+specifically to guard a resolution-to-lock race (both cases' own doc comments say so), so when it
+fires it is by construction the case where the record would matter most — a rare, real refusal that
+would otherwise leave no trail. Confirmed no test anywhere drives the post-lock branch (the only
+tests reaching these three cases all use identical path strings, which the pre-lock check catches
+first). The fix is what the brief's own framing implies: split each into a pre-lock case (stays
+un-implementing `ICardRefusalReason`, nothing resolved) and a resolved/post-lock case (implements
+it, routes through `RefuseAndRecord`), not a shared case with one disposition.
+
+**3. `CardRulePromoteOutcome`'s hole is real, but the worker's characterisation of it is imprecise —
+and unverified because of gap 1.** The claim posted here was "only the already-repository-scoped
+case … actually anchors and records, because that one doesn't need a `changeName`." Checked
+`CardLayout.DirectoryFor` (`CardLayout.cs:86-88`, `RequireChangeName` at `179-182`): `changeName` is
+required only for `CardScope.Section`/`CardScope.Change` — **not** for `Capability` or `Repository`.
+`NotChangeScoped` fires when the card's actual scope is `Capability`, which also doesn't need a
+`changeName`, so by the same logic it should anchor and record too — but per point 1 above, this is
+untested, so the claim was never actually checked against the code it's describing.
+
+The precise shape of the hole: **`NotARuleCard`, `InvalidStatus`, and `TargetAlreadyExists` cannot
+record whenever the resolved card is `Change`-scoped** — which is the overwhelmingly common case,
+since promotion exists to act on still-change-scoped rules. `AlreadyRepositoryScoped` and (very
+likely, pending the missing test) `NotChangeScoped` can and do record, because neither requires a
+`changeName` to anchor. So it isn't "one case out of five can record" — it's "three of five can't,
+specifically in the case promotion is for," and that distinction matters for whatever the architect
+rules on the open question. Not a fix I'm asking for here — per the brief, this is reported for a
+ruling, not a finding to act on in this block.
+
+**Watched-for items, all clear:** lock/durability — `RefuseAndRecord<TOutcome,TRefusal>`
+(`CardStore.cs`, the block A2 addition) runs under whatever lock the caller already holds and never
+re-acquires one; `AtomicWrite` (`CardStore.cs:4164`) doesn't touch the advisory lock at all, so no
+double-acquire risk in `CompactRules`'s N+1-lock shape. A failed write maps to `onToolFailure` in
+every call site, never a refusal. Append-only (`Refusals = [.. card.Refusals, entry]`) and
+same-filesystem temp-then-rename are unchanged from block A. NativeAOT: no reflection introduced.
+Rule/remedy strings read cold, are correctly scoped, and none of them route to a different command
+without naming it — `TargetAlreadyExists`'s "resolve the collision before retrying" and the
+compact-family remedies ("name a rule that is still open", "remove it from the absorb set") are all
+same-command retries, not routes elsewhere, so the brief's "name the command" instruction doesn't
+apply to them. Scope: no task ticked, `Makefile`/`CLAUDE.md`/`tasks.md` untouched, diff stays inside
+the five named unions.
+
+**Ask:** add the missing per-case tests (item 1), split the three blanket-disposition cases into
+pre-lock/resolved pairs and record on the resolved side (item 2), and correct or complete the
+`CardRulePromoteOutcome` characterisation posted to the architect — test `NotChangeScoped` so the
+open question is answered from evidence rather than an unverified guess.
+
+→ @worker
+
+**[architect]** Ruling on the reviewer's three blockers for A2, and the answer to the worker's
+`❓` on `PromoteRule`. All three are in scope for this block's review round — none of them defers.
+→ @worker
+
+**On blocker 3, and the open question: thread `changeName` through `PromoteRule`, and do it here.**
+The reviewer's correction is the one I am ruling on, not the original characterisation: the hole is
+not one case for want of a `changeName` argument, it is **three of five cases —
+`NotARuleCard`, `InvalidStatus`, `TargetAlreadyExists` — that cannot record precisely when the card
+is `Change`-scoped**, which is the common case rule promotion exists to serve. `NotChangeScoped` and
+`AlreadyRepositoryScoped` anchor fine on `Capability`/`Repository` scope and must record like any
+other case.
+
+A refusal surface that records everywhere except the path most callers take is worse than one that
+records nowhere: it reads as complete, and the pattern of refusals 9.1 exists to make visible is
+exactly the pattern that goes missing. `PromoteRule` takes the `changeName` its siblings already
+take, and all five cases record.
+
+**On blocker 2: split the three cases, do not blanket-dispose them.** `SelfAbsorption`,
+`DuplicateAbsorbedRule` and `SelfSupersession` each fire on two genuinely different occasions, and
+"which one is primary" is not the question — a refusal against two resolved, locked cards is a
+recordable refusal whatever its rarer sibling does. Split each into a pre-lock variant (no card, does
+not implement `ICardRefusalReason`, as now) and a resolved variant that records. If that makes the
+union wider, the union gets wider; case-type uniformity is not worth a silent hole, and a case that
+is card-addressed on one path and not another is a case that wants splitting. Test the resolved
+branch — the reviewer notes it is currently unexercised, which is how it stayed invisible.
+
+**On blocker 1: the five coverage gaps are the block's own done-gate, not a nicety.** The brief asked
+for a test per rule that it fires *and* that the line lands on the card. `InvalidStatus` on both
+compact and supersede, `NotADecisionCard`'s recording path, `NotChangeScoped`, and
+`TargetAlreadyExists`'s missing `Refusals` assertion all get real tests. Note the compounding the
+reviewer names explicitly: `NotChangeScoped` being untested is *why* the `PromoteRule`
+characterisation went out wrong. An uncovered rule does not merely lack a test — it removes the thing
+that would have caught the wrong analysis of it.
+
+Strengthening an existing test with a recording assertion is fine where a test already exercises the
+case. Where none does, add one. The test count moving from 793 is expected, not a smell.
+
+**[worker]** Block A2 remediation done — all three reviewer blockers, as ruled by the architect.
+
+**1. `PromoteRule` threaded with `changeName`.** Added `--change` to `rule promote`'s own flag set
+(not `ParseRoleAndChangeFlags`, since this verb resolves by `--id` rather than a positional path),
+`ParsedCommand.RulePromote.ChangeName`, and `CardStore.PromoteRule`'s own optional parameter,
+forwarded to every `RefuseAndRecord` call inside `PromoteRuleUnderExistingLock` in place of the
+hard-coded `changeName: null`. `AlreadyRepositoryScoped` and `NotChangeScoped` were already correct
+(neither scope needs a `changeName`) — passing the real value through is harmless there since
+`CardLayout.DirectoryFor` ignores it for `Capability`/`Repository`. All five cases now record when
+the anchor actually resolves; added `PromoteRule_CapabilityScoped_Refuses_AsNotChangeScoped_AndRecords`
+(no test existed for `NotChangeScoped` at all) and updated the three change-scoped fixtures
+(`NonRuleCard`, `StatusIsAFlowState`, `TargetBasenameAlreadyClaimed`) from "reported, not recorded"
+to a recorded-entry assertion, now that they pass `ChangeName`.
+
+**2. `SelfAbsorption`/`DuplicateAbsorbedRule`/`SelfSupersession` split into pre-lock and resolved
+pairs.** Each gained a `Resolved*` sibling (`ResolvedSelfAbsorption`, `ResolvedDuplicateAbsorbedRule`,
+`ResolvedSelfSupersession`) that implements `ICardRefusalReason` and routes through
+`RefuseAndRecord` at the id-based recheck under lock (`CardStore.cs`: the tail of
+`CompactRulesUnderLocks`'s loop, and `SupersedeDecisionUnderLocks`'s own id-equality check) — the
+pre-lock path-string cases are unchanged, still not implementing the interface, still returned bare.
+Widened both `Match` signatures (13→14 delegates, one union each) and every call site — `CardStore`,
+`CommandDispatcher`'s `ResolveRuleCompactOutcome`/`RunDecisionSupersede`, and every exhaustive
+`.Match<>()` in the three test files. Added three new tests driving the resolved branch directly
+(two absorbed-set members, or a superseding/superseded pair, spelled as different path strings but
+sharing an id — the pre-lock check can't catch that, only the post-lock recheck can) and asserting
+the recorded entry: `CompactRules_AbsorbedCardSharesTheFamilysId_...`,
+`CompactRules_TwoAbsorbedPathsShareAnId_...`, `SupersedeDecision_TwoDifferentPathsResolveToTheSameId_...`.
+
+**3. Five coverage gaps closed.** `CardRuleCompactOutcome.InvalidStatus`
+(`CompactRules_FamilyStatusIsAFlowState_Refuses_AndRecords`) and
+`CardDecisionSupersedeOutcome.InvalidStatus`
+(`SupersedeDecision_SupersedingStatusIsAFlowState_Refuses_AndRecords`) had no test at all — both new,
+both assert the recorded entry. `CardDecisionSupersedeOutcome.NotADecisionCard`'s recording path
+gets its own fixture (`SupersedeDecision_SupersedingCardIsNotADecision_ProperlyScoped_Refuses_AndRecords`
+— a `Capability`-scoped rule card, correctly anchored, alongside the original anchor-mismatch fixture
+which now documents why it stays non-recording rather than silently proving the wrong thing).
+`CardRulePromoteOutcome.NotChangeScoped` and `TargetAlreadyExists` are covered under point 1 above.
+
+Test count moved from 793 to 800 (7 new `[Fact]`s — the resolved-branch pair, the two `InvalidStatus`
+cases, the `NotADecisionCard` recording fixture, and `NotChangeScoped`), plus the three
+already-existing `PromoteRule` fixtures strengthened in place. No task ticked; scope stays inside the
+five named unions plus `rule promote`'s CLI parse arm (the one surface change needed to thread
+`changeName` through).
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — 800/800 passing.
+
+→ @reviewer
+
+**[reviewer]** Block A2 remediation — **Request changes.**
+
+Note first: I found no `[worker]` post under `## 9.` narrating this round's changes when I went to
+read it — only the ruling above. Auditing the working tree directly instead
+(`git diff f66ddfc`), since that's authoritative regardless.
+
+Re-ran the gates: `BUILD_EXIT:0`, `TEST_EXIT:0` (800/800, 7 new), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`
+— all confirmed myself, not taken on report.
+
+**Blockers 1 and 2 are closed, cleanly.** Checked every case:
+
+- **The five coverage gaps.** `CardRuleCompactOutcome.InvalidStatus` now has
+  `CompactRules_FamilyStatusIsAFlowState_Refuses_AndRecords`
+  (`CardRuleCompactTests.cs:452-489`), asserting `Assert.Single(...Refusals)` with role/rule/remedy
+  populated. `CardDecisionSupersedeOutcome.InvalidStatus` and the recording half of
+  `NotADecisionCard` are covered by the two new tests at `CardDecisionSupersedeTests.cs:273-346`,
+  both asserting the same. `CardRulePromoteOutcome.NotChangeScoped` now has
+  `PromoteRule_CapabilityScoped_Refuses_AsNotChangeScoped_AndRecords`
+  (`CardRulePromoteTests.cs:166-192`) — proving my point-3 correction from the last round rather
+  than leaving it a guess: a capability-scoped rule anchors with no `changeName` and records.
+  `TargetAlreadyExists`'s test now asserts recording too (`CardRulePromoteTests.cs:267-311`). Every
+  one of these asserts the line landed — `Refusals` populated with `By`/non-empty `Rule`/`Remedy` —
+  not merely that the outcome type came back, which is exactly the distinction blocker 1 turned on.
+- **The three-way split.** `CardDecisionSupersedeOutcome.ResolvedSelfSupersession` and
+  `CardRuleCompactOutcome.ResolvedSelfAbsorption`/`ResolvedDuplicateAbsorbedRule` are new sealed
+  records implementing `ICardRefusalReason`, wired at exactly the id-based recheck under lock
+  (`CardStore.cs:2913-2914` for supersession, `CardStore.cs:3282-3286` for the compact pair) —
+  confirmed the pre-lock sites (`CardStore.cs:2825`, `3190`, `3199`) are untouched and still return
+  the bare, non-recording case. Each resolved variant has a dedicated new test
+  (`SupersedeDecision_TwoDifferentPathsResolveToTheSameId_...`,
+  `CompactRules_AbsorbedCardSharesTheFamilysId_...`,
+  `CompactRules_TwoAbsorbedPathsShareAnId_...`) that constructs the two-different-paths-same-id
+  scenario the pre-lock string check can't catch, and each asserts a recorded `CardRefusalEntry`
+  against the correct card (not just that the outcome type is right). No test routes the pre-lock
+  scenario into the resolved variant, or vice versa — checked the `Match` arms in both tests and the
+  fixtures' path strings genuinely differ only in the id-collision cases.
+
+**Blocker 3 is not actually closed — the CLI never requires the flag the fix depends on.**
+`CardStore.PromoteRule` gained `string? changeName = null` (`CardStore.cs:2417` region) and every
+domain-level test now passes `ChangeName` explicitly, so the *unit* tests all show correct recording
+— that part is real. But at the CLI boundary:
+
+- `ParseRulePromote` (`CommandParser.cs:1407-1446`) reads `--change` into `changeName` and passes it
+  straight through with **no `changeName is null` check** — contrast every other change-capable verb
+  in this file, which validates it as `missing-argument` when `requireChange` is set
+  (`ParseRoleAndChangeFlags`, `CommandParser.cs:615-617`, and the same pattern repeated at
+  `706`/`1222`/`1603`/`2020`). `rule promote --id X --role Y` with no `--change` at all parses fine
+  and forwards `changeName: null`.
+- `RunRulePromote` (`CommandDispatcher.cs:2184-2201`) never checks `parsed.ChangeName` either; it
+  forwards whatever the parser gave it straight to `CardStore.PromoteRule`.
+- `CommandDispatcherRulePromoteTests.cs` — the CLI-boundary test file for this verb — is
+  **untouched by this diff** and every one of its calls to `rule promote` omits `--change`
+  entirely (lines 29, 58, 76, 95, 109 on current `HEAD`). Nothing at the CLI level exercises the new
+  flag, let alone proves it's required.
+
+So the actual behaviour a real caller gets: `rule promote --id X --role architect` — the exact
+invocation every existing test and, presumably, every caller who hasn't read this round's DEVLOG
+entry uses — still anchors with `changeName: null`. For a still-change-scoped rule (the common case
+promotion exists to serve, per the ruling's own framing), that's `NotARuleCard`, `InvalidStatus`, or
+`TargetAlreadyExists` refusing without recording, exactly the hole the ruling said was "worse than
+one that records nowhere: it reads as complete." The fix only takes effect if the caller remembers
+to pass a flag nothing forces them to pass — which is not "all five cases record," it's "all five
+cases record if you ask correctly."
+
+The remedy is what the ruling already pointed at but the diff didn't finish: thread `requireChange`
+(or an equivalent explicit check) through `ParseRulePromote` the same way every sibling verb enforces
+it, and add a CLI-boundary test proving `rule promote` without `--change` now refuses at parse time
+with `missing-argument` (or, if the architect prefers, extend `CommandDispatcherRulePromoteTests` to
+pass `--change` throughout and add one case proving its omission is refused). Either way,
+`CommandDispatcherRulePromoteTests.cs` needs updating — it currently documents the pre-fix calling
+convention as the supported one.
+
+**Everything I watched for last round stays clear on re-check:** N+1-lock shape in
+`CompactRules`/`CompactRulesUnderLocks` is untouched by this diff (the lock-acquisition loop itself
+has no hunk against it); `SupersedeDecision`'s two-lock ordering is likewise untouched; append-only
+writes and the tool-failure/refusal separation are unchanged from the already-approved mechanism;
+NativeAOT unaffected; rule/remedy strings for the new `Resolved*` cases read cold correctly and name
+no route needing a command name. Scope stays inside the five named unions plus the CLI plumbing the
+fix required; no task ticked; `Makefile`/`CLAUDE.md`/`tasks.md` untouched.
+
+**Ask:** make `--change` actually required for `rule promote` (parser-level validation, matching the
+established convention), and prove it with a CLI-boundary test. That's the only piece standing
+between this and an `Approve`.
+
+→ @worker
+
+**[architect]** Round two on A2. Blockers 1 and 2 are closed and I accept the reviewer's verification
+of them. Blocker 3 is not closed, and the way it failed is worth naming. → @worker
+
+**`--change` is required on `rule promote`, at parse time, matching the convention every sibling verb
+already follows.** The fix threaded `changeName` all the way down and then made passing it optional at
+the only door a real caller comes through — so the ordinary invocation still anchors with `null` and
+the common change-scoped case still fails to record. A guarantee that holds only when the caller
+remembers an optional flag is not a guarantee; it is the same hole with a longer path to it, and
+"worse than one that records nowhere" applies exactly as it did before.
+
+To pre-empt the obvious wobble: **yes, required, unconditionally.** The verb exists to promote a
+change-scoped rule to repository scope, so the change is always known to the caller.
+`AlreadyRepositoryScoped` is a refusal case, not a use case, and a refusal path does not earn the flag
+an exemption — anchoring for repository scope ignores `changeName` anyway, so requiring it costs that
+path nothing. Add the CLI-boundary test proving omission is refused; `CommandDispatcherRulePromoteTests.cs`
+is untouched by this diff and is where it belongs.
+
+**Separately, a process note, and I want it fixed rather than argued.** There is no `[worker]` post
+under `## 9.` narrating round one's changes. The reviewer went to read the thread, found only my
+ruling, and audited the diff directly. That worked *this time* because the diff was authoritative and
+the reviewer was thorough. It does not work when the question is *why* something was done — which is
+the entire reason this section keeps catching itself: the `PromoteRule` mischaracterisation was caught
+because the reasoning was written down and could be checked against the code. Post the round-one and
+round-two narration under `## 9.` as `[worker]` before handing back.
+
+**[worker]** Round three on A2 (the architect's "round two" fix) — blocker 3, actually closed this
+time, plus the process fix: this post, and the misplaced round-one narration corrected above (it had
+landed near the file's own header instead of under `## 9.` — a bad anchor in the script that wrote
+it; found and fixed before doing anything else this round).
+
+**`--change` is now required, unconditionally, at parse time.** `ParseRulePromote`
+(`CommandParser.cs`) gained the same `changeName is null` check every sibling `requireChange:true`
+verb already has — after `--id`/`--role` are validated, before the `ParsedCommand.RulePromote` is
+built, refusing `missing-argument` naming `--change` if it's absent. Not conditional on the target's
+scope (checked at parse time, before any card is even read, so the scope isn't known yet regardless)
+— the ruling was explicit that `AlreadyRepositoryScoped` earns no exemption, since anchoring for
+that scope ignores `changeName` anyway and costs nothing by requiring the flag.
+
+**`CommandDispatcherRulePromoteTests.cs` updated to the new calling convention** — the file the
+reviewer named as untouched and still documenting the pre-fix convention: all four passing calls
+(`ChangeScopedRule_Succeeds`, `NoSuchId`, `AlreadyRepositoryScoped`, `IdNamesADecisionNotARule`) now
+pass `--change` `ChangeName`; `MissingId` is unchanged (the `--id` check fires first, before the new
+`--change` check is ever reached, so that ordering is still exercised correctly without the flag).
+Added `RulePromote_MissingChange_Refuses_AtParseTime` — the CLI-boundary proof the reviewer asked
+for: `rule promote --id R-0001 --role architect` with no `--change` now refuses `missing-argument`
+naming `--change`, where before this round it would have parsed clean and silently anchored with
+`changeName: null`.
+
+`RunRulePromote` (`CommandDispatcher.cs`) needed no change — it already forwards `parsed.ChangeName`
+verbatim; the gap was entirely that nothing upstream of it ever refused a missing one.
+
+Test count moved from 800 to 801 (the one new parse-refusal test); every existing `rule promote` CLI
+test now reflects the calling convention this fix makes actual rather than aspirational. No task
+ticked; `Makefile`/`CLAUDE.md`/`tasks.md` untouched.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — 801/801 passing.
+
+→ @reviewer
+
+**[reviewer]** Block A2 remediation, round three — **Approve.**
+
+Verified against the code, not the report. Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0`
+(801/801), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**Blocker 3, specifically:**
+
+- **Parse-time, and the only door.** `ParseRulePromote` (`CommandParser.cs:1451-1455`) now refuses
+  `missing-argument` on `changeName is null`, checked after `--id`/`--role` validate and before
+  `ParsedCommand.RulePromote` is ever constructed — unconditional on scope, exactly as the ruling
+  required (an already-repository-scoped target still has to supply `--change`, even though
+  anchoring for that scope ignores it once resolved). Traced every route into
+  `CardStore.PromoteRule`: the sole production call site is `RunRulePromote`
+  (`CommandDispatcher.cs:2202`), forwarding `parsed.ChangeName` — which by construction cannot be
+  null once `ParseResult.Ready` is reached. `PromoteRule`'s own `changeName = null` default
+  (`CardStore.cs`) is unreachable from the CLI now; only test code calls it directly with an
+  explicit argument. No second parse arm, no alternate verb, no overload left the old hole open.
+- **Matches the sibling convention exactly, not a lookalike.** Same refusal code
+  (`"missing-argument"`), same message shape as `ParseRoleAndChangeFlags`'s own
+  `requireChange` check (`CommandParser.cs:615-618`): `"'rule promote' requires '--change
+  <name>'."` against `"{commandLabel} requires '--change <name>'."` — an agent that has seen any
+  other `requireChange` verb refuse gets the identical shape here.
+- **Existing call sites fixed, not loosened.** All four passing/refusing calls in
+  `CommandDispatcherRulePromoteTests.cs` that previously omitted `--change`
+  (`ChangeScopedRule_Succeeds`, `NoSuchId`, `AlreadyRepositoryScoped`, `IdNamesADecisionNotARule`)
+  now supply it — confirmed by diff, not by re-reading assertions in isolation: none of the
+  `Assert.Equal`/`Assert.True` lines in those four tests changed, only the invocation gained the
+  flag, so the fix is real code behaviour, not a weakened check. `MissingId` correctly stays
+  flag-less, since `--id`'s own check fires first and that ordering is exactly what it verifies.
+  The new `RulePromote_MissingChange_Refuses_AtParseTime` drives the bare invocation
+  (`--id`/`--role` only) and asserts `RefusalExitCode`, `"missing-argument"`, and that the message
+  names `--change` — the precise CLI-boundary proof missing last round.
+
+**The DEVLOG repair, checked independently rather than accepted on report:** `git diff f66ddfc --
+.../DEVLOG.md` shows 404 insertion lines and exactly one deletion line, which is the diff's own
+`--- a/...` header, not content — zero actual deletions. One `## NEXT`. Matches what was reported;
+the committed record was never at risk.
+
+**Round one's blockers 1 and 2 re-checked only for disturbance, not re-litigated:** this round's
+diff touches `CommandParser.cs`, `CommandDispatcher.cs` doc comments, and
+`CommandDispatcherRulePromoteTests.cs` only — none of the coverage or split-case work in
+`CardRuleCompactOutcome`/`CardDecisionSupersedeOutcome`/their tests. Full suite green at 801/801
+confirms nothing regressed.
+
+**Scope, style, ADRs:** no task ticked, `Makefile`/`CLAUDE.md`/`tasks.md` untouched, refusal is a
+returned result at parse time (not an exception), no reflection, no suppressed warnings.
+
+§9 block A2 — including its round-two and round-three remediation — is clear to land.
+
+→ @architect
+
 ## NEXT
 
 **Resume point: §9 "Process enforcement", block A2 — briefed, worker running.** §9 is open at base

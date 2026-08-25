@@ -20,7 +20,9 @@ internal abstract record CardRuleCompactOutcome
         Func<RoleNotPermitted, TResult> onRoleNotPermitted,
         Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet,
         Func<SelfAbsorption, TResult> onSelfAbsorption,
+        Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption,
         Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule,
+        Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule,
         Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged,
         Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged,
         Func<InvalidStatus, TResult> onInvalidStatus,
@@ -37,7 +39,7 @@ internal abstract record CardRuleCompactOutcome
     /// given them.</param>
     internal sealed record Compacted(CardFile FamilyCard, IReadOnlyList<CardFile> AbsorbedCards) : CardRuleCompactOutcome
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCompacted(this);
     }
 
@@ -52,7 +54,7 @@ internal abstract record CardRuleCompactOutcome
     /// exists to write.</summary>
     internal sealed record RoleNotPermitted(CardOwner AttemptedRole, CardOwner RequiredRole) : CardRuleCompactOutcome
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onRoleNotPermitted(this);
     }
 
@@ -62,27 +64,69 @@ internal abstract record CardRuleCompactOutcome
     /// through <see cref="CardStore.CompactRules"/> called directly.</summary>
     internal sealed record EmptyAbsorbSet : CardRuleCompactOutcome
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onEmptyAbsorbSet(this);
     }
 
-    /// <summary>The family's own id appears in its own absorb set — a family absorbing itself is
-    /// not a coherent record, the same fact <see cref="CardDecisionSupersedeOutcome.
-    /// SelfSupersession"/> already names for decisions. Refusal-shaped.</summary>
+    /// <summary>The family's own id equals one it was about to absorb, checked on caller-supplied
+    /// path text alone, before any lock is requested (<see cref="CardStore.CompactRules"/>). No card
+    /// has been resolved yet at this point, so there is nothing to record against (§9 architect
+    /// ruling: "only a card-addressed refusal records") — not <see cref="ICardRefusalReason"/>. See
+    /// <see cref="ResolvedSelfAbsorption"/> for the sibling occurrence once locks are held.
+    /// </summary>
     internal sealed record SelfAbsorption(string Id) : CardRuleCompactOutcome
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onSelfAbsorption(this);
     }
 
-    /// <summary>The same rule id was named more than once in the absorb set — locking the same
-    /// path twice within one call would hang this call against itself (the same reasoning
-    /// <see cref="CardDecisionSupersedeOutcome.SelfSupersession"/> is checked ahead of locking for).
+    /// <summary>The family's own id equals one it was about to absorb, discovered by the id-based
+    /// recheck in <see cref="CardStore.CompactRulesUnderLocks"/> — <b>after</b> both the family and
+    /// the member have been read and every one of the N+1 locks is held (§9 block A2 remediation,
+    /// reviewer/Architect ruling: "a refusal against two resolved, locked cards is a recordable
+    /// refusal", split from <see cref="SelfAbsorption"/> rather than sharing its blanket
+    /// non-recording disposition). This is the case a caller-supplied path pair that resolves to the
+    /// same id under different spellings (e.g. differing only in case, or one relative/one absolute)
+    /// reaches — <see cref="SelfAbsorption"/>'s own path-string check cannot catch it, so when this
+    /// fires it is, by construction, exactly the refusal that would otherwise leave no trail.
     /// Refusal-shaped.</summary>
+    internal sealed record ResolvedSelfAbsorption(string Id) : CardRuleCompactOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            onResolvedSelfAbsorption(this);
+
+        public string RefusingRule => "register: a family with no members, or one absorbing itself, is not a family";
+
+        public string Remedy => $"remove '{Id}' from the absorb set; a family cannot absorb itself.";
+    }
+
+    /// <summary>The same rule id was named more than once in the absorb set, checked on
+    /// caller-supplied path text, before any lock is requested — locking the same path twice within
+    /// one call would hang this call against itself. No card has been resolved yet at this point, so
+    /// there is nothing to record against — not <see cref="ICardRefusalReason"/>. See
+    /// <see cref="ResolvedDuplicateAbsorbedRule"/> for the sibling occurrence once locks are held.
+    /// </summary>
     internal sealed record DuplicateAbsorbedRule(string Id) : CardRuleCompactOutcome
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onDuplicateAbsorbedRule(this);
+    }
+
+    /// <summary>The same rule was named more than once in the absorb set, discovered by the
+    /// id-based recheck in <see cref="CardStore.CompactRulesUnderLocks"/> — <b>after</b> the member
+    /// has been read and every lock is held (§9 block A2 remediation — see
+    /// <see cref="ResolvedSelfAbsorption"/>'s own doc comment for the shared reasoning, split from
+    /// <see cref="DuplicateAbsorbedRule"/> the same way). Reachable when two differently-spelled
+    /// caller-supplied paths resolve to the same rule id, which the pre-lock path-string check
+    /// cannot catch. Refusal-shaped.</summary>
+    internal sealed record ResolvedDuplicateAbsorbedRule(string Id) : CardRuleCompactOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            onResolvedDuplicateAbsorbedRule(this);
+
+        public string RefusingRule => "register: the same rule cannot be named twice in one absorb set";
+
+        public string Remedy => $"name '{Id}' only once in the absorb set.";
     }
 
     /// <summary>The family rule is itself already discharged (already absorbed by another family) —
@@ -92,42 +136,60 @@ internal abstract record CardRuleCompactOutcome
     /// <see cref="AbsorbedAlreadyDischarged"/> (Architect ruling on decisions, reused here:
     /// compaction sets the state block A already shipped, it does not introduce a parallel one).
     /// </summary>
-    internal sealed record FamilyAlreadyDischarged(string FilePath) : CardRuleCompactOutcome
+    internal sealed record FamilyAlreadyDischarged(string FilePath) : CardRuleCompactOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onFamilyAlreadyDischarged(this);
+
+        public string RefusingRule => "register: a discharged rule cannot newly act as a compaction family";
+
+        public string Remedy => $"'{FilePath}' is already discharged; name a rule that is still open as the family.";
     }
 
     /// <summary>One of the rules named to be absorbed is already discharged — "absorbing an
     /// already-discharged rule" is a refusal (§7 block F brief item 5), not a re-absorption.
     /// Refusal-shaped.</summary>
-    internal sealed record AbsorbedAlreadyDischarged(string FilePath) : CardRuleCompactOutcome
+    internal sealed record AbsorbedAlreadyDischarged(string FilePath) : CardRuleCompactOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onAbsorbedAlreadyDischarged(this);
+
+        public string RefusingRule => "register: absorbing an already-discharged rule is a refusal, not a re-absorption";
+
+        public string Remedy => $"'{FilePath}' is already discharged; remove it from the absorb set.";
     }
 
     /// <summary>One of the cards' own <c>status</c> does not parse as <see cref="
     /// RegisterLifecycleState"/> — register: "SHALL NOT occupy flow states". Refusal-shaped.
     /// </summary>
-    internal sealed record InvalidStatus(string FilePath, string Status) : CardRuleCompactOutcome
+    internal sealed record InvalidStatus(string FilePath, string Status) : CardRuleCompactOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onInvalidStatus(this);
+
+        public string RefusingRule => "register: register cards SHALL NOT occupy flow states";
+
+        public string Remedy =>
+            $"'{FilePath}' has status '{Status}', which is not a recognised register lifecycle state " +
+            $"({RegisterLifecycleStateWireFormat.RecognisedValues}); correct the card's own 'status' field before compacting with it.";
     }
 
     /// <summary>One of the resolved cards is not a <c>rule</c>. Refusal-shaped.</summary>
-    internal sealed record NotARuleCard(string FilePath, CardKind Kind) : CardRuleCompactOutcome
+    internal sealed record NotARuleCard(string FilePath, CardKind Kind) : CardRuleCompactOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotARuleCard(this);
+
+        public string RefusingRule => "register: compaction applies only to rule cards";
+
+        public string Remedy => $"'{FilePath}' is a '{Kind.ToWireString()}' card, not a 'rule' card; target rules on both the family and absorb sides.";
     }
 
     /// <summary>One of the resolved paths no longer has a card on disk (a race between resolution
     /// and locking). Refusal-shaped.</summary>
     internal sealed record CardNotFound(string FilePath) : CardRuleCompactOutcome
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardNotFound(this);
     }
 
@@ -137,7 +199,7 @@ internal abstract record CardRuleCompactOutcome
     /// </summary>
     internal sealed record LayoutMismatch(string Reason) : CardRuleCompactOutcome
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onLayoutMismatch(this);
     }
 
@@ -145,7 +207,7 @@ internal abstract record CardRuleCompactOutcome
     /// </summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardRuleCompactOutcome
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardCorrupt(this);
     }
 
@@ -153,7 +215,7 @@ internal abstract record CardRuleCompactOutcome
     /// its timeout, or an I/O error occurred while writing. Tool-failure-shaped.</summary>
     internal sealed record ToolFailure(string Reason) : CardRuleCompactOutcome
     {
-        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Compacted, TResult> onCompacted, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<EmptyAbsorbSet, TResult> onEmptyAbsorbSet, Func<SelfAbsorption, TResult> onSelfAbsorption, Func<ResolvedSelfAbsorption, TResult> onResolvedSelfAbsorption, Func<DuplicateAbsorbedRule, TResult> onDuplicateAbsorbedRule, Func<ResolvedDuplicateAbsorbedRule, TResult> onResolvedDuplicateAbsorbedRule, Func<FamilyAlreadyDischarged, TResult> onFamilyAlreadyDischarged, Func<AbsorbedAlreadyDischarged, TResult> onAbsorbedAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARuleCard, TResult> onNotARuleCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onToolFailure(this);
     }
 }

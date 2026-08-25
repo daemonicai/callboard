@@ -26,7 +26,7 @@ public sealed class CommandDispatcherRulePromoteTests
             new StringWriter(), repo.Path, "Body.");
 
         var output = new StringWriter();
-        var exitCode = RunInRepo(["rule", "promote", "--id", "R-0001", "--role", "architect"], output, repo.Path, string.Empty);
+        var exitCode = RunInRepo(["rule", "promote", "--id", "R-0001", "--role", "architect", "--change", ChangeName], output, repo.Path, string.Empty);
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
@@ -55,7 +55,7 @@ public sealed class CommandDispatcherRulePromoteTests
         using var repo = new TempGitRepo();
 
         var output = new StringWriter();
-        var exitCode = RunInRepo(["rule", "promote", "--id", "R-9999", "--role", "architect"], output, repo.Path, string.Empty);
+        var exitCode = RunInRepo(["rule", "promote", "--id", "R-9999", "--role", "architect", "--change", ChangeName], output, repo.Path, string.Empty);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
@@ -73,7 +73,7 @@ public sealed class CommandDispatcherRulePromoteTests
             new StringWriter(), repo.Path, "Body.");
 
         var output = new StringWriter();
-        var exitCode = RunInRepo(["rule", "promote", "--id", "R-0001", "--role", "architect"], output, repo.Path, string.Empty);
+        var exitCode = RunInRepo(["rule", "promote", "--id", "R-0001", "--role", "architect", "--change", ChangeName], output, repo.Path, string.Empty);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
@@ -92,7 +92,7 @@ public sealed class CommandDispatcherRulePromoteTests
             new StringWriter(), repo.Path, "Body.");
 
         var output = new StringWriter();
-        var exitCode = RunInRepo(["rule", "promote", "--id", "D-0001", "--role", "architect"], output, repo.Path, string.Empty);
+        var exitCode = RunInRepo(["rule", "promote", "--id", "D-0001", "--role", "architect", "--change", ChangeName], output, repo.Path, string.Empty);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
@@ -112,6 +112,25 @@ public sealed class CommandDispatcherRulePromoteTests
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
+    }
+
+    // §9 block A2 remediation round two, Architect ruling: '--change' is required unconditionally,
+    // not only when the target happens to be change-scoped — the ordinary invocation this test
+    // used to make (no '--change' at all) must now refuse at parse time rather than silently
+    // anchoring with changeName: null and failing to record for the common case.
+    [Fact]
+    public void RulePromote_MissingChange_Refuses_AtParseTime()
+    {
+        using var repo = new TempGitRepo();
+
+        var output = new StringWriter();
+        var exitCode = RunInRepo(["rule", "promote", "--id", "R-0001", "--role", "architect"], output, repo.Path, string.Empty);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
+        Assert.Contains("--change", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

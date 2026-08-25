@@ -130,6 +130,14 @@ public sealed class CardSectionAuthorisationTests : IDisposable
 
         var notASection = Assert.IsType<CardSectionAuthorisationOutcome.NotASectionCard>(outcome);
         Assert.Equal(CardKind.Question, notASection.Kind);
+
+        // process-enforcement (§9 block A2): card-addressed — recorded against the question card
+        // the authorisation was actually pointed at.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.ProductOwner, recorded.By);
+        Assert.Equal(notASection.RefusingRule, recorded.Rule);
+        Assert.Equal(notASection.Remedy, recorded.Remedy);
     }
 
     [Fact]
@@ -202,6 +210,12 @@ public sealed class CardSectionAuthorisationTests : IDisposable
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Empty(read.SectionFields.Authorisations);
+
+        // process-enforcement (§9 block A2): recorded against this same section card.
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.ProductOwner, recorded.By);
+        Assert.Equal(notAtBound.RefusingRule, recorded.Rule);
+        Assert.Equal(notAtBound.Remedy, recorded.Remedy);
     }
 
     [Fact]

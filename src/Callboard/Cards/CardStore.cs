@@ -499,7 +499,7 @@ internal static class CardStore
                     onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
             },
             onFailure: failure =>
-                new CardBlockTransitionOutcome.CardCorrupt(filePath, failure.Reason));
+                        new CardBlockTransitionOutcome.CardCorrupt(filePath, failure.Reason));
     }
 
     /// <summary>
@@ -542,6 +542,41 @@ internal static class CardStore
             onLayoutMismatch: static _ => throw new InvalidOperationException("unreachable: the anchored path already resolved above."),
             onCorrupt: corrupt => new CardBlockTransitionOutcome.ToolFailure($"could not record refusal: {corrupt.Reason}"),
             onToolFailure: toolFailure => new CardBlockTransitionOutcome.ToolFailure(toolFailure.Reason),
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: refusal recording never touches round/history."));
+    }
+
+    /// <summary>
+    /// Generalised sibling of the <see cref="CardBlockTransitionOutcome"/>-specific
+    /// <see cref="RefuseAndRecord{TRefusal}(string, CardFile, string, string?, CardOwner,
+    /// DateTimeOffset, TRefusal)"/> above, parameterised over the outcome union too so §9 block A2's
+    /// five register/rules families can share one recording path instead of five copies of the same
+    /// eleven-line body. Same contract, same two rulings (§9 architect ruling): only a refusal that
+    /// resolved a real, anchored card is recorded — an anchor failure returns <paramref
+    /// name="refusal"/> unchanged, with no write — and a refusal is never reported ahead of its
+    /// record line landing: a failed write is mapped through <paramref name="onToolFailure"/>
+    /// instead of the refusal (ADR-0001: enforcement unavailable is a tool-failure, never a quieter
+    /// refusal).
+    /// </summary>
+    private static TOutcome RefuseAndRecord<TOutcome, TRefusal>(
+        string cardsRoot, CardFile card, string filePath, string? changeName, CardOwner actingRole, DateTimeOffset timestamp, TRefusal refusal, Func<string, TOutcome> onToolFailure)
+        where TRefusal : TOutcome, ICardRefusalReason
+    {
+        var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out _);
+        if (anchored is null)
+        {
+            return refusal;
+        }
+
+        var entry = new CardRefusalEntry(actingRole, refusal.RefusingRule, refusal.Remedy, timestamp, []);
+        var updated = card with { Refusals = [.. card.Refusals, entry] };
+        var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+        return writeResult.Match<TOutcome>(
+            onSuccess: _ => refusal,
+            onNotFound: notFound => onToolFailure($"could not record refusal against '{notFound.FilePath}': card not found."),
+            onAlreadyExists: alreadyExists => onToolFailure($"could not record refusal against '{alreadyExists.FilePath}': unexpected write conflict."),
+            onLayoutMismatch: static _ => throw new InvalidOperationException("unreachable: the anchored path already resolved above."),
+            onCorrupt: corrupt => onToolFailure($"could not record refusal: {corrupt.Reason}"),
+            onToolFailure: toolFailure => onToolFailure(toolFailure.Reason),
             onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: refusal recording never touches round/history."));
     }
 
@@ -1399,7 +1434,9 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsSectionCard(card))
                 {
-                    return new CardSectionAuthorisationOutcome.NotASectionCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardSectionAuthorisationOutcome, CardSectionAuthorisationOutcome.NotASectionCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardSectionAuthorisationOutcome.NotASectionCard(card.Frontmatter.Kind),
+                        static reason => new CardSectionAuthorisationOutcome.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -1417,7 +1454,9 @@ internal static class CardStore
                 var (priorRequestChanges, unspentAuthorisations) = SectionRemediationBoundState(card.SectionFields);
                 if (priorRequestChanges < 2 || unspentAuthorisations > 0)
                 {
-                    return new CardSectionAuthorisationOutcome.NotAtBound(priorRequestChanges, unspentAuthorisations);
+                    return RefuseAndRecord<CardSectionAuthorisationOutcome, CardSectionAuthorisationOutcome.NotAtBound>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardSectionAuthorisationOutcome.NotAtBound(priorRequestChanges, unspentAuthorisations),
+                        static reason => new CardSectionAuthorisationOutcome.ToolFailure(reason));
                 }
 
                 var entry = new SectionAuthorisationEntry(actingRole, reason, timestamp, []);
@@ -2277,19 +2316,25 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsRegisterCard(card))
                 {
-                    return new CardRegisterDischargeOutcome.NotARegisterCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardRegisterDischargeOutcome, CardRegisterDischargeOutcome.NotARegisterCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardRegisterDischargeOutcome.NotARegisterCard(card.Frontmatter.Kind),
+                        static reason => new CardRegisterDischargeOutcome.ToolFailure(reason));
                 }
 
                 // register: "SHALL NOT occupy flow states" — a real, exercised refusal, not merely
                 // a documented intention. See RegisterLifecycleState's own doc comment.
                 if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
                 {
-                    return new CardRegisterDischargeOutcome.InvalidStatus(filePath, card.Frontmatter.Status);
+                    return RefuseAndRecord<CardRegisterDischargeOutcome, CardRegisterDischargeOutcome.InvalidStatus>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardRegisterDischargeOutcome.InvalidStatus(filePath, card.Frontmatter.Status),
+                        static reason => new CardRegisterDischargeOutcome.ToolFailure(reason));
                 }
 
                 if (currentState == RegisterLifecycleState.Discharged)
                 {
-                    return new CardRegisterDischargeOutcome.AlreadyDischarged(filePath);
+                    return RefuseAndRecord<CardRegisterDischargeOutcome, CardRegisterDischargeOutcome.AlreadyDischarged>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardRegisterDischargeOutcome.AlreadyDischarged(filePath),
+                        static reason => new CardRegisterDischargeOutcome.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -2372,17 +2417,31 @@ internal static class CardStore
     /// </para>
     /// </summary>
     internal static CardRulePromoteOutcome PromoteRule(
-        string cardsRoot, string filePath, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout) =>
+        string cardsRoot, string filePath, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
         WithLock(
             filePath,
             lockTimeout,
-            heldLock => PromoteRuleUnderExistingLock(heldLock, cardsRoot, actingRole, timestamp),
+            heldLock => PromoteRuleUnderExistingLock(heldLock, cardsRoot, actingRole, timestamp, changeName),
             onTimedOut: timedOut => new CardRulePromoteOutcome.ToolFailure(timedOut.Message));
 
     /// <summary>The read-decide-move-write step of <see cref="PromoteRule"/>. Same structural lock
-    /// precondition as every other <c>*UnderExistingLock</c> method on this type.</summary>
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type.
+    ///
+    /// <para>
+    /// <b><paramref name="changeName"/> exists only to anchor a refusal (§9 block A2 remediation).
+    /// </b> A card that is still <see cref="CardScope.Change"/>-scoped — the common case promotion
+    /// serves — cannot be anchored by <see cref="AnchoredCardPath.TryCreate"/> without one
+    /// (<see cref="CardLayout.DirectoryFor"/> requires it for that scope); without
+    /// <paramref name="changeName"/>, <see cref="CardRulePromoteOutcome.NotARuleCard"/>,
+    /// <see cref="CardRulePromoteOutcome.InvalidStatus"/> and <see cref="CardRulePromoteOutcome.
+    /// TargetAlreadyExists"/> would report their refusal but never record it — reviewer/Architect
+    /// ruling: "a refusal surface that records everywhere except the path most callers take is
+    /// worse than one that records nowhere." The promotion move itself never uses this value — the
+    /// move target is always <see cref="CardScope.Repository"/>, which needs no change name.
+    /// </para>
+    /// </summary>
     private static CardRulePromoteOutcome PromoteRuleUnderExistingLock(
-        CardLock heldLock, string cardsRoot, CardOwner actingRole, DateTimeOffset timestamp)
+        CardLock heldLock, string cardsRoot, CardOwner actingRole, DateTimeOffset timestamp, string? changeName)
     {
         ArgumentNullException.ThrowIfNull(heldLock);
         var originalFilePath = heldLock.CardPath;
@@ -2399,14 +2458,18 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsRuleCard(card))
                 {
-                    return new CardRulePromoteOutcome.NotARuleCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardRulePromoteOutcome, CardRulePromoteOutcome.NotARuleCard>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        new CardRulePromoteOutcome.NotARuleCard(card.Frontmatter.Kind),
+                        static reason => new CardRulePromoteOutcome.ToolFailure(reason));
                 }
 
                 // register: "SHALL NOT occupy flow states" — the same exercised refusal every
                 // other register mutation in this codebase already enforces.
                 if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out _))
                 {
-                    return new CardRulePromoteOutcome.InvalidStatus(originalFilePath, card.Frontmatter.Status);
+                    return RefuseAndRecord<CardRulePromoteOutcome, CardRulePromoteOutcome.InvalidStatus>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        new CardRulePromoteOutcome.InvalidStatus(originalFilePath, card.Frontmatter.Status),
+                        static reason => new CardRulePromoteOutcome.ToolFailure(reason));
                 }
 
                 // Promotion knows how to move exactly one scope pair: change -> repository.
@@ -2419,9 +2482,16 @@ internal static class CardStore
                     onChange: static () => null,
                     onCapability: () => new CardRulePromoteOutcome.NotChangeScoped(CardScope.Capability, originalFilePath),
                     onRepository: () => new CardRulePromoteOutcome.AlreadyRepositoryScoped(originalFilePath));
-                if (scopeRefusal is not null)
+                if (scopeRefusal is CardRulePromoteOutcome.AlreadyRepositoryScoped alreadyRepositoryScoped)
                 {
-                    return scopeRefusal;
+                    return RefuseAndRecord<CardRulePromoteOutcome, CardRulePromoteOutcome.AlreadyRepositoryScoped>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        alreadyRepositoryScoped, static reason => new CardRulePromoteOutcome.ToolFailure(reason));
+                }
+
+                if (scopeRefusal is CardRulePromoteOutcome.NotChangeScoped notChangeScoped)
+                {
+                    return RefuseAndRecord<CardRulePromoteOutcome, CardRulePromoteOutcome.NotChangeScoped>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        notChangeScoped, static reason => new CardRulePromoteOutcome.ToolFailure(reason));
                 }
 
                 var registerDirectory = Path.GetFullPath(
@@ -2436,7 +2506,9 @@ internal static class CardStore
                 {
                     if (File.Exists(targetFilePath))
                     {
-                        return new CardRulePromoteOutcome.TargetAlreadyExists(targetFilePath);
+                        return RefuseAndRecord<CardRulePromoteOutcome, CardRulePromoteOutcome.TargetAlreadyExists>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                            new CardRulePromoteOutcome.TargetAlreadyExists(targetFilePath),
+                            static reason => new CardRulePromoteOutcome.ToolFailure(reason));
                     }
 
                     Directory.CreateDirectory(registerDirectory);
@@ -2821,27 +2893,40 @@ internal static class CardStore
 
         if (!IsDecisionCard(supersedingCard))
         {
-            return new CardDecisionSupersedeOutcome.NotADecisionCard(supersedingFilePath, supersedingCard.Frontmatter.Kind);
+            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.NotADecisionCard>(cardsRoot, supersedingCard, supersedingFilePath, changeName: null, actingRole, timestamp,
+                        new CardDecisionSupersedeOutcome.NotADecisionCard(supersedingFilePath, supersedingCard.Frontmatter.Kind),
+                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
         }
 
         if (!IsDecisionCard(supersededCard))
         {
-            return new CardDecisionSupersedeOutcome.NotADecisionCard(supersededFilePath, supersededCard.Frontmatter.Kind);
+            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.NotADecisionCard>(cardsRoot, supersededCard, supersededFilePath, changeName: null, actingRole, timestamp,
+                        new CardDecisionSupersedeOutcome.NotADecisionCard(supersededFilePath, supersededCard.Frontmatter.Kind),
+                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
         }
 
         if (string.Equals(supersedingCard.Frontmatter.Id, supersededCard.Frontmatter.Id, StringComparison.Ordinal))
         {
-            return new CardDecisionSupersedeOutcome.SelfSupersession(supersedingCard.Frontmatter.Id);
+            // §9 block A2 remediation: both cards are resolved and both locks are held by this
+            // point — unlike SupersedeDecision's own pre-lock path-string check, this is a
+            // recordable refusal against a real card.
+            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.ResolvedSelfSupersession>(cardsRoot, supersedingCard, supersedingFilePath, changeName: null, actingRole, timestamp,
+                new CardDecisionSupersedeOutcome.ResolvedSelfSupersession(supersedingCard.Frontmatter.Id),
+                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
         }
 
         if (!RegisterLifecycleStateWireFormat.TryParse(supersedingCard.Frontmatter.Status, out var supersedingState))
         {
-            return new CardDecisionSupersedeOutcome.InvalidStatus(supersedingFilePath, supersedingCard.Frontmatter.Status);
+            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.InvalidStatus>(cardsRoot, supersedingCard, supersedingFilePath, changeName: null, actingRole, timestamp,
+                        new CardDecisionSupersedeOutcome.InvalidStatus(supersedingFilePath, supersedingCard.Frontmatter.Status),
+                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
         }
 
         if (!RegisterLifecycleStateWireFormat.TryParse(supersededCard.Frontmatter.Status, out var supersededState))
         {
-            return new CardDecisionSupersedeOutcome.InvalidStatus(supersededFilePath, supersededCard.Frontmatter.Status);
+            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.InvalidStatus>(cardsRoot, supersededCard, supersededFilePath, changeName: null, actingRole, timestamp,
+                        new CardDecisionSupersedeOutcome.InvalidStatus(supersededFilePath, supersededCard.Frontmatter.Status),
+                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
         }
 
         // Both sides must be open — the superseded side because supersession discharges it exactly
@@ -2850,12 +2935,16 @@ internal static class CardStore
         // this method's own doc comment on SupersedeDecision for the proof.
         if (supersededState == RegisterLifecycleState.Discharged)
         {
-            return new CardDecisionSupersedeOutcome.SupersededAlreadyDischarged(supersededFilePath);
+            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.SupersededAlreadyDischarged>(cardsRoot, supersededCard, supersededFilePath, changeName: null, actingRole, timestamp,
+                        new CardDecisionSupersedeOutcome.SupersededAlreadyDischarged(supersededFilePath),
+                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
         }
 
         if (supersedingState == RegisterLifecycleState.Discharged)
         {
-            return new CardDecisionSupersedeOutcome.SupersedingAlreadyDischarged(supersedingFilePath);
+            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.SupersedingAlreadyDischarged>(cardsRoot, supersedingCard, supersedingFilePath, changeName: null, actingRole, timestamp,
+                        new CardDecisionSupersedeOutcome.SupersedingAlreadyDischarged(supersedingFilePath),
+                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
         }
 
         var supersedingAnchored = AnchoredCardPath.TryCreate(
@@ -3160,7 +3249,7 @@ internal static class CardStore
         string cardsRoot, string familyFilePath, IReadOnlyList<string> absorbedFilePaths, string changeName,
         CardOwner actingRole, DateTimeOffset timestamp)
     {
-        var (familyRefusal, familyCard) = ReadOpenChangeScopedRule(familyFilePath, changeName, isFamilySide: true);
+        var (familyRefusal, familyCard) = ReadOpenChangeScopedRule(cardsRoot, familyFilePath, changeName, isFamilySide: true, actingRole, timestamp);
         if (familyRefusal is not null)
         {
             return familyRefusal;
@@ -3178,7 +3267,7 @@ internal static class CardStore
 
         for (var i = 0; i < absorbedFilePaths.Count; i++)
         {
-            var (absorbedRefusal, absorbedCard) = ReadOpenChangeScopedRule(absorbedFilePaths[i], changeName, isFamilySide: false);
+            var (absorbedRefusal, absorbedCard) = ReadOpenChangeScopedRule(cardsRoot, absorbedFilePaths[i], changeName, isFamilySide: false, actingRole, timestamp);
             if (absorbedRefusal is not null)
             {
                 return absorbedRefusal;
@@ -3186,9 +3275,16 @@ internal static class CardStore
 
             if (!seenIds.Add(absorbedCard!.Frontmatter.Id))
             {
+                // §9 block A2 remediation: both cards are resolved and every lock is held by this
+                // point, so — unlike the path-string checks in CompactRules that catch the common
+                // case before any lock exists — this is a recordable refusal against a real card.
                 return string.Equals(absorbedCard.Frontmatter.Id, familyCard.Frontmatter.Id, StringComparison.Ordinal)
-                    ? new CardRuleCompactOutcome.SelfAbsorption(absorbedCard.Frontmatter.Id)
-                    : new CardRuleCompactOutcome.DuplicateAbsorbedRule(absorbedCard.Frontmatter.Id);
+                    ? RefuseAndRecord<CardRuleCompactOutcome, CardRuleCompactOutcome.ResolvedSelfAbsorption>(cardsRoot, absorbedCard, absorbedFilePaths[i], changeName, actingRole, timestamp,
+                        new CardRuleCompactOutcome.ResolvedSelfAbsorption(absorbedCard.Frontmatter.Id),
+                        static reason => new CardRuleCompactOutcome.ToolFailure(reason))
+                    : RefuseAndRecord<CardRuleCompactOutcome, CardRuleCompactOutcome.ResolvedDuplicateAbsorbedRule>(cardsRoot, absorbedCard, absorbedFilePaths[i], changeName, actingRole, timestamp,
+                        new CardRuleCompactOutcome.ResolvedDuplicateAbsorbedRule(absorbedCard.Frontmatter.Id),
+                        static reason => new CardRuleCompactOutcome.ToolFailure(reason));
             }
 
             var absorbedAnchored = AnchoredCardPath.TryCreate(cardsRoot, absorbedFilePaths[i], CardScope.Change, changeName, out var absorbedLayoutFailure);
@@ -3310,7 +3406,7 @@ internal static class CardStore
     /// <see cref="AnchoredCardPath.TryCreate"/> alone cannot distinguish "the wrong change" from
     /// "not change-scoped at all".</summary>
     private static (CardRuleCompactOutcome? Refusal, CardFile? Card) ReadOpenChangeScopedRule(
-        string filePath, string changeName, bool isFamilySide)
+        string cardsRoot, string filePath, string changeName, bool isFamilySide, CardOwner actingRole, DateTimeOffset timestamp)
     {
         if (!File.Exists(filePath))
         {
@@ -3327,19 +3423,27 @@ internal static class CardStore
 
         if (!IsRuleCard(card))
         {
-            return (new CardRuleCompactOutcome.NotARuleCard(filePath, card.Frontmatter.Kind), null);
+            return (RefuseAndRecord<CardRuleCompactOutcome, CardRuleCompactOutcome.NotARuleCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardRuleCompactOutcome.NotARuleCard(filePath, card.Frontmatter.Kind),
+                static reason => new CardRuleCompactOutcome.ToolFailure(reason)), null);
         }
 
         if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var state))
         {
-            return (new CardRuleCompactOutcome.InvalidStatus(filePath, card.Frontmatter.Status), null);
+            return (RefuseAndRecord<CardRuleCompactOutcome, CardRuleCompactOutcome.InvalidStatus>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardRuleCompactOutcome.InvalidStatus(filePath, card.Frontmatter.Status),
+                static reason => new CardRuleCompactOutcome.ToolFailure(reason)), null);
         }
 
         if (state == RegisterLifecycleState.Discharged)
         {
             return isFamilySide
-                ? (new CardRuleCompactOutcome.FamilyAlreadyDischarged(filePath), null)
-                : (new CardRuleCompactOutcome.AbsorbedAlreadyDischarged(filePath), null);
+                ? (RefuseAndRecord<CardRuleCompactOutcome, CardRuleCompactOutcome.FamilyAlreadyDischarged>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardRuleCompactOutcome.FamilyAlreadyDischarged(filePath),
+                    static reason => new CardRuleCompactOutcome.ToolFailure(reason)), null)
+                : (RefuseAndRecord<CardRuleCompactOutcome, CardRuleCompactOutcome.AbsorbedAlreadyDischarged>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardRuleCompactOutcome.AbsorbedAlreadyDischarged(filePath),
+                    static reason => new CardRuleCompactOutcome.ToolFailure(reason)), null);
         }
 
         var isChangeScoped = card.Frontmatter.Scope.Match(

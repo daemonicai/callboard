@@ -16,6 +16,7 @@ internal abstract record CardDecisionSupersedeOutcome
     internal abstract TResult Match<TResult>(
         Func<Superseded, TResult> onSuperseded,
         Func<SelfSupersession, TResult> onSelfSupersession,
+        Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession,
         Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged,
         Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged,
         Func<InvalidStatus, TResult> onInvalidStatus,
@@ -31,17 +32,40 @@ internal abstract record CardDecisionSupersedeOutcome
     /// and <c>superseded_by</c>.</param>
     internal sealed record Superseded(CardFile SupersedingCard, CardFile SupersededCard) : CardDecisionSupersedeOutcome
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onSuperseded(this);
     }
 
-    /// <summary>The superseding and superseded card names resolved to the identical card id — "a
-    /// decision superseding itself is not a coherent record" (§7 block C brief). Refusal-shaped.
+    /// <summary>The superseding and superseded card names resolved to the identical card id, on
+    /// caller-supplied path text alone, before any lock is requested (<see cref="CardStore.
+    /// SupersedeDecision"/>'s own path-equality check) — "a decision superseding itself is not a
+    /// coherent record" (§7 block C brief). No card has been resolved yet at this point, so there
+    /// is nothing to record against — not <see cref="ICardRefusalReason"/>. See
+    /// <see cref="ResolvedSelfSupersession"/> for the sibling occurrence once both locks are held.
     /// </summary>
     internal sealed record SelfSupersession(string Id) : CardDecisionSupersedeOutcome
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onSelfSupersession(this);
+    }
+
+    /// <summary>The superseding and superseded card names resolved to the identical card id,
+    /// discovered by the id-based recheck in <see cref="CardStore.SupersedeDecisionUnderLocks"/> —
+    /// <b>after</b> both cards have been read and both locks are held (§9 block A2 remediation,
+    /// reviewer/Architect ruling: "a refusal against two resolved, locked cards is a recordable
+    /// refusal", split from <see cref="SelfSupersession"/> rather than sharing its blanket
+    /// non-recording disposition). Reachable when two differently-spelled caller-supplied paths
+    /// resolve to the same decision id, which <see cref="SelfSupersession"/>'s own path-string check
+    /// cannot catch — when this fires it is, by construction, exactly the refusal that would
+    /// otherwise leave no trail. Refusal-shaped.</summary>
+    internal sealed record ResolvedSelfSupersession(string Id) : CardDecisionSupersedeOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            onResolvedSelfSupersession(this);
+
+        public string RefusingRule => "register: a decision superseding itself is not a coherent record";
+
+        public string Remedy => "name a different decision as the one being superseded.";
     }
 
     /// <summary>The decision to be superseded is already discharged — "superseding an
@@ -49,10 +73,14 @@ internal abstract record CardDecisionSupersedeOutcome
     /// Refusal-shaped, same code as <see cref="CardRegisterDischargeOutcome.AlreadyDischarged"/>
     /// (Architect ruling: supersession sets the state block A already shipped, it does not
     /// introduce a parallel one).</summary>
-    internal sealed record SupersededAlreadyDischarged(string FilePath) : CardDecisionSupersedeOutcome
+    internal sealed record SupersededAlreadyDischarged(string FilePath) : CardDecisionSupersedeOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onSupersededAlreadyDischarged(this);
+
+        public string RefusingRule => "register: superseding an already-discharged decision is a refusal, not a re-supersession";
+
+        public string Remedy => $"'{FilePath}' is already discharged; name a decision that is still open as the one being superseded.";
     }
 
     /// <summary>The decision doing the superseding is itself already discharged (already
@@ -61,34 +89,48 @@ internal abstract record CardDecisionSupersedeOutcome
     /// that keeps <c>supersedes</c>/<c>superseded_by</c> acyclic — see
     /// <see cref="CardStore.SupersedeDecision"/>'s own doc comment for the proof. Refusal-shaped,
     /// same code as <see cref="SupersededAlreadyDischarged"/>, distinguished by message.</summary>
-    internal sealed record SupersedingAlreadyDischarged(string FilePath) : CardDecisionSupersedeOutcome
+    internal sealed record SupersedingAlreadyDischarged(string FilePath) : CardDecisionSupersedeOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onSupersedingAlreadyDischarged(this);
+
+        public string RefusingRule => "register: a discharged decision cannot newly supersede another";
+
+        public string Remedy => $"'{FilePath}' is already discharged; name a decision that is still open as the one doing the superseding.";
     }
 
     /// <summary>One of the two cards' own <c>status</c> does not parse as
     /// <see cref="RegisterLifecycleState"/> — register: "SHALL NOT occupy flow states", the same
     /// exercised refusal <see cref="CardRegisterDischargeOutcome.InvalidStatus"/> already
     /// enforces.</summary>
-    internal sealed record InvalidStatus(string FilePath, string Status) : CardDecisionSupersedeOutcome
+    internal sealed record InvalidStatus(string FilePath, string Status) : CardDecisionSupersedeOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onInvalidStatus(this);
+
+        public string RefusingRule => "register: register cards SHALL NOT occupy flow states";
+
+        public string Remedy =>
+            $"'{FilePath}' has status '{Status}', which is not a recognised register lifecycle state " +
+            $"({RegisterLifecycleStateWireFormat.RecognisedValues}); correct the card's own 'status' field before superseding with it.";
     }
 
     /// <summary>One of the two resolved cards is not a <c>decision</c>. Refusal-shaped.</summary>
-    internal sealed record NotADecisionCard(string FilePath, CardKind Kind) : CardDecisionSupersedeOutcome
+    internal sealed record NotADecisionCard(string FilePath, CardKind Kind) : CardDecisionSupersedeOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onNotADecisionCard(this);
+
+        public string RefusingRule => "register: supersession applies only to decision cards";
+
+        public string Remedy => $"'{FilePath}' is a '{Kind.ToWireString()}' card, not a 'decision' card; target a decision on both sides.";
     }
 
     /// <summary>One of the two resolved paths no longer has a card on disk (a race between
     /// resolution and locking). Refusal-shaped.</summary>
     internal sealed record CardNotFound(string FilePath) : CardDecisionSupersedeOutcome
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardNotFound(this);
     }
 
@@ -96,7 +138,7 @@ internal abstract record CardDecisionSupersedeOutcome
     /// (<see cref="AnchoredCardPath.TryCreate"/>). Refusal-shaped.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardDecisionSupersedeOutcome
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onLayoutMismatch(this);
     }
 
@@ -104,7 +146,7 @@ internal abstract record CardDecisionSupersedeOutcome
     /// tool-failure.</summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardDecisionSupersedeOutcome
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardCorrupt(this);
     }
 
@@ -112,7 +154,7 @@ internal abstract record CardDecisionSupersedeOutcome
     /// within its timeout, or an I/O error occurred while writing. Tool-failure-shaped.</summary>
     internal sealed record ToolFailure(string Reason) : CardDecisionSupersedeOutcome
     {
-        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Superseded, TResult> onSuperseded, Func<SelfSupersession, TResult> onSelfSupersession, Func<ResolvedSelfSupersession, TResult> onResolvedSelfSupersession, Func<SupersededAlreadyDischarged, TResult> onSupersededAlreadyDischarged, Func<SupersedingAlreadyDischarged, TResult> onSupersedingAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotADecisionCard, TResult> onNotADecisionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onToolFailure(this);
     }
 }

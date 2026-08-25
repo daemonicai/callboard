@@ -146,6 +146,7 @@ public sealed class CardCommentImmutabilityTests
             "RecordSectionVerdict",                 // §5 block E: append-only write on SectionFields.Verdicts only; never touches Frontmatter.Status or Comments
             "RecordSectionVerdictUnderExistingLock", // same, lock already held
             "RefuseAndRecord",                       // §9 block A: appends exactly one CardRefusalEntry to Refusals (never Comments) and writes it back under the caller's own held lock; called only from a refusal branch, never touches an existing comment
+            "RefuseAndRecord",                       // §9 block A2: the outcome-union-generic overload the register/rules families share — same contract, same lock precondition, never touches Comments
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"
             "RemoveBlockedByUnderExistingLock",     // same, lock already held
             "RestoreAllAbsorbed",                   // §7 block F: loops RestoreCardContent over every absorbed rule already written in a CompactRulesUnderLocks call when the family's own write then fails; touches only what RestoreCardContent itself touches
