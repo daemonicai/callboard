@@ -60,12 +60,17 @@ internal abstract record CardNitDispositionOutcome
     }
 
     /// <summary>The target card exists and parses, but its <c>kind</c> is not <c>block</c>.
-    /// Refusal-shaped: caller pointed the verb at the wrong card.</summary>
-    internal sealed record NotABlockCard(CardKind Kind) : CardNitDispositionOutcome
+    /// Refusal-shaped: caller pointed the verb at the wrong card. Card-addressed (§9 block A3):
+    /// resolved under lock before this check runs.</summary>
+    internal sealed record NotABlockCard(CardKind Kind) : CardNitDispositionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onNotABlockCard(this);
+
+        public string RefusingRule => "review-certification: nit dispositions only apply to a block card";
+
+        public string Remedy => "target a card whose kind is 'block'.";
     }
 
     /// <summary>No card exists at the target path. Refusal-shaped: caller-correctable.</summary>
@@ -78,22 +83,32 @@ internal abstract record CardNitDispositionOutcome
 
     /// <summary>The block card was found, but no comment on it carries <c>NitId</c> as a live nit —
     /// checked again under the lock (<see cref="NitResolver"/> found it before the lock was
-    /// acquired). Refusal-shaped: caller-correctable.</summary>
-    internal sealed record NitNotFound(string NitId) : CardNitDispositionOutcome
+    /// acquired). Refusal-shaped: caller-correctable. Card-addressed (§9 block A3): the block card
+    /// is resolved before this check runs.</summary>
+    internal sealed record NitNotFound(string NitId) : CardNitDispositionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onNitNotFound(this);
+
+        public string RefusingRule => "review-certification: a disposition targets a live nit on the card";
+
+        public string Remedy => $"'{NitId}' is not a live nit on this card; raise it first, or correct the id.";
     }
 
     /// <summary>The nit already carries a disposition (review-certification: "A nit SHALL cease to
     /// be live only through one of these three dispositions" — implying exactly one). Refusal-
-    /// shaped: caller-correctable.</summary>
-    internal sealed record AlreadyDispositioned(string NitId) : CardNitDispositionOutcome
+    /// shaped: caller-correctable. Card-addressed (§9 block A3): the block card is resolved and the
+    /// nit's own disposition already read before this check runs.</summary>
+    internal sealed record AlreadyDispositioned(string NitId) : CardNitDispositionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onAlreadyDispositioned(this);
+
+        public string RefusingRule => "review-certification: a nit ceases to be live only through one of its three dispositions";
+
+        public string Remedy => $"nit '{NitId}' already carries a disposition; it cannot be dispositioned again.";
     }
 
     /// <summary>The block card's own target path does not resolve under the given root/scope/change
@@ -115,12 +130,21 @@ internal abstract record CardNitDispositionOutcome
     }
 
     /// <summary>A card already exists at the raised card's target path. Refusal-shaped: caller-
-    /// correctable.</summary>
-    internal sealed record RaisedCardAlreadyExists(string FilePath) : CardNitDispositionOutcome
+    /// correctable. Card-addressed (§9 block A3), against the block card the disposition targets —
+    /// not the colliding path, which is never read or parsed here (only <see cref="File.Exists(
+    /// string)"/> checked) and so has nothing of its own to record against, the same "already
+    /// exists" reasoning <see cref="CardRulePromoteOutcome.TargetAlreadyExists"/> already applies
+    /// against its own source card. The block card is already resolved and anchored by the time
+    /// this check runs.</summary>
+    internal sealed record RaisedCardAlreadyExists(string FilePath) : CardNitDispositionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onRaisedCardAlreadyExists(this);
+
+        public string RefusingRule => "card-model: identities are never recycled, and a raised card must not overwrite an unrelated one";
+
+        public string Remedy => $"'{FilePath}' already exists at the raised card's target path; resolve the collision before retrying.";
     }
 
     /// <summary>The card exists but its content could not be parsed, or carries a <c>status</c> this
@@ -139,10 +163,16 @@ internal abstract record CardNitDispositionOutcome
     /// neither is altered — a stored count ahead of the history and a history ahead of the count are
     /// different failures, and guessing which is right would silently destroy the evidence of
     /// whichever was correct.</summary>
-    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardNitDispositionOutcome
+    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardNitDispositionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onRoundDisagreesWithHistory(this);
+
+        public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
+
+        public string Remedy =>
+            $"the recorded round ({StoredRound}) disagrees with the transition history ({ExpectedRound}); " +
+            "correct whichever was altered outside the tool before this disposition can proceed.";
     }
 
     /// <summary>Enforcement itself is unavailable: a lock could not be acquired within its timeout,

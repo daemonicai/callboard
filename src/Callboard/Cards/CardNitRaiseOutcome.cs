@@ -46,12 +46,17 @@ internal abstract record CardNitRaiseOutcome
     /// <see cref="Callboard.Cli.CommandDispatcher.RunNitRaise"/> already resolves the reference
     /// against <see cref="CardStore.IsBlockCard"/>, because that resolution happens before the
     /// lock is taken and so is not itself race-proof (the same reasoning <see cref="
-    /// CardApprovalOutcome.NotABlockCard"/> already applies). Refusal-shaped.</summary>
-    internal sealed record NotABlockCard(CardKind Kind) : CardNitRaiseOutcome
+    /// CardApprovalOutcome.NotABlockCard"/> already applies). Refusal-shaped, and card-addressed
+    /// (§9 block A3): the card was resolved under lock before this check runs.</summary>
+    internal sealed record NotABlockCard(CardKind Kind) : CardNitRaiseOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onNotABlockCard(this);
+
+        public string RefusingRule => "review-certification: nits only apply to a block card";
+
+        public string Remedy => "target a card whose kind is 'block'.";
     }
 
     /// <summary>No card exists at the target path. Refusal-shaped: caller-correctable.</summary>
@@ -72,12 +77,20 @@ internal abstract record CardNitRaiseOutcome
     /// <c>landed</c> or <c>closed</c> card can ever come to hold a live nit. Refusal-shaped —
     /// the observation is not lost, it becomes an <c>obligation</c> where the architect or the
     /// Product Owner judges it needs fixing, a judgement this type deliberately does not
-    /// automate.</summary>
-    internal sealed record NotUnderReview(BlockFlowState CurrentState) : CardNitRaiseOutcome
+    /// automate. Card-addressed (§9 block A3): the card is resolved and its status parsed before
+    /// this check runs.</summary>
+    internal sealed record NotUnderReview(BlockFlowState CurrentState) : CardNitRaiseOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onNotUnderReview(this);
+
+        public string RefusingRule => "review-certification: a nit SHALL be raised only against a block that is under review";
+
+        public string Remedy =>
+            $"'{CurrentState.ToWireString()}' is not 'in-review'; raise this once the block returns to 'in-review', " +
+            "or, if the observation needs fixing regardless, record it as an obligation ('obligation create') " +
+            "naming the section expected to discharge it.";
     }
 
     /// <summary>The target path does not resolve under the given root/scope/change name
@@ -107,10 +120,16 @@ internal abstract record CardNitRaiseOutcome
     /// neither is altered — a stored count ahead of the history and a history ahead of the count are
     /// different failures, and guessing which is right would silently destroy the evidence of
     /// whichever was correct.</summary>
-    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardNitRaiseOutcome
+    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardNitRaiseOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onRoundDisagreesWithHistory(this);
+
+        public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
+
+        public string Remedy =>
+            $"the recorded round ({StoredRound}) disagrees with the transition history ({ExpectedRound}); " +
+            "correct whichever was altered outside the tool before this nit can be raised.";
     }
 
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within its

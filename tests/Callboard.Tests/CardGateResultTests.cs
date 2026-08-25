@@ -148,6 +148,14 @@ public sealed class CardGateResultTests : IDisposable
 
         var notABlock = Assert.IsType<CardGateResultOutcome.NotABlockCard>(outcome);
         Assert.Equal(CardKind.Question, notABlock.Kind);
+
+        // process-enforcement (§9 block A3): card-addressed — recorded against this same card.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, refusal.By);
+        Assert.Equal(Created, refusal.Timestamp);
+        Assert.Equal(notABlock.RefusingRule, refusal.Rule);
+        Assert.Equal(notABlock.Remedy, refusal.Remedy);
     }
 
     [Fact]

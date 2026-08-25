@@ -981,8 +981,16 @@ internal static class CommandDispatcher
                 ActingRole = recorded.ActingRole.ToWireString(),
                 Timestamp = parsed.Timestamp,
             }),
-            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "gate results only apply to a block card"),
-            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(filePath, disagreement.StoredRound, disagreement.ExpectedRound),
+            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "gate results only apply to a block card") with
+            {
+                Rule = notABlock.RefusingRule,
+                Remedy = notABlock.Remedy,
+            },
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(filePath, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to record a gate result on."),
@@ -1187,15 +1195,24 @@ internal static class CommandDispatcher
                 ActingRole = parsed.ActingRole.ToWireString(),
                 Timestamp = parsed.Timestamp,
             }),
-            onNotABlockCard: notABlock => WrongCardKind(resolved.FilePath!, CardKind.Block, notABlock.Kind, "nits only apply to a block card"),
-            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(resolved.FilePath!, disagreement.StoredRound, disagreement.ExpectedRound),
+            onNotABlockCard: notABlock => WrongCardKind(resolved.FilePath!, CardKind.Block, notABlock.Kind, "nits only apply to a block card") with
+            {
+                Rule = notABlock.RefusingRule,
+                Remedy = notABlock.Remedy,
+            },
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(resolved.FilePath!, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to raise a nit against."),
             onNotUnderReview: notUnderReview => new CommandOutcome.Refusal(
                 "nit-target-not-in-review",
                 $"block '{parsed.Id}' is '{notUnderReview.CurrentState.ToWireString()}', not 'in-review'; a nit may only " +
                 "be raised against a block under review. If this observation needs fixing, record it as an obligation " +
-                "naming the section expected to discharge it — that judgement is not automated."),
+                "naming the section expected to discharge it — that judgement is not automated.",
+                notUnderReview.RefusingRule, notUnderReview.Remedy),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
             onCardCorrupt: corrupt => throw new InvalidOperationException(
@@ -1264,20 +1281,31 @@ internal static class CommandDispatcher
             }),
             onRoleNotPermitted: roleNotPermitted => RoleNotPermitted(
                 "dispositioning a nit", roleNotPermitted.AttemptedRole, CardOwner.Architect),
-            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "nits only apply to a block card"),
-            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(filePath, disagreement.StoredRound, disagreement.ExpectedRound),
+            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "nits only apply to a block card") with
+            {
+                Rule = notABlock.RefusingRule,
+                Remedy = notABlock.Remedy,
+            },
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(filePath, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to disposition a nit on."),
             onNitNotFound: nitNotFound => new CommandOutcome.Refusal(
-                "nit-id-not-found", $"'--id' names id '{nitNotFound.NitId}', but no live nit in the record carries it."),
+                "nit-id-not-found", $"'--id' names id '{nitNotFound.NitId}', but no live nit in the record carries it.",
+                nitNotFound.RefusingRule, nitNotFound.Remedy),
             onAlreadyDispositioned: alreadyDispositioned => new CommandOutcome.Refusal(
-                "nit-already-dispositioned", $"nit '{alreadyDispositioned.NitId}' already carries a disposition."),
+                "nit-already-dispositioned", $"nit '{alreadyDispositioned.NitId}' already carries a disposition.",
+                alreadyDispositioned.RefusingRule, alreadyDispositioned.Remedy),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
             onRaisedCardLayoutMismatch: raisedLayoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", raisedLayoutMismatch.Reason),
             onRaisedCardAlreadyExists: raisedAlreadyExists => new CommandOutcome.Refusal(
-                "card-already-exists", $"a card already exists at '{raisedAlreadyExists.FilePath}'."),
+                "card-already-exists", $"a card already exists at '{raisedAlreadyExists.FilePath}'.",
+                raisedAlreadyExists.RefusingRule, raisedAlreadyExists.Remedy),
             onCardCorrupt: corrupt => throw new InvalidOperationException(
                 $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
@@ -2652,7 +2680,11 @@ internal static class CommandDispatcher
             // A rule card, never a block card — AppendCommentUnderExistingLock's round check is
             // gated on IsBlockCard, so this arm is unreachable from this call site specifically,
             // but CardWriteResult's Match is exhaustive over every caller of the shared surface.
-            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(resolved.FilePath!, disagreement.StoredRound, disagreement.ExpectedRound));
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(resolved.FilePath!, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            });
     }
 
     /// <summary>

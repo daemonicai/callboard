@@ -292,6 +292,35 @@ public sealed class CardStoreWriteTests : IDisposable
         Assert.Equal("not a card file at all", File.ReadAllText(path));
     }
 
+    // process-enforcement (§9 block A3): CardWriteResult's shared "act on that card" bound
+    // (work-lifecycle 8a.17) applies to the generic AppendComment surface too — this bound is not
+    // scoped to the round-incrementing edges themselves — and the refusal is card-addressed, so it
+    // records against the card.
+    [Fact]
+    public void AppendComment_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard()
+    {
+        var path = Path.Combine(_directory, "b-0010.md");
+        var frontmatter = new CardFrontmatter("B-0010", CardKind.Block, "Title", "building", CardOwner.Worker, CardScope.Change, "2", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: null, Tasks: [], Round: 4, BlockedBy: [], GateResults: []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created.AddHours(1), "Done.", null, null, null, []);
+
+        var outcome = CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
+
+        var disagreement = Assert.IsType<CardWriteResult.RoundDisagreesWithHistory>(outcome);
+        Assert.Equal(4, disagreement.StoredRound);
+        Assert.Equal(1, disagreement.ExpectedRound);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Empty(read.Comments);
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, refusal.By);
+        Assert.Equal(Created.AddHours(1), refusal.Timestamp);
+        Assert.Equal(disagreement.RefusingRule, refusal.Rule);
+        Assert.Equal(disagreement.Remedy, refusal.Remedy);
+    }
+
     [Fact]
     public void AppendCommentUnderExistingLock_RequiresAHeldLock_NullBypassIsRejectedAtRuntime()
     {

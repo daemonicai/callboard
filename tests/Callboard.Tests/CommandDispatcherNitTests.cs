@@ -83,7 +83,6 @@ public sealed class CommandDispatcherNitTests
         using var repo = new TempGitRepo();
         Assert.True(BlockFlowStateWireFormat.TryParse(status, out var currentState));
         var path = WriteInitialBlockCard(repo.Path, "b-not-in-review", "B-NOT-IN-REVIEW", currentState);
-        var before = File.ReadAllBytes(path);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -97,7 +96,17 @@ public sealed class CommandDispatcherNitTests
         var message = refusal.GetProperty("message").GetString()!;
         Assert.Contains($"'{status}'", message, StringComparison.Ordinal);
         Assert.Contains("obligation", message, StringComparison.Ordinal);
-        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.False(string.IsNullOrWhiteSpace(refusal.GetProperty("rule").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(refusal.GetProperty("remedy").GetString()));
+
+        // Status and history are unchanged; the refusal itself is now recorded against the card
+        // (§9 block A3).
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(status, read.Frontmatter.Status);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
     [Fact]

@@ -7,6 +7,19 @@ namespace Callboard.Cards;
 /// instructions to the caller, so they cannot share a case. Every case here is refusal-shaped except
 /// <see cref="ToolFailure"/> — a lock timeout, an I/O error, or an allocator that could not confirm
 /// the identity it just wrote, none of which the caller can fix by supplying different arguments.
+///
+/// <para>
+/// <b>None of the four refusal cases implement <see cref="ICardRefusalReason"/> (§9 block A3).</b>
+/// <see cref="CardStore.RecordFinding"/> is a pure creation surface — it never reads or resolves an
+/// existing card at any point. <see cref="FindingAlreadyExists"/>/<see cref="
+/// BlindSpotCardAlreadyExists"/> fire on a bare <see cref="System.IO.File.Exists(string)"/> check
+/// against the finding's/raised card's own target path — the file that already sits there is never
+/// parsed, so there is nothing resolved to record against (the same reasoning that keeps <see
+/// cref="CardCreateOutcome.AlreadyExists"/> unrecorded). <see cref="FindingLayoutMismatch"/>/<see
+/// cref="BlindSpotLayoutMismatch"/> are anchoring failures on a not-yet-existing target — the
+/// categorical "a layout mismatch has nothing to record against" case the Architect's §9 ruling
+/// names explicitly.
+/// </para>
 /// </summary>
 internal abstract record CardFindingRecordOutcome
 {

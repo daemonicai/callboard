@@ -183,11 +183,45 @@ public sealed class CardOwnershipTransferTests : IDisposable
         Assert.Contains(path, failure, StringComparison.Ordinal);
     }
 
+    // process-enforcement (§9 block A3): CardWriteResult's shared "act on that card" bound
+    // (work-lifecycle 8a.17) applies to TransferOwnership too, not just the round-incrementing
+    // edges — and the refusal is card-addressed, so it records.
+    [Fact]
+    public void TransferOwnership_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard()
+    {
+        var path = WriteBlockCardWithRound("b-0009", "B-0009", round: 3);
+
+        var outcome = CardStore.TransferOwnership(_root, path, CardOwner.Reviewer, CardOwner.Architect, Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName);
+
+        var disagreement = Assert.IsType<CardWriteResult.RoundDisagreesWithHistory>(outcome);
+        Assert.Equal(3, disagreement.StoredRound);
+        Assert.Equal(1, disagreement.ExpectedRound);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(CardOwner.Worker, read.Frontmatter.Owner);
+        Assert.Empty(read.Handovers);
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, refusal.By);
+        Assert.Equal(Created.AddHours(1), refusal.Timestamp);
+        Assert.Equal(disagreement.RefusingRule, refusal.Rule);
+        Assert.Equal(disagreement.Remedy, refusal.Remedy);
+    }
+
     private string WriteInitialCard(string fileStem, string id, CardOwner owner)
     {
         var path = Path.Combine(_directory, fileStem + ".md");
         var frontmatter = new CardFrontmatter(id, CardKind.Block, "Title", "open", owner, CardScope.Change, "4", Created, Created);
         AssertSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName));
+        return path;
+    }
+
+    private string WriteBlockCardWithRound(string fileStem, string id, int round)
+    {
+        var path = Path.Combine(_directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(id, CardKind.Block, "Title", "building", CardOwner.Worker, CardScope.Change, "4", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: null, Tasks: [], Round: round, BlockedBy: [], GateResults: []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
     }
 

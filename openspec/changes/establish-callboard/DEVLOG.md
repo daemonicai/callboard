@@ -23823,6 +23823,183 @@ the caller is my call, not yours.
 `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim. Do not commit,
 do not tick, do not touch the Makefile or `CLAUDE.md`. Stop and post if a Product Owner call appears.
 
+**[worker]** Block A3 done — the six named unions retrofitted onto the refusal format. No task
+ticked; `9.1` was ticked by block A.
+
+**Per union, what's card-addressed and what isn't:**
+
+- **`CardNitRaiseOutcome`** (`RaiseNitUnderExistingLock`) — `NotABlockCard`, `NotUnderReview` and
+  `RoundDisagreesWithHistory` all fire after the card is read under lock: all three now implement
+  `ICardRefusalReason` and record. `NotUnderReview`'s remedy names the obligation route review-
+  certification's own spec text points at (`obligation create`). `CardNotFound`/`LayoutMismatch`
+  (own path never anchors) stay unrecorded, per the base ruling.
+- **`CardNitDispositionOutcome`** (`DispositionNitUnderLocks`) — `NotABlockCard`, `NitNotFound`,
+  `AlreadyDispositioned` and `RoundDisagreesWithHistory` are all post-read, all four now record.
+  `RaisedCardAlreadyExists` is the interesting one: it fires on a bare `File.Exists` against the
+  *raised* card's target — never parsed — so there's nothing of its own to record against, but the
+  *block* card the disposition targets is already resolved and anchored by that point. Recorded
+  against the block card, same reasoning A2's `CardRulePromoteOutcome.TargetAlreadyExists` already
+  established (an "already exists" collision records against the resolved source, a layout mismatch
+  never records regardless of whose path). `RaisedCardLayoutMismatch` and the own-path
+  `LayoutMismatch` both stay unrecorded — categorical, per the base ruling, not case-by-case.
+  `RoleNotPermitted` is pre-lock (no card resolved yet) — stays unrecorded, matching `CardRuleCompactOutcome.RoleNotPermitted`'s own precedent.
+- **`CardGateResultOutcome`** (`RecordGateResultUnderExistingLock`) — `NotABlockCard` and
+  `RoundDisagreesWithHistory` are both post-read; both now record. Plain retrofit, no splits.
+  `RunBlockGate` in `CommandDispatcher` gained the `with { Rule, Remedy }` wiring the other
+  `RoundDisagreesWithHistory`/`WrongCardKind` call sites already carry.
+- **`CardFindingRecordOutcome`** and **`CardCreateOutcome`** — **zero recordable cases in either.**
+  `RecordFinding`/`CreateCard` are pure creation surfaces: neither ever reads or resolves an
+  existing card at any point. Every "already exists" case fires on a bare `File.Exists` against a
+  target path that is never parsed (unlike `TargetAlreadyExists`/`RaisedCardAlreadyExists` above,
+  there is no *other*, already-resolved card in the same call to record against instead), and every
+  `LayoutMismatch`/`ScopeRefused` is a pre-write anchoring failure. Added a doc-comment paragraph to
+  each union explaining this so the next reader doesn't wonder why the retrofit skipped them.
+- **`CardWriteResult`** — the flagged one. Its only card-addressed case is
+  `RoundDisagreesWithHistory`, constructed at exactly two sites (`AppendCommentUnderExistingLock`,
+  `TransferOwnershipUnderExistingLock`), both post-read. Checked whether the rule/remedy actually
+  depends on the caller, per the brief's warning: **`RefusingRule` doesn't** — "work-lifecycle:
+  stored round agrees with the transition history" is the same structural bound regardless of verb,
+  already worded identically across every other union in this codebase. The **remedy wording** is
+  where A2's sibling phrasing ("before this transition can proceed") would be wrong for a comment
+  append or an ownership transfer — so I generalised it to "before this write can proceed", accurate
+  for any caller of this generic surface (matching the type's own doc comment, which already frames
+  every case as "a write to... the primary record"), not a verb-specific claim stretched to fit.
+  This isn't the caller-dependency trap the brief named — no value needed threading, no caller
+  identity needed knowing — so I implemented it rather than reporting and leaving it; flagging the
+  reasoning here per the "if uncertain, be transparent" instruction rather than treating it as
+  silently obvious. `NotFound` (pre-read), `AlreadyExists` (only ever fires from a brand-new-card
+  create path or an `AtomicWrite` rename race, never a resolved card) and `LayoutMismatch` stay
+  unrecorded. `TransferOwnership` itself has no CLI verb yet (`CommandParser` never constructs a
+  call into it), so its half of this is unit-tested at the `CardStore` level only, same as A2's
+  direct-`CardStore` calls for the register/rules family.
+
+**The four standing instructions:**
+
+1. *A test per rule, asserting the line landed on the card.* New/strengthened:
+   `RecordGateResult_CardWithDisagreeingRound_Refuses_NamesBothFigures_AltersNeither` (dropped its
+   old byte-identical assertion, now asserts the recorded `CardRefusalEntry`) and
+   `RecordGateResult_TargetIsNotABlockCard_Refuses` in `CardGateResultTests.cs`;
+   `NitRaise_NotUnderReview_Refuses_NamingStateAndObligationRoute` (same drop-byte-identical fix) in
+   `CommandDispatcherNitTests.cs`; `TransferOwnership_BlockCardWithDisagreeingRound_Refuses_...` in
+   `CardOwnershipTransferTests.cs`; `AppendComment_BlockCardWithDisagreeingRound_Refuses_...` in
+   `CardStoreWriteTests.cs`; and a new file, `CardNitStoreTests.cs`, with five direct-`CardStore`
+   tests covering `RaiseNit`'s `NotABlockCard` and `DispositionNit`'s `NotABlockCard`, `NitNotFound`
+   (the under-lock race `NitResolver` itself can't close — only reachable by calling `CardStore`
+   directly, bypassing the CLI's own id resolution), `AlreadyDispositioned` and
+   `RaisedCardAlreadyExists`. Suite moved 801 → 808.
+2. *Split, don't blanket-dispose, a case that's card-addressed on only some paths.* Looked hard for
+   this shape across all six unions (it's exactly the `SelfAbsorption`/`ResolvedSelfAbsorption`
+   pattern from A2) and didn't find one that needed a new split — every pre-lock/post-lock pair
+   already existing in these six unions was already split from an earlier block (`CardNotFound` vs.
+   the post-read cases). `RaisedCardAlreadyExists` looked like a split candidate at first (it names a
+   *different* card's path than the block card the lock is held on) but it isn't one: it's a single
+   occurrence, always post-lock, always with the block card resolved — the question was which
+   *already-resolved* card to record against, not whether to split by lock state.
+3. *Follow a threaded value to the door a real caller comes through.* Nothing in this block needed
+   threading a new value — no CLI flag changes, no new required parameter. Named as N/A rather than
+   silently skipped.
+4. *Insert by matching `## NEXT` as a whole anchored line.* Done — this post lands above the current
+   `## NEXT` heading via an anchored-line match, not a substring replace.
+
+**Everything else the brief called out:** every recording call re-derives its own anchored path
+inside `RefuseAndRecord` rather than depending on a locally-computed one, so none of this depended on
+reordering an existing `anchored` variable. `RaiseNitUnderExistingLock`/`AppendCommentUnderExistingLock`
+had no explicit `actingRole`/`timestamp` parameters to reuse — used `comment.Author`/`comment.Timestamp`
+for both, which is what the appended entry itself already carries as its own attribution.
+NativeAOT/no-reflection unaffected; every write stays under the lock the refusing read already holds,
+temp-file-then-rename, append-only.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — 808/808 passing.
+
+→ @reviewer
+
+**[reviewer]** Block A3 — **Approve.**
+
+Verified against the code, not the summary. Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0`
+(808/808), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**Claim 1, checked case by case rather than accepted as a summary.** Traced
+`CardFindingRecordOutcome`'s four refusal cases into `RecordFindingUnderLocks`
+(`CardStore.cs:3769-3900`): `FindingAlreadyExists`/`BlindSpotCardAlreadyExists` both fire on a bare
+`File.Exists` against a target that is never parsed (confirmed no `ReadCard` call precedes either
+check), and both `LayoutMismatch` cases are anchoring failures on a not-yet-existing target — no
+`ReadCard` anywhere in this method resolves an *existing* card at all, so there is genuinely nothing
+in this union to record against. Same trace for `CardCreateOutcome` via `CreateCard`/`WriteCard`
+(`CardStore.cs:2262-2298`, `73-93`): `ScopeRefused` is pre-allocation, `AlreadyExists` is `WriteCard`'s
+own bare `File.Exists` inside the lock (never a parse), `LayoutMismatch` is the categorical case. Both
+unions are correctly declared empty — this is not the A2 mistake in either direction.
+
+**Claim 2, all seven `CardWriteResult` cases checked.** `NotFound` and `AlreadyExists` are both
+pre-`ReadCard` (`AppendCommentUnderExistingLock`/`TransferOwnershipUnderExistingLock` both check
+`!File.Exists` before parsing; `AlreadyExists` only ever originates from `WriteCard`'s own
+create-only bare check, a different call entirely). `Corrupt` is `ReadCard`'s own parse-failure arm —
+nothing resolved to record against, correctly excluded. `LayoutMismatch` is categorical. I also
+checked `AtomicWrite` itself (`CardStore.cs:4214-4248`): it can only return `Success` or
+`ToolFailure` in its current implementation (no `AlreadyExists`/`NotFound`/`Corrupt` path exists there
+at all) — so the doc comment's "or an `AtomicWrite` rename race" clause for `AlreadyExists` describes
+a case that can't currently occur; harmless (the `Match` arm consuming it is defensively present but
+dead), not a functional gap. `RoundDisagreesWithHistory` is the only case reached after `ReadCard`
+succeeds at both construction sites — confirmed correct.
+
+**Claim 3.** Confirmed by direct comparison: `RefusingRule` is byte-identical across
+`CardBlockTransitionOutcome`, `CardNitRaiseOutcome`, `CardNitDispositionOutcome`,
+`CardGateResultOutcome` and `CardWriteResult`'s own `RoundDisagreesWithHistory` — genuinely
+verb-independent, not something this block invented. On the remedy: read "correct whichever was
+altered outside the tool before this write can proceed" from both call sites —
+`AppendCommentUnderExistingLock` (adding a comment) and `TransferOwnershipUnderExistingLock` (an
+ownership handover) — and it holds up at both without misnaming either operation or borrowing
+`CardBlockTransitionOutcome`'s "this transition" phrasing, which would have been wrong for both. I
+looked for a reason a caller-specific remedy would serve the reader better and didn't find one: the
+fact being stated (stored round vs. transition history) and the correction needed (fix the
+discrepancy before anything else touches this card) are identical regardless of which surface
+triggered it, so a caller-specific remedy would only repeat the same information under a different
+verb name. Worth noting for the record: today's only live CLI path onto this surface
+(`RunRulePromoteConstitution`, `CommandDispatcher.cs:2668-2683`) targets rule cards only, so this
+case is currently unreachable from that call site (correctly commented as such) — `AppendComment`
+against a block card and `TransferOwnership` entirely still have no CLI verb, so the wording's real
+test awaits whichever future verb reaches them. Not a finding — the implementation is correct for
+what exists and for what's described; I'm not asking you to rule on anything here.
+
+**The four standing instructions:**
+
+1. *A test per rule, asserting the line landed.* All seven test additions/strengthenings assert
+   `Assert.Single(read.Refusals)` (or the CLI envelope's `rule`/`remedy` fields) with matching
+   `By`/`Timestamp`/`Rule`/`Remedy` — not one is a bare outcome-type assertion. Counted: 5 new
+   `[Fact]`s in `CardNitStoreTests.cs` + 1 in `CardOwnershipTransferTests.cs` + 1 in
+   `CardStoreWriteTests.cs` = 7, matching 801→808 exactly; `CardGateResultTests.cs`,
+   `CommandDispatcherNitTests.cs` and `RoundAgreesWithHistoryTests.cs` strengthened existing tests
+   (dropping a byte-identical assertion for the stronger recorded-entry one, same disposition A/A2
+   established) without adding a count.
+2. *Split, don't blanket-dispose.* Checked `RaisedCardAlreadyExists` myself as the one candidate
+   that looked like it might need splitting (it names a different path than the card the lock is
+   held on) — it isn't a split case: it's always post-lock, always with the block card resolved, and
+   the only question was which already-resolved card to record against (the block card, correctly,
+   matching `CardRulePromoteOutcome.TargetAlreadyExists`'s precedent). No pre-lock/post-lock pair in
+   this family was left unsplit.
+3. *Follow a threaded value to the CLI door.* N/A here — no new required parameter, nothing to
+   verify against a missing flag this round.
+4. *DEVLOG posts intact.* Confirmed independently: `git diff fd939f5 -- .../DEVLOG.md` is
+   insertions only (zero content deletions, the sole `-` line is the diff's own header), one
+   `## NEXT`, thread reads chronologically. The worker's own anchored-line insertion method for
+   this post used the same approach.
+
+**Standard pass:** lock/durability — every new `RefuseAndRecord` call sits inside the `onSuccess` arm
+of a `ReadCard` already running under the lock `WithLock`/`CardLock.Acquire` obtained, no re-acquire,
+consistent with A/A2. Tool-failure vs. refusal stays separated (every `RefuseAndRecord` call here
+supplies its own `onToolFailure` mapping to the union's own `ToolFailure` case). Append-only and
+atomicity unchanged (`AtomicWrite`, temp-file-then-rename, `Refusals = [.. card.Refusals, entry]`).
+NativeAOT: no reflection introduced. Rule/remedy strings read cold correctly, and
+`CardNitRaiseOutcome.NotUnderReview`'s remedy now names `obligation create` explicitly — closing the
+§8/§8a-carried supervisor note ("refusals name the route by concept, not by verb") a block early,
+which is a good sign rather than something I need to chase down separately. Scope: no task ticked,
+`Makefile`/`CLAUDE.md`/`tasks.md` untouched, diff stays inside the six named unions plus their CLI
+wiring.
+
+§9 block A3 is clear to land — the retrofit is complete across all seventeen unions this section
+touches.
+
+→ @architect
+
 ## NEXT
 
 **Resume point: §9 "Process enforcement", block A3 — briefed, worker running.** §9 is open at base

@@ -216,14 +216,23 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
     public void RecordGateResult_CardWithDisagreeingRound_Refuses_NamesBothFigures_AltersNeither()
     {
         var path = WriteBlockCard("b-0006", "B-0006", BlockFlowState.Building, round: 2, transitions: []);
-        var before = File.ReadAllBytes(path);
 
         var outcome = CardStore.RecordGateResult(_root, path, "build", 0, CardOwner.Worker, Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName);
 
         var disagreement = Assert.IsType<CardGateResultOutcome.RoundDisagreesWithHistory>(outcome);
         Assert.Equal(2, disagreement.StoredRound);
         Assert.Equal(1, disagreement.ExpectedRound);
-        Assert.Equal(before, File.ReadAllBytes(path));
+
+        // Neither figure is altered, and no gate result lands; the refusal itself is now recorded
+        // against the card (§9 block A3).
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(2, read.BlockFields.Round);
+        Assert.Empty(read.BlockFields.GateResults);
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, refusal.By);
+        Assert.Equal(Created.AddHours(1), refusal.Timestamp);
+        Assert.Equal(disagreement.RefusingRule, refusal.Rule);
+        Assert.Equal(disagreement.Remedy, refusal.Remedy);
     }
 
     // A read is unaffected by the refusal: a card the tool refuses to write to is not a card it

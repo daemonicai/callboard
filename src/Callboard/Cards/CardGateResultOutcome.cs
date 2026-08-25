@@ -43,12 +43,17 @@ internal abstract record CardGateResultOutcome
     }
 
     /// <summary>The target card exists and parses, but its <c>kind</c> is not <c>block</c> — gate
-    /// results are only recorded on a block card. Refusal-shaped.</summary>
-    internal sealed record NotABlockCard(CardKind Kind) : CardGateResultOutcome
+    /// results are only recorded on a block card. Refusal-shaped, and card-addressed (§9 block A3):
+    /// resolved under lock before this check runs.</summary>
+    internal sealed record NotABlockCard(CardKind Kind) : CardGateResultOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onNotABlockCard(this);
+
+        public string RefusingRule => "work-lifecycle: gate results only apply to a block card";
+
+        public string Remedy => "target a card whose kind is 'block'.";
     }
 
     /// <summary>No card exists at the target path. Refusal-shaped.</summary>
@@ -85,10 +90,16 @@ internal abstract record CardGateResultOutcome
     /// neither is altered — a stored count ahead of the history and a history ahead of the count are
     /// different failures, and guessing which is right would silently destroy the evidence of
     /// whichever was correct.</summary>
-    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardGateResultOutcome
+    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardGateResultOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onRoundDisagreesWithHistory(this);
+
+        public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
+
+        public string Remedy =>
+            $"the recorded round ({StoredRound}) disagrees with the transition history ({ExpectedRound}); " +
+            "correct whichever was altered outside the tool before this gate result can be recorded.";
     }
 
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within

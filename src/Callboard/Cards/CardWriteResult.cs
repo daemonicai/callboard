@@ -84,11 +84,22 @@ internal abstract record CardWriteResult
     /// <see cref="CardFile.Transitions"/> history. Refusal-shaped: neither figure is privileged and
     /// neither is altered — a stored count ahead of the history and a history ahead of the count are
     /// different failures, and guessing which is right would silently destroy the evidence of
-    /// whichever was correct.</summary>
-    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardWriteResult
+    /// whichever was correct. Card-addressed (§9 block A3): every caller of this shared surface
+    /// (<see cref="CardStore.AppendComment"/>, <see cref="CardStore.TransferOwnership"/>) checks
+    /// this only after the card has been read under lock. The rule itself is verb-independent —
+    /// the bound is on any writer that mutates a block card, not on the specific write attempted —
+    /// so the <see cref="Remedy"/> below is phrased in terms of "this write", accurate for every
+    /// caller of this generic surface rather than naming one verb.</summary>
+    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardWriteResult, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onRoundDisagreesWithHistory(this);
+
+        public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
+
+        public string Remedy =>
+            $"the recorded round ({StoredRound}) disagrees with the transition history ({ExpectedRound}); " +
+            "correct whichever was altered outside the tool before this write can proceed.";
     }
 
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within

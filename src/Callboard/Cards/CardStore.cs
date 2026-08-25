@@ -153,7 +153,9 @@ internal static class CardStore
                 // block card).
                 if (IsBlockCard(success.Card) && !RoundAgreesWithHistory(success.Card, out var storedRound, out var expectedRound))
                 {
-                    return new CardWriteResult.RoundDisagreesWithHistory(storedRound, expectedRound);
+                    return RefuseAndRecord<CardWriteResult, CardWriteResult.RoundDisagreesWithHistory>(cardsRoot, success.Card, filePath, changeName, comment.Author, comment.Timestamp,
+                        new CardWriteResult.RoundDisagreesWithHistory(storedRound, expectedRound),
+                        static reason => new CardWriteResult.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, success.Card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -224,12 +226,16 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsBlockCard(card))
                 {
-                    return new CardNitRaiseOutcome.NotABlockCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardNitRaiseOutcome, CardNitRaiseOutcome.NotABlockCard>(cardsRoot, card, filePath, changeName, comment.Author, comment.Timestamp,
+                        new CardNitRaiseOutcome.NotABlockCard(card.Frontmatter.Kind),
+                        static reason => new CardNitRaiseOutcome.ToolFailure(reason));
                 }
 
                 if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
                 {
-                    return new CardNitRaiseOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                    return RefuseAndRecord<CardNitRaiseOutcome, CardNitRaiseOutcome.RoundDisagreesWithHistory>(cardsRoot, card, filePath, changeName, comment.Author, comment.Timestamp,
+                        new CardNitRaiseOutcome.RoundDisagreesWithHistory(storedRound, expectedRound),
+                        static reason => new CardNitRaiseOutcome.ToolFailure(reason));
                 }
 
                 if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
@@ -240,7 +246,9 @@ internal static class CardStore
 
                 if (currentState != BlockFlowState.InReview)
                 {
-                    return new CardNitRaiseOutcome.NotUnderReview(currentState);
+                    return RefuseAndRecord<CardNitRaiseOutcome, CardNitRaiseOutcome.NotUnderReview>(cardsRoot, card, filePath, changeName, comment.Author, comment.Timestamp,
+                        new CardNitRaiseOutcome.NotUnderReview(currentState),
+                        static reason => new CardNitRaiseOutcome.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -318,7 +326,9 @@ internal static class CardStore
                 // with its history before this call is allowed to mutate it further.
                 if (IsBlockCard(success.Card) && !RoundAgreesWithHistory(success.Card, out var storedRound, out var expectedRound))
                 {
-                    return new CardWriteResult.RoundDisagreesWithHistory(storedRound, expectedRound);
+                    return RefuseAndRecord<CardWriteResult, CardWriteResult.RoundDisagreesWithHistory>(cardsRoot, success.Card, filePath, changeName, actingRole, timestamp,
+                        new CardWriteResult.RoundDisagreesWithHistory(storedRound, expectedRound),
+                        static reason => new CardWriteResult.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, success.Card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -930,12 +940,16 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsBlockCard(card))
                 {
-                    return new CardNitDispositionOutcome.NotABlockCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardNitDispositionOutcome, CardNitDispositionOutcome.NotABlockCard>(cardsRoot, card, nitFilePath, changeName, actingRole, timestamp,
+                        new CardNitDispositionOutcome.NotABlockCard(card.Frontmatter.Kind),
+                        static reason => new CardNitDispositionOutcome.ToolFailure(reason));
                 }
 
                 if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
                 {
-                    return new CardNitDispositionOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                    return RefuseAndRecord<CardNitDispositionOutcome, CardNitDispositionOutcome.RoundDisagreesWithHistory>(cardsRoot, card, nitFilePath, changeName, actingRole, timestamp,
+                        new CardNitDispositionOutcome.RoundDisagreesWithHistory(storedRound, expectedRound),
+                        static reason => new CardNitDispositionOutcome.ToolFailure(reason));
                 }
 
                 var nitIndex = -1;
@@ -950,12 +964,16 @@ internal static class CardStore
 
                 if (nitIndex < 0)
                 {
-                    return new CardNitDispositionOutcome.NitNotFound(nitId);
+                    return RefuseAndRecord<CardNitDispositionOutcome, CardNitDispositionOutcome.NitNotFound>(cardsRoot, card, nitFilePath, changeName, actingRole, timestamp,
+                        new CardNitDispositionOutcome.NitNotFound(nitId),
+                        static reason => new CardNitDispositionOutcome.ToolFailure(reason));
                 }
 
                 if (CardCommentRouting.IsNitDispositioned(card.Comments, nitIndex))
                 {
-                    return new CardNitDispositionOutcome.AlreadyDispositioned(nitId);
+                    return RefuseAndRecord<CardNitDispositionOutcome, CardNitDispositionOutcome.AlreadyDispositioned>(cardsRoot, card, nitFilePath, changeName, actingRole, timestamp,
+                        new CardNitDispositionOutcome.AlreadyDispositioned(nitId),
+                        static reason => new CardNitDispositionOutcome.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, nitFilePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -977,7 +995,9 @@ internal static class CardStore
 
                     if (File.Exists(raiseRequest.FilePath))
                     {
-                        return new CardNitDispositionOutcome.RaisedCardAlreadyExists(raiseRequest.FilePath);
+                        return RefuseAndRecord<CardNitDispositionOutcome, CardNitDispositionOutcome.RaisedCardAlreadyExists>(cardsRoot, card, nitFilePath, changeName, actingRole, timestamp,
+                            new CardNitDispositionOutcome.RaisedCardAlreadyExists(raiseRequest.FilePath),
+                            static reason => new CardNitDispositionOutcome.ToolFailure(reason));
                     }
 
                     var raisedFrontmatter = new CardFrontmatter(
@@ -1200,12 +1220,16 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsBlockCard(card))
                 {
-                    return new CardGateResultOutcome.NotABlockCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardGateResultOutcome, CardGateResultOutcome.NotABlockCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardGateResultOutcome.NotABlockCard(card.Frontmatter.Kind),
+                        static reason => new CardGateResultOutcome.ToolFailure(reason));
                 }
 
                 if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
                 {
-                    return new CardGateResultOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                    return RefuseAndRecord<CardGateResultOutcome, CardGateResultOutcome.RoundDisagreesWithHistory>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardGateResultOutcome.RoundDisagreesWithHistory(storedRound, expectedRound),
+                        static reason => new CardGateResultOutcome.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);

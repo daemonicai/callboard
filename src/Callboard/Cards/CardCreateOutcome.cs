@@ -7,6 +7,16 @@ namespace Callboard.Cards;
 /// write). Same split-by-disposition reasoning as <see cref="CardWriteResult"/>: refusal,
 /// tool-failure and reported-failure carry opposite instructions to the caller, so they are
 /// distinct cases rather than one flat failure a caller could accidentally collapse.
+///
+/// <para>
+/// <b>None of the three refusal cases implement <see cref="ICardRefusalReason"/> (§9 block A3).</b>
+/// <see cref="CardStore.CreateCard"/> never reads or resolves an existing card: <see cref="
+/// ScopeRefused"/> fires before any identity is even allocated; <see cref="AlreadyExists"/> comes
+/// back from <see cref="CardStore.WriteCard"/>'s own create-only <see cref="System.IO.File.
+/// Exists(string)"/> check, never a parse of whatever already occupies the path; <see cref="
+/// LayoutMismatch"/> is an anchoring failure on the not-yet-existing target — the categorical "a
+/// layout mismatch has nothing to record against" case the Architect's §9 ruling names explicitly.
+/// </para>
 /// </summary>
 internal abstract record CardCreateOutcome
 {
