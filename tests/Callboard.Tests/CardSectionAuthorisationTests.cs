@@ -331,6 +331,7 @@ public sealed class CardSectionAuthorisationTests : IDisposable
             onRecorded: static _ => null,
             onNotASectionCard: static n => throw new Xunit.Sdk.XunitException($"expected Recorded, got NotASectionCard({n.Kind.ToWireString()})"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Recorded, got CardNotFound: '{notFound.FilePath}'"),
+            onRecurringTargetNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringTargetNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Recorded, got LayoutMismatch: {layoutMismatch.Reason}"),
             onRecurringFindingNotApproved: static notApproved => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringFindingNotApproved: '{notApproved.CardId}'"),
             onRecurringFindingTargetsTaskImplementingBlock: static taskImplementing => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringFindingTargetsTaskImplementingBlock: '{taskImplementing.CardId}'"),

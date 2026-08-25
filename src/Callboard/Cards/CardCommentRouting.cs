@@ -81,6 +81,29 @@ internal static class CardCommentRouting
         owner == role || HasLiveThreadAddressedTo(comments, role);
 
     /// <summary>
+    /// The ids of every live thread addressed to <paramref name="role"/> — <see cref="
+    /// HasLiveThreadAddressedTo"/>'s own sibling, naming the set rather than a bare boolean, the
+    /// same "the refusal names the set, never a bare count" shape <see cref="LiveUndispositionedNitIds"/>
+    /// already establishes (process-enforcement: "A verdict cannot leave threads unanswered" — "the
+    /// system refuses and lists the unresolved threads"). Only <see cref="CardComment.To"/> is read,
+    /// not a role mention in body text, for the same reason <see cref="HasLiveThreadAddressedTo"/>
+    /// gives.
+    /// </summary>
+    internal static IReadOnlyList<string> LiveThreadIdsAddressedTo(IReadOnlyList<CardComment> comments, CardOwner role)
+    {
+        var ids = new List<string>();
+        for (var i = 0; i < comments.Count; i++)
+        {
+            if (comments[i].To == role && !IsResolved(comments, i))
+            {
+                ids.Add(comments[i].Id);
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>
     /// True when the nit at <paramref name="index"/> has received a disposition (review-certification:
     /// "Nits carry a disposition", §8 block B) — some comment later in the same append order both
     /// <see cref="CardComment.Resolves"/> it and itself carries a <see cref="CardComment.Disposition"/>.

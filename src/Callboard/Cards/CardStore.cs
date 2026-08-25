@@ -444,6 +444,20 @@ internal static class CardStore
                     return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.UndispositionedNits(liveNitIds));
                 }
 
+                // process-enforcement: "A verdict cannot leave threads unanswered" (§9 block B).
+                // `changes-requested` is the only edge this generic applier can ever resolve from
+                // `in-review` (BlockFlowTransitions.GenericallyInvocableFrom never offers `approve`
+                // or `fix-before-land` from that state) — the guard reads transition.From rather
+                // than a name literal so it stays correct if that ever changes.
+                if (transition.From == BlockFlowState.InReview)
+                {
+                    var unresolvedThreadIds = CardCommentRouting.LiveThreadIdsAddressedTo(card.Comments, actingRole);
+                    if (unresolvedThreadIds.Count > 0)
+                    {
+                        return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.UnresolvedThreadsAddressedToActor(actingRole, unresolvedThreadIds));
+                    }
+                }
+
                 var recordedBase = card.BlockFields.Base;
                 if (recordedBase is not null && baseCommit is not null && !string.Equals(recordedBase, baseCommit, StringComparison.Ordinal))
                 {
@@ -688,11 +702,6 @@ internal static class CardStore
         ArgumentNullException.ThrowIfNull(heldLock);
         var filePath = heldLock.CardPath;
 
-        if (!IsApprovingRole(actingRole))
-        {
-            return new CardApprovalOutcome.RoleNotPermitted(actingRole);
-        }
-
         if (!File.Exists(filePath))
         {
             return new CardApprovalOutcome.CardNotFound(filePath);
@@ -703,14 +712,36 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+
+                // review-certification: "Approval is role-bounded" (§9 block B reviewer/architect
+                // ruling, overruling this block's own first pass). Checked here, immediately after
+                // a successful ReadCard, rather than ahead of File.Exists the way CompactRules and
+                // DispositionNit check role: neither of those methods' reasons for checking early
+                // apply here — this method's one lock is already held regardless of where the check
+                // sits, and IsApprovingRole is a pure function of CardOwner with no card dependency,
+                // so nothing is skipped by moving it here except a read every other case in this
+                // method already pays. Recording matters more than the reorder: a pattern of
+                // wrong-role approval attempts is exactly the pattern process-enforcement's "so that
+                // a pattern of refusals is itself visible" exists to catch.
+                if (!IsApprovingRole(actingRole))
+                {
+                    return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.RoleNotPermitted>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.RoleNotPermitted(actingRole),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason));
+                }
+
                 if (!IsBlockCard(card))
                 {
-                    return new CardApprovalOutcome.NotABlockCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.NotABlockCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.NotABlockCard(card.Frontmatter.Kind),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason));
                 }
 
                 if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
                 {
-                    return new CardApprovalOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                    return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.RoundDisagreesWithHistory>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.RoundDisagreesWithHistory(storedRound, expectedRound),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason));
                 }
 
                 if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
@@ -723,7 +754,9 @@ internal static class CardStore
                 var transition = available.FirstOrDefault(candidate => string.Equals(candidate.Name, "approve", StringComparison.Ordinal));
                 if (transition is null)
                 {
-                    return new CardApprovalOutcome.UndefinedTransition(currentState, available);
+                    return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.UndefinedTransition>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.UndefinedTransition(currentState, available),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason));
                 }
 
                 // review-certification: "Undispositioned nits block the verdict" (§8 block B) — an
@@ -733,7 +766,23 @@ internal static class CardStore
                 var liveNitIds = CardCommentRouting.LiveUndispositionedNitIds(card.Comments);
                 if (liveNitIds.Count > 0)
                 {
-                    return new CardApprovalOutcome.UndispositionedNits(liveNitIds);
+                    return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.UndispositionedNits>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.UndispositionedNits(liveNitIds),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason));
+                }
+
+                // process-enforcement: "A verdict cannot leave threads unanswered" (§9 block B) —
+                // `approve` is always a door out of `in-review` (CardApprovalOutcome.UndefinedTransition's
+                // own doc comment: "approve is only a legal edge from in-review"), so this applies
+                // unconditionally here, unlike ApplyBlockTransitionUnderExistingLock's own copy of
+                // this check, which has to gate on transition.From because it also handles edges
+                // that do not leave in-review.
+                var unresolvedThreadIds = CardCommentRouting.LiveThreadIdsAddressedTo(card.Comments, actingRole);
+                if (unresolvedThreadIds.Count > 0)
+                {
+                    return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.UnresolvedThreadsAddressedToActor>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.UnresolvedThreadsAddressedToActor(actingRole, unresolvedThreadIds),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -982,6 +1031,92 @@ internal static class CardStore
                     return new CardNitDispositionOutcome.LayoutMismatch(layoutFailure!.Reason);
                 }
 
+                var dispositionComment = new CardComment(
+                    Id: $"disposition-{Guid.NewGuid():N}", Author: actingRole, Timestamp: timestamp, Body: body,
+                    ReplyTo: nitId, To: null, Resolves: nitId, UnknownHeaderFields: [], Disposition: disposition);
+
+                var updatedFrontmatter = card.Frontmatter with { Updated = timestamp };
+                var updatedBlockFields = card.BlockFields;
+                var updatedTransitions = card.Transitions;
+                var transitioned = false;
+
+                // §8 block B remediation (the original HAZARD fix over-narrowed): applies the
+                // fix-before-land edge only while the card is still in-review — a disposition after
+                // the round has already left in-review just records its own disposition, below,
+                // regardless. This also folds in §8.7's own "every exit from in-review is bound":
+                // if this disposition would leave a different nit still undispositioned, the edge
+                // is withheld the same way — the transition, not the disposition, is what waits.
+                //
+                // The edge does NOT turn on whether *this call's* disposition is fix-before-land —
+                // requiring both "this call is fix-before-land" and "nothing is left undispositioned"
+                // stranded a card whenever the nit that emptied the live set was itself deferred or
+                // declined, even though an earlier nit this round was already dispositioned
+                // fix-before-land (the exact scenario the original brief item 4 only tested in the
+                // opposite order). The question the edge asks is whether *the round, taken as a
+                // whole* carries a fix-before-land nit — CardCommentRouting.
+                // HasFixBeforeLandDisposition, LiveUndispositionedNitIds's own sibling.
+                //
+                // "The round" has to be scoped, not the card's whole history: comments are
+                // append-only, so a fix-before-land disposition that already triggered the edge in
+                // an earlier round remains in the thread forever and must not re-trigger it here.
+                // The round's start is the most recent transition that (re-)entered in-review
+                // ("submit-for-review" is its only door, BlockFlowTransitions) — comments at or
+                // after that point are this round's; DateTimeOffset.MinValue when no such
+                // transition is recorded yet (a card seeded directly into in-review, as tests do)
+                // correctly folds in the whole thread, since there is only the one round.
+                //
+                // Computed here, before any write — including the raised card below, for a
+                // defer/decline disposition that happens to be the one leaving no nit
+                // undispositioned this round (see the "does NOT turn on whether this call's
+                // disposition is fix-before-land" note above) — because process-enforcement's "A
+                // verdict cannot leave threads unanswered" (§9 block B) has to refuse the whole
+                // call, not merely the transition, when this disposition would leave in-review
+                // with a thread still addressed to the acting role: a refusal must prevent the
+                // side effect it refuses, not merely follow it (ADR-0001), and here the side effect
+                // includes the disposition itself, not only the transition.
+                if (BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState)
+                    && currentState == BlockFlowState.InReview)
+                {
+                    var commentsAfterThisDisposition = (IReadOnlyList<CardComment>)[.. card.Comments, dispositionComment];
+                    var stillLiveNitIds = CardCommentRouting.LiveUndispositionedNitIds(commentsAfterThisDisposition);
+                    if (stillLiveNitIds.Count == 0)
+                    {
+                        var roundStart = DateTimeOffset.MinValue;
+                        for (var i = card.Transitions.Count - 1; i >= 0; i--)
+                        {
+                            if (card.Transitions[i].To == BlockFlowState.InReview)
+                            {
+                                roundStart = card.Transitions[i].Timestamp;
+                                break;
+                            }
+                        }
+
+                        var thisRoundComments = commentsAfterThisDisposition.Where(c => c.Timestamp >= roundStart).ToList();
+                        if (CardCommentRouting.HasFixBeforeLandDisposition(thisRoundComments))
+                        {
+                            var unresolvedThreadIds = CardCommentRouting.LiveThreadIdsAddressedTo(commentsAfterThisDisposition, actingRole);
+                            if (unresolvedThreadIds.Count > 0)
+                            {
+                                return RefuseAndRecord<CardNitDispositionOutcome, CardNitDispositionOutcome.UnresolvedThreadsAddressedToActor>(cardsRoot, card, nitFilePath, changeName, actingRole, timestamp,
+                                    new CardNitDispositionOutcome.UnresolvedThreadsAddressedToActor(actingRole, unresolvedThreadIds),
+                                    static reason => new CardNitDispositionOutcome.ToolFailure(reason));
+                            }
+
+                            var transition = BlockFlowTransitions.AvailableFrom(currentState)
+                                .First(candidate => string.Equals(candidate.Name, "fix-before-land", StringComparison.Ordinal));
+                            updatedFrontmatter = updatedFrontmatter with { Status = transition.To.ToWireString() };
+                            // Unset reads as round 1, the same default every other increment site
+                            // applies (§8a block D: this arm and ApplyBlockTransitionUnderExistingLock's
+                            // changes-requested arm both read `?? 0` before this fix, disagreeing with
+                            // RecordSectionVerdictUnderExistingLock's finding-recurred arm's `?? 1` —
+                            // fixed to agree, see the DEVLOG post for this block).
+                            updatedBlockFields = updatedBlockFields with { Round = (updatedBlockFields.Round ?? 1) + 1 };
+                            updatedTransitions = [.. updatedTransitions, new CardBlockTransitionEntry(actingRole, transition.Name, transition.From, transition.To, timestamp, [])];
+                            transitioned = true;
+                        }
+                    }
+                }
+
                 string? raisedContent = null;
                 CardFile? raisedCardFile = null;
                 if (raiseRequest is not null)
@@ -1032,74 +1167,6 @@ internal static class CardStore
                     }
 
                     raisedContent = serializedRaisedCard;
-                }
-
-                var dispositionComment = new CardComment(
-                    Id: $"disposition-{Guid.NewGuid():N}", Author: actingRole, Timestamp: timestamp, Body: body,
-                    ReplyTo: nitId, To: null, Resolves: nitId, UnknownHeaderFields: [], Disposition: disposition);
-
-                var updatedFrontmatter = card.Frontmatter with { Updated = timestamp };
-                var updatedBlockFields = card.BlockFields;
-                var updatedTransitions = card.Transitions;
-                var transitioned = false;
-
-                // §8 block B remediation (the original HAZARD fix over-narrowed): applies the
-                // fix-before-land edge only while the card is still in-review — a disposition after
-                // the round has already left in-review just records its own disposition, below,
-                // regardless. This also folds in §8.7's own "every exit from in-review is bound":
-                // if this disposition would leave a different nit still undispositioned, the edge
-                // is withheld the same way — the transition, not the disposition, is what waits.
-                //
-                // The edge does NOT turn on whether *this call's* disposition is fix-before-land —
-                // requiring both "this call is fix-before-land" and "nothing is left undispositioned"
-                // stranded a card whenever the nit that emptied the live set was itself deferred or
-                // declined, even though an earlier nit this round was already dispositioned
-                // fix-before-land (the exact scenario the original brief item 4 only tested in the
-                // opposite order). The question the edge asks is whether *the round, taken as a
-                // whole* carries a fix-before-land nit — CardCommentRouting.
-                // HasFixBeforeLandDisposition, LiveUndispositionedNitIds's own sibling.
-                //
-                // "The round" has to be scoped, not the card's whole history: comments are
-                // append-only, so a fix-before-land disposition that already triggered the edge in
-                // an earlier round remains in the thread forever and must not re-trigger it here.
-                // The round's start is the most recent transition that (re-)entered in-review
-                // ("submit-for-review" is its only door, BlockFlowTransitions) — comments at or
-                // after that point are this round's; DateTimeOffset.MinValue when no such
-                // transition is recorded yet (a card seeded directly into in-review, as tests do)
-                // correctly folds in the whole thread, since there is only the one round.
-                if (BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState)
-                    && currentState == BlockFlowState.InReview)
-                {
-                    var commentsAfterThisDisposition = (IReadOnlyList<CardComment>)[.. card.Comments, dispositionComment];
-                    var stillLiveNitIds = CardCommentRouting.LiveUndispositionedNitIds(commentsAfterThisDisposition);
-                    if (stillLiveNitIds.Count == 0)
-                    {
-                        var roundStart = DateTimeOffset.MinValue;
-                        for (var i = card.Transitions.Count - 1; i >= 0; i--)
-                        {
-                            if (card.Transitions[i].To == BlockFlowState.InReview)
-                            {
-                                roundStart = card.Transitions[i].Timestamp;
-                                break;
-                            }
-                        }
-
-                        var thisRoundComments = commentsAfterThisDisposition.Where(c => c.Timestamp >= roundStart).ToList();
-                        if (CardCommentRouting.HasFixBeforeLandDisposition(thisRoundComments))
-                        {
-                            var transition = BlockFlowTransitions.AvailableFrom(currentState)
-                                .First(candidate => string.Equals(candidate.Name, "fix-before-land", StringComparison.Ordinal));
-                            updatedFrontmatter = updatedFrontmatter with { Status = transition.To.ToWireString() };
-                            // Unset reads as round 1, the same default every other increment site
-                            // applies (§8a block D: this arm and ApplyBlockTransitionUnderExistingLock's
-                            // changes-requested arm both read `?? 0` before this fix, disagreeing with
-                            // RecordSectionVerdictUnderExistingLock's finding-recurred arm's `?? 1` —
-                            // fixed to agree, see the DEVLOG post for this block).
-                            updatedBlockFields = updatedBlockFields with { Round = (updatedBlockFields.Round ?? 1) + 1 };
-                            updatedTransitions = [.. updatedTransitions, new CardBlockTransitionEntry(actingRole, transition.Name, transition.From, transition.To, timestamp, [])];
-                            transitioned = true;
-                        }
-                    }
                 }
 
                 var updatedCard = card with
@@ -1635,7 +1702,9 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsSectionCard(card))
                 {
-                    return new CardSectionVerdictOutcome.NotASectionCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.NotASectionCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardSectionVerdictOutcome.NotASectionCard(card.Frontmatter.Kind),
+                        static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -1655,8 +1724,10 @@ internal static class CardStore
                     var (priorRequestChanges, unspentAuthorisations) = SectionRemediationBoundState(card.SectionFields);
                     if (priorRequestChanges >= 2 && unspentAuthorisations <= 0)
                     {
-                        return new CardSectionVerdictOutcome.RemediationBoundExceeded(
-                            priorRequestChanges + 1, card.SectionFields.Authorisations.Length, unspentAuthorisations);
+                        return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.RemediationBoundExceeded>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                            new CardSectionVerdictOutcome.RemediationBoundExceeded(
+                                priorRequestChanges + 1, card.SectionFields.Authorisations.Length, unspentAuthorisations),
+                            static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                     }
                 }
 
@@ -1712,7 +1783,9 @@ internal static class CardStore
                     {
                         if (!File.Exists(recurringPath))
                         {
-                            return new CardSectionVerdictOutcome.CardNotFound(recurringPath);
+                            return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.RecurringTargetNotFound>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                                new CardSectionVerdictOutcome.RecurringTargetNotFound(recurringPath),
+                                static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                         }
 
                         var reread = ReadCard(recurringPath);
@@ -1734,12 +1807,16 @@ internal static class CardStore
 
                         if (!RoundAgreesWithHistory(rereadCard, out var recurringStoredRound, out var recurringExpectedRound))
                         {
-                            return new CardSectionVerdictOutcome.RoundDisagreesWithHistory(recurringPath, recurringStoredRound, recurringExpectedRound);
+                            return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.RoundDisagreesWithHistory>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                                new CardSectionVerdictOutcome.RoundDisagreesWithHistory(recurringPath, recurringStoredRound, recurringExpectedRound),
+                                static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                         }
 
                         if (rereadCard.BlockFields.Tasks.Length > 0)
                         {
-                            return new CardSectionVerdictOutcome.RecurringFindingTargetsTaskImplementingBlock(rereadCard.Frontmatter.Id, recurringPath);
+                            return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.RecurringFindingTargetsTaskImplementingBlock>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                                new CardSectionVerdictOutcome.RecurringFindingTargetsTaskImplementingBlock(rereadCard.Frontmatter.Id, recurringPath),
+                                static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                         }
 
                         if (!BlockFlowStateWireFormat.TryParse(rereadCard.Frontmatter.Status, out var recurringState))
@@ -1756,7 +1833,9 @@ internal static class CardStore
                         // review).
                         if (recurringState != BlockFlowState.Approved)
                         {
-                            return new CardSectionVerdictOutcome.RecurringFindingNotApproved(rereadCard.Frontmatter.Id, recurringPath, recurringState);
+                            return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.RecurringFindingNotApproved>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                                new CardSectionVerdictOutcome.RecurringFindingNotApproved(rereadCard.Frontmatter.Id, recurringPath, recurringState),
+                                static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                         }
 
                         recurringCards.Add((recurringPath, rereadCard));
@@ -1794,12 +1873,16 @@ internal static class CardStore
                         {
                             if (ownedKeys.TryGetValue(newFinding.Key, out var owner))
                             {
-                                return new CardSectionVerdictOutcome.FindingAlreadyOwned(newFinding.Key, owner.OwnerId, owner.OwnerFilePath);
+                                return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.FindingAlreadyOwned>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                                    new CardSectionVerdictOutcome.FindingAlreadyOwned(newFinding.Key, owner.OwnerId, owner.OwnerFilePath),
+                                    static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                             }
 
                             if (File.Exists(newFinding.FilePath) || !usedNewFindingFilePaths.Add(newFinding.FilePath))
                             {
-                                return new CardSectionVerdictOutcome.NewFindingCardAlreadyExists(newFinding.FilePath);
+                                return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.NewFindingCardAlreadyExists>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                                    new CardSectionVerdictOutcome.NewFindingCardAlreadyExists(newFinding.FilePath),
+                                    static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                             }
 
                             var newAnchored = AnchoredCardPath.TryCreate(cardsRoot, newFinding.FilePath, CardScope.Change, changeName, out var newLayoutFailure);

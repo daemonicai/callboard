@@ -43,7 +43,8 @@ internal abstract record CardBlockTransitionOutcome
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
         Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory);
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor);
 
     /// <param name="Card">The card as written: new status, updated <c>base</c>/<c>round</c>, and
     /// the appended <see cref="CardBlockTransitionEntry"/>.</param>
@@ -51,7 +52,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record Applied(CardFile Card, BlockFlowTransition Transition) : CardBlockTransitionOutcome
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onApplied(this);
     }
 
@@ -66,7 +68,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record UndefinedTransition(BlockFlowState CurrentState, IReadOnlyList<BlockFlowTransition> Available) : CardBlockTransitionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onUndefinedTransition(this);
 
         public string RefusingRule => "work-lifecycle: block cards move through a defined flow";
@@ -81,7 +84,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record BaseNotRecorded : CardBlockTransitionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onBaseNotRecorded(this);
 
         public string RefusingRule => "work-lifecycle: base SHALL be recorded before the block is briefed";
@@ -94,7 +98,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record BaseImmutable(string Recorded, string Attempted) : CardBlockTransitionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onBaseImmutable(this);
 
         public string RefusingRule => "work-lifecycle: base SHALL NOT change across remediation rounds";
@@ -110,7 +115,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record UndispositionedNits(IReadOnlyList<string> NitIds) : CardBlockTransitionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onUndispositionedNits(this);
 
         public string RefusingRule => "review-certification: undispositioned nits block the verdict";
@@ -124,7 +130,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record NotABlockCard(CardKind Kind) : CardBlockTransitionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onNotABlockCard(this);
 
         public string RefusingRule => "work-lifecycle: block flow transitions apply only to a block card";
@@ -137,7 +144,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record CardNotFound(string FilePath) : CardBlockTransitionOutcome
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onCardNotFound(this);
     }
 
@@ -146,7 +154,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record LayoutMismatch(string Reason) : CardBlockTransitionOutcome
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onLayoutMismatch(this);
     }
 
@@ -158,7 +167,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardBlockTransitionOutcome
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onCardCorrupt(this);
     }
 
@@ -171,7 +181,8 @@ internal abstract record CardBlockTransitionOutcome
     /// whichever was correct.</summary>
     internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardBlockTransitionOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onRoundDisagreesWithHistory(this);
 
         public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
@@ -179,6 +190,29 @@ internal abstract record CardBlockTransitionOutcome
         public string Remedy =>
             $"the recorded round ({StoredRound}) disagrees with the transition history ({ExpectedRound}); " +
             "correct whichever was altered outside the tool before this transition can proceed.";
+    }
+
+    /// <summary>process-enforcement: "A verdict cannot leave threads unanswered" — <paramref
+    /// name="ActorRole"/> attempted <c>changes-requested</c>, the generic transition table's own
+    /// door out of <c>in-review</c>, while the card carries at least one live thread (<see
+    /// cref="CardCommentRouting.LiveThreadIdsAddressedTo"/>) addressed to that same role. A thread
+    /// addressed to a different role does not block this (§9 block B DEVLOG post). Refusal-shaped
+    /// and card-addressed: fires after the transition itself has already been resolved as legal,
+    /// under the same lock, so it is checked only when <see cref="BlockFlowTransition.From"/> is
+    /// <see cref="BlockFlowState.InReview"/> — the only case this generic applier can ever resolve
+    /// from that state.</summary>
+    internal sealed record UnresolvedThreadsAddressedToActor(CardOwner ActorRole, IReadOnlyList<string> ThreadIds) : CardBlockTransitionOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+            onUnresolvedThreadsAddressedToActor(this);
+
+        public string RefusingRule => "process-enforcement: a verdict cannot leave threads unanswered";
+
+        public string Remedy =>
+            $"resolve the following thread(s) addressed to '{ActorRole.ToWireString()}' before recording this verdict: " +
+            $"{string.Join(", ", ThreadIds)}.";
     }
 
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within its
@@ -190,7 +224,8 @@ internal abstract record CardBlockTransitionOutcome
     internal sealed record ToolFailure(string Reason) : CardBlockTransitionOutcome
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
             onToolFailure(this);
     }
 }

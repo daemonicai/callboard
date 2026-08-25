@@ -523,7 +523,6 @@ public sealed class CommandDispatcherNitTests
         using var repo = new TempGitRepo();
         var path = WriteInitialBlockCard(repo.Path, "b-0010", "B-0010", BlockFlowState.InReview);
         var nitId = RaiseNit(repo, "B-0010");
-        var before = File.ReadAllBytes(path);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -535,7 +534,80 @@ public sealed class CommandDispatcherNitTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("undispositioned-nits", refusal.GetProperty("code").GetString());
         Assert.Contains(nitId, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
-        Assert.Equal(before, File.ReadAllBytes(path));
+
+        // process-enforcement (§9 block B): CardApprovalOutcome.UndispositionedNits now implements
+        // ICardRefusalReason and records — the card is no longer byte-identical, it carries exactly
+        // one CardRefusalEntry naming the same rule/remedy the envelope carries, and nothing else
+        // (status, comments) changed.
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("in-review", read.Frontmatter.Status);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
+    // 9.3, the 'approve' exit — process-enforcement: "A verdict cannot leave threads unanswered".
+    // A live comment addressed to 'reviewer' (the acting role attempting the approve) blocks it;
+    // the refusal names the thread and is itself recorded against the card.
+    [Fact]
+    public void BlockApprove_UnresolvedThreadAddressedToActor_Refuses_AndListsTheThread_AndRecordsIt()
+    {
+        using var repo = new TempGitRepo();
+        var addressedComment = new CardComment(
+            Id: "comment-addressed-0001", Author: CardOwner.Architect, Timestamp: FixedNow, Body: "A question for the reviewer.",
+            ReplyTo: null, To: CardOwner.Reviewer, Resolves: null, UnknownHeaderFields: []);
+        var path = WriteInitialBlockCard(repo.Path, "b-0010b", "B-0010B", BlockFlowState.InReview, [addressedComment]);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "approve", "--id", "B-0010B", "--role", "reviewer", "--state", "commit-abc", "--claims", "claim one", "--change", ChangeName],
+            output, repo, string.Empty);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("unresolved-threads-addressed-to-actor", refusal.GetProperty("code").GetString());
+        Assert.Contains(addressedComment.Id, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("in-review", read.Frontmatter.Status);
+        Assert.Empty(read.Claims);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
+    // Same scenario, but the live thread is addressed to a different role than the one attempting
+    // the verdict — process-enforcement binds the acting role's own inbox, not every open thread
+    // on the card (§9 block B DEVLOG: the reviewer is not the architect's postbox).
+    [Fact]
+    public void BlockApprove_UnresolvedThreadAddressedToAnotherRole_DoesNotBlockTheVerdict()
+    {
+        using var repo = new TempGitRepo();
+        var addressedToArchitect = new CardComment(
+            Id: "comment-addressed-0002", Author: CardOwner.Reviewer, Timestamp: FixedNow, Body: "A question for the architect.",
+            ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: []);
+        var path = WriteInitialBlockCard(repo.Path, "b-0010c", "B-0010C", BlockFlowState.InReview, [addressedToArchitect]);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "approve", "--id", "B-0010C", "--role", "reviewer", "--state", "commit-abc", "--claims", "claim one", "--change", ChangeName],
+            output, repo, string.Empty);
+
+        Assert.Equal(0, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.True(doc.RootElement.TryGetProperty("result", out _));
     }
 
     // Same requirement, the changes-requested exit.
@@ -554,6 +626,83 @@ public sealed class CommandDispatcherNitTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("undispositioned-nits", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // 9.3, the 'changes-requested' exit — the hazard the block B brief named by name: this is the
+    // generic 'block transition' door out of in-review, and it must refuse just as the dedicated
+    // 'approve' door does above.
+    [Fact]
+    public void BlockTransition_ChangesRequested_UnresolvedThreadAddressedToActor_Refuses_AndRecordsIt()
+    {
+        using var repo = new TempGitRepo();
+        var addressedComment = new CardComment(
+            Id: "comment-addressed-0003", Author: CardOwner.Architect, Timestamp: FixedNow, Body: "A question for the reviewer.",
+            ReplyTo: null, To: CardOwner.Reviewer, Resolves: null, UnknownHeaderFields: []);
+        var path = WriteInitialBlockCard(repo.Path, "b-0011a", "B-0011A", BlockFlowState.InReview, [addressedComment]);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "changes-requested", "--role", "reviewer", "--change", ChangeName],
+            output, repo, string.Empty);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("unresolved-threads-addressed-to-actor", refusal.GetProperty("code").GetString());
+        Assert.Contains(addressedComment.Id, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("in-review", read.Frontmatter.Status);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
+    // 9.3, the 'fix-before-land' exit — the third of the three doors the brief named. Dispositioning
+    // the only live nit fix-before-land would leave in-review; a live thread addressed to
+    // 'architect' (the acting role — nit disposition is architect-only) refuses the whole call, not
+    // merely the transition: the disposition itself must not be recorded either (ADR-0001 — a
+    // refusal prevents the side effect it refuses), so the nit stays live and undispositioned.
+    [Fact]
+    public void NitDisposition_FixBeforeLand_UnresolvedThreadAddressedToActor_Refuses_AndDispositionsNothing()
+    {
+        using var repo = new TempGitRepo();
+        var addressedComment = new CardComment(
+            Id: "comment-addressed-0004", Author: CardOwner.Reviewer, Timestamp: FixedNow, Body: "A question for the architect.",
+            ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: []);
+        var liveNit = new CardComment(
+            Id: "nit-0011b", Author: CardOwner.Reviewer, Timestamp: FixedNow, Body: "A nit.",
+            ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: [],
+            IsNit: true, Required: false, Sites: []);
+        var path = WriteInitialBlockCard(repo.Path, "b-0011b", "B-0011B", BlockFlowState.InReview, [addressedComment, liveNit]);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["nit", "disposition", "--id", "nit-0011b", "--role", "architect", "--disposition", "fix-before-land", "--change", ChangeName],
+            output, repo, "the fix");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("unresolved-threads-addressed-to-actor", refusal.GetProperty("code").GetString());
+        Assert.Contains(addressedComment.Id, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("in-review", read.Frontmatter.Status);
+        Assert.Equal(2, read.Comments.Count);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
     }
 
     // §8 remediation blocker 2 (superseded by §8a block A): the guard originally checked only

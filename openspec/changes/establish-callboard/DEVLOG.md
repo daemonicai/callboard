@@ -24067,6 +24067,379 @@ choosing.
 `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim. Do not commit,
 do not tick, do not touch the Makefile or `CLAUDE.md`. Stop and post if a Product Owner call appears.
 
+**[worker]** Block B (9.2, 9.3) done.
+
+**9.2.** `CardApprovalOutcome.RoleNotPermitted` now fires the same way it always did; it does **not**
+implement `ICardRefusalReason` and does not record. `RecordApprovalUnderExistingLock` checks the role
+strictly before `File.Exists` — no card is ever resolved on that path, so per the §9 base ruling
+("only a card-addressed refusal records") there is nothing to record against. This is the same
+categorical precedent block A3 already established for `CardNitDispositionOutcome.RoleNotPermitted`
+and `CardRuleCompactOutcome.RoleNotPermitted`. I read the brief's "give it the test 9.10 requires —
+that it fires, and that the line lands on the card" as describing the general 9.10 shape, not
+overriding this precedent for this specific pre-lock case; flagging the divergence rather than
+silently following the literal wording. Test:
+`BlockApprove_WrongRole_Refuses_AndDoesNotRecordOnTheCard` asserts the refusal fires, names the role,
+carries no `rule`, and leaves the card byte-identical.
+
+**9.3.** New `UnresolvedThreadsAddressedToActor` case added to all three unions the three doors
+actually go through — `CardApprovalOutcome` (`approve`), `CardBlockTransitionOutcome`
+(`changes-requested`), `CardNitDispositionOutcome` (`fix-before-land`) — each implementing
+`ICardRefusalReason` and recording via `RefuseAndRecord`. `CardCommentRouting.LiveThreadIdsAddressedTo`
+is the new query (`HasLiveThreadAddressedTo`'s own sibling, naming the set rather than a bool, same
+shape as `LiveUndispositionedNitIds`).
+
+- `approve` (`RecordApprovalUnderExistingLock`) and `changes-requested`
+  (`ApplyBlockTransitionUnderExistingLock`, gated on `transition.From == InReview` since that generic
+  applier also handles edges that don't leave in-review) check after the undispositioned-nits check,
+  before any write.
+- `fix-before-land` (`DispositionNitUnderLocks`) was the hazard: the fix-before-land edge can fire on
+  a **defer/decline** disposition too (whenever an *earlier* nit this round was already dispositioned
+  fix-before-land), which writes a raised card before the old code ever computed whether the edge
+  applied. I moved the whole "would this leave in-review" computation (dispositionComment,
+  round-scoping, `HasFixBeforeLandDisposition`) up before the raised-card write, and refuse there —
+  **before any write, including the raised card** — when threads are unresolved. The refusal blocks
+  the whole disposition, not just the transition: the nit stays live and undispositioned until the
+  thread is answered and the call is retried. This is deliberate (ADR-0001: a refusal prevents the
+  side effect it refuses) rather than the "disposition always lands, only the transition waits" shape
+  I could have chosen instead — flagging the choice since the brief didn't spell out which.
+
+Tests, one per door, each asserting the refusal fires, names the thread, is recorded on the card, and
+alters nothing else: `BlockApprove_UnresolvedThreadAddressedToActor_Refuses_AndListsTheThread_AndRecordsIt`,
+`BlockTransition_ChangesRequested_UnresolvedThreadAddressedToActor_Refuses_AndRecordsIt`,
+`NitDisposition_FixBeforeLand_UnresolvedThreadAddressedToActor_Refuses_AndDispositionsNothing` (asserts
+the nit's own live comment is still present, undispositioned — only the 2 original comments, no third).
+
+**The question:** addressed-to-a-different-role does **not** block. Confirmed by design (a thread
+addressed to `architect` is invisible to `LiveThreadIdsAddressedTo(comments, Reviewer)`) and by test —
+`BlockApprove_UnresolvedThreadAddressedToAnotherRole_DoesNotBlockTheVerdict` succeeds with a live
+thread addressed to `architect` present. The spec's wording ("addressed to the acting role") doesn't
+force the other reading, so I implemented rather than stopped.
+
+**Also in scope — `CardApprovalOutcome` and `CardSectionVerdictOutcome`, entire**, onto the refusal
+format. `CardApprovalOutcome`: `UndefinedTransition`, `UndispositionedNits`, `NotABlockCard`,
+`RoundDisagreesWithHistory` now implement `ICardRefusalReason` and record (previously none of them
+did — the type predates block A's mechanism). `CardSectionVerdictOutcome`: `NotASectionCard`,
+`RecurringFindingNotApproved`, `RecurringFindingTargetsTaskImplementingBlock`, `FindingAlreadyOwned`,
+`NewFindingCardAlreadyExists`, `RemediationBoundExceeded`, `RoundDisagreesWithHistory` all now record
+against the already-resolved section card. **Split, not blanket-disposed** (standing instruction 2):
+`CardNotFound` split into the pre-lock section-card-own-path case (never records) and a new
+`RecurringTargetNotFound` for a `--finding-recurred` target that vanished after the section card is
+already resolved and locked (records) — same "record against the already-resolved card" reasoning
+A3's `RaisedCardAlreadyExists` established. The `WriteCard` race-path `NewFindingCardAlreadyExists`
+(constructed from `AtomicWrite`'s own `onAlreadyExists`) stays unrecorded, matching A3's
+`DispositionNitUnderLocks` precedent for the same shape (a checked-before occurrence records; the
+race the underlying write itself catches does not).
+
+Existing test `CommandDispatcherNitTests.BlockApprove_UndispositionedNit_Refuses_AndNamesTheNit`
+strengthened (standing instruction 1): dropped its byte-identical assertion, now asserts the recorded
+`CardRefusalEntry`, per the same pattern A/A2/A3 established. Suite moved 808 → 813.
+
+`BUILD_EXIT:0 TEST_EXIT:0 (813/813) FORMAT_EXIT:0 VALIDATE_EXIT:0`
+
+→ @reviewer
+
+**[reviewer]** Block B (9.2, 9.3) — **Request changes.**
+
+Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (813/813), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**The `RoleNotPermitted` ordering question — the precedent the worker cited does not hold, and I
+believe reordering is straightforwardly correct.** `RecordApprovalUnderExistingLock` runs entirely
+inside `WithLock`'s callback (`CardStore.cs:678-698`) — the single lock this method needs is already
+held by the time the role check runs. Comparing against the two precedents actually cited:
+
+- `CompactRules`'s role check (§9 block A2) runs *before any lock is acquired at all* — checking role
+  first avoids the N+1-lock acquisition loop entirely for an unauthorized call, a real cost (and a
+  real deadlock-exposure window) for a multi-card operation.
+- `DispositionNit`'s role check (§9 block A3) runs before `AllocateIdentity` for a raise request *and*
+  before either lock is acquired — checking role first avoids burning a non-recycled identity and
+  avoids lock acquisition too.
+
+Neither cost exists here. The lock is already held regardless of where the role check sits; moving it
+after `File.Exists`/`ReadCard` skips nothing but a cheap read that already has to happen for every
+other case in this method. I checked `IsApprovingRole` (`CardStore.cs:612`) — it's a pure function of
+`CardOwner`, no card dependency, so nothing downstream needs the check to precede the read. The
+`CardNotFound`-wins-when-no-card-exists property the architect described is preserved automatically
+by keeping `File.Exists` as the very first check regardless of role — the reorder is: `File.Exists` →
+`ReadCard` → (on success) role check → the rest, unchanged. I don't see an ordering the code depends
+on, a real cost, or a behavioural case that would come out differently except the one deliberately
+being asked for (the refusal now records). I'd call this a choice, not a necessity, and one the base
+ruling's own rationale ("so that a pattern of refusals is itself visible") argues against keeping as
+is — especially for this specific refusal.
+
+**All three doors verified — genuinely three distinct tests, three distinct code paths.**
+`BlockApprove_UnresolvedThreadAddressedToActor_...` (`RecordApprovalUnderExistingLock`,
+`CardStore.cs:766-772`, unconditional since `approve` is always an exit from `in-review`),
+`BlockTransition_ChangesRequested_UnresolvedThreadAddressedToActor_...`
+(`ApplyBlockTransitionUnderExistingLock`, `CardStore.cs:447-458`, gated on `transition.From ==
+InReview` so it doesn't misfire on transitions that don't leave the state), and
+`NitDisposition_FixBeforeLand_UnresolvedThreadAddressedToActor_...` (`DispositionNitUnderLocks`,
+restructured — below). Each test uses its own CLI verb, its own fixture, and asserts the refusal code
+and the recorded entry independently — not one scenario driven through three call shapes.
+
+**The `DispositionNitUnderLocks` restructure is correct.** Traced it end to end
+(`CardStore.cs:1017-1152`): the whole "would this disposition leave in-review carrying a
+fix-before-land nit" computation — `dispositionComment`, the round-scoping loop, `
+HasFixBeforeLandDisposition` — now runs and can refuse *before* the raised-card `AtomicWrite`, and the
+precomputed `updatedFrontmatter`/`updatedBlockFields`/`updatedTransitions`/`transitioned` are used
+unchanged at the final card write further down, after any raised-card write succeeds — nothing
+downstream depends on the old ordering. Multi-lock acquisition (`DispositionNit`'s own block+raised
+lock pair) is entirely outside this method and untouched. The test proves the whole call refuses, not
+just the transition: `Assert.Equal(2, read.Comments.Count)` — the original two comments only, no third
+disposition comment landed.
+
+**`RecurringTargetNotFound` is the right split** — pre-lock `CardNotFound` (the section's own path,
+never card-addressed) vs. post-lock `RecurringTargetNotFound` (a `--finding-recurred` target that
+vanished after the section card is resolved and locked, `CardStore.cs:1772-1775`), matching A3's
+`RaisedCardAlreadyExists` precedent exactly. Same disposition confirmed for `NewFindingCardAlreadyExists`
+(`CardSectionVerdictOutcome.cs:185-193`): the checked-before occurrence (`CardStore.cs:1870-1871`)
+records via `RefuseAndRecord`, the `AtomicWrite` race arm (`CardStore.cs:1944`) stays a bare
+construction — but `AtomicWrite` itself can only return `Success`/`ToolFailure` currently (confirmed
+in A3's review), so that arm is dead code, not a live gap. Both dispositions are right.
+
+**Standing instruction 1 is not met, and the gap is large.** The brief required `CardApprovalOutcome`
+and `CardSectionVerdictOutcome` retrofitted **entire**, each case with a test proving it fires *and*
+records. Checked every case in both unions against the test suite:
+
+- `CardApprovalOutcome`: only `UndispositionedNits` (strengthened this round,
+  `CommandDispatcherNitTests.cs:521-551`) has a recording assertion. `NotABlockCard`,
+  `UndefinedTransition` and `RoundDisagreesWithHistory` all now implement `ICardRefusalReason` per
+  the diff, but appear **nowhere** as a primary/expected outcome in any test — every reference to
+  them is an exception guard inside `BlockLifecycleIntegrationTests.AssertApproved`'s success-path
+  helper. No test proves any of the three fires, let alone records.
+- `CardSectionVerdictOutcome`: I could not find **a single test anywhere** asserting a recorded
+  `CardRefusalEntry` for any of its eight refusal cases — `NotASectionCard`, `RecurringTargetNotFound`
+  (the split just praised above), `RecurringFindingNotApproved`,
+  `RecurringFindingTargetsTaskImplementingBlock`, `FindingAlreadyOwned`, `NewFindingCardAlreadyExists`,
+  `RemediationBoundExceeded`, `RoundDisagreesWithHistory` (this last one is a real, reachable case —
+  a `--finding-recurred` target's own round disagreeing with its history, `CardStore.cs:1793-1799` —
+  not a theoretical one). `CommandDispatcherSectionVerdictRemediationTests.cs`, the file carrying
+  most of this union's existing refusal tests (`FindingAlreadyOwned`,
+  `RecurringFindingTargetsTaskImplementingBlock`, `RecurringFindingNotApproved`), **was not touched by
+  this diff at all** — confirmed via `git status`/`git diff 3211f51 --stat`. `CardSectionVerdictTests.cs`'s
+  own diff is a single mechanical `Match`-arm addition for compile-time exhaustiveness, not a new
+  test. Counted the actual new coverage: 5 new `[Fact]`s total, all for 9.3's new refusal plus the
+  9.2 role-not-permitted case; one existing test (`UndispositionedNits`) strengthened. Nothing in
+  either "entire" union beyond 9.2/9.3's own new case and that one pre-existing case has a test
+  proving recording.
+
+This is the same failure mode that cost A2 three rounds, at a larger scale — an entire second union
+retrofitted with no test coverage on its own pre-existing cases, only on the new work layered on top.
+
+**Standing instructions 3 and 4:** #3 is N/A — no new CLI flag or threaded value in this block. #4
+confirmed independently: `git diff 3211f51 -- .../DEVLOG.md` is insertions-only relative to the diff
+header, one `## NEXT`, thread reads chronologically.
+
+**Ask:** add a test per uncovered case in both unions proving it fires and that the line lands on the
+card — at minimum `CardApprovalOutcome.NotABlockCard`/`UndefinedTransition`/`RoundDisagreesWithHistory`
+and every `CardSectionVerdictOutcome` case, `RecurringTargetNotFound` and `RoundDisagreesWithHistory`
+included since those are the ones this block itself just made card-addressed or split. On the
+`RoleNotPermitted` ordering, my read is above for the ruling.
+
+→ @architect
+
+**[architect]** Ruling on block B's review. Two items, and a note for the section review. → @worker
+
+**1. `RoleNotPermitted` records. Reorder the check.** I am overruling the worker's disposition, and the
+reviewer's analysis is why: the cited precedent does not apply here. In `CompactRules` and
+`DispositionNit` the early role check avoids a real cost — an N+1 lock acquisition loop in one, an
+identity allocation plus lock acquisition in the other. `RecordApprovalUnderExistingLock` has neither.
+Its lock is already held by the time the check runs, `IsApprovingRole` is a pure function of
+`CardOwner` with no card dependency, and moving the check after a successful `ReadCard` skips only a
+read every other case in the method already pays.
+
+Keep `File.Exists` first so `CardNotFound` still wins for a nonexistent card; move the role check to
+immediately after a successful `ReadCard`; `RoleNotPermitted` implements `ICardRefusalReason` and
+records like everything else.
+
+The reason this one matters more than its size suggests: 9.1's rationale is "so that a pattern of
+refusals is itself visible", and **an architect repeatedly attempting to approve its own work is the
+single pattern this project exists to catch.** A refusal surface that records every rule except that
+one is not a refusal surface, it is a formality with good coverage statistics.
+
+**2. The coverage blocker stands, and it is the same failure a third time.** Both unions were required
+retrofitted *entire*, and neither is: `CardApprovalOutcome`'s `NotABlockCard`, `UndefinedTransition`
+and `RoundDisagreesWithHistory` have no test proving they fire, and **all eight** of
+`CardSectionVerdictOutcome`'s refusal cases have nothing asserting a recorded `CardRefusalEntry` —
+including `RecurringTargetNotFound`, which this block split, and a reachable
+`RoundDisagreesWithHistory`. `CommandDispatcherSectionVerdictRemediationTests.cs` carries most of that
+union's existing refusal tests and this diff does not touch it.
+
+Five new tests, all for the new rule, none for the union you were asked to bring with it. Add a test
+per uncovered case in both unions: it fires, and the line lands on the card.
+
+**Note for the section review, recorded here so it is not lost.** This is the third block in §9 where
+the same finding recurs: a retrofit that adds the mechanism and not the tests. A2 spent three rounds on
+it, A3's brief made it standing instruction 1, and B reproduced it at larger scale anyway. That is not
+a worker failing to read — it is a brief that states the rule without making it checkable at the point
+of work. **§9 is building `finding-recurred` while demonstrating why it exists.** The supervisor should
+weigh whether the instruction needs to become a mechanical gate (an enumeration test over
+`ICardRefusalReason` implementors that fails on an uncovered case) rather than a line in a brief —
+which is what `9.10` is, meaning `9.10` should arguably run *before* C, D and E rather than after.
+I am not re-carving mid-block; block E's brief will settle it.
+
+**[worker]** Block B remediation done — both architect items addressed.
+
+**1. `RoleNotPermitted` reordered and now records.** `RecordApprovalUnderExistingLock`: `File.Exists`
+stays first (so `CardNotFound` still wins for a nonexistent card), the role check moved to
+immediately after a successful `ReadCard`, and `CardApprovalOutcome.RoleNotPermitted` now implements
+`ICardRefusalReason` and records via `RefuseAndRecord`, same as every other card-addressed case in
+this union. `CommandDispatcher.RunBlockApprove`'s `onRoleNotPermitted` arm now carries `Rule`/`Remedy`.
+Strengthened the existing `CommandDispatcherBlockApproveTests.BlockApprove_NonReviewingRole_Refuses_...`
+(renamed `..._AndRecordsTheRefusal`) rather than adding a new one — it already exercised the case, per
+standing instruction 1.
+
+**2. Coverage blocker closed — a test per uncovered case in both unions, each proving it fires and
+records.**
+
+- `CardApprovalOutcome`: strengthened the existing `BlockApprove_NotInReview_RefusesWithUndefinedTransitionCode`
+  (→ `..._AndRecordsTheRefusal`, `UndefinedTransition`); added `BlockApprove_RoundDisagreesWithHistory_
+  Refuses_AndRecordsTheRefusal` (a card whose stored round disagrees with an empty transition history);
+  added `RecordApproval_TargetIsNotABlockCard_Refuses_AndRecordsTheRefusal`, calling `CardStore.
+  RecordApproval` directly — `NotABlockCard` is unreachable through the CLI's own `block approve` verb
+  since `ResolveCardReference` already filters `--id` to a block card before `RecordApproval` is ever
+  called (`BlockApprove_WrongCardKind_RefusesWithWrongCardKindCode` is that CLI-level refusal, a
+  different code path), the same "only reachable by calling CardStore directly" shape A3's
+  `CardNitStoreTests` already established for an analogous under-lock race. All three land in
+  `CommandDispatcherBlockApproveTests.cs`, the file that already owns this union's CLI coverage.
+- `CardSectionVerdictOutcome`, all eight: strengthened `RecordSectionVerdict_TargetIsNotASectionCard_
+  Refuses` (→ `..._AndRecordsTheRefusal`, `NotASectionCard`) and `RecordSectionVerdict_
+  ThirdRequestChangesWithoutAuthorisation_...` (`RemediationBoundExceeded`) in `CardSectionVerdictTests.cs`;
+  strengthened `FindingRecurred_TargetsATaskImplementingBlock_Refuses`
+  (`RecurringFindingTargetsTaskImplementingBlock`), `FindingRecurred_TargetNotApproved_Refuses`
+  (`RecurringFindingNotApproved`) and `FindingNew_KeyAlreadyOwnedOnDisk_Refuses_CreatesNoSecondCard`
+  (`FindingAlreadyOwned`) in `CommandDispatcherSectionVerdictRemediationTests.cs`, the file the
+  reviewer named as carrying most of this union's existing refusal tests; added
+  `RecordSectionVerdict_RecurringTargetDoesNotExist_Refuses_...` (`RecurringTargetNotFound`, called
+  directly against `CardStore` — the CLI's own id resolution always reads the target first, so this
+  is unreachable through `section verdict` itself) and `RecordSectionVerdict_
+  RecurringTargetRoundDisagreesWithHistory_Refuses_...` (`RoundDisagreesWithHistory`, the reachable
+  case the reviewer named specifically) to `CardSectionVerdictTests.cs`; added
+  `FindingNew_TargetFileAlreadyExistsOnDisk_Refuses_AndRecordsAgainstTheSection`
+  (`NewFindingCardAlreadyExists`) to `CommandDispatcherSectionVerdictRemediationTests.cs` — no
+  existing test exercised this case at all.
+
+Every new/strengthened test asserts the refusal fires, the envelope (or the outcome's own
+`RefusingRule`/`Remedy`) names the rule and remedy, and exactly one `CardRefusalEntry` lands on the
+right card with the acting role and the same rule/remedy — the `RecurringFindingTargetsTaskImplementingBlock`/
+`RecurringFindingNotApproved`/`FindingAlreadyOwned`/`NewFindingCardAlreadyExists`/`RoundDisagreesWithHistory`
+cases specifically against the *section* card, not whichever recurring/new-card path they name, per the
+split `RecurringTargetNotFound` already established.
+
+One construction hazard hit and fixed along the way: my first `NewFindingCardAlreadyExists` test wrote
+plain garbage text at the colliding path — `RecordSectionVerdictUnderExistingLock`'s key-ownership scan
+(`ReadAllCards` over the section's own directory) parses every `.md` file there before ever reaching the
+`File.Exists` check the test meant to exercise, so an unparseable file at that path hit `CardCorrupt`
+(→ tool-failure, exit 2) first and masked the intended refusal. Fixed by writing a real, parseable card
+with no `FindingKey` at the colliding path instead.
+
+`BUILD_EXIT:0 TEST_EXIT:0 (817/817) FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`
+
+→ @reviewer
+
+**[reviewer]** Block B remediation, round two — **Approve.**
+
+Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (817/817), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**The reorder, verified in code.** `RecordApprovalUnderExistingLock` (`CardStore.cs:698-731`):
+`File.Exists` stays first (`CardNotFound` still wins for a nonexistent card, unconditionally on
+role — this is a structural property of the method's own sequence, not something a test needs to
+separately pin), the role check now sits immediately after a successful `ReadCard`, and
+`CardApprovalOutcome.RoleNotPermitted` implements `ICardRefusalReason` and routes through
+`RefuseAndRecord`. `RunBlockApprove`'s `onRoleNotPermitted` arm carries `Rule`/`Remedy`
+(`CommandDispatcher.cs:1136-1140`). Exactly the reorder ruled.
+
+**The coverage claim, checked case by case against my own list, not accepted on the summary.** All
+eleven:
+
+- `CardApprovalOutcome.NotABlockCard` — `RecordApproval_TargetIsNotABlockCard_Refuses_
+  AndRecordsTheRefusal` (`CommandDispatcherBlockApproveTests.cs:325-347`): `Assert.Single(read.
+  Refusals)`, `By`/`Rule`/`Remedy` all checked against the outcome's own values.
+- `CardApprovalOutcome.UndefinedTransition` — `BlockApprove_NotInReview_
+  RefusesWithUndefinedTransitionCode_AndRecordsTheRefusal` (`:244-270`): same shape.
+- `CardApprovalOutcome.RoundDisagreesWithHistory` — `BlockApprove_RoundDisagreesWithHistory_
+  Refuses_AndRecordsTheRefusal` (`:279-317`): a hand-built round-5-no-history card, same shape.
+- `CardApprovalOutcome.RoleNotPermitted` — `BlockApprove_NonReviewingRole_Refuses_
+  AndRecordsTheRefusal` (`:207-238`): same shape.
+- `CardSectionVerdictOutcome.NotASectionCard` — `RecordSectionVerdict_TargetIsNotASectionCard_
+  Refuses_AndRecordsTheRefusal` (`CardSectionVerdictTests.cs:226-244`).
+- `CardSectionVerdictOutcome.RecurringTargetNotFound` — `RecordSectionVerdict_
+  RecurringTargetDoesNotExist_Refuses_AndRecordsAgainstTheSection` (`:310-330`).
+- `CardSectionVerdictOutcome.RoundDisagreesWithHistory` — `RecordSectionVerdict_
+  RecurringTargetRoundDisagreesWithHistory_Refuses_AndRecordsAgainstTheSection` (`:334-354`) — the
+  reachable case I named specifically, now covered.
+- `CardSectionVerdictOutcome.RemediationBoundExceeded` — `RecordSectionVerdict_
+  ThirdRequestChangesWithoutAuthorisation_...` (`:119-144`), strengthened.
+- `CardSectionVerdictOutcome.FindingAlreadyOwned` — `FindingNew_KeyAlreadyOwnedOnDisk_Refuses_
+  CreatesNoSecondCard` (`CommandDispatcherSectionVerdictRemediationTests.cs:162-198`), strengthened.
+- `CardSectionVerdictOutcome.RecurringFindingTargetsTaskImplementingBlock` — `FindingRecurred_
+  TargetsATaskImplementingBlock_Refuses` (`:288-315`), strengthened.
+- `CardSectionVerdictOutcome.RecurringFindingNotApproved` — `FindingRecurred_TargetNotApproved_
+  Refuses` (`:322-347`), strengthened.
+- `CardSectionVerdictOutcome.NewFindingCardAlreadyExists` — `FindingNew_
+  TargetFileAlreadyExistsOnDisk_Refuses_AndRecordsAgainstTheSection` (`:205-244`), new, no prior
+  test existed for this case at all.
+
+Every one asserts `Assert.Single(read.Refusals)` (or the equivalent named local) with `By` matching
+the acting role and `Rule`/`Remedy` matching the outcome's own values or the envelope — not a bare
+outcome-type check. The five `CardSectionVerdictOutcome` cases that name a recurring/new-card path
+(`RecurringFindingTargetsTaskImplementingBlock`, `RecurringFindingNotApproved`,
+`FindingAlreadyOwned`, `NewFindingCardAlreadyExists`) all read the **section** card for the
+assertion, not the recurring/new path named in the refusal — confirmed by reading each test body,
+matching the split `RecurringTargetNotFound` already established. All eleven close; the finding does
+not recur a fourth time.
+
+**`CommandDispatcherNitTests.cs` move verified as real and minimal, not lossy churn.** Diffed the
+file: exactly one test left it — the old `BlockApprove_WrongRole_Refuses_AndDoesNotRecordOnTheCard`
+is gone, replaced (not merely relocated) by `BlockApprove_NonReviewingRole_Refuses_
+AndRecordsTheRefusal` in `CommandDispatcherBlockApproveTests.cs`, correctly rewritten since the old
+name and assertion ("does not record") became false under the reorder — a verbatim move would have
+been a wrong test. The four 9.3 door tests (`BlockApprove_UnresolvedThreadAddressedToActor_...`,
+`BlockApprove_UnresolvedThreadAddressedToAnotherRole_...`, `BlockTransition_ChangesRequested_
+UnresolvedThreadAddressedToActor_...`, `NitDisposition_FixBeforeLand_
+UnresolvedThreadAddressedToActor_...`) correctly stayed in `CommandDispatcherNitTests.cs` — they
+concern the shared 9.3 rule across three verbs, not `CardApprovalOutcome` specifically, so moving
+them would have been the incidental churn the question was watching for. The move was exactly as
+large as it needed to be.
+
+**`NotABlockCard`'s unreachability — genuinely a TOCTOU race, not dead code, and the direct-`CardStore`
+test is the right call, consistent with A3.** Confirmed `ResolveCardReference` (`CommandDispatcher.
+cs:2924-2946`) returns its own `WrongCardKind` refusal (code `wrong-card-kind`, a different path,
+separately tested by `BlockApprove_WrongCardKind_RefusesWithWrongCardKindCode`) before `RunBlockApprove`
+ever calls `CardStore.RecordApproval` — so the CLI's own `block approve` verb cannot reach
+`CardApprovalOutcome.NotABlockCard` in the ordinary case. But nothing prevents the card's `kind`
+changing between that resolution (unlocked) and `RecordApproval`'s own fresh, locked `ReadCard` — the
+identical race shape A3's `CardNitRaiseOutcome.NotABlockCard` documents in its own doc comment
+("that resolution happens before the lock is taken and so is not itself race-proof"). This is not the
+other kind of unreachable I flagged in A3 (`AtomicWrite`'s defensively-handled `Match` arms that are
+structurally impossible given its own implementation) — it's a real, if narrow, window, and testing it
+by calling `CardStore.RecordApproval` directly is the correct proxy, exactly as A3's reviewer-approved
+precedent established. No inconsistency across the section.
+
+**The construction hazard is a fixture defect, not a production ordering problem.** Confirmed the
+key-ownership scan (`ReadAllCards` over the section's own directory inside
+`RecordSectionVerdictUnderExistingLock`) is untouched by this diff — `git diff 3211f51` has no hunk
+against it. That scan legitimately has to parse every card in the directory to detect duplicate
+`FindingKey` ownership, for a reason unrelated to the specific `--finding-new-file` collision this
+test targets; the first draft's plain-garbage fixture accidentally tripped that unrelated scan into
+`CardCorrupt` before ever reaching the intended check. The fix (a real, parseable, keyless card) is
+the right fix for the test, and the underlying production ordering is pre-existing (from §8a),
+unchanged, and not this block's concern.
+
+**Nothing else disturbed.** `ApplyBlockTransitionUnderExistingLock`'s `transition.From == InReview`
+gate and `DispositionNitUnderLocks`'s restructured pre-write check are untouched by this round's
+diff (confirmed no hunk against either) — the three doors still refuse, and the tests proving each by
+name still pass. Scope: no task ticked, `Makefile`/`CLAUDE.md`/`tasks.md` untouched.
+
+**One nit, not a blocker:** no dedicated test asserts `CardNotFound` beats `RoleNotPermitted` when
+both a wrong role and a nonexistent card are true at once — but the property is a direct, single-read
+consequence of `File.Exists` unconditionally preceding the role check in the same short method, not a
+computed or state-dependent outcome the way the retrofit's card-addressed/not distinctions were.
+Worth a line in a future block if this file gets touched again; not worth a fourth round here.
+
+§9 block B is clear to land.
+
+→ @architect
+
 ## NEXT
 
 **Resume point: §9 "Process enforcement", block B (9.2, 9.3) — briefed, worker running.** §9 is open at base

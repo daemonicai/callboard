@@ -134,9 +134,14 @@ public sealed class CardSectionVerdictTests : IDisposable
         Assert.Equal(3, boundExceeded.VerdictNumber);
         Assert.Equal(0, boundExceeded.AuthorisationsRecorded);
 
-        // Refusal-shaped: nothing was written for the attempt.
+        // Refusal-shaped: no verdict was written for the attempt — but the refusal itself now is
+        // (§9 block B).
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(3, read.SectionFields.Verdicts.Length);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(boundExceeded.RefusingRule, recorded.Rule);
+        Assert.Equal(boundExceeded.Remedy, recorded.Remedy);
     }
 
     // work-lifecycle scenario "A recurring finding counts toward the bound": three request-changes
@@ -218,7 +223,7 @@ public sealed class CardSectionVerdictTests : IDisposable
     }
 
     [Fact]
-    public void RecordSectionVerdict_TargetIsNotASectionCard_Refuses()
+    public void RecordSectionVerdict_TargetIsNotASectionCard_Refuses_AndRecordsTheRefusal()
     {
         var path = Path.Combine(_directory, "q-0001.md");
         var frontmatter = new CardFrontmatter(
@@ -230,6 +235,13 @@ public sealed class CardSectionVerdictTests : IDisposable
 
         var notASection = Assert.IsType<CardSectionVerdictOutcome.NotASectionCard>(outcome);
         Assert.Equal(CardKind.Question, notASection.Kind);
+
+        // §9 block B: card-addressed — the target is resolved and parsed before the kind check.
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(notASection.RefusingRule, recorded.Rule);
+        Assert.Equal(notASection.Remedy, recorded.Remedy);
     }
 
     [Fact]
@@ -285,6 +297,76 @@ public sealed class CardSectionVerdictTests : IDisposable
         {
             holder.Dispose();
         }
+    }
+
+    // §9 block B: RecurringTargetNotFound is split from the pre-lock CardNotFound above precisely
+    // because it is card-addressed — the section card is already resolved, anchored and locked by
+    // the time a --finding-recurred target is found missing. Reached only by calling CardStore
+    // directly with a path CardIdentityResolver/ResolveCardReference never had the chance to refuse
+    // first — the CLI's own id resolution always reads the file before this method is ever called,
+    // so this is the same "only reachable by calling CardStore directly, bypassing the CLI's own id
+    // resolution" shape §9 block A3's CardNitStoreTests already established.
+    [Fact]
+    public void RecordSectionVerdict_RecurringTargetDoesNotExist_Refuses_AndRecordsAgainstTheSection()
+    {
+        var path = WriteInitialSectionCard("s-0026", "S-0026");
+        var missingRecurringPath = Path.Combine(_directory, "b-does-not-exist.md");
+
+        var outcome = CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName,
+            [missingRecurringPath], []);
+
+        var notFound = Assert.IsType<CardSectionVerdictOutcome.RecurringTargetNotFound>(outcome);
+        Assert.Equal(missingRecurringPath, notFound.FilePath);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Empty(read.SectionFields.Verdicts);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(notFound.RefusingRule, recorded.Rule);
+        Assert.Equal(notFound.Remedy, recorded.Remedy);
+    }
+
+    // A reachable case, not a theoretical one: a --finding-recurred target whose own stored round
+    // disagrees with its transition history. Card-addressed against the section, the same as
+    // RecurringTargetNotFound above.
+    [Fact]
+    public void RecordSectionVerdict_RecurringTargetRoundDisagreesWithHistory_Refuses_AndRecordsAgainstTheSection()
+    {
+        var path = WriteInitialSectionCard("s-0027", "S-0027");
+        var recurringPath = WriteApprovedRemediationCard("b-own-0027", "B-OWN-0027", "S-0027", "finding-x027", storedRound: 3);
+
+        var outcome = CardStore.RecordSectionVerdict(
+            _root, path, SectionVerdict.RequestChanges, "a", "b", CardOwner.Supervisor, Created, TimeSpan.FromSeconds(5), ChangeName,
+            [recurringPath], []);
+
+        var disagreement = Assert.IsType<CardSectionVerdictOutcome.RoundDisagreesWithHistory>(outcome);
+        Assert.Equal(recurringPath, disagreement.FilePath);
+        Assert.Equal(3, disagreement.StoredRound);
+        Assert.Equal(1, disagreement.ExpectedRound);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Empty(read.SectionFields.Verdicts);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(disagreement.RefusingRule, recorded.Rule);
+        Assert.Equal(disagreement.Remedy, recorded.Remedy);
+        // The recurring card itself is untouched — neither figure is privileged or altered.
+        Assert.Equal(3, AssertParseSuccess(CardStore.ReadCard(recurringPath)).BlockFields.Round);
+    }
+
+    private string WriteApprovedRemediationCard(string fileStem, string id, string sectionId, string findingKey, int storedRound)
+    {
+        var path = Path.Combine(_directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Block, "Title", "approved", CardOwner.Architect, CardScope.Change, sectionId, Created, Created);
+        var blockFields = new BlockCardFields(
+            Base: "base-commit", ReviewedState: "reviewed-state", Tasks: [], Round: storedRound, BlockedBy: [], GateResults: [], FindingKey: findingKey);
+        // No transitions recorded at all, so the expected round (one plus round-incrementing
+        // transitions) is 1 regardless of storedRound — deliberately disagreeing for storedRound > 1.
+        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
     }
 
     /// <summary>
@@ -344,6 +426,7 @@ public sealed class CardSectionVerdictTests : IDisposable
             onRecorded: static recorded => recorded,
             onNotASectionCard: static n => throw new Xunit.Sdk.XunitException($"expected Recorded, got NotASectionCard({n.Kind.ToWireString()})"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Recorded, got CardNotFound: '{notFound.FilePath}'"),
+            onRecurringTargetNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringTargetNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Recorded, got LayoutMismatch: {layoutMismatch.Reason}"),
             onRecurringFindingNotApproved: static notApproved => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringFindingNotApproved: '{notApproved.CardId}'"),
             onRecurringFindingTargetsTaskImplementingBlock: static taskImplementing => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringFindingTargetsTaskImplementingBlock: '{taskImplementing.CardId}'"),

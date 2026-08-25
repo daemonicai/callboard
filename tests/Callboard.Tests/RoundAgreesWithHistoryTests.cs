@@ -297,7 +297,9 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Applied, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Applied, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException(
-                $"expected Applied, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+                $"expected Applied, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException(
+                $"expected Applied, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"));
 
     private static CardNitDispositionOutcome.Dispositioned AssertDispositioned(CardNitDispositionOutcome outcome) =>
         outcome.Match(
@@ -313,13 +315,16 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Dispositioned, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Dispositioned, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException(
-                $"expected Dispositioned, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+                $"expected Dispositioned, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException(
+                $"expected Dispositioned, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"));
 
     private static CardSectionVerdictOutcome.Recorded AssertRecorded(CardSectionVerdictOutcome outcome) =>
         outcome.Match(
             onRecorded: static recorded => recorded,
             onNotASectionCard: static n => throw new Xunit.Sdk.XunitException($"expected Recorded, got NotASectionCard({n.Kind.ToWireString()})"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Recorded, got CardNotFound: '{notFound.FilePath}'"),
+            onRecurringTargetNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringTargetNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Recorded, got LayoutMismatch: {layoutMismatch.Reason}"),
             onRecurringFindingNotApproved: static n => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringFindingNotApproved({n.CardId})"),
             onRecurringFindingTargetsTaskImplementingBlock: static n => throw new Xunit.Sdk.XunitException($"expected Recorded, got RecurringFindingTargetsTaskImplementingBlock({n.CardId})"),

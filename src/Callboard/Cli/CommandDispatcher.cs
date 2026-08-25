@@ -929,6 +929,11 @@ internal static class CommandDispatcher
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
             },
+            onUnresolvedThreadsAddressedToActor: unresolved => UnresolvedThreadsAddressedToActor(filePath, unresolved.ActorRole, unresolved.ThreadIds) with
+            {
+                Rule = unresolved.RefusingRule,
+                Remedy = unresolved.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to transition."),
@@ -1126,18 +1131,41 @@ internal static class CommandDispatcher
                 Timestamp = parsed.Timestamp,
                 Round = approved.Card.BlockFields.Round,
             }),
+            // §9 block B (reviewer/architect ruling): unlike the pre-lock RoleNotPermitted
+            // checks elsewhere, RecordApprovalUnderExistingLock's role check runs after a
+            // successful ReadCard under the lock it already holds, so it is card-addressed and
+            // records — see CardApprovalOutcome.RoleNotPermitted's own doc comment.
             onRoleNotPermitted: roleNotPermitted => RoleNotPermitted(
-                "recording an approval", roleNotPermitted.AttemptedRole, [CardOwner.Reviewer, CardOwner.Supervisor]),
+                "recording an approval", roleNotPermitted.AttemptedRole, [CardOwner.Reviewer, CardOwner.Supervisor]) with
+            {
+                Rule = roleNotPermitted.RefusingRule,
+                Remedy = roleNotPermitted.Remedy,
+            },
             onUndefinedTransition: undefined => new CommandOutcome.Refusal(
                 "undefined-transition",
                 $"no transition 'approve' from '{undefined.CurrentState.ToWireString()}'. " +
-                $"Available: {(undefined.Available.Count == 0 ? "none" : string.Join(", ", undefined.Available.Select(static t => t.Name)))}."),
+                $"Available: {(undefined.Available.Count == 0 ? "none" : string.Join(", ", undefined.Available.Select(static t => t.Name)))}.",
+                undefined.RefusingRule, undefined.Remedy),
             onUndispositionedNits: undispositioned => new CommandOutcome.Refusal(
                 "undispositioned-nits",
                 $"'{resolved.FilePath}' cannot leave 'in-review' — the following nit(s) have no disposition: " +
-                $"{string.Join(", ", undispositioned.NitIds)}."),
-            onNotABlockCard: notABlock => WrongCardKind(resolved.FilePath!, CardKind.Block, notABlock.Kind, "'block approve' only applies to a block card"),
-            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(resolved.FilePath!, disagreement.StoredRound, disagreement.ExpectedRound),
+                $"{string.Join(", ", undispositioned.NitIds)}.",
+                undispositioned.RefusingRule, undispositioned.Remedy),
+            onNotABlockCard: notABlock => WrongCardKind(resolved.FilePath!, CardKind.Block, notABlock.Kind, "'block approve' only applies to a block card") with
+            {
+                Rule = notABlock.RefusingRule,
+                Remedy = notABlock.Remedy,
+            },
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(resolved.FilePath!, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            },
+            onUnresolvedThreadsAddressedToActor: unresolved => UnresolvedThreadsAddressedToActor(resolved.FilePath!, unresolved.ActorRole, unresolved.ThreadIds) with
+            {
+                Rule = unresolved.RefusingRule,
+                Remedy = unresolved.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to approve."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
@@ -1291,6 +1319,11 @@ internal static class CommandDispatcher
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
             },
+            onUnresolvedThreadsAddressedToActor: unresolved => UnresolvedThreadsAddressedToActor(filePath, unresolved.ActorRole, unresolved.ThreadIds) with
+            {
+                Rule = unresolved.RefusingRule,
+                Remedy = unresolved.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to disposition a nit on."),
             onNitNotFound: nitNotFound => new CommandOutcome.Refusal(
@@ -1366,31 +1399,49 @@ internal static class CommandDispatcher
                 RecurredCardIds = [.. recorded.RecurredCards.Select(static c => c.Frontmatter.Id)],
                 NewCardIds = [.. recorded.NewCards.Select(static c => c.Frontmatter.Id)],
             }),
-            onNotASectionCard: notASection => WrongCardKind(filePath, CardKind.Section, notASection.Kind, "verdicts only apply to a section card"),
-            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(disagreement.FilePath, disagreement.StoredRound, disagreement.ExpectedRound),
+            onNotASectionCard: notASection => WrongCardKind(filePath, CardKind.Section, notASection.Kind, "verdicts only apply to a section card") with
+            {
+                Rule = notASection.RefusingRule,
+                Remedy = notASection.Remedy,
+            },
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(disagreement.FilePath, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to record a verdict on."),
+            // §9 block B, standing instruction 2: split from CardNotFound above — this occurrence
+            // is post-lock, with the section card already resolved and anchored, so it records.
+            onRecurringTargetNotFound: recurringNotFound => new CommandOutcome.Refusal(
+                "card-not-found",
+                $"no card file exists at '{recurringNotFound.FilePath}' to record a verdict on.",
+                recurringNotFound.RefusingRule, recurringNotFound.Remedy),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
             onRecurringFindingNotApproved: notApproved => new CommandOutcome.Refusal(
                 "recurring-finding-not-approved",
                 $"'{notApproved.CardId}' ('{notApproved.FilePath}') is not 'approved' (it is " +
                 $"'{notApproved.CurrentState.ToWireString()}') — 'finding-recurred' only returns a remediation " +
-                "card that is currently approved."),
+                "card that is currently approved.",
+                notApproved.RefusingRule, notApproved.Remedy),
             onRecurringFindingTargetsTaskImplementingBlock: taskImplementing => new CommandOutcome.Refusal(
                 "recurring-finding-targets-task-implementing-block",
                 $"'{taskImplementing.CardId}' ('{taskImplementing.FilePath}') carries tasks — it is a task-" +
                 "implementing block, not a remediation card, and 'finding-recurred' never targets one. Raise the " +
-                "finding as new instead, with '--finding-new'."),
+                "finding as new instead, with '--finding-new'.",
+                taskImplementing.RefusingRule, taskImplementing.Remedy),
             onFindingAlreadyOwned: alreadyOwned => new CommandOutcome.Refusal(
                 "finding-already-owned",
                 $"finding '{alreadyOwned.Key}' is already owned by '{alreadyOwned.OwningCardId}' " +
                 $"('{alreadyOwned.OwningCardFilePath}') — a recurrence SHALL NOT create a second card for a " +
                 $"finding a card already owns. Use '--finding-recurred {alreadyOwned.OwningCardId}' instead, or " +
-                "give the new finding a different '--finding-new' key."),
+                "give the new finding a different '--finding-new' key.",
+                alreadyOwned.RefusingRule, alreadyOwned.Remedy),
             onNewFindingCardAlreadyExists: alreadyExists => new CommandOutcome.Refusal(
-                "card-already-exists", $"a card already exists at '{alreadyExists.FilePath}'."),
+                "card-already-exists", $"a card already exists at '{alreadyExists.FilePath}'.",
+                alreadyExists.RefusingRule, alreadyExists.Remedy),
             onRemediationBoundExceeded: boundExceeded => new CommandOutcome.Refusal(
                 "remediation-bound-exceeded",
                 $"the section already carries {boundExceeded.VerdictNumber - 1} 'request-changes' verdicts " +
@@ -1398,7 +1449,8 @@ internal static class CommandDispatcher
                 $"{boundExceeded.VerdictNumber} — {boundExceeded.AuthorisationsRecorded} authorisation" +
                 $"{(boundExceeded.AuthorisationsRecorded == 1 ? "" : "s")} recorded, " +
                 $"{Math.Max(boundExceeded.UnspentAuthorisations, 0)} unspent. A recorded Product Owner " +
-                "authorisation ('section authorise --role product-owner --reason <text>') would satisfy it."),
+                "authorisation ('section authorise --role product-owner --reason <text>') would satisfy it.",
+                boundExceeded.RefusingRule, boundExceeded.Remedy),
             onCardCorrupt: corrupt => throw new InvalidOperationException(
                 $"card '{corrupt.FilePath}' could not be read: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
@@ -2772,6 +2824,17 @@ internal static class CommandDispatcher
             $"'{filePath}' has stored round {storedRound}, but its own transition history implies round " +
             $"{expectedRound} (one plus its round-incrementing transitions); refusing to act on this card. " +
             "Neither figure is altered — correct the discrepancy directly on the card.");
+
+    /// <summary>process-enforcement: "A verdict cannot leave threads unanswered" (§9 block B) —
+    /// the one refusal every door out of <c>in-review</c> mints when the acting role's own inbox
+    /// still carries a live addressed thread. Names the file, the acting role and the unresolved
+    /// thread ids, the same "state the fact, not just the rule" shape <see cref="
+    /// RoundDisagreesWithHistory"/> already establishes.</summary>
+    private static CommandOutcome.Refusal UnresolvedThreadsAddressedToActor(string filePath, CardOwner actorRole, IReadOnlyList<string> threadIds) =>
+        new CommandOutcome.Refusal(
+            "unresolved-threads-addressed-to-actor",
+            $"'{filePath}' carries thread(s) addressed to '{actorRole.ToWireString()}' that are still unresolved: " +
+            $"{string.Join(", ", threadIds)}. Resolve them before recording this verdict.");
 
     /// <summary>
     /// The one refusal every role-authorisation site mints (§7 block F remediation, Architect

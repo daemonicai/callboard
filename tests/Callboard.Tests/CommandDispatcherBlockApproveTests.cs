@@ -204,11 +204,10 @@ public sealed class CommandDispatcherBlockApproveTests
     // 'worker', a role neither IsApprovingRole nor CardOwnerWireFormat's own parse fallback
     // defaults to, so a hardcoded pass cannot survive this test (§7 item E discipline).
     [Fact]
-    public void BlockApprove_NonReviewingRole_Refuses_AndLeavesTheCardByteIdentical()
+    public void BlockApprove_NonReviewingRole_Refuses_AndRecordsTheRefusal()
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialBlockCard(repo.Path, "b-0008", "B-0008", BlockFlowState.InReview);
-        var before = File.ReadAllBytes(path);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -222,11 +221,27 @@ public sealed class CommandDispatcherBlockApproveTests
         Assert.Contains("reviewer", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
         Assert.Contains("supervisor", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
 
-        Assert.Equal(before, File.ReadAllBytes(path));
+        // §9 block B (reviewer/architect ruling, overruling the worker's own first pass):
+        // RecordApprovalUnderExistingLock's role check runs under the lock it already holds,
+        // immediately after a successful ReadCard, so it is card-addressed and records — unlike
+        // the pre-lock RoleNotPermitted checks elsewhere in this codebase. An architect repeatedly
+        // attempting to approve its own work is exactly the pattern this is meant to catch.
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("in-review", read.Frontmatter.Status);
+        Assert.Empty(read.Claims);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
     }
 
     [Fact]
-    public void BlockApprove_NotInReview_RefusesWithUndefinedTransitionCode()
+    public void BlockApprove_NotInReview_RefusesWithUndefinedTransitionCode_AndRecordsTheRefusal()
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialBlockCard(repo.Path, "b-0009", "B-0009", BlockFlowState.Drafting);
@@ -238,7 +253,97 @@ public sealed class CommandDispatcherBlockApproveTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("undefined-transition", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("undefined-transition", refusal.GetProperty("code").GetString());
+        Assert.Contains("drafting", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+
+        // §9 block B: CardApprovalOutcome.UndefinedTransition implements ICardRefusalReason and
+        // records — post-read, card-addressed.
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("drafting", read.Frontmatter.Status);
+        Assert.Empty(read.Claims);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
+    // Same gap, CardApprovalOutcome.RoundDisagreesWithHistory: a card stored with a round the
+    // transition history does not support.
+    [Fact]
+    public void BlockApprove_RoundDisagreesWithHistory_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        var directory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "b-0009a.md");
+        var frontmatter = new CardFrontmatter(
+            "B-0009A", CardKind.Block, "Title", "in-review", CardOwner.Architect, CardScope.Change, "9", FixedNow, FixedNow);
+        // Round 5 with no transition history at all — the expected round (one plus round-incrementing
+        // transitions) is 1, so this disagrees.
+        var blockFields = new BlockCardFields(null, null, [], 5, [], []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "approve", "--id", "B-0009A", "--role", "reviewer", "--state", "commit-abc", "--claims", "claim one", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("round-disagrees-with-history", refusal.GetProperty("code").GetString());
+
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(5, read.BlockFields.Round);
+        Assert.Empty(read.Claims);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
+    // CardApprovalOutcome.NotABlockCard — unreachable through the CLI's own 'block approve' verb,
+    // since ResolveCardReference already filters '--id' to a block card before CardStore.
+    // RecordApproval is ever called (BlockApprove_WrongCardKind_RefusesWithWrongCardKindCode below
+    // is that CLI-level refusal, a different code path entirely). Called directly against a
+    // hand-written question card — the same "only reachable by calling CardStore directly,
+    // bypassing the CLI's own id resolution" shape §9 block A3's CardNitStoreTests already
+    // established for an analogous under-lock race.
+    [Fact]
+    public void RecordApproval_TargetIsNotABlockCard_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        var directory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "q-0010f.md");
+        var frontmatter = new CardFrontmatter(
+            "Q-0010F", CardKind.Question, "A question", "open", CardOwner.Architect, CardScope.Change, "9", FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.RecordApproval(
+            repo.Path, path, "commit-abc", ["claim one"], [], CardOwner.Reviewer, FixedNow, TimeSpan.FromSeconds(5), ChangeName);
+
+        var notABlock = Assert.IsType<CardApprovalOutcome.NotABlockCard>(outcome);
+        Assert.Equal(CardKind.Question, notABlock.Kind);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(notABlock.RefusingRule, recorded.Rule);
+        Assert.Equal(notABlock.Remedy, recorded.Remedy);
     }
 
     [Fact]

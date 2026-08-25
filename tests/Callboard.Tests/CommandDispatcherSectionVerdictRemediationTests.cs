@@ -183,9 +183,67 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
 
         Assert.False(File.Exists(newCardPath));
         // All-or-nothing: the section itself carries no verdict either, since the whole call refused.
-        Assert.Empty(AssertParseSuccess(CardStore.ReadCard(sectionPath)).SectionFields.Verdicts);
+        var sectionRead = AssertParseSuccess(CardStore.ReadCard(sectionPath));
+        Assert.Empty(sectionRead.SectionFields.Verdicts);
         // The owning card is untouched — this was a --finding-new attempt, not a --finding-recurred one.
         Assert.Equal("approved", AssertParseSuccess(CardStore.ReadCard(owningPath)).Frontmatter.Status);
+
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+        var recorded = Assert.Single(sectionRead.Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
+    // 9.2/9.3 block B coverage: a --finding-new target whose file already exists on disk, for a
+    // key nothing owns (the File.Exists(newFinding.FilePath) check, distinct from the
+    // key-ownership scan FindingAlreadyOwned tests above). Card-addressed against the section.
+    [Fact]
+    public void FindingNew_TargetFileAlreadyExistsOnDisk_Refuses_AndRecordsAgainstTheSection()
+    {
+        using var repo = new TempGitRepo();
+        var sectionPath = WriteInitialSectionCard(repo.Path, "s-0018", "S-0018");
+        var changeDir = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        var collidingPath = Path.Combine(changeDir, "b-new-0018.md");
+        // A real, parseable card — not garbage text: the key-ownership scan
+        // (RecordSectionVerdictUnderExistingLock) reads every '*.md' file in the section's own
+        // directory via ReadAllCards before it ever reaches the File.Exists check this test targets,
+        // so an unparseable file at this path would hit CardCorrupt first and mask the refusal this
+        // test means to exercise. No FindingKey, so it cannot be mistaken for owning 'finding-x018'.
+        var collidingFrontmatter = new CardFrontmatter(
+            "B-UNRELATED-0018", CardKind.Block, "An unrelated file", "briefed", CardOwner.Architect, CardScope.Change, "S-0018", FixedNow, FixedNow);
+        var collidingCard = new CardFile(collidingFrontmatter, "Body.", [], [], [], BlockCardFields.Empty, []);
+        File.WriteAllText(collidingPath, CardFileWriter.Serialize(collidingCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var manifest = WriteManifestFile(repo.Path, "finding-x018", collidingPath, "Never created", "The target file already exists.");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "section", "verdict", sectionPath, "--verdict", "request-changes", "--range-from", "aaa", "--range-to", "bbb",
+                "--role", "supervisor", "--change", ChangeName, "--finding-new", manifest,
+            ],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("card-already-exists", refusal.GetProperty("code").GetString());
+        Assert.Contains(collidingPath, refusal.GetProperty("message").GetString());
+
+        var sectionRead = AssertParseSuccess(CardStore.ReadCard(sectionPath));
+        Assert.Empty(sectionRead.SectionFields.Verdicts);
+
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+        var recorded = Assert.Single(sectionRead.Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
     }
 
     // 8a.9's in-batch case (§8a block B revision, once a verdict could carry more than one new
@@ -243,10 +301,19 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal(
-            "recurring-finding-targets-task-implementing-block",
-            doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("recurring-finding-targets-task-implementing-block", refusal.GetProperty("code").GetString());
         Assert.Equal("approved", AssertParseSuccess(CardStore.ReadCard(taskBlockPath)).Frontmatter.Status);
+
+        // §9 block B: card-addressed against the already-resolved section card, not the task block.
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(sectionPath)).Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
     }
 
     // finding-recurred against a card that is not currently approved refuses — the state-table
@@ -268,8 +335,18 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("recurring-finding-not-approved", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
-        _ = briefedPath;
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("recurring-finding-not-approved", refusal.GetProperty("code").GetString());
+        Assert.Equal("briefed", AssertParseSuccess(CardStore.ReadCard(briefedPath)).Frontmatter.Status);
+
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(sectionPath)).Refusals);
+        Assert.Equal(CardOwner.Supervisor, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
     }
 
     // All-or-nothing (8a.10): a verdict combining a valid new finding with an invalid recurring

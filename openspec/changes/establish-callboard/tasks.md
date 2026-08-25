@@ -108,8 +108,8 @@
 ## 9. Process enforcement
 
 - [x] 9.1 Implement the refusal reporting format: name the rule, state what would satisfy it, record role and timestamp
-- [ ] 9.2 Refuse approval from a role other than reviewer or supervisor
-- [ ] 9.3 Refuse leaving `in-review` with threads addressed to the acting role unresolved
+- [x] 9.2 Refuse approval from a role other than reviewer or supervisor
+- [x] 9.3 Refuse leaving `in-review` with threads addressed to the acting role unresolved
 - [ ] 9.4 Refuse section close over open obligations owed by that section
 - [ ] 9.5 Refuse section close over open undeferred questions
 - [ ] 9.6 Refuse section close over unresolved addressed threads, and surface threads older than one round as a prompt
