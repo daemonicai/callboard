@@ -2,8 +2,9 @@
 
 Governs what a review verdict certifies — approval as a binary certification of one exact state, the
 claims and limits it must enumerate, and the disposition every nit must receive so none dies by
-neglect. A certification covers one state and one state only: once that state changes, the approval is
-spent, and the block is reviewed afresh rather than having its claims re-asserted over the difference.
+neglect. A certification covers one state and one state only, and is never re-asserted over a later
+one: what it records is what that reviewer saw. Approval is terminal for the block — drift past the
+certified state is caught by the supervisor's review of the whole section, not by reopening the block.
 
 ## ADDED Requirements
 

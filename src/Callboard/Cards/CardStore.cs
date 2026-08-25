@@ -168,8 +168,7 @@ internal static class CardStore
     /// of 2026-08-24). Not built on <see cref="AppendComment"/> — that surface is generic over any
     /// comment on any card kind and has no notion of "under review"; this method re-reads and
     /// re-validates state under its own lock instead, the same read-decide-write shape
-    /// <see cref="RecordApproval"/> and <see cref="RecordAmendmentRequest"/> already use for their
-    /// own verb-specific checks.
+    /// <see cref="RecordApproval"/> already uses for its own verb-specific checks.
     ///
     /// <para>
     /// <b>What this bound closes, and why raising is the right place to close it (not a second
@@ -386,9 +385,9 @@ internal static class CardStore
                 // review-certification: "A nit SHALL cease to be live only through one of these
                 // three dispositions. It SHALL NOT lapse by neglect." (§8 block B). §8 remediation
                 // blocker 2: the original guard checked only 'transition.From == InReview', so
-                // 'approved's own exits ('land', 'amendment-requested') and 'landed's exit
-                // ('close') carried no nit check at all — a block holding a live undispositioned
-                // nit could reach 'landed', even 'closed', with nothing refusing. A per-state
+                // 'approved's own exit ('land') and 'landed's exit ('close') carried no nit check
+                // at all — a block holding a live undispositioned nit could reach 'landed', even
+                // 'closed', with nothing refusing. A per-state
                 // 'From ==' list has now been wrong once already (this one); rather than extend it
                 // to a second hard-coded state, the check applies to every transition this table
                 // permits, regardless of origin — a card with a live undispositioned nit simply
@@ -601,109 +600,6 @@ internal static class CardStore
             },
             onFailure: failure =>
                 new CardApprovalOutcome.CardCorrupt(filePath, failure.Reason));
-    }
-
-    /// <summary>
-    /// Records one <c>block amendment-requested</c> call (§8 block C remediation, work-lifecycle:
-    /// "`amendment-requested` is the architect deliberately reopening an approved block" — the only
-    /// route from <c>approved</c> back to work that is not a supervisor's recurrence) — the one door
-    /// to the <c>approved → briefed</c> edge of that name. Role-bounded to <c>architect</c>
-    /// (<see cref="IsArchitectRole"/>, the same predicate <see cref="DispositionNit"/> already
-    /// uses), unlike <see cref="ApplyBlockTransition"/>'s generic path, which never restricts who
-    /// may apply a named edge — this verb specifically exists to be a deliberate architect act, not
-    /// a fact any role may record.
-    /// </summary>
-    internal static CardAmendmentRequestOutcome RecordAmendmentRequest(
-        string cardsRoot, string filePath, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
-        WithLock(
-            filePath,
-            lockTimeout,
-            heldLock => RecordAmendmentRequestUnderExistingLock(heldLock, cardsRoot, actingRole, timestamp, changeName),
-            onTimedOut: timedOut => new CardAmendmentRequestOutcome.ToolFailure(timedOut.Message));
-
-    /// <summary>
-    /// The read-decide-write step of <see cref="RecordAmendmentRequest"/>. Same structural lock
-    /// precondition as every other <c>*UnderExistingLock</c> method on this type — the target is
-    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>. Role checked
-    /// first, ahead of <see cref="File.Exists(string)"/>, the same ordering <see cref="
-    /// RecordApprovalUnderExistingLock"/> already uses.
-    /// </summary>
-    internal static CardAmendmentRequestOutcome RecordAmendmentRequestUnderExistingLock(
-        CardLock heldLock, string cardsRoot, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
-    {
-        ArgumentNullException.ThrowIfNull(heldLock);
-        var filePath = heldLock.CardPath;
-
-        if (!IsArchitectRole(actingRole))
-        {
-            return new CardAmendmentRequestOutcome.RoleNotPermitted(actingRole);
-        }
-
-        if (!File.Exists(filePath))
-        {
-            return new CardAmendmentRequestOutcome.CardNotFound(filePath);
-        }
-
-        var current = ReadCard(filePath);
-        return current.Match<CardAmendmentRequestOutcome>(
-            onSuccess: success =>
-            {
-                var card = success.Card;
-                if (!IsBlockCard(card))
-                {
-                    return new CardAmendmentRequestOutcome.NotABlockCard(card.Frontmatter.Kind);
-                }
-
-                if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
-                {
-                    return new CardAmendmentRequestOutcome.CardCorrupt(
-                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
-                }
-
-                var available = BlockFlowTransitions.AvailableFrom(currentState);
-                var transition = available.FirstOrDefault(candidate => string.Equals(candidate.Name, "amendment-requested", StringComparison.Ordinal));
-                if (transition is null)
-                {
-                    return new CardAmendmentRequestOutcome.UndefinedTransition(currentState, available);
-                }
-
-                // Defence in depth (§8 remediation, CardAmendmentRequestOutcome.UndispositionedNits's
-                // own doc comment): not reachable through any write this tool itself makes now that
-                // `nit raise` is bound to `in-review`, but the card on disk can carry a hand-edited
-                // nit the tool never wrote (ADR-0003) — re-validated exactly like
-                // RecordApprovalUnderExistingLock's equivalent check, not inferred from history.
-                var liveNitIds = CardCommentRouting.LiveUndispositionedNitIds(card.Comments);
-                if (liveNitIds.Count > 0)
-                {
-                    return new CardAmendmentRequestOutcome.UndispositionedNits(liveNitIds);
-                }
-
-                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
-                if (anchored is null)
-                {
-                    return new CardAmendmentRequestOutcome.LayoutMismatch(layoutFailure!.Reason);
-                }
-
-                var entry = new CardBlockTransitionEntry(actingRole, transition.Name, transition.From, transition.To, timestamp, []);
-                var updated = card with
-                {
-                    Frontmatter = card.Frontmatter with { Status = transition.To.ToWireString(), Updated = timestamp },
-                    BlockFields = card.BlockFields with { Round = (card.BlockFields.Round ?? 0) + 1 },
-                    Transitions = [.. card.Transitions, entry],
-                };
-
-                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
-                return writeResult.Match<CardAmendmentRequestOutcome>(
-                    onSuccess: _ => new CardAmendmentRequestOutcome.Requested(updated),
-                    onNotFound: notFound => new CardAmendmentRequestOutcome.CardNotFound(notFound.FilePath),
-                    onAlreadyExists: alreadyExists => new CardAmendmentRequestOutcome.LayoutMismatch(
-                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
-                    onLayoutMismatch: layoutMismatch => new CardAmendmentRequestOutcome.LayoutMismatch(layoutMismatch.Reason),
-                    onCorrupt: corrupt => new CardAmendmentRequestOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardAmendmentRequestOutcome.ToolFailure(toolFailure.Reason));
-            },
-            onFailure: failure =>
-                new CardAmendmentRequestOutcome.CardCorrupt(filePath, failure.Reason));
     }
 
     /// <summary>
@@ -1355,10 +1251,11 @@ internal static class CardStore
 
     /// <summary>
     /// Closes the section card at <paramref name="filePath"/> (work-lifecycle: "Sections are
-    /// entities" — "closing it SHALL record the acting role and the time", §5 block E) — reads the
-    /// current card, and only if it is a section card not already closed, writes
-    /// <c>status: closed</c> plus <c>closed_by</c>/<c>closed_at</c> under the card's lock. Whether a
-    /// section is <em>permitted</em> to close (§9: open obligations, undeferred questions,
+    /// entities" — "closing it SHALL record the acting role and the time", §5 block E; "Approval is
+    /// provisional until the section closes", §8a block A) — reads the current card, and only if it
+    /// is a section card not already closed, lands every <c>approved</c> block the section owns and
+    /// then writes <c>status: closed</c> plus <c>closed_by</c>/<c>closed_at</c>, all under lock.
+    /// Whether a section is <em>permitted</em> to close (§9: open obligations, undeferred questions,
     /// unresolved threads) is not decided here — see <see cref="CardSectionCloseOutcome"/>'s own
     /// doc comment.
     /// </summary>
@@ -1367,16 +1264,64 @@ internal static class CardStore
         WithLock(
             filePath,
             lockTimeout,
-            heldLock => CloseSectionUnderExistingLock(heldLock, cardsRoot, actingRole, timestamp, changeName),
+            heldLock => CloseSectionUnderExistingLock(heldLock, cardsRoot, actingRole, timestamp, lockTimeout, changeName),
             onTimedOut: timedOut => new CardSectionCloseOutcome.ToolFailure(timedOut.Message));
 
     /// <summary>
     /// The read-decide-write step of <see cref="CloseSection"/>. Same structural lock precondition
     /// as every other <c>*UnderExistingLock</c> method on this type — the target is
     /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>.
+    ///
+    /// <para>
+    /// <b>Locking shape (§8a block A brief: "N cards is not two").</b> The section's own lock is
+    /// already held (<paramref name="heldLock"/>) by the time this runs. This method then discovers
+    /// candidate blocks by scanning the section's own directory — <see cref="ReadAllCards"/> over
+    /// <c>Path.GetDirectoryName(filePath)</c>, filtered to <see cref="IsBlockCard"/> cards whose
+    /// <see cref="CardFrontmatter.Section"/> names this section's own <see cref="CardFrontmatter.Id"/>
+    /// — and acquires each candidate's lock in turn, in the ordinal-sorted order
+    /// <see cref="ReadAllCards"/> already returns them in, <em>blocking</em> for whatever remains of
+    /// one overall deadline computed from <paramref name="lockTimeout"/>. Unlike <see
+    /// cref="AcquireLocksAndRecord"/>'s acquire-probe-release-retry dance for <see
+    /// cref="RecordFinding"/>'s two-card write, no probing or retrying is needed here, and blocking
+    /// acquisition in a fixed order is safe: <see cref="AcquireLocksAndRecord"/>'s own doc comment
+    /// explains that ordinal ordering breaks only when the <em>set</em> of paths being locked is
+    /// caller-typed and can be spelled two different ways by two different invocations naming the
+    /// same physical files (so two calls can disagree on the order and deadlock) — the same problem
+    /// <see cref="SupersedeDecisionUnderLocks"/> does not have, for the same reason: every path this
+    /// method locks comes from <see cref="Directory.EnumerateFiles(string, string, SearchOption)"/>
+    /// over one physical directory, not from caller-supplied text, so any two invocations that ever
+    /// contend for the same physical file always compute it to the identical string and therefore
+    /// the identical order. No other writer on this type ever holds a block's lock while blocking on
+    /// a section's lock, or vice versa (every other block-mutating verb — <c>block gate</c>, <c>block
+    /// approve</c>, <c>block transition</c> — takes exactly one lock, its
+    /// own card's), so a fixed order over {this section's blocks} can never cycle against a
+    /// concurrent writer holding one of them and wanting something else this method holds. If any
+    /// acquisition in the chain times out, every lock already acquired in this call is released (the
+    /// <c>finally</c> block below) and a tool-failure is returned naming what actually happened,
+    /// before any card is read a second time or written at all.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Validate everything, then write — and even the write is honest about partial completion
+    /// (§8a block A brief item 3).</b> Every candidate block is re-read fresh once its lock is held
+    /// (a stale scan-time snapshot is never trusted) and checked by <see cref="
+    /// ValidateBlockForLanding"/>; the first refusal found stops the whole call before any card is
+    /// written, so a refusal leaves every card — section and blocks alike — exactly as it found them.
+    /// Only once every block has passed does this method write: blocks first (skipping any already
+    /// <c>landed</c>, work-lifecycle: "a block already landed is skipped rather than refused"), the
+    /// section's own <c>status: closed</c> last. That ordering is deliberate, not incidental — a
+    /// process crash or an I/O failure partway through the block writes leaves the section open and
+    /// every already-landed block exactly that, so a retried <c>section close</c> call picks up
+    /// wherever the last one stopped rather than needing to be undone first. No rollback is attempted
+    /// on a write failure (unlike <see cref="RecordFindingUnderLocks"/>'s or <see
+    /// cref="SupersedeDecisionUnderLocks"/>'s two-card compensating writes) — for N cards, undoing
+    /// M &lt; N already-landed blocks would itself need to succeed to restore consistency, trading one
+    /// partial-failure mode for another. Idempotent retry is the honest guarantee this method
+    /// actually has, and the ordering above is what makes that guarantee true.
+    /// </para>
     /// </summary>
     internal static CardSectionCloseOutcome CloseSectionUnderExistingLock(
-        CardLock heldLock, string cardsRoot, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+        CardLock heldLock, string cardsRoot, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null)
     {
         ArgumentNullException.ThrowIfNull(heldLock);
         var filePath = heldLock.CardPath;
@@ -1396,13 +1341,13 @@ internal static class CardStore
                     return new CardSectionCloseOutcome.NotASectionCard(card.Frontmatter.Kind);
                 }
 
-                if (!SectionFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
+                if (!SectionFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentSectionState))
                 {
                     return new CardSectionCloseOutcome.CardCorrupt(
                         filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {SectionFlowStateWireFormat.RecognisedValues}.");
                 }
 
-                if (currentState == SectionFlowState.Closed)
+                if (currentSectionState == SectionFlowState.Closed)
                 {
                     return new CardSectionCloseOutcome.AlreadyClosed(filePath);
                 }
@@ -1413,24 +1358,213 @@ internal static class CardStore
                     return new CardSectionCloseOutcome.LayoutMismatch(layoutFailure!.Reason);
                 }
 
-                var updated = card with
+                var sectionDirectory = Path.GetDirectoryName(filePath)!;
+                var candidatePaths = new List<string>();
+                foreach (var (candidatePath, parseResult) in ReadAllCards(sectionDirectory))
                 {
-                    Frontmatter = card.Frontmatter with { Status = SectionFlowState.Closed.ToWireString(), Updated = timestamp },
-                    SectionFields = card.SectionFields with { ClosedBy = actingRole, ClosedAt = timestamp },
-                };
+                    var corruptReason = parseResult.Match<string?>(onSuccess: static _ => null, onFailure: static failure => failure.Reason);
+                    if (corruptReason is not null)
+                    {
+                        // Conservative by construction: an unreadable card's `section` field cannot
+                        // be checked, so it cannot be ruled out as one of this section's own blocks
+                        // (see CardCorrupt's own doc comment for the ArchiveChange precedent).
+                        return new CardSectionCloseOutcome.CardCorrupt(candidatePath, corruptReason);
+                    }
 
-                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
-                return writeResult.Match<CardSectionCloseOutcome>(
-                    onSuccess: _ => new CardSectionCloseOutcome.Closed(updated),
-                    onNotFound: notFound => new CardSectionCloseOutcome.CardNotFound(notFound.FilePath),
-                    onAlreadyExists: alreadyExists => new CardSectionCloseOutcome.LayoutMismatch(
-                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
-                    onLayoutMismatch: layoutMismatch => new CardSectionCloseOutcome.LayoutMismatch(layoutMismatch.Reason),
-                    onCorrupt: corrupt => new CardSectionCloseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
-                    onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason));
+                    var parsedCard = parseResult.Match(onSuccess: static s => s.Card, onFailure: static _ => throw new InvalidOperationException("unreachable: corruptReason above already returned on failure."));
+                    if (IsBlockCard(parsedCard) && string.Equals(parsedCard.Frontmatter.Section, card.Frontmatter.Id, StringComparison.Ordinal))
+                    {
+                        candidatePaths.Add(candidatePath);
+                    }
+                }
+
+                var acquiredLocks = new List<CardLock>(candidatePaths.Count);
+                try
+                {
+                    var deadline = DateTimeOffset.UtcNow + lockTimeout;
+                    foreach (var candidatePath in candidatePaths)
+                    {
+                        var remaining = deadline - DateTimeOffset.UtcNow;
+                        if (remaining < TimeSpan.Zero)
+                        {
+                            remaining = TimeSpan.Zero;
+                        }
+
+                        var lockResult = CardLock.Acquire(candidatePath, remaining);
+                        var acquireFailure = lockResult.Match<CardSectionCloseOutcome?>(
+                            onAcquired: acquired =>
+                            {
+                                acquiredLocks.Add(acquired.Lock);
+                                return null;
+                            },
+                            onTimedOut: timedOut => new CardSectionCloseOutcome.ToolFailure(timedOut.Message));
+                        if (acquireFailure is not null)
+                        {
+                            return acquireFailure;
+                        }
+                    }
+
+                    var freshBlocks = new List<(string FilePath, CardFile Card)>(candidatePaths.Count);
+                    foreach (var candidatePath in candidatePaths)
+                    {
+                        if (!File.Exists(candidatePath))
+                        {
+                            return new CardSectionCloseOutcome.CardNotFound(candidatePath);
+                        }
+
+                        var reread = ReadCard(candidatePath);
+                        var rereadCard = reread.Match<CardFile?>(onSuccess: static s => s.Card, onFailure: static _ => null);
+                        if (rereadCard is null)
+                        {
+                            var reason = reread.Match(onSuccess: static _ => string.Empty, onFailure: static failure => failure.Reason);
+                            return new CardSectionCloseOutcome.CardCorrupt(candidatePath, reason);
+                        }
+
+                        freshBlocks.Add((candidatePath, rereadCard));
+                    }
+
+                    foreach (var (blockFilePath, blockCard) in freshBlocks)
+                    {
+                        var refusal = ValidateBlockForLanding(blockCard, blockFilePath);
+                        if (refusal is not null)
+                        {
+                            return refusal;
+                        }
+                    }
+
+                    var landedBlocks = new List<CardFile>(freshBlocks.Count);
+                    var landTransition = BlockFlowTransitions.LandTransition;
+                    foreach (var (blockFilePath, blockCard) in freshBlocks)
+                    {
+                        // ValidateBlockForLanding above already proved this parses as a recognised
+                        // BlockFlowState; a landed block is skipped rather than re-written (work-
+                        // lifecycle: "a block already landed is skipped rather than refused").
+                        BlockFlowStateWireFormat.TryParse(blockCard.Frontmatter.Status, out var blockState);
+                        if (blockState == BlockFlowState.Landed)
+                        {
+                            landedBlocks.Add(blockCard);
+                            continue;
+                        }
+
+                        var blockAnchored = AnchoredCardPath.TryCreate(cardsRoot, blockFilePath, blockCard.Frontmatter.Scope, changeName, out var blockLayoutFailure);
+                        if (blockAnchored is null)
+                        {
+                            return new CardSectionCloseOutcome.LayoutMismatch(blockLayoutFailure!.Reason);
+                        }
+
+                        var entry = new CardBlockTransitionEntry(actingRole, landTransition.Name, landTransition.From, landTransition.To, timestamp, []);
+                        var updatedBlock = blockCard with
+                        {
+                            Frontmatter = blockCard.Frontmatter with { Status = landTransition.To.ToWireString(), Updated = timestamp },
+                            Transitions = [.. blockCard.Transitions, entry],
+                        };
+
+                        var blockWriteResult = AtomicWrite(blockAnchored, CardFileWriter.Serialize(updatedBlock));
+                        var blockWriteFailure = blockWriteResult.Match<CardSectionCloseOutcome?>(
+                            onSuccess: static _ => null,
+                            onNotFound: notFound => new CardSectionCloseOutcome.CardNotFound(notFound.FilePath),
+                            onAlreadyExists: alreadyExists => new CardSectionCloseOutcome.LayoutMismatch(
+                                $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                            onLayoutMismatch: layoutMismatch => new CardSectionCloseOutcome.LayoutMismatch(layoutMismatch.Reason),
+                            onCorrupt: corrupt => new CardSectionCloseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                            onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason));
+                        if (blockWriteFailure is not null)
+                        {
+                            return blockWriteFailure;
+                        }
+
+                        landedBlocks.Add(updatedBlock);
+                    }
+
+                    var updatedSection = card with
+                    {
+                        Frontmatter = card.Frontmatter with { Status = SectionFlowState.Closed.ToWireString(), Updated = timestamp },
+                        SectionFields = card.SectionFields with { ClosedBy = actingRole, ClosedAt = timestamp },
+                    };
+
+                    var sectionWriteResult = AtomicWrite(anchored, CardFileWriter.Serialize(updatedSection));
+                    return sectionWriteResult.Match<CardSectionCloseOutcome>(
+                        onSuccess: _ => new CardSectionCloseOutcome.Closed(updatedSection, landedBlocks),
+                        onNotFound: notFound => new CardSectionCloseOutcome.CardNotFound(notFound.FilePath),
+                        onAlreadyExists: alreadyExists => new CardSectionCloseOutcome.LayoutMismatch(
+                            $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                        onLayoutMismatch: layoutMismatch => new CardSectionCloseOutcome.LayoutMismatch(layoutMismatch.Reason),
+                        onCorrupt: corrupt => new CardSectionCloseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                        onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason));
+                }
+                finally
+                {
+                    foreach (var acquiredLock in acquiredLocks)
+                    {
+                        acquiredLock.Dispose();
+                    }
+                }
             },
             onFailure: failure =>
                 new CardSectionCloseOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// The two §8a block A closing conditions applied to one block (work-lifecycle: "Closing a
+    /// section SHALL refuse where any block in it is not `approved`, or where any block carries an
+    /// expected gate whose recorded exit code is non-zero or absent"), checked in that order.
+    /// Returns <see langword="null"/> when the block passes — including when it is already <see
+    /// cref="BlockFlowState.Landed"/>, which is not re-validated at all (work-lifecycle: "a block
+    /// already landed is skipped rather than refused" — it already satisfied these conditions the
+    /// call that landed it).
+    ///
+    /// <para>
+    /// <b>No `reviewed_state` comparison (§8a block A revision, Product Owner ruling: "`approved`
+    /// is terminal").</b> An earlier version of this check compared each block's `reviewed_state`
+    /// against a caller-supplied "current state", refusing a close when they disagreed. That check
+    /// had no remedy: with `amendment-requested` cut (below), a block found stale by it could never
+    /// be reopened — the refusal was unsatisfiable, not merely strict. work-lifecycle now says so
+    /// explicitly: closing a section SHALL NOT compare `reviewed_state` against the repository at
+    /// all. `reviewed_state` stays recorded as evidence of what a reviewer certified; the
+    /// supervisor's whole-section review, not a per-block field comparison, is what catches a
+    /// sibling's change touching an already-approved block's files.
+    /// </para>
+    /// </summary>
+    private static CardSectionCloseOutcome? ValidateBlockForLanding(CardFile blockCard, string blockFilePath)
+    {
+        if (!IsBlockCard(blockCard))
+        {
+            // Filtered to IsBlockCard candidates before this is ever called — a defensive
+            // unreachable guard, not a live code path (BlockFlowTransitions.Match's own discipline).
+            throw new InvalidOperationException($"'{blockFilePath}' is not a block card; this method must only be called on IsBlockCard candidates.");
+        }
+
+        if (!BlockFlowStateWireFormat.TryParse(blockCard.Frontmatter.Status, out var state))
+        {
+            return new CardSectionCloseOutcome.CardCorrupt(
+                blockFilePath, $"unrecognised status: '{blockCard.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
+        }
+
+        if (state == BlockFlowState.Landed)
+        {
+            return null;
+        }
+
+        if (state != BlockFlowState.Approved)
+        {
+            return new CardSectionCloseOutcome.BlockNotApproved(blockCard.Frontmatter.Id, blockFilePath, state);
+        }
+
+        foreach (var label in blockCard.BlockFields.GateResults.Select(static result => result.Label).Distinct(StringComparer.Ordinal))
+        {
+            var status = blockCard.BlockFields.GateStatusOf(label);
+            var gateRefusal = status.Match<CardSectionCloseOutcome?>(
+                onAbsent: () => new CardSectionCloseOutcome.BlockGateAbsent(blockCard.Frontmatter.Id, blockFilePath, label),
+                onRecorded: exitCode => exitCode == 0
+                    ? null
+                    : new CardSectionCloseOutcome.BlockGateFailed(blockCard.Frontmatter.Id, blockFilePath, label, exitCode));
+            if (gateRefusal is not null)
+            {
+                return gateRefusal;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

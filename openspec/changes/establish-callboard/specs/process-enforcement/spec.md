@@ -16,21 +16,6 @@ itself visible.
 - **WHEN** any transition is refused
 - **THEN** the response names the refusing rule and states what would satisfy it
 
-### Requirement: Landing requires a current certification
-
-The system SHALL refuse to land a card whose `reviewed_state` does not match the current state of the
-repository.
-
-#### Scenario: Fingerprint has moved since approval
-
-- **WHEN** a card is landed after its approved state has changed
-- **THEN** the system refuses and names the certified state and the current one
-
-#### Scenario: Certification is current
-
-- **WHEN** a card is landed while `reviewed_state` matches the current state
-- **THEN** the transition proceeds
-
 ### Requirement: Landing requires recorded passing gates
 
 The system SHALL refuse to land a card carrying any gate whose recorded exit code is non-zero, or any

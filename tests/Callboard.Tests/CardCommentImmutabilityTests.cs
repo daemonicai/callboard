@@ -135,8 +135,6 @@ public sealed class CardCommentImmutabilityTests
             "AcquireLocksAndRecord",                // §6 block B remediation: acquires one or two CardLocks in ordinal path order and runs the record step under them; never touches a CardFile
             "RecordFinding",                        // §6 block B: allocates identities, pre-creates directories, then delegates to AcquireLocksAndRecord/RecordFindingUnderLocks — never touches an existing card's Comments, it only ever creates brand-new cards with an empty comment list
             "RecordFindingUnderLocks",              // same: writes the raised card (if any) then the finding, both create-only via AtomicWrite, rolling the raised card back (by content, not by path) on the finding's own write failing — never an edit or drop of an existing comment
-            "RecordAmendmentRequest",               // §8 block C remediation: role check, then acquires the block's lock and delegates to RecordAmendmentRequestUnderExistingLock; never touches a CardFile itself
-            "RecordAmendmentRequestUnderExistingLock", // §8 block C remediation: read-decide-write on Frontmatter.Status/BlockFields.Round/Transitions only; never touches Comments or ReviewedState
             "RecordApproval",                       // §8 block A: role check, then acquires the block's lock and delegates to RecordApprovalUnderExistingLock; never touches a CardFile itself
             "RecordApprovalUnderExistingLock",      // §8 block A: read-decide-write on Frontmatter.Status/BlockFields.ReviewedState/Transitions/Claims/Limits only, in one write with the transition; never touches Comments
             "RecordGateResult",                     // §5 block D: read-modify-write on BlockFields.GateResults only; never touches Frontmatter.Status or Comments — see the structural argument in GateStatus's doc comment
@@ -155,6 +153,7 @@ public sealed class CardCommentImmutabilityTests
             "TransferOwnership",                    // read-modify-write: overwrites Owner/Handovers only; Comments passes through the `success.Card with { ... }` unchanged
             "TransferOwnershipUnderExistingLock",   // same, lock already held
             "UpdateBlockedByUnderExistingLock",     // §5 block D: the read-decide-write shape AddBlockedByUnderExistingLock/RemoveBlockedByUnderExistingLock share; never touches Frontmatter.Status or Comments
+            "ValidateBlockForLanding",              // §8a block A: the three closing-condition checks CloseSectionUnderExistingLock applies to one block; read-only, returns a refusal or null, never touches a CardFile
             "WithLock",                             // lock-acquisition plumbing (CardWriteResult overload); never touches a CardFile
             "WithLock",                             // §5 block C: the same plumbing generalised over TResult so ApplyBlockTransition can return a CardBlockTransitionOutcome; never touches a CardFile — two overloads, two entries, same method name
             "WriteCard",                            // create-only (this fix) — see WriteCard_RefusesToOverwriteAnExistingCard_SoItCannotDropAComment below for the direct proof

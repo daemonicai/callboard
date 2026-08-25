@@ -100,7 +100,7 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'block' requires a subcommand. Known subcommands: transition, gate, add-blocker, remove-blocker, approve, amendment-requested."));
+                    "'block' requires a subcommand. Known subcommands: transition, gate, add-blocker, remove-blocker, approve."));
             case "transition":
                 context.Arguments.TryTake();
                 return ParseBlockTransition(context);
@@ -118,13 +118,10 @@ internal static class CommandParser
             case "approve":
                 context.Arguments.TryTake();
                 return ParseBlockApprove(context);
-            case "amendment-requested":
-                context.Arguments.TryTake();
-                return ParseBlockAmendmentRequested(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition, gate, add-blocker, remove-blocker, approve, amendment-requested."));
+                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition, gate, add-blocker, remove-blocker, approve."));
         }
     }
 
@@ -186,18 +183,25 @@ internal static class CommandParser
                 "instead."));
         }
 
-        // §8 block C remediation (Architect ruling, same reasoning as the two refusals above):
-        // 'amendment-requested' is the architect deliberately reopening an approved block — a bare
-        // transition through this path would move a block back to 'briefed' with no architect
-        // decision actually recorded as having made that call. Argv-decidable, so refused here
-        // rather than left to execute. Use 'block amendment-requested' instead, which role-checks
-        // the caller in the same write as the transition.
-        if (string.Equals(transitionName, "amendment-requested", StringComparison.Ordinal))
+        // §8a block A revision (Product Owner ruling: "approved is terminal", amendment-requested
+        // cut entirely): 'amendment-requested' is no longer a named edge on BlockFlowTransitions at
+        // all, so a 'block transition ... amendment-requested' call needs no special-cased refusal
+        // here — it reaches ApplyBlockTransitionUnderExistingLock like any other unrecognised name
+        // and is refused there as an ordinary undefined-transition, the same as any string that was
+        // never a real edge.
+
+        // §8a block A (Architect ruling, same reasoning as the two refusals above): 'land' is not
+        // individually invocable — a block reaches 'landed' only as a consequence of its whole
+        // section closing (work-lifecycle: "Approval is provisional until the section closes").
+        // Argv-decidable, so refused here rather than left to execute. Names the one door that
+        // remains, not merely that this one is shut.
+        if (string.Equals(transitionName, "land", StringComparison.Ordinal))
         {
             return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "amendment-requested-via-transition-refused",
-                "'amendment-requested' cannot be applied through 'block transition' — it is only raised as " +
-                "the architect's own deliberate act. Use 'block amendment-requested' instead."));
+                "land-via-transition-refused",
+                "'land' cannot be applied through 'block transition' — a block reaches 'landed' only as a " +
+                "consequence of its whole section closing. Use 'section close' instead, which lands every " +
+                "approved block in the section as one operation."));
         }
 
         string? roleText = null;
@@ -442,55 +446,6 @@ internal static class CommandParser
     }
 
     /// <summary>
-    /// Builds <c>block amendment-requested</c>'s <see cref="CommandDispatcher.ParsedCommand.
-    /// AmendmentRequested"/> (§8 block C remediation, work-lifecycle: "`amendment-requested` is the
-    /// architect deliberately reopening an approved block" — the only route from <c>approved</c>
-    /// back to work that is not a supervisor's recurrence). Addressed by <c>--id</c>, the same
-    /// identity-addressing convention <c>block approve</c> already established. Everything
-    /// argv-decidable is decided here: <c>--role</c>'s wire-format validity. Role <em>permission</em>
-    /// (architect-only) is left to the execute phase, the same split every other role-bounded verb
-    /// here uses.
-    /// </summary>
-    private static CommandDispatcher.ParseResult ParseBlockAmendmentRequested(CommandDispatcher.CommandContext context)
-    {
-        string? id = null;
-        string? roleText = null;
-        string? changeName = null;
-
-        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
-        {
-            ["--id"] = value => id = value,
-            ["--role"] = value => roleText = value,
-            ["--change"] = value => changeName = value,
-        });
-        if (flagRefusal is not null)
-        {
-            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
-        }
-
-        if (id is null)
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'block amendment-requested' requires '--id <card-id>'."));
-        }
-
-        if (roleText is null)
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'block amendment-requested' requires '--role <role>'."));
-        }
-
-        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
-        }
-
-        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.AmendmentRequested(
-            id, role, changeName, context.WorkingDirectory, context.Clock()));
-    }
-
-    /// <summary>
     /// The one flag-loop every §5 verb's flag parsing now goes through (§5 remediation, DEVLOG §5
     /// finding B1/N residue) — <paramref name="setters"/> names every flag this call recognises and
     /// what to do with its value; a token that matches none of them is left unconsumed, the same
@@ -662,8 +617,8 @@ internal static class CommandParser
     /// <summary>
     /// The shape every §7 block A discharge verb shares — one positional token (card file path),
     /// <c>--role</c> (required) and the optional <c>--change</c> flag, the same
-    /// <see cref="ParseRoleAndChangeFlags"/> pair <see cref="ParseSectionClose"/> already uses.
-    /// <paramref name="kind"/> is fixed per caller (<see cref="ParseRule"/>/<see cref="ParseHazard"/>/
+    /// <see cref="ParseRoleAndChangeFlags"/> pair <see cref="ParseBlockGate"/> and
+    /// <see cref="ParseSectionClose"/> already use. <paramref name="kind"/> is fixed per caller (<see cref="ParseRule"/>/<see cref="ParseHazard"/>/
     /// <see cref="ParseObligation"/>/<see cref="ParseDecision"/>'s own <c>discharge</c> arm), never
     /// read from argv — there is no <c>--kind</c> flag, because which of the four kinds is being
     /// discharged is exactly what the top-level command word (<c>rule</c>/<c>hazard</c>/…) already
@@ -992,7 +947,10 @@ internal static class CommandParser
     /// Builds <c>section close</c>'s <see cref="CommandDispatcher.ParsedCommand.SectionClose"/>:
     /// one positional token (card file path), <c>--role</c> (required) and the optional
     /// <c>--change</c> flag — the same <c>--role</c>/<c>--change</c> pair
-    /// <see cref="ParseRoleAndChangeFlags"/> already factors out.
+    /// <see cref="ParseRoleAndChangeFlags"/> already factors out. §8a block A briefly gave this verb
+    /// a third flag, <c>--state</c>, to compare against each block's <c>reviewed_state</c>; §8a
+    /// block A's revision (Product Owner ruling: closing SHALL NOT compare `reviewed_state` against
+    /// the repository) removed the check that flag fed, so it is gone too.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseSectionClose(CommandDispatcher.CommandContext context)
     {

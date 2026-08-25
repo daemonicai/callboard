@@ -56,18 +56,28 @@ public sealed class BlockFlowTests
         Assert.Same(BlockFlowState.Briefed, fixBeforeLand.To);
     }
 
+    // §8a block A revision (Product Owner ruling: "approved is terminal", amendment-requested cut
+    // entirely): 'approved' has no caller-facing edge at all — 'land' is not individually
+    // invocable (see BlockFlowTransitions.LandTransition for where it still lives), and
+    // 'amendment-requested' no longer exists as an edge on this table.
     [Fact]
-    public void Approved_HasTwoAvailableTransitions_LandAndAmendmentRequested()
+    public void Approved_HasNoAvailableTransitions()
     {
         var available = BlockFlowTransitions.AvailableFrom(BlockFlowState.Approved);
 
-        Assert.Equal(2, available.Count);
+        Assert.Empty(available);
+    }
 
-        var land = Assert.Single(available, t => t.Name == "land");
+    // §8a block A: 'land' still exists as a value — the thing CloseSectionUnderExistingLock
+    // applies directly — it is only the AvailableFrom(approved) invocation surface that lost it.
+    [Fact]
+    public void LandTransition_StillExists_ApprovedToLanded_ButIsNotOnAvailableFrom()
+    {
+        var land = BlockFlowTransitions.LandTransition;
+
+        Assert.Equal("land", land.Name);
+        Assert.Same(BlockFlowState.Approved, land.From);
         Assert.Same(BlockFlowState.Landed, land.To);
-
-        var amendmentRequested = Assert.Single(available, t => t.Name == "amendment-requested");
-        Assert.Same(BlockFlowState.Briefed, amendmentRequested.To);
     }
 
     [Fact]

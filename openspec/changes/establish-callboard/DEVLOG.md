@@ -21012,6 +21012,427 @@ obligation and the gate-freshness limit — and the only one where the prose was
 it had landed, three supervisor findings closed, three Product Owner rulings, two spec amendments this
 pass. The section's own subject is when to stop and ask; it took four escalations to build.
 
+## 8a. Provisional approval and section-driven landing
+
+**[architect]** Base: 9dede1f — withdraws `land` as an individually invocable transition and makes
+section close land every approved block in one write; routes supervisor section remediation by finding
+(new card vs. finding-recurred on the owning card); and bounds request-changes verdicts past the second
+to a recorded Product Owner authorisation, with round/history consistency enforced on every
+round-incrementing transition.
+
+### §8a block A brief — landing is section-driven
+
+**[architect]** → @worker. Tasks **8a.1–8a.6, 8a.16**. Block A of four:
+
+- **A (this one)** — 8a.1–8a.6, 8a.16: withdraw `land`, section close lands the section's blocks.
+- **B** — 8a.7–8a.11: section remediation routed by finding (new card vs. `finding-recurred`).
+- **C** — 8a.12–8a.15: verdict retention, the derived count, the two-verdict bound and its authorisation.
+- **D** — 8a.17–8a.18: stored `round` agrees with the transition history.
+
+**Spec** — `specs/work-lifecycle/spec.md`, "Approval is provisional until the section closes"
+(L114–150) and "Reviewer remediation is the same card at a higher round" (L50–72). Read both in full;
+the paragraphs between the scenarios are normative and say *why*, which is what the refusal messages
+have to name.
+
+**What is built today contradicts it.** `BlockFlowTransitions` carries `land` as an ordinary
+`approved → landed` edge on the table `AvailableFrom` returns, and `CardStore.CloseSection` touches
+the section card alone — it reads it, checks it is a section, checks it is not already closed, writes
+`status: closed` plus `closed_by`/`closed_at`, and never looks at a block. So a block reaches `landed`
+by an individually invocable transition, and a section can close over blocks that never landed at all.
+Both halves are the work.
+
+**8a.1 — reviewer remediation is the same card, and only the block loop.** `changes-requested`
+(`in-review → briefed`, `round += 1`) already does the right thing. What is missing is that the
+requirement now *bounds* itself: it governs the block-level loop only, and section-level remediation is
+routed by whether a card already owns the finding — block B's subject. Make that boundary explicit
+where a reader meets it: `changes-requested`'s own doc comment on `BlockFlowTransitions`, and a test
+that a reviewer's `changes-requested` creates no card. Do not build any part of B here.
+
+**8a.2 — `land` is not individually invocable.** Take it off the caller-facing surface: `approved`'s
+entry in `AvailableFrom` keeps `amendment-requested` and loses `land`, and `block transition …
+land` is refused at parse the way `fix-before-land` and `amendment-requested` already are — the "one
+door" discipline those two established. The refusal **names section close as the only door**: a
+message that says `land` is unavailable and stops has told an agent nothing it can act on. The edge
+itself still exists as the thing section close applies; it is the *invocation* that goes.
+
+**8a.3 — section close lands every block in the section, or lands none.** Blocks are found by
+`CardFrontmatter.Section`. Validate the whole set first and write nothing until every block has
+passed; a refusal must leave every card exactly as it found it. Order the writes so the section's own
+`status: closed` is **last** — a close interrupted part-way then leaves the section open and re-runnable,
+and a block already `landed` is skipped rather than refused. Say in the DEVLOG which locking shape you
+chose and why; `RecordFinding`'s acquire-probe-release-retry two-card dance is the nearest precedent,
+and N cards is not two.
+
+**8a.4–8a.6 — the three refusals**, each naming the block and the specific fact:
+
+- **8a.4** any block not `approved`;
+- **8a.5** any block whose `reviewed_state` does not match that block's current state — and the refusal
+  says the remedy is `amendment-requested` and a fresh review. There is no recertification: it was cut,
+  and nothing may re-assert a spent approval over changed content;
+- **8a.6** any block carrying an expected gate whose recorded exit code is non-zero **or absent**.
+  Absent is a refusal in its own right, not a pass by default.
+
+**8a.16 — test that `landed` is unreachable except through the block's section closing.** Not a
+restatement of 8a.2's parse refusal: exercise the doors. Every caller-facing route that could plausibly
+move a block, tried against an `approved` block, leaves it `approved`; section close is the one thing
+that does not.
+
+**Binding, from §8's close:** a refusal names its route by concept *and* by the command that takes it —
+the reader is an agent reading cold. `--claims`/`--limits`/`--site` are repeatable flags. Do not touch
+`tasks.md`, the `Makefile`, or `.claude/`; do not commit.
+
+**Gates:** `make gates` → `GATES_EXIT:0`. Report the exit lines verbatim. → `@reviewer` when green.
+
+**[worker]** Block A (8a.1–8a.6, 8a.16) implemented and self-tested.
+
+- **8a.1** — `changes-requested`'s doc comment on `BlockFlowTransitions` now states the block-level-only
+  boundary explicitly, and `CardBlockTransitionTests` gained an assertion that a reviewer's
+  `changes-requested` creates no second card file in the section's directory.
+- **8a.2** — `land` is off `BlockFlowTransitions.AvailableFrom(Approved)` (which now returns only
+  `amendment-requested`); the edge itself survives as `BlockFlowTransitions.LandTransition`, the one
+  thing `CloseSectionUnderExistingLock` applies directly. `block transition ... land` is refused at
+  parse (`land-via-transition-refused`), naming `section close` as the door, the same "one door" pattern
+  `fix-before-land`/`amendment-requested` already established.
+- **8a.3** — `CloseSectionUnderExistingLock` now discovers every block whose `Section` field names the
+  section's own `Id` (a directory scan via the existing `ReadAllCards`, filtered to `IsBlockCard`),
+  validates the whole set with a new `ValidateBlockForLanding` helper before writing anything, then
+  writes blocks first (skipping any already `landed`) and the section's own `status: closed` last — so
+  an interrupted close is re-runnable, not stuck half-open. A card in the directory that fails to parse
+  at all refuses the whole close (conservative, same discipline `ArchiveChange` already uses — its
+  `section` field can't be checked, so it can't be ruled out as one of this section's blocks).
+- **Locking shape** — the section's own lock is already held (outer `WithLock`). Every candidate block's
+  lock is then acquired in turn, *blocking*, in the ordinal-sorted order `ReadAllCards` already returns
+  (not `RecordFinding`'s acquire-probe-release-retry dance): that dance exists only because
+  `RecordFinding`'s second path is caller-typed and two invocations can spell the same physical file two
+  different ways, so ordinal order can disagree invocation to invocation. Every path this method locks
+  instead comes from `Directory.EnumerateFiles` over one physical directory, the same basis
+  `SupersedeDecisionUnderLocks` already relies on for its own safe ordinal ordering — two calls
+  contending for the same file always compute the same order. No other writer on `CardStore` ever holds
+  a block's lock while blocking on a section's (or vice versa), so blocking acquisition in this fixed
+  order can't cycle against a concurrent writer. A timeout anywhere in the chain releases every lock
+  already acquired and reports which card it lost the race for.
+- **8a.4–8a.6** — three new `CardSectionCloseOutcome` cases (`BlockNotApproved`,
+  `BlockReviewedStateStale`, `BlockGateFailed`/`BlockGateAbsent`), each naming the block id, its file,
+  and the specific fact. "Expected gate" (8a.6) is read as: any label this block has ever recorded a
+  `GateResult` for, checked via the existing `GateStatusOf` at the block's current round —
+  absent-this-round and non-zero-this-round are both refusals, matching `GateStatus`'s own "never ran"
+  vs "ran and failed" distinction.
+- **❓ interpretation flagged for challenge — "reviewed_state does not match that block's current
+  state" (8a.5).** The tool never shells out or resolves a SHA (ADR + established `block approve
+  --state` precedent), so there is nothing the tool itself can compare a block's `reviewed_state`
+  against. I gave `section close` its own required `--state <text>` flag (verified against nothing,
+  same discipline as `block approve`'s), compared ordinally against each block's `reviewed_state`. This
+  is a genuine judgment call, not a certainty — if the intended meaning was something else (e.g. mutual
+  consistency across a section's own blocks, or something keyed off a supervisor verdict's `range_to`),
+  this is the line to push back on.
+- **8a.16** — new `BlockLandUnreachableExceptSectionCloseTests`: every caller-facing door tried against
+  one `approved` block (`block transition ... land`, `block transition ... approve`, `block approve`
+  itself, the domain-layer `CardStore.ApplyBlockTransition` direct call bypassing the CLI, and `block
+  amendment-requested`) either refuses or moves the block somewhere other than `landed`; `section close`
+  is the one door proven to land it.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`). 735
+tests (was 726 before this block; +9 new, plus fixes to existing tests whose fixtures needed a
+`--state`/`currentState` argument or a different exercised transition name after `land`'s withdrawal).
+
+Files touched: `src/Callboard/Cards/{BlockFlowTransitions,CardStore,CardSectionCloseOutcome}.cs`,
+`src/Callboard/Cli/{CommandParser,CommandDispatcher,SectionCloseResult}.cs`, plus test files:
+`tests/Callboard.Tests/{BlockFlowTests,CardBlockTransitionTests,CardSectionCloseTests,
+CardFindingRecordTests,FindingDegradationEvaluatorTests,CommandDispatcherSectionTests,
+CommandDispatcherBlockTransitionTests,CommandDispatcherNitTests,CardCommentImmutabilityTests,
+CardStoreActingRoleTests,BlockLifecycleIntegrationTests}.cs` and new
+`tests/Callboard.Tests/BlockLandUnreachableExceptSectionCloseTests.cs`.
+
+→ @reviewer
+
+### §8a block A — Product Owner ruling: `approved` is terminal, `amendment-requested` is cut
+
+**[architect]** The worker flagged 8a.5's "`reviewed_state` does not match that block's current state"
+as a genuine judgment call and built a caller-supplied `section close --state`. Pushing on it took the
+question up to the Product Owner, and the answer moves more than 8a.5.
+
+**The defect in what was built.** A single section-wide `--state` compared against every block's
+`reviewed_state` is the literal reading of review-certification's "one exact state … including any
+uncommitted working-tree content". Follow it through: block A certified at S1, block B lands and the
+tree is S2, close happens at S2, A refuses. Every section of more than one block would need each
+earlier block re-reviewed at the final state before it could close. With `recertify` cut in §8, the
+only remedy was `amendment-requested` and a full fresh review of each — per block, per sibling landing.
+
+**The ruling, in the Product Owner's own terms:** a block is `approved` by its reviewer and stays
+`approved`; it becomes `landed` when its section lands. An approved block never goes back to work. A
+supervisor requesting changes on a section does not reopen approved blocks — it raises a **new
+remediation block**, which may cover things from one or more blocks, because the supervisor reviews the
+section as a whole and not block by block.
+
+That makes the whole-tree refusal not merely harsh but unsatisfiable: it would refuse a close with no
+remedy available at all. So it goes, and `amendment-requested` — the only edge that reopened a
+task-implementing approved block — goes with it.
+
+**Confirmed against the model, because it looked like a contradiction:** `finding-recurred` also leaves
+`approved`, and it stays. `approved` is terminal for a block that *implements tasks*; a **remediation
+card** can return through `finding-recurred`, because that card *is* the finding and its thread is that
+finding's whole history (8a.8–8a.11, unchanged). The Product Owner confirmed this reading explicitly.
+
+**Spec amendments made (architect, this commit):**
+
+- `work-lifecycle` — the flow diagram loses the `amendment-requested` back-edge and reads `round += 1 on
+  all three`; the transition's paragraph is replaced by a statement that `approved` is terminal for a
+  task-implementing block, naming the remediation-block route and the `finding-recurred` exception.
+- `work-lifecycle`, "Approval is provisional until the section closes" — the `reviewed_state` clause is
+  removed from the close refusal list, and its rationale paragraph is replaced by an explicit **SHALL
+  NOT**: close does not compare `reviewed_state` against the repository. The supervisor's section-wide
+  review is named as what covers the drift instead. `reviewed_state` stays recorded as evidence of what
+  a reviewer certified; it is no longer a gate on landing. The "lands its blocks together" scenario
+  drops its `matching reviewed_state` condition.
+- `process-enforcement` — the requirement **"Landing requires a current certification"** is deleted
+  entire. It was the same rule stated a second time, and §9 has not been built, so this costs no code.
+- `review-certification` — the purpose paragraph no longer says a changed state means the block is
+  "reviewed afresh".
+- `tasks.md` — **8a.5 is deleted, not unticked**, the same disposition §8 gave 8.8–8.12. §8a is now 17
+  tasks.
+
+**What this does not change:** 8a.2's withdrawal of `land`, 8a.3's all-or-none section landing, 8a.4's
+not-`approved` refusal and 8a.6's gate refusals all stand exactly as briefed. §8a blocks B, C and D are
+untouched.
+
+### §8a block A revision brief — cut `amendment-requested`, drop the `reviewed_state` gate
+
+**[architect]** → @worker. Same block A, revised by the ruling above. Read that post first; the spec
+files are already amended, so `work-lifecycle`, `process-enforcement` and `review-certification` are
+now the authority and this brief only says what to do with the code.
+
+**1. Remove the `reviewed_state` comparison at section close, and the flag it needed.**
+`section close --state` goes — it was invented to feed a check that no longer exists, and it is CLI
+surface an agent would otherwise have to be taught. `CardSectionCloseOutcome.BlockReviewedStateStale`
+goes with it, along with its tests. `ValidateBlockForLanding` keeps 8a.4 (not `approved`) and 8a.6
+(gate non-zero or absent) exactly as you built them. Do **not** weaken either: they are the whole of
+what close now checks per block.
+
+**2. Cut `amendment-requested` entirely.** It is not deprecated, it is deleted: the transition on
+`BlockFlowTransitions`, `approved`'s edge in `AvailableFrom` (which now returns `finding-recurred`
+alone once block B adds it — until then, empty, and say so in the doc comment rather than leaving the
+reader to guess), `CardStore.RecordAmendmentRequest`, `CardAmendmentRequestOutcome.cs`, the CLI parse
+arm and dispatcher case, and `CommandDispatcherBlockAmendmentRequestedTests.cs`. Grep for `mendment`
+across `src/` and `tests/` and leave nothing behind — `CardNitRaiseOutcome.cs` and
+`CardSectionCloseOutcome.cs` both mention it in prose, and stale doc comments describing a transition
+that no longer exists are worse than none.
+
+**3. `approved` is terminal — say it where a reader meets it.** `BlockFlowTransitions`'s class doc
+comment currently explains `amendment-requested` as the deliberate reopening of an approved block and
+cites the `recertify` cut as its justification. Replace that with the ruling: a block that implements
+tasks is approved once and waits to land; work found wanting in it becomes a new remediation block in
+the section. Keep the note that a remediation card is the exception, arriving in block B.
+
+**4. 8a.16 grows a case rather than losing one.** Your `BlockLandUnreachableExceptSectionCloseTests`
+tried `block amendment-requested` as one of the doors; that door is gone, so it becomes a different
+assertion — an `approved` block has **no** caller-facing route back to work at all, and `block
+transition … amendment-requested` is refused as an unrecognised transition rather than a withdrawn one.
+That is a stronger statement than the one it replaces, and it is the one the ruling actually makes.
+
+**Do not** touch §8a blocks B, C or D, `tasks.md`, the `Makefile` or `.claude/`. Do not commit. I have
+already amended the specs and deleted 8a.5 from `tasks.md` — leave both alone.
+
+**Gates:** `make gates` → `GATES_EXIT:0`, exit lines quoted verbatim. → `@reviewer` when green.
+
+**[worker]** Block A revised per the ruling and brief above. Self-tested.
+
+- **Reviewed_state gate removed.** `section close --state` is gone; `CardSectionCloseOutcome.BlockReviewedStateStale` is gone; `ValidateBlockForLanding` now checks only not-approved (8a.4) and gate non-zero/absent (8a.6), unchanged from what I originally built. `SectionCloseResult.landedBlockIds` stays — unrelated to the cut check.
+- **`amendment-requested` cut entirely.** `BlockFlowTransitions.AvailableFrom(Approved)` now returns `[]` (empty until block B adds `finding-recurred`); the `AmendmentRequested` transition field, `CardStore.RecordAmendmentRequest`/`RecordAmendmentRequestUnderExistingLock`, `CardAmendmentRequestOutcome.cs`, the `block amendment-requested` CLI subcommand (`ParseBlockAmendmentRequested`, its dispatch case, `RunBlockAmendmentRequested`) and `CommandDispatcherBlockAmendmentRequestedTests.cs` are all deleted. `block transition ... amendment-requested`'s special-cased parse refusal is also gone — it's no longer a named edge anywhere, so it now reaches `ApplyBlockTransitionUnderExistingLock` like any other unrecognised name and comes back as an ordinary `undefined-transition` naming zero available edges from `approved`. Grepped `mendment` across `src/`/`tests/` after: every remaining hit is historical/explanatory prose (why the cut happened), not a dangling reference — confirmed each one names no surviving type or member.
+- **`BlockFlowTransitions`'s class doc comment rewritten** per item 3: `approved` is terminal for a task-implementing block: is approved once and waits to land; a review finding it wanting becomes a new remediation block, not a reopening. Kept the `finding-recurred`-is-the-exception note for block B.
+- **8a.16 strengthened, not shrunk.** `BlockLandUnreachableExceptSectionCloseTests` now has: the `block amendment-requested` subcommand itself refused as unknown (`unknown-subcommand`, before any card is touched), and `block transition ... amendment-requested` proven as an ordinary `undefined-transition` naming `Approved` with zero available edges — the stronger claim the ruling makes. The `land`/`approve`/domain-layer/`section close` cases from the original pass are untouched.
+- **8a.4 and 8a.6 kept exactly as built** — no changes to `BlockNotApproved`/`BlockGateFailed`/`BlockGateAbsent`, their refusal messages, or the locking shape.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`). 728 tests (was 735 after the first pass; -9 from deleting the amendment-requested test file and the stale-reviewed-state/state-required tests, +2 from the strengthened 8a.16 cases and the still-lands-with-an-old-reviewed_state proof).
+
+Files touched (on top of the first pass): deleted `src/Callboard/Cards/CardAmendmentRequestOutcome.cs` and `tests/Callboard.Tests/CommandDispatcherBlockAmendmentRequestedTests.cs`; edited `src/Callboard/Cards/{BlockFlowTransitions,CardStore,CardSectionCloseOutcome,CardNitRaiseOutcome}.cs`, `src/Callboard/Cli/{CommandParser,CommandDispatcher}.cs`, and test files `tests/Callboard.Tests/{BlockFlowTests,CardSectionCloseTests,CardFindingRecordTests,FindingDegradationEvaluatorTests,CommandDispatcherSectionTests,CommandDispatcherBlockTransitionTests,CardStoreActingRoleTests,BlockLifecycleIntegrationTests,BlockLandUnreachableExceptSectionCloseTests,CardCommentImmutabilityTests}.cs`.
+
+→ @reviewer
+
+**[reviewer]** Block A (8a.1–8a.4, 8a.6, 8a.16), post-revision. **Approve.**
+
+Reviewed `git diff HEAD` plus the untracked `BlockLandUnreachableExceptSectionCloseTests.cs`, both
+worker passes, the three amended spec files, and confirmed all gates myself: `BUILD_EXIT:0
+TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` → `GATES_EXIT:0` (728 tests, matching the worker's
+report).
+
+**Correctness and hazard checks:**
+
+- **8a.3, the multi-card landing write.** `CloseSectionUnderExistingLock`
+  (`src/Callboard/Cards/CardStore.cs:1323–1505`) validates every candidate block via
+  `ValidateBlockForLanding` before writing anything (`:1426–1433`), and only then writes blocks
+  first, the section's own `status: closed` last (`:1435–1493`) — a crash mid-write leaves the
+  section open and every already-landed block exactly landed, so a retried close resumes rather
+  than needing to be undone. `CloseSection_ABlockNotApproved_RefusesTheWholeClose_LeavesEveryCardUntouched`
+  (`CardSectionCloseTests.cs`) proves the refusal leaves every card's bytes untouched, not merely
+  that it returns the right outcome. Lock acquisition (`:1381–1405`) is blocking, in the fixed
+  ordinal order `ReadAllCards` returns for one physical directory (`CardStore.cs:3372–3375`
+  confirms `OrderBy(..., StringComparer.Ordinal)` over `Directory.EnumerateFiles`), against one
+  shared deadline; a timeout returns `ToolFailure` and the `finally` at `:1495–1501` releases every
+  lock already acquired regardless of which branch returned. The argument that this fixed order
+  can't deadlock (no other writer holds a block's lock while blocking on a section's, or vice
+  versa) is sound and documented. `CloseSection_ABlockAlreadyLanded_IsSkipped_NotRefused` proves
+  the idempotent-retry half of the re-runnability claim. One gap: unlike `RecordFinding`'s own
+  `CardFindingRecordConcurrencyTests.cs` (a real multi-thread stress test that caught a genuine
+  lock-ordering bug in that verb), there is no concurrent-invocation test here proving the no-
+  deadlock argument under real contention — only sequential unit tests. Given the precedent this
+  codebase already set for a comparably shaped multi-lock write, that is a gap worth closing, not a
+  reason to withhold approval: nit below.
+- **8a.2, `land` withdrawn from the invocable surface.** `AvailableFrom(Approved)` returns `[]`
+  (`BlockFlowTransitions.cs:117`); `land` is refused at parse
+  (`CommandParser.cs:198–205`) naming `section close` as the door and what it does ("lands every
+  approved block in the section as one operation") — satisfies the "one door" discipline and names
+  the remedy by command. `BlockLandUnreachableExceptSectionCloseTests` exercises the CLI door, the
+  `block approve`/`block transition ... approve` doors, and the domain-layer
+  `CardStore.ApplyBlockTransition` call directly, proving the closure is structural
+  (`BlockFlowTransitions.AvailableFrom` itself, not a CLI-layer guard a bypassing caller could
+  route around) — exactly what 8a.16 asked for.
+- **8a.4/8a.6, refusal completeness.** `ValidateBlockForLanding` (`CardStore.cs:1528–1568`) checks
+  not-approved then gate-non-zero-or-absent, in that order; a block already `landed` is never
+  re-validated (`:1543–1546`), matching work-lifecycle's "skipped rather than refused". `BlockGateAbsent`
+  fires correctly when a gate has evidence in an earlier round but nothing in the current one
+  (`GateStatusOf`'s "current round only is evidence" rule) — proven by
+  `CloseSection_ABlockWithAnAbsentGateThisRound_Refuses_NotAPassByDefault`. Refusal messages
+  (`CommandDispatcher.cs:1306–1317`) name the block id, its file, the actual state/exit
+  code/label, and the remedy by command (`"Record it with 'block gate' before closing"`). `CardSectionCloseOutcome`
+  stays a closed union with no `_` arm — every `Match` call site (11 cases) updated across the diff.
+- **`amendment-requested` removal.** Grepped `mendment` across `src/`/`tests/` myself: every
+  remaining hit is historical prose explaining the cut, naming no surviving type or member — confirmed
+  independently, not just taken on the worker's word. `CardAmendmentRequestOutcome.cs` and
+  `CommandDispatcherBlockAmendmentRequestedTests.cs` are both gone. `block transition ...
+  amendment-requested` correctly degrades to an ordinary `undefined-transition` naming zero
+  available edges (`BlockLandUnreachableExceptSectionCloseTests.cs:106–122`) — the stronger claim
+  the ruling actually makes, not merely a restatement of the old special-cased refusal.
+- **Specs vs. code, both directions.** `work-lifecycle`'s diagram, its `approved`-is-terminal
+  paragraph, and its "SHALL NOT compare `reviewed_state`" clause all match what
+  `ValidateBlockForLanding` actually checks (two conditions, no third). `process-enforcement`'s
+  "Landing requires a current certification" requirement is deleted entire, matching the code
+  having no such check anywhere. `review-certification`'s purpose paragraph no longer claims a
+  changed state means "reviewed afresh" — matches `approved` having no route back. No drift found
+  either direction.
+- **Scope discipline.** No `finding-recurred`, no remediation-card creation, no verdict retention,
+  no `round`/history reconciliation — blocks B/C/D's territory — anywhere in the diff. `tasks.md`
+  and the `Makefile` are untouched by the worker (only the architect's own prior edit deleting
+  8a.5 is present). 8a.5 is absent from `tasks.md` as directed, not unticked.
+
+**Nits (non-blocking):**
+
+1. No concurrency/stress test for `CloseSectionUnderExistingLock`'s N-lock acquisition, unlike the
+   precedent `CardFindingRecordConcurrencyTests.cs` sets for a comparably shaped multi-lock write in
+   this same codebase. The sequential tests prove the logic; nothing here proves the no-deadlock
+   argument under real contention. Worth a small addition before this shape gets more callers.
+2. `CardNitRaiseOutcome.cs:11` — the doc-comment line listing refusal-shaped cases
+   (`NotABlockCard`, `CardNotFound`, `NotUnderReview`, `LayoutMismatch`) reads as one long
+   unwrapped line after the `amendment-requested` reference was trimmed out of the sentence above
+   it; cosmetic only, `make format` passes.
+
+### §8a block A — architect disposition of the reviewer's two nits
+
+**[architect]** `Approve` taken, gates verified independently by the reviewer. Both nits are
+`fix-before-land`, not deferred:
+
+1. **No concurrency test for the N-lock section-close write.** Taken because it lands on this block's
+   one real hazard. Every other multi-lock verb in this codebase has one — `RecordFinding`'s two-card
+   write has `CardFindingRecordConcurrencyTests` — and section close acquires more locks than any of
+   them. An all-or-none guarantee asserted only against a quiet tree is asserted against the case that
+   was never in doubt.
+2. **The long doc-comment line in `CardNitRaiseOutcome.cs`** left by the `amendment-requested` trim.
+   Cosmetic, and a one-line fix while the file is open.
+
+**[worker]** Both fix-before-land nits dispositioned.
+
+1. **New `tests/Callboard.Tests/CardSectionCloseConcurrencyTests.cs`**, three tests, same precedent
+   `CardFindingRecordConcurrencyTests` set for `RecordFinding`'s two-card write:
+   - `CloseSection_WhenAMidOrdinalBlockLockIsHeldElsewhere_TimesOut_ReleasesEveryOtherLock_WritesNothing`
+     — three blocks in ordinal order `b-1 < b-2 < b-3`; `b-2`'s lock is planted externally (held by
+     the test process itself, so `CardLock`'s liveness check correctly refuses to break it). The
+     call acquires `b-1`'s lock, blocks on `b-2`'s for the whole timeout, and never attempts `b-3`'s.
+     Proves: `b-1`'s lock is released by the `finally` even though the call never reached its
+     decide-and-write phase; the section and both untouched blocks are byte-identical afterward
+     (all-or-none holds for a lock-timeout failure, not only a validation refusal); and a retried
+     close, once the plant is released, lands all three.
+   - `CloseSection_WhenAContendedBlockLockIsReleasedPartway_TheWaitingCallSucceeds` — a block's lock
+     held briefly and released inside the call's own budget lets the blocking (not release-and-
+     retry) acquisition make real progress, proving it genuinely waits rather than failing fast on
+     first contention.
+   - `CloseSection_ManyIndependentSectionsClosedSimultaneously_AllSucceed_NoCorruption_NoDeadlock` —
+     24 independent sections (3 blocks each), all closed at once via a shared start barrier (the
+     same "every round starts simultaneously" shape as the finding-record precedent's stress test),
+     asserting every round lands cleanly, completes well inside a bound that would catch unexpected
+     cross-round contention, and no card is corrupted. Independent sections share no files, so this
+     exercises the real file-lock machinery under genuine thread-pool load rather than proving
+     anything about deliberate contention (that's the two tests above).
+2. **`CardNitRaiseOutcome.cs:11` rewrapped** — no content change, just line width; `dotnet format
+   --verify-no-changes` still passes.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`).
+731 tests (was 728; +3, the new concurrency file).
+
+→ @reviewer
+
+**[reviewer]** Delta re-audit (the two `fix-before-land` nits) — **Approve.** Block A's approval stands.
+
+Verified independently: `make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` →
+`GATES_EXIT:0`, 731 tests, matching the worker's report. Also ran the three new tests in isolation
+five times back to back (`dotnet test --filter FullyQualifiedName~CardSectionCloseConcurrencyTests`)
+— consistently green, ~1.5–1.7s each run, no variance suggesting a near-miss timing window.
+
+**Nit 2 (doc-comment rewrap)** — `CardNitRaiseOutcome.cs:11–14`: clean, no content change, reads
+correctly now that the `amendment-requested` clause is gone.
+
+**Nit 1 (concurrency tests)**, the one asked to be checked hardest:
+
+- **`CloseSection_WhenAMidOrdinalBlockLockIsHeldElsewhere_TimesOut_ReleasesEveryOtherLock_WritesNothing`
+  genuinely observes release, not inferred success.** After the timed-out `CloseSection` call
+  returns, the test calls `CardLock.Acquire` on `b-1`'s and `b-3`'s paths itself and asserts each
+  succeeds — a direct re-acquisition, not "a later `CloseSection` retry succeeded, therefore the
+  lock must have been free." That is exactly what was asked for. Traced the mechanics against
+  `CardLock.Acquire` (`CardLock.cs:218–252`): the deadline clamp in `CloseSectionUnderExistingLock`
+  means `b-1` always gets at least one uncontended `TryCreate` attempt regardless of how much of
+  the 400ms budget elapsed before its turn, so the test's timing assumption is about `b-2`
+  eventually timing out (it is planted for 30s, so it always will) — not about hitting a precise
+  window. Ran it 5x with no flake.
+- **The blocking-vs-fail-fast test genuinely waits, and can't complete early.** The
+  `Assert.False(closeTask.IsCompleted, ...)` after `Task.Delay(300ms)` is not a timing race — the
+  planted lock is a real file on disk held by this same live process until `plantedLock.Dispose()`
+  runs, strictly after the delay, so `CloseSection` cannot physically complete before then
+  regardless of machine speed. No hang risk either: `CloseSection`'s own lock timeout (5s) bounds
+  the worst case even if something were wrong.
+- **The stress test's barrier can't strand a participant.** All 24 tasks call
+  `startBarrier.SignalAndWait()` as their first statement, before anything that could throw, so no
+  task can fail to arrive at the barrier; `ThreadPool.SetMinThreads(rounds + 4, ...)` (restored in
+  `finally`) avoids the starvation case that would otherwise delay scheduling 24 tasks at once —
+  the same mitigation `CardFindingRecordConcurrencyTests` already uses for its own, larger barrier.
+  Sections are fully independent (disjoint directories), so no two tasks ever contend on the same
+  file — the 15s bound is generous slack for scheduling overhead, not a correctness dependency.
+- **One residual concern, non-blocking:** the two direct re-acquisition timeouts in the first test
+  (`CardLock.Acquire(block1Path, TimeSpan.FromMilliseconds(500))` and the same for `block3Path`)
+  are tighter than this codebase's own established margin for the identical kind of check —
+  `CardFindingRecordConcurrencyTests.cs:281` gives its analogous post-hoc probe a 5-second budget
+  against the same uncontended-acquisition claim. 500ms is very likely fine (an uncontended
+  `TryCreate` doesn't sleep before its first attempt at all — see `CardLock.cs:227–230`), and five
+  local runs found no variance, but I could not load-test this sandbox's CPU to actually stress it
+  (`nice`/background-load commands were blocked by the sandbox itself). Given the precedent this
+  same file already deviates from, I'd widen both to something in the 2–5s range before this file
+  sees less scrutiny than it's getting right now — worth a follow-up nit, not a reason to withhold
+  approval today.
+
+No hang risk found in any of the three tests: every wait is bounded by either a `CardLock` timeout
+passed explicitly or a `Task.Delay` with a fixed duration, and the barrier cannot strand a
+participant. All three tests observe real state (bytes on disk, a re-acquired lock, task
+completion against a physically-held file) rather than inferring correctness from a later
+outcome.
+
+**[worker]** Residual nit dispositioned: both direct lock re-acquisition budgets in
+`CloseSection_WhenAMidOrdinalBlockLockIsHeldElsewhere_TimesOut_ReleasesEveryOtherLock_WritesNothing`
+widened from 500ms to 5s, matching `CardFindingRecordConcurrencyTests.cs:281`'s precedent for the
+same kind of check (an uncontended re-acquisition proving a lock was released, not a property that
+gets weaker with a longer budget). No other change.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (`make gates` → `GATES_EXIT:0`).
+731 tests, unchanged in count.
+
+→ @reviewer
+
 ## NEXT
 
 **Resume point: §8a (18 tasks, nothing built).** Working tree clean, nothing in flight, no part-built

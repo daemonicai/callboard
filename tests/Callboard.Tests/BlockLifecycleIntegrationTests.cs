@@ -27,6 +27,7 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
 
     private readonly string _directory;
     private readonly string _path;
+    private readonly string _sectionPath;
 
     public BlockLifecycleIntegrationTests()
     {
@@ -35,9 +36,17 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
 
         var frontmatter = new CardFrontmatter(
             "B-0900", CardKind.Block, "Whole-lifecycle proof", BlockFlowState.Drafting.ToWireString(),
-            CardOwner.Architect, CardScope.Change, "5", T0, T0);
+            CardOwner.Architect, CardScope.Change, "S-0900", T0, T0);
         var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, []);
         File.WriteAllText(_path = Path.Combine(_directory, "b-0900.md"), CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        // §8a block A: landing is section-driven — the section this block belongs to, so the run's
+        // own "land" step below can go through CloseSection, the one door that remains.
+        var sectionFrontmatter = new CardFrontmatter(
+            "S-0900", CardKind.Section, "Whole-lifecycle proof's section", SectionFlowState.Open.ToWireString(),
+            CardOwner.Architect, CardScope.Change, string.Empty, T0, T0);
+        var sectionCard = new CardFile(sectionFrontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
+        File.WriteAllText(_sectionPath = Path.Combine(_directory, "s-0900.md"), CardFileWriter.Serialize(sectionCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     public void Dispose()
@@ -131,14 +140,21 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             _root, _path, "submit-for-review", CardOwner.Worker, t = t.AddMinutes(1), null, TimeSpan.FromSeconds(5), ChangeName));
         Assert.Equal("in-review", inReview2.Frontmatter.Status);
 
-        var approved = AssertApplied(CardStore.ApplyBlockTransition(
-            _root, _path, "approve", CardOwner.Reviewer, t = t.AddMinutes(1), null, TimeSpan.FromSeconds(5), ChangeName));
+        // approved via the one real door, RecordApproval — the generic ApplyBlockTransition path
+        // never stamps reviewed_state, and §8a block A's landing check needs one recorded.
+        var approved = AssertApproved(CardStore.RecordApproval(
+            _root, _path, "final-reviewed-state", ["Behaves correctly end to end."], [], CardOwner.Reviewer, t = t.AddMinutes(1), TimeSpan.FromSeconds(5), ChangeName)).Card;
         Assert.Equal("approved", approved.Frontmatter.Status);
         Assert.Equal(Base, approved.BlockFields.Base);
         Assert.Equal(2, approved.BlockFields.Round);
+        Assert.Equal("final-reviewed-state", approved.BlockFields.ReviewedState);
 
-        var landed = AssertApplied(CardStore.ApplyBlockTransition(
-            _root, _path, "land", CardOwner.Architect, t = t.AddMinutes(1), null, TimeSpan.FromSeconds(5), ChangeName));
+        // landed via the one door that remains, §8a block A: the section closing. §8a block A's
+        // revision removed the reviewed_state comparison entirely, so no --state-equivalent value
+        // is needed here any more.
+        var sectionClosed = AssertClosed(CardStore.CloseSection(
+            _root, _sectionPath, CardOwner.Architect, t = t.AddMinutes(1), TimeSpan.FromSeconds(5), ChangeName));
+        var landed = Assert.Single(sectionClosed.LandedBlocks);
         Assert.Equal("landed", landed.Frontmatter.Status);
 
         var closed = AssertApplied(CardStore.ApplyBlockTransition(
@@ -199,4 +215,29 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
         result.Match<CardFile>(
             onSuccess: success => success.Card,
             onFailure: failure => throw new Xunit.Sdk.XunitException($"expected parse success, got failure: {failure.Reason}"));
+
+    private static CardApprovalOutcome.Approved AssertApproved(CardApprovalOutcome outcome) =>
+        outcome.Match(
+            onApproved: static approved => approved,
+            onRoleNotPermitted: static r => throw new Xunit.Sdk.XunitException($"expected Approved, got RoleNotPermitted({r.AttemptedRole})"),
+            onUndefinedTransition: static u => throw new Xunit.Sdk.XunitException($"expected Approved, got UndefinedTransition from {u.CurrentState.ToWireString()}"),
+            onUndispositionedNits: static u => throw new Xunit.Sdk.XunitException($"expected Approved, got UndispositionedNits({string.Join(", ", u.NitIds)})"),
+            onNotABlockCard: static n => throw new Xunit.Sdk.XunitException($"expected Approved, got NotABlockCard({n.Kind.ToWireString()})"),
+            onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Approved, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Approved, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Approved, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Approved, got ToolFailure: {toolFailure.Reason}"));
+
+    private static CardSectionCloseOutcome.Closed AssertClosed(CardSectionCloseOutcome outcome) =>
+        outcome.Match(
+            onClosed: static closed => closed,
+            onAlreadyClosed: static already => throw new Xunit.Sdk.XunitException($"expected Closed, got AlreadyClosed: '{already.FilePath}'"),
+            onNotASectionCard: static n => throw new Xunit.Sdk.XunitException($"expected Closed, got NotASectionCard({n.Kind.ToWireString()})"),
+            onBlockNotApproved: static n => throw new Xunit.Sdk.XunitException($"expected Closed, got BlockNotApproved({n.BlockId}, {n.ActualState})"),
+            onBlockGateFailed: static f => throw new Xunit.Sdk.XunitException($"expected Closed, got BlockGateFailed({f.BlockId}, {f.GateLabel}={f.ExitCode})"),
+            onBlockGateAbsent: static a => throw new Xunit.Sdk.XunitException($"expected Closed, got BlockGateAbsent({a.BlockId}, {a.GateLabel})"),
+            onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Closed, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Closed, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Closed, got CardCorrupt: {corrupt.Reason}"),
+            onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Closed, got ToolFailure: {toolFailure.Reason}"));
 }

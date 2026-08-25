@@ -547,17 +547,16 @@ public sealed class CommandDispatcherNitTests
         Assert.Equal("undispositioned-nits", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
-    // §8 remediation blocker 2: the guard originally checked only 'transition.From == InReview',
-    // so 'approved's own exit ('land') carried no nit check at all. §8's second remediation then
-    // bound 'nit raise' to 'in-review', so this state — 'approved' carrying a live undispositioned
-    // nit — is no longer reachable through the tool's own writers: RecordApprovalUnderExistingLock
-    // already refuses to certify a card with a live nit, and RaiseNitUnderExistingLock now refuses
-    // to raise one against anything but an in-review card. The card is a plain, git-committed file a
-    // human can hand-edit directly (ADR-0003), so the comment is seeded straight into the card file
-    // rather than through 'nit raise' — this is exactly the by-hand path the guard still has to
-    // cover, and the guard itself (this test's subject) is unchanged.
+    // §8 remediation blocker 2 (superseded by §8a block A): the guard originally checked only
+    // 'transition.From == InReview', so 'approved's own exit ('land') carried no nit check at all.
+    // §8a block A then withdrew 'land' from 'block transition' entirely — it refuses outright at
+    // parse now, before any card is even read, so this route can no longer reach
+    // ApplyBlockTransitionUnderExistingLock's nit guard at all. The only surviving route from
+    // 'approved' to 'landed' is 'section close' (§8a block A), which this test does not exercise —
+    // see BlockLifecycleIntegrationTests for that route's own proof. Kept as a regression lock on
+    // the parse-time refusal itself, byte-identical card included.
     [Fact]
-    public void BlockTransition_Land_UndispositionedNit_Refuses_AndLeavesTheCardByteIdentical()
+    public void BlockTransition_Land_IsRefusedAtParse_BeforeAnyNitCheckRuns_AndLeavesTheCardByteIdentical()
     {
         using var repo = new TempGitRepo();
         const string nitId = "nit-hand-edited-0020";
@@ -576,8 +575,7 @@ public sealed class CommandDispatcherNitTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
-        Assert.Equal("undispositioned-nits", refusal.GetProperty("code").GetString());
-        Assert.Contains(nitId, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Equal("land-via-transition-refused", refusal.GetProperty("code").GetString());
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 

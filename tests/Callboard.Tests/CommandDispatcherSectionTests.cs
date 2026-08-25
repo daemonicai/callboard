@@ -237,6 +237,26 @@ public sealed class CommandDispatcherSectionTests
         Assert.Equal("card-not-found", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
+    // §8a block A end to end through the CLI: an approved block in the section lands when the
+    // section closes, and the envelope reports its id.
+    [Fact]
+    public void SectionClose_LandsApprovedBlocksInTheSection_AndReportsTheirIds()
+    {
+        using var repo = new TempGitRepo();
+        var sectionPath = WriteInitialSectionCard(repo.Path, "s-0008", "S-0008");
+        WriteApprovedBlockCard(repo.Path, "b-0004", "B-0004", "S-0008", "current-state");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["section", "close", sectionPath, "--role", "architect", "--change", ChangeName], output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        var landedIds = result.GetProperty("landedBlockIds").EnumerateArray().Select(static e => e.GetString()).ToArray();
+        Assert.Equal(["B-0004"], landedIds);
+    }
+
     [Fact]
     public void SectionStatus_ReadingAnOpenSection_Succeeds_AndReportsItsOwnFields()
     {
@@ -328,6 +348,19 @@ public sealed class CommandDispatcherSectionTests
         var frontmatter = new CardFrontmatter(
             id, CardKind.Block, "Title", "building", CardOwner.Worker, CardScope.Change, "5", FixedNow, FixedNow);
         var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    private static string WriteApprovedBlockCard(string repoRoot, string fileStem, string id, string sectionId, string reviewedState)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Block, "Title", "approved", CardOwner.Architect, CardScope.Change, sectionId, FixedNow, FixedNow);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: reviewedState, Tasks: ["5.1"], Round: null, BlockedBy: [], GateResults: []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
     }

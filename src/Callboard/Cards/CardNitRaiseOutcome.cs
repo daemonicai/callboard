@@ -8,11 +8,11 @@ namespace Callboard.Cards;
 /// of that shared surface (comments that are not nits, ownership handovers) has no notion of
 /// "under review" at all, so folding <see cref="NotUnderReview"/> into the shared union would force
 /// every unrelated caller's exhaustive switch to carry a case that can never apply to it — the same
-/// reasoning that already split <see cref="CardApprovalOutcome"/> and
-/// <see cref="CardAmendmentRequestOutcome"/> out of the shared surface for their own verb-specific
-/// facts. <see cref="NotABlockCard"/>, <see cref="CardNotFound"/>, <see cref="NotUnderReview"/> and
-/// <see cref="LayoutMismatch"/> are refusal-shaped (caller-correctable); <see cref="CardCorrupt"/>
-/// and <see cref="ToolFailure"/> are not — a caller wired over this type (see
+/// reasoning that already split <see cref="CardApprovalOutcome"/> out of the shared surface for
+/// its own verb-specific facts. <see cref="NotABlockCard"/>, <see cref="CardNotFound"/>,
+/// <see cref="NotUnderReview"/> and <see cref="LayoutMismatch"/> are refusal-shaped
+/// (caller-correctable); <see cref="CardCorrupt"/> and <see cref="ToolFailure"/> are not — a
+/// caller wired over this type (see
 /// <see cref="Callboard.Cli.CommandDispatcher.RunNitRaise"/>) must route those two to a
 /// tool-failure exit, never a refusal.
 /// </summary>
@@ -44,8 +44,7 @@ internal abstract record CardNitRaiseOutcome
     /// <see cref="Callboard.Cli.CommandDispatcher.RunNitRaise"/> already resolves the reference
     /// against <see cref="CardStore.IsBlockCard"/>, because that resolution happens before the
     /// lock is taken and so is not itself race-proof (the same reasoning <see cref="
-    /// CardApprovalOutcome.NotABlockCard"/> and <see cref="CardAmendmentRequestOutcome.
-    /// NotABlockCard"/> already apply). Refusal-shaped.</summary>
+    /// CardApprovalOutcome.NotABlockCard"/> already applies). Refusal-shaped.</summary>
     internal sealed record NotABlockCard(CardKind Kind) : CardNitRaiseOutcome
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>

@@ -167,14 +167,18 @@ public sealed class CardBlockTransitionTests : IDisposable
         Assert.Equal("commit-abc", stillRecorded.BlockFields.Base);
     }
 
-    // 5.3: remediation is the same card at an incremented round, on the same identity, and ticks
-    // no task — there is no task-completion field on BlockCardFields at all for this to flip, so
-    // this asserts the one thing that could otherwise silently regress: Tasks survives unchanged.
+    // 5.3 / §8a block A (work-lifecycle: "Reviewer remediation is the same card at a higher
+    // round" — "This governs the block-level review loop only"): remediation is the same card at
+    // an incremented round, on the same identity, ticks no task — there is no task-completion
+    // field on BlockCardFields at all for this to flip, so this asserts the one thing that could
+    // otherwise silently regress: Tasks survives unchanged — and it creates no second card, the
+    // §8a block A boundary a reviewer's own changes-requested must not cross into.
     [Fact]
-    public void ApplyBlockTransition_ChangesRequested_ReturnsToBriefed_IncrementsRound_AndLeavesTasksUntouched()
+    public void ApplyBlockTransition_ChangesRequested_ReturnsToBriefed_IncrementsRound_LeavesTasksUntouched_AndCreatesNoCard()
     {
         var path = WriteInitialBlockCard("b-0007", "B-0007", BlockFlowState.Drafting, tasks: ["5.2", "5.3", "5.5"]);
         var originalId = AssertParseSuccess(CardStore.ReadCard(path)).Frontmatter.Id;
+        var cardFilesBefore = Directory.EnumerateFiles(_directory, "*.md").ToArray();
 
         AssertApplied(CardStore.ApplyBlockTransition(_root, path, "brief", CardOwner.Architect, Created, "commit-abc", TimeSpan.FromSeconds(5), ChangeName));
         AssertApplied(CardStore.ApplyBlockTransition(_root, path, "claim", CardOwner.Worker, Created.AddHours(1), null, TimeSpan.FromSeconds(5), ChangeName));
@@ -190,6 +194,9 @@ public sealed class CardBlockTransitionTests : IDisposable
         Assert.Equal(originalId, read.Frontmatter.Id);
         Assert.Equal(["5.2", "5.3", "5.5"], read.BlockFields.Tasks);
         Assert.Equal(4, read.Transitions.Count);
+
+        // §8a block A: no second card was created as a side effect of the reviewer's own return.
+        Assert.Equal(cardFilesBefore, Directory.EnumerateFiles(_directory, "*.md").ToArray());
     }
 
     [Fact]

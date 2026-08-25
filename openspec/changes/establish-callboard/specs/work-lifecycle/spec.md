@@ -16,24 +16,25 @@ drafting ──▶ briefed ──▶ building ──▶ in-review ──┬─�
                 ▲                                 │        │
                 ├──── changes-requested ◀─────────┤        │
                 ├──── fix-before-land ◀───────────┘        │
-                ├──── amendment-requested ◀────────────────┤
                 └──── finding-recurred ◀───────────────────┘
-                            (round += 1 on all four)
+                           (round += 1 on all three)
 ```
 
-`changes-requested` and `fix-before-land` both leave `in-review`; `amendment-requested` and
-`finding-recurred` both leave `approved`. They are distinct named transitions because the name is
-recorded in the card's history — see `review-certification` for what raises each.
+`changes-requested` and `fix-before-land` both leave `in-review`; `finding-recurred` leaves
+`approved`. They are distinct named transitions because the name is recorded in the card's history —
+see `review-certification` for what raises each.
 
 `finding-recurred` is a supervisor returning a remediation card whose finding it reports still
 unresolved; it is the only transition a supervisor drives directly, and it never targets a
 task-implementing block.
 
-`amendment-requested` is the architect deliberately reopening an approved block. It is the **only**
-route from `approved` back to work that is not a supervisor's recurrence, and it is invoked on purpose
-rather than falling out of a refusal. An approval certifies one exact state; any change to that state
-spends it, and this transition is how the block is handed back for the fresh review that change
-requires.
+`approved` is terminal for a block that implements tasks. Once a reviewer has certified such a block it
+does not go back to work: it waits, and it lands when its section closes. No transition reopens it —
+not the architect's, not the supervisor's. Work found wanting in an approved block becomes a new
+remediation block in that section, because a supervisor reviews the section as a whole and its findings
+routinely span more than one block, belonging to no single block's card. The one card that can return
+from `approved` is a remediation card, through `finding-recurred`, because that card *is* the finding
+and its thread is that finding's whole history.
 
 Every transition SHALL record the acting role and the time it occurred.
 
@@ -121,16 +122,16 @@ establishes.
 section closing, and closing a section SHALL land every block in that section as one operation or refuse
 and land none.
 
-Closing a section SHALL refuse where any block in it is not `approved`, where any block's
-`reviewed_state` does not match that block's current state, or where any block carries an expected gate
-whose recorded exit code is non-zero or absent.
+Closing a section SHALL refuse where any block in it is not `approved`, or where any block carries an
+expected gate whose recorded exit code is non-zero or absent.
 
-The `reviewed_state` refusal is the provisional window's whole point. A block can sit `approved` for a
-long time while its siblings land, and a sibling touching its files leaves its certification describing a
-state that no longer exists. The system SHALL NOT offer any means of re-asserting that certification over
-the changed state: the block SHALL be reopened through `amendment-requested` and reviewed afresh. A
-change made by another block is precisely the case where a fix confined to one place breaks something in
-another and nobody notices, which is what a full review exists to catch.
+Closing a section SHALL NOT compare any block's `reviewed_state` against the state of the repository at
+close. A block can sit `approved` for a long time while its siblings land, and a sibling touching its
+files leaves its certification describing a state that no longer exists — but the remedy is not to
+reopen that block. The supervisor's review of the section as a whole, at the state the section actually
+closes in, is what covers the difference: it is the review that sees a fix confined to one block break
+something in another, which no block-local review can see. `reviewed_state` stays recorded as evidence
+of what each reviewer certified. It is not a gate on landing.
 
 #### Scenario: An approved block is not yet landed
 
@@ -139,8 +140,7 @@ another and nobody notices, which is what a full review exists to catch.
 
 #### Scenario: Section close lands its blocks together
 
-- **WHEN** a supervisor closes a section whose blocks are all `approved` with matching `reviewed_state`
-  and green expected gates
+- **WHEN** a supervisor closes a section whose blocks are all `approved` with green expected gates
 - **THEN** every block in that section moves to `landed`, recording the acting role and the time
 
 #### Scenario: One unlandable block refuses the whole close

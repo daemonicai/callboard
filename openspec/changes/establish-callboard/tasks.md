@@ -87,12 +87,11 @@
 
 ## 8a. Provisional approval and section-driven landing
 
-- [ ] 8a.1 Scope reviewer remediation to the same card, distinct from section remediation
-- [ ] 8a.2 Refuse `land` as an individually invocable transition, naming section close as the only door
-- [ ] 8a.3 Implement section close landing every block in the section as one write, or landing none
-- [ ] 8a.4 Refuse section close where any block is not `approved`
-- [ ] 8a.5 Refuse section close where any block's `reviewed_state` does not match its current state
-- [ ] 8a.6 Refuse section close on any block carrying a non-zero or absent expected gate
+- [x] 8a.1 Scope reviewer remediation to the same card, distinct from section remediation
+- [x] 8a.2 Refuse `land` as an individually invocable transition, naming section close as the only door
+- [x] 8a.3 Implement section close landing every block in the section as one write, or landing none
+- [x] 8a.4 Refuse section close where any block is not `approved`
+- [x] 8a.6 Refuse section close on any block carrying a non-zero or absent expected gate
 - [ ] 8a.7 Implement a first-time supervisor finding creating a new remediation block card, ticking nothing
 - [ ] 8a.8 Implement `finding-recurred` returning the owning card to `briefed` at a higher round
 - [ ] 8a.9 Refuse a recurrence that would create a second card for a finding a card already owns
@@ -102,7 +101,7 @@
 - [ ] 8a.13 Refuse a third or subsequent `request-changes` verdict absent a recorded Product Owner authorisation
 - [ ] 8a.14 Derive the verdict count from the record at request time, never storing it
 - [ ] 8a.15 Implement recording that authorisation, naming the section and the reason
-- [ ] 8a.16 Test that `landed` is unreachable except through the block's section closing
+- [x] 8a.16 Test that `landed` is unreachable except through the block's section closing
 - [ ] 8a.17 Refuse acting on a block whose stored `round` disagrees with its transition history, reconciling neither
 - [ ] 8a.18 Test that every round-incrementing transition advances the field and the history in one write
 
