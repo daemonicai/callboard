@@ -106,7 +106,6 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
     public void ApplyBlockTransition_FixBeforeLand_ThroughTheGenericApplierDirectly_IsUndefined_RoundAndHistoryUnchanged()
     {
         var path = WriteBlockCard("b-0008", "B-0008", BlockFlowState.InReview, round: 1, transitions: []);
-        var before = File.ReadAllBytes(path);
 
         var outcome = CardStore.ApplyBlockTransition(
             _root, path, "fix-before-land", CardOwner.Architect, Created.AddHours(1), baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
@@ -114,11 +113,12 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
         var undefined = Assert.IsType<CardBlockTransitionOutcome.UndefinedTransition>(outcome);
         Assert.Equal(BlockFlowState.InReview, undefined.CurrentState);
         Assert.DoesNotContain(undefined.Available, t => t.Name == "fix-before-land");
-        Assert.Equal(before, File.ReadAllBytes(path));
 
+        // Round and history are unchanged; the refusal itself is now recorded (§9 block A).
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(1, read.BlockFields.Round);
         Assert.Empty(read.Transitions);
+        Assert.Single(read.Refusals);
     }
 
     // 8a.18 remediation — same shape as the test above, for 'finding-recurred' from 'approved'.
@@ -126,7 +126,6 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
     public void ApplyBlockTransition_FindingRecurred_ThroughTheGenericApplierDirectly_IsUndefined_RoundAndHistoryUnchanged()
     {
         var path = WriteApprovedRemediationCard("b-0009", "B-0009", "S-0001", "finding-y001", round: 1, transitions: []);
-        var before = File.ReadAllBytes(path);
 
         var outcome = CardStore.ApplyBlockTransition(
             _root, path, "finding-recurred", CardOwner.Supervisor, Created.AddHours(1), baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
@@ -134,11 +133,12 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
         var undefined = Assert.IsType<CardBlockTransitionOutcome.UndefinedTransition>(outcome);
         Assert.Equal(BlockFlowState.Approved, undefined.CurrentState);
         Assert.Empty(undefined.Available);
-        Assert.Equal(before, File.ReadAllBytes(path));
 
+        // Round and history are unchanged; the refusal itself is now recorded (§9 block A).
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(1, read.BlockFields.Round);
         Assert.Empty(read.Transitions);
+        Assert.Single(read.Refusals);
     }
 
     // 8a.18 — finding-recurred advances round and history in the same write.
@@ -167,7 +167,6 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
     public void ApplyBlockTransition_StoredRoundAheadOfHistory_Refuses_NamesBothFigures_AltersNeither()
     {
         var path = WriteBlockCard("b-0004", "B-0004", BlockFlowState.InReview, round: 3, transitions: []);
-        var before = File.ReadAllBytes(path);
 
         var outcome = CardStore.ApplyBlockTransition(
             _root, path, "changes-requested", CardOwner.Reviewer, Created.AddHours(1), baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
@@ -175,7 +174,14 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
         var disagreement = Assert.IsType<CardBlockTransitionOutcome.RoundDisagreesWithHistory>(outcome);
         Assert.Equal(3, disagreement.StoredRound);
         Assert.Equal(1, disagreement.ExpectedRound);
-        Assert.Equal(before, File.ReadAllBytes(path));
+
+        // Neither figure is altered; the refusal itself is now recorded (§9 block A).
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(3, read.BlockFields.Round);
+        Assert.Empty(read.Transitions);
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(disagreement.RefusingRule, refusal.Rule);
+        Assert.Equal(disagreement.Remedy, refusal.Remedy);
     }
 
     // 8a.17 — the other direction: a history ahead of the stored round is an equally distinct
@@ -186,7 +192,6 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
         var priorTransition = new CardBlockTransitionEntry(
             CardOwner.Reviewer, "changes-requested", BlockFlowState.InReview, BlockFlowState.Briefed, Created, []);
         var path = WriteBlockCard("b-0005", "B-0005", BlockFlowState.InReview, round: 1, transitions: [priorTransition]);
-        var before = File.ReadAllBytes(path);
 
         var outcome = CardStore.ApplyBlockTransition(
             _root, path, "changes-requested", CardOwner.Reviewer, Created.AddHours(1), baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
@@ -194,7 +199,14 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
         var disagreement = Assert.IsType<CardBlockTransitionOutcome.RoundDisagreesWithHistory>(outcome);
         Assert.Equal(1, disagreement.StoredRound);
         Assert.Equal(2, disagreement.ExpectedRound);
-        Assert.Equal(before, File.ReadAllBytes(path));
+
+        // Neither figure is altered; the refusal itself is now recorded (§9 block A).
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(1, read.BlockFields.Round);
+        Assert.Single(read.Transitions);
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(disagreement.RefusingRule, refusal.Rule);
+        Assert.Equal(disagreement.Remedy, refusal.Remedy);
     }
 
     // 8a.17 — "act on that card" is not scoped to the round-incrementing edges themselves: a

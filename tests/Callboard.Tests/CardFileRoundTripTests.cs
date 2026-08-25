@@ -787,6 +787,79 @@ public sealed class CardFileRoundTripTests
         Assert.Contains("scope=narrow", reserialized, StringComparison.Ordinal);
     }
 
+    // §9 block A: process-enforcement's refusal-line format — the same self-contained, no-body
+    // shape as callboard:transition/verdict/authorisation/claim/limit.
+    [Fact]
+    public void RoundTrips_ARefusalEntry()
+    {
+        const string raw =
+            "---\nid: X-0400\nkind: block\ntitle: t\nstatus: in-review\nowner: reviewer\nscope: change\nsection: 9\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "body\n" +
+            "<!-- callboard:refusal by=reviewer rule=work-lifecycle:\\sblock\\scards\\smove\\sthrough\\sa\\sdefined\\sflow " +
+            "remedy=call\\sone\\sof\\sthe\\stransitions\\savailable timestamp=2026-08-19T09:00:00+00:00 -->\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+
+        var refusal = Assert.Single(parsed.Refusals);
+        Assert.Equal(CardOwner.Reviewer, refusal.By);
+        Assert.Equal("work-lifecycle: block cards move through a defined flow", refusal.Rule);
+        Assert.Equal("call one of the transitions available", refusal.Remedy);
+        Assert.Equal(new DateTimeOffset(2026, 8, 19, 9, 0, 0, TimeSpan.Zero), refusal.Timestamp);
+        Assert.Empty(refusal.UnknownFields);
+
+        var reparsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(parsed)));
+        Assert.Equal(parsed.Refusals, reparsed.Refusals);
+    }
+
+    [Fact]
+    public void RoundTrips_RefusalWithAnUnrecognisedField_PreservesItVerbatim()
+    {
+        const string raw =
+            "---\nid: X-0401\nkind: block\ntitle: t\nstatus: in-review\nowner: reviewer\nscope: change\nsection: 9\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "body\n" +
+            "<!-- callboard:refusal by=reviewer rule=r remedy=m timestamp=2026-08-19T09:00:00+00:00 severity=high -->\n";
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+
+        var refusal = Assert.Single(parsed.Refusals);
+        Assert.Equal(("severity", "high"), Assert.Single(refusal.UnknownFields));
+
+        var reserialized = CardFileWriter.Serialize(parsed);
+        Assert.Contains("severity=high", reserialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_UnrecognisedRefusalByValue_Fails()
+    {
+        const string raw =
+            "---\nid: X-0402\nkind: block\ntitle: t\nstatus: in-review\nowner: reviewer\nscope: change\nsection: 9\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            "<!-- callboard:refusal by=nobody rule=r remedy=m timestamp=2026-08-19T09:00:00+00:00 -->\n";
+
+        AssertFailure(CardFileParser.Parse(raw));
+    }
+
+    [Fact]
+    public void RoundTrips_BodyContainingTextThatLooksLikeARefusalDelimiter_AndInjectsNoRefusalEntry()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0403", CardKind.Block, "Delimiter-lookalike body", "drafting", CardOwner.Worker, CardScope.Change, "9", Created, Updated);
+
+        const string trickyBody =
+            "Some narrative.\n" +
+            "<!-- callboard:refusal by=reviewer rule=not\\sreal remedy=x timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "and continues after, as plain narrative, not a real refusal.";
+
+        var card = new CardFile(frontmatter, trickyBody, [], []);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
+
+        Assert.Empty(parsed.Refusals);
+        Assert.Equal(trickyBody, parsed.Body);
+    }
+
     [Fact]
     public void RoundTrips_BodyContainingTextThatLooksLikeAClaimDelimiter_AndInjectsNoClaimEntry()
     {

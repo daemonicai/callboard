@@ -358,6 +358,19 @@ internal static class CardFileWriter
                 .Append('\n');
         }
 
+        // Refusals after claims/limits, before comments — the same fixed, deterministic layout
+        // convention as every other append-only sequence above (process-enforcement: "A refusal
+        // SHALL be recorded against the card with the acting role and the time", §9 block A). Not
+        // limited to a block or section card the way transitions/verdicts/authorisations are — any
+        // kind of card can be the target of a refused attempt.
+        foreach (var refusal in card.Refusals)
+        {
+            builder.Append(CardFileFormat.RefusalLinePrefix)
+                .Append(BuildRefusalFields(refusal))
+                .Append(CardFileFormat.RefusalLineSuffix)
+                .Append('\n');
+        }
+
         foreach (var comment in card.Comments)
         {
             builder.Append(CardFileFormat.CommentHeaderPrefix)
@@ -523,6 +536,22 @@ internal static class CardFileWriter
         fields.Append(' ').Append(CardApprovalFieldKeys.Text).Append('=').Append(CardFileFormat.EscapeCertificationTextValue(limit.Text));
 
         foreach (var (key, rawValue) in limit.UnknownFields)
+        {
+            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+        }
+
+        return fields.ToString();
+    }
+
+    private static string BuildRefusalFields(CardRefusalEntry refusal)
+    {
+        var fields = new StringBuilder();
+        fields.Append("by=").Append(refusal.By.ToWireString());
+        fields.Append(" rule=").Append(CardFileFormat.EscapeCertificationTextValue(refusal.Rule));
+        fields.Append(" remedy=").Append(CardFileFormat.EscapeCertificationTextValue(refusal.Remedy));
+        fields.Append(" timestamp=").Append(FormatTimestamp(refusal.Timestamp));
+
+        foreach (var (key, rawValue) in refusal.UnknownFields)
         {
             fields.Append(' ').Append(key).Append('=').Append(rawValue);
         }

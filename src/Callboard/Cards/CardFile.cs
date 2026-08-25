@@ -89,6 +89,15 @@ namespace Callboard.Cards;
 /// The constructor parameter accepts <see langword="null"/> for the same reason
 /// <paramref name="Handovers"/>'s does.
 /// </param>
+/// <param name="Refusals">
+/// The card's append-only refusal history (process-enforcement: "A refusal SHALL be recorded
+/// against the card with the acting role and the time", §9 block A) — one
+/// <see cref="CardRefusalEntry"/> per refusal-shaped outcome that resolved this card, oldest
+/// first, for the same reason <paramref name="Transitions"/> is its own sequence rather than a
+/// scalar. Not limited to a <c>block</c> card the way <paramref name="Transitions"/> is: any kind
+/// of card can be the target of a refused attempt. The constructor parameter accepts
+/// <see langword="null"/> for the same reason <paramref name="Handovers"/>'s does.
+/// </param>
 internal sealed record CardFile(
     CardFrontmatter Frontmatter,
     string Body,
@@ -101,7 +110,8 @@ internal sealed record CardFile(
     FindingCardFields? FindingFields = null,
     RegisterCardFields? RegisterFields = null,
     IReadOnlyList<CardApprovalClaim>? Claims = null,
-    IReadOnlyList<CardApprovalLimit>? Limits = null)
+    IReadOnlyList<CardApprovalLimit>? Limits = null,
+    IReadOnlyList<CardRefusalEntry>? Refusals = null)
 {
     public IReadOnlyList<CardHandover> Handovers { get; init; } = Handovers ?? [];
 
@@ -118,4 +128,6 @@ internal sealed record CardFile(
     public IReadOnlyList<CardApprovalClaim> Claims { get; init; } = Claims ?? [];
 
     public IReadOnlyList<CardApprovalLimit> Limits { get; init; } = Limits ?? [];
+
+    public IReadOnlyList<CardRefusalEntry> Refusals { get; init; } = Refusals ?? [];
 }

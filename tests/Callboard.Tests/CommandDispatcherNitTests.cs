@@ -583,7 +583,7 @@ public sealed class CommandDispatcherNitTests
     // above — a nit hand-added while a block sits 'landed' must not be allowed to lapse by neglect
     // through to 'closed' either.
     [Fact]
-    public void BlockTransition_Close_UndispositionedNit_Refuses_AndLeavesTheCardByteIdentical()
+    public void BlockTransition_Close_UndispositionedNit_Refuses_AndRecordsTheRefusal()
     {
         using var repo = new TempGitRepo();
         const string nitId = "nit-hand-edited-0021";
@@ -592,7 +592,6 @@ public sealed class CommandDispatcherNitTests
             ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: [],
             IsNit: true, Required: false, Sites: []);
         var path = WriteInitialBlockCard(repo.Path, "b-0021", "B-0021", BlockFlowState.Landed, [liveNit]);
-        var before = File.ReadAllBytes(path);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -604,7 +603,14 @@ public sealed class CommandDispatcherNitTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("undispositioned-nits", refusal.GetProperty("code").GetString());
         Assert.Contains(nitId, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
-        Assert.Equal(before, File.ReadAllBytes(path));
+
+        // process-enforcement (§9 block A): the refusal is recorded against the card; the nit
+        // comment itself is untouched (still live, still undispositioned).
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Single(read.Refusals);
+        var comment = Assert.Single(read.Comments);
+        Assert.Equal(nitId, comment.Id);
+        Assert.Null(comment.Disposition);
     }
 
     // §8 block B: fix-before-land is only ever raised as the side effect of a nit disposition —

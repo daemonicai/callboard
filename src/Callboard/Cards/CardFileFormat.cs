@@ -76,6 +76,17 @@ internal static class CardFileFormat
     internal const string LimitLineSuffix = " -->";
 
     /// <summary>
+    /// A card's append-only refusal entry (process-enforcement: "Refusals are explained and
+    /// attributable" — "A refusal SHALL be recorded against the card with the acting role and the
+    /// time", §9 block A). Same self-contained, no-body, no-footer shape as
+    /// <see cref="TransitionLinePrefix"/> and its siblings — a refusal carries no prose beyond its
+    /// own <c>rule</c>/<c>remedy</c> text, only <c>by</c>/<c>rule</c>/<c>remedy</c>/<c>timestamp</c>
+    /// fields.
+    /// </summary>
+    internal const string RefusalLinePrefix = "<!-- callboard:refusal ";
+    internal const string RefusalLineSuffix = " -->";
+
+    /// <summary>
     /// True for a line that, written unescaped, would be misread as a structural delimiter on
     /// the next parse — the header prefix, the footer, or an already-escaped instance of either
     /// (any number of leading backslashes stripped still matches). Escaping is checked against
@@ -91,7 +102,8 @@ internal static class CardFileFormat
             || unescaped.StartsWith(VerdictLinePrefix, StringComparison.Ordinal)
             || unescaped.StartsWith(AuthorisationLinePrefix, StringComparison.Ordinal)
             || unescaped.StartsWith(ClaimLinePrefix, StringComparison.Ordinal)
-            || unescaped.StartsWith(LimitLinePrefix, StringComparison.Ordinal);
+            || unescaped.StartsWith(LimitLinePrefix, StringComparison.Ordinal)
+            || unescaped.StartsWith(RefusalLinePrefix, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -155,6 +167,11 @@ internal static class CardFileFormat
     internal static bool IsLimitLine(string line) =>
         line.StartsWith(LimitLinePrefix, StringComparison.Ordinal)
             && line.EndsWith(LimitLineSuffix, StringComparison.Ordinal);
+
+    /// <summary>An unescaped, self-contained refusal entry line.</summary>
+    internal static bool IsRefusalLine(string line) =>
+        line.StartsWith(RefusalLinePrefix, StringComparison.Ordinal)
+            && line.EndsWith(RefusalLineSuffix, StringComparison.Ordinal);
 
     private static readonly IReadOnlyDictionary<char, char> FrontmatterEscapeTable =
         new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r' };

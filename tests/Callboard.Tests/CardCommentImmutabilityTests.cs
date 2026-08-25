@@ -145,6 +145,7 @@ public sealed class CardCommentImmutabilityTests
             "RecordSectionAuthorisationUnderExistingLock", // §8a block C: role check first, then append-only write on SectionFields.Authorisations only; never touches Frontmatter.Status or Comments
             "RecordSectionVerdict",                 // §5 block E: append-only write on SectionFields.Verdicts only; never touches Frontmatter.Status or Comments
             "RecordSectionVerdictUnderExistingLock", // same, lock already held
+            "RefuseAndRecord",                       // §9 block A: appends exactly one CardRefusalEntry to Refusals (never Comments) and writes it back under the caller's own held lock; called only from a refusal branch, never touches an existing comment
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"
             "RemoveBlockedByUnderExistingLock",     // same, lock already held
             "RestoreAllAbsorbed",                   // §7 block F: loops RestoreCardContent over every absorbed rule already written in a CompactRulesUnderLocks call when the family's own write then fails; touches only what RestoreCardContent itself touches

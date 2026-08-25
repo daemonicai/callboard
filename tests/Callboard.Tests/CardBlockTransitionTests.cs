@@ -91,19 +91,29 @@ public sealed class CardBlockTransitionTests : IDisposable
         Assert.Equal("brief", available.Name);
     }
 
-    // Owed evidence 3, for the undefined-transition refusal specifically: the record is left
-    // byte-identical — asserted against the file's own bytes, not the outcome object.
+    // Owed evidence 3, for the undefined-transition refusal specifically: process-enforcement
+    // (§9 block A) now records the refusal against the card, so the file is no longer
+    // byte-identical — the assertion moves to "gained exactly one CardRefusalEntry naming this
+    // rule, and nothing else changed", which is the stronger of the two claims the old
+    // byte-identical assertion was standing in for.
     [Fact]
-    public void ApplyBlockTransition_UndefinedTransition_LeavesTheCardFileByteIdentical()
+    public void ApplyBlockTransition_UndefinedTransition_RecordsExactlyOneRefusal_AndChangesNothingElse()
     {
         var path = WriteInitialBlockCard("b-0003", "B-0003", BlockFlowState.Drafting);
-        var before = File.ReadAllBytes(path);
+        var before = AssertParseSuccess(CardStore.ReadCard(path));
 
         var outcome = CardStore.ApplyBlockTransition(_root, path, "land", CardOwner.Architect, Created, baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
 
-        Assert.IsType<CardBlockTransitionOutcome.UndefinedTransition>(outcome);
-        var after = File.ReadAllBytes(path);
-        Assert.Equal(before, after);
+        var undefined = Assert.IsType<CardBlockTransitionOutcome.UndefinedTransition>(outcome);
+        var after = AssertParseSuccess(CardStore.ReadCard(path));
+        var refusal = Assert.Single(after.Refusals);
+        Assert.Equal(CardOwner.Architect, refusal.By);
+        Assert.Equal(undefined.RefusingRule, refusal.Rule);
+        Assert.Equal(undefined.Remedy, refusal.Remedy);
+        Assert.Equal(Created, refusal.Timestamp);
+        Assert.Equal(before.Frontmatter, after.Frontmatter);
+        Assert.Equal(before.Transitions, after.Transitions);
+        Assert.Equal(before.BlockFields, after.BlockFields);
     }
 
     // Owed evidence 2, first half: refuse briefing a block with no base recorded.
@@ -111,12 +121,16 @@ public sealed class CardBlockTransitionTests : IDisposable
     public void ApplyBlockTransition_BriefWithNoBaseRecordedAndNoneSupplied_Refuses()
     {
         var path = WriteInitialBlockCard("b-0004", "B-0004", BlockFlowState.Drafting);
-        var before = File.ReadAllBytes(path);
 
         var outcome = CardStore.ApplyBlockTransition(_root, path, "brief", CardOwner.Architect, Created, baseCommit: null, TimeSpan.FromSeconds(5), ChangeName);
 
-        Assert.IsType<CardBlockTransitionOutcome.BaseNotRecorded>(outcome);
-        Assert.Equal(before, File.ReadAllBytes(path));
+        var baseNotRecorded = Assert.IsType<CardBlockTransitionOutcome.BaseNotRecorded>(outcome);
+        var after = AssertParseSuccess(CardStore.ReadCard(path));
+        var refusal = Assert.Single(after.Refusals);
+        Assert.Equal(baseNotRecorded.RefusingRule, refusal.Rule);
+        Assert.Equal(baseNotRecorded.Remedy, refusal.Remedy);
+        Assert.Equal("drafting", after.Frontmatter.Status);
+        Assert.Null(after.BlockFields.Base);
     }
 
     [Fact]
@@ -154,18 +168,23 @@ public sealed class CardBlockTransitionTests : IDisposable
         Assert.Equal(2, afterRound1.BlockFields.Round);
         Assert.Equal("briefed", afterRound1.Frontmatter.Status);
 
-        // A different base is refused, and the file is untouched — base still "commit-abc".
-        var beforeAttempt = File.ReadAllBytes(path);
+        // A different base is refused, and its base/round/status are untouched — base still
+        // "commit-abc" — but the refusal itself is now recorded against the card (§9 block A).
         var refused = CardStore.ApplyBlockTransition(
             _root, path, "claim", CardOwner.Worker, Created.AddHours(4), "a-different-commit", TimeSpan.FromSeconds(5), ChangeName);
 
         var immutable = Assert.IsType<CardBlockTransitionOutcome.BaseImmutable>(refused);
         Assert.Equal("commit-abc", immutable.Recorded);
         Assert.Equal("a-different-commit", immutable.Attempted);
-        Assert.Equal(beforeAttempt, File.ReadAllBytes(path));
 
         var stillRecorded = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("commit-abc", stillRecorded.BlockFields.Base);
+        Assert.Equal(2, stillRecorded.BlockFields.Round);
+        Assert.Equal("briefed", stillRecorded.Frontmatter.Status);
+        var refusal = Assert.Single(stillRecorded.Refusals);
+        Assert.Equal(CardOwner.Worker, refusal.By);
+        Assert.Equal(immutable.RefusingRule, refusal.Rule);
+        Assert.Equal(immutable.Remedy, refusal.Remedy);
     }
 
     // 5.3 / §8a block A (work-lifecycle: "Reviewer remediation is the same card at a higher

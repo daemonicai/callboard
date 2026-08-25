@@ -904,19 +904,31 @@ internal static class CommandDispatcher
             onUndefinedTransition: undefined => new CommandOutcome.Refusal(
                 "undefined-transition",
                 $"no transition '{parsed.TransitionName}' from '{undefined.CurrentState.ToWireString()}'. " +
-                $"Available: {(undefined.Available.Count == 0 ? "none" : string.Join(", ", undefined.Available.Select(static t => t.Name)))}."),
-            onBaseNotRecorded: static _ => new CommandOutcome.Refusal(
+                $"Available: {(undefined.Available.Count == 0 ? "none" : string.Join(", ", undefined.Available.Select(static t => t.Name)))}.",
+                undefined.RefusingRule, undefined.Remedy),
+            onBaseNotRecorded: baseNotRecorded => new CommandOutcome.Refusal(
                 "base-not-recorded",
-                "a brief must name the commit it was carved against — pass --base or record one before briefing."),
+                "a brief must name the commit it was carved against — pass --base or record one before briefing.",
+                baseNotRecorded.RefusingRule, baseNotRecorded.Remedy),
             onBaseImmutable: immutable => new CommandOutcome.Refusal(
                 "base-immutable",
-                $"'base' is already recorded as '{immutable.Recorded}' and cannot change across rounds; supplied '{immutable.Attempted}'."),
+                $"'base' is already recorded as '{immutable.Recorded}' and cannot change across rounds; supplied '{immutable.Attempted}'.",
+                immutable.RefusingRule, immutable.Remedy),
             onUndispositionedNits: undispositioned => new CommandOutcome.Refusal(
                 "undispositioned-nits",
                 $"'{filePath}' cannot leave 'in-review' — the following nit(s) have no disposition: " +
-                $"{string.Join(", ", undispositioned.NitIds)}."),
-            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "flow transitions only apply to a block card"),
-            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(filePath, disagreement.StoredRound, disagreement.ExpectedRound),
+                $"{string.Join(", ", undispositioned.NitIds)}.",
+                undispositioned.RefusingRule, undispositioned.Remedy),
+            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "flow transitions only apply to a block card") with
+            {
+                Rule = notABlock.RefusingRule,
+                Remedy = notABlock.Remedy,
+            },
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(filePath, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to transition."),
@@ -2817,7 +2829,7 @@ internal static class CommandDispatcher
             {
                 Ok = false,
                 Command = command,
-                Refusal = new CliRefusal { Code = refusal.Code, Message = refusal.Message },
+                Refusal = new CliRefusal { Code = refusal.Code, Message = refusal.Message, Rule = refusal.Rule, Remedy = refusal.Remedy },
             });
 
         output.WriteLine(JsonSerializer.Serialize(envelope, CliJsonContext.Default.CliEnvelope));

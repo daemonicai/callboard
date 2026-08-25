@@ -54,11 +54,10 @@ public sealed class CommandDispatcherBlockTransitionTests
     // and no card modified — asserted on the card file's bytes, not on the outcome object (§3's
     // rule: green tests do not exercise the machine contract).
     [Fact]
-    public void BlockTransition_UndefinedTransition_Refuses_NamesAvailableTransitions_AndLeavesTheCardByteIdentical()
+    public void BlockTransition_UndefinedTransition_Refuses_NamesAvailableTransitions_AndRecordsTheRefusal()
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialBlockCard(repo.Path, "b-0002", "B-0002", BlockFlowState.Drafting);
-        var before = File.ReadAllBytes(path);
         var output = new StringWriter();
 
         // "submit-for-review" (not "approve"/"land"/"fix-before-land" — §8 and §8a block A refuse
@@ -78,7 +77,19 @@ public sealed class CommandDispatcherBlockTransitionTests
         Assert.Contains("brief", message, StringComparison.Ordinal);
         Assert.False(doc.RootElement.TryGetProperty("result", out _));
 
-        Assert.Equal(before, File.ReadAllBytes(path));
+        // process-enforcement (§9 block A): "Refusals are explained and attributable" — the
+        // envelope carries the refusing rule and its remedy, and the same pair is recorded against
+        // the card under the acting role and the time.
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
     }
 
     // A card-writing verb's own proof for the funnel's boundary too: a trailing unrecognised token

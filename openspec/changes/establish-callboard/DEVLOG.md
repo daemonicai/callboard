@@ -23006,10 +23006,250 @@ My two earlier `## NEXT` notes stand as noted. Nothing further from me on §8a.
 
 → `@architect`.
 
+## 9. Process enforcement
+
+**[architect]** Base: `ec2d99b` — §9 delivers the refusals *as a set*: one refusal reporting format
+recorded against the card, the question lifecycle §7 deliberately stopped short of (answer, defer,
+Product-Owner escalation), the three section-close gates, the verdict thread gate, and the archive
+orphan-obligation gate — each with a test proving it fires.
+
+**[architect]** Block carve — five blocks. `9.10` is not a block of its own; it is discharged
+progressively and closed out by block E's sweep over the whole set.
+
+- **A — the refusal reporting format (9.1)**, plus the transition-table invariant §8a's supervisor
+  parked for "early in §9".
+- **B — certification refusals (9.2, 9.3)**: approval from the wrong role (already implemented as
+  `CardApprovalOutcome.RoleNotPermitted` — this block brings it into the format and gives it its
+  9.10 test), and leaving `in-review` with threads addressed to the acting role unresolved.
+- **C — the question lifecycle (9.7, 9.8)**: the `open`/`answered`/`deferred` vocabulary, answering
+  with a decision reference or an inline answer, and refusing to advance a card blocked by an open
+  Product Owner question.
+- **D — the section-close gates (9.4, 9.5, 9.6)**: obligations owed by the section, undeferred
+  questions, unresolved addressed threads, and the ageing-thread prompt that is not a refusal.
+  Depends on C: "undeferred" has no meaning until the question vocabulary exists.
+- **E — the archive gate and the sweep (9.9, 9.10)**: orphaned change-scoped obligations at archive,
+  then one enumeration over the closed refusal set proving every member fires and none is
+  unreachable.
+
+**[architect]** Two rulings this section's briefs bind, settled here rather than per block.
+
+1. **A refusal is recorded as a card line, not a comment.** The file format already has the shape
+   five times over — `callboard:transition`, `callboard:handover`, `callboard:verdict`,
+   `callboard:authorisation`, `callboard:claim` — a self-contained no-body line carrying
+   `by`/`timestamp` and its own fields. A refusal is `<!-- callboard:refusal ... -->` with the rule
+   it names, what would satisfy it, the acting role and the time. It is **not** a comment: a comment
+   is addressed narrative that routes to a queue, and a refusal is neither addressed nor narrative.
+2. **Only a card-addressed refusal records.** A refusal that never resolved a card — no repo root,
+   no card at the path, a layout mismatch, an unparseable file — has nothing to record against and
+   is reported without a write. The recorded set is exactly the refusals that reached a card that
+   exists and parses. Note the consequence and hold it: a refusal now **writes on the failure path**,
+   under the card's own lock, so a refusal must never be reported until its record line is durable
+   or its write has itself failed as a tool-failure (ADR-0001 — enforcement unavailable is not a
+   refusal).
+
+**[architect]** Brief — **block A (9.1)**: the refusal reporting format, plus §8a's parked
+transition-table invariant. → @worker
+
+**Tasks in scope:** `9.1` only. `9.10` is not yours to tick, but every rule you bring into the format
+gets its test now, not later.
+
+**What the spec requires** (`specs/process-enforcement/spec.md`, "Refusals are explained and
+attributable"):
+
+> Every refused transition SHALL state which rule refused it and what would satisfy that rule. A
+> refusal SHALL be recorded against the card with the acting role and the time, so that a pattern of
+> refusals is itself visible.
+
+Scenario: *when any transition is refused, the response names the refusing rule and states what would
+satisfy it.*
+
+**Binding rulings** (posted above, read them): a refusal records as a `<!-- callboard:refusal ... -->`
+card line in the established self-contained no-body shape, **not** as a comment; and only a refusal
+that actually reached a card that exists and parses records at all.
+
+**The shape to aim for.** Today each `CardStore` operation returns its own outcome union
+(`CardApprovalOutcome`, `CardSectionCloseOutcome`, …) and `CommandDispatcher` maps each case to
+`CommandOutcome.Refusal(code, message)`. The rule name and the remedy are, right now, prose inside
+that mapping. Move them onto the outcome cases themselves — a small interface each refusal-shaped
+case implements, declaring the rule it enforces and what would satisfy it — and record from the one
+place that already holds the card's lock, so the line lands under the same lock as the read that
+decided to refuse. `CliRefusal` grows the fields to carry it out to the caller. Two constraints on
+that:
+
+- **A refusal must not be reported until its record line is durable.** If the recording write itself
+  fails, that is a tool-failure (ADR-0001: enforcement unavailable), not a quieter refusal.
+- **A tool-failure case is not a refusal case** and must not be dragged into the set. Every union
+  here already separates the two; keep it separated.
+
+**Also in this block — the invariant §8a's supervisor asked for early in §9.** `BlockFlowTransitions`
+is pinned arm by arm in `BlockFlowTests`, which is a third hand-written restatement of the table
+rather than an invariant over it. Add the loop over all seven `BlockFlowState`s asserting
+`GenericallyInvocableFrom(s) ⊆ AvailableFrom(s)` and `transition.From == s` for every edge in both
+queries. Omission fails closed; **commission** — a one-door edge landing in the wrong state's arm — is
+fenced by nothing today, and commission is what bricked cards the first time.
+
+**Watch for:** the card file is append-only and every write is atomic (ADR-0003); the parser must
+round-trip a refusal line it wrote, and must not drop one written by a future build (the
+`UnknownHeaderFields` idiom). Add the wire-compatibility corpus case. NativeAOT: no reflection.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`; `make format` →
+`FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report the exit lines verbatim.
+
+**If the retrofit across every existing card-addressed refusal turns out to be more than one
+reviewable block, stop and post that here rather than half-applying it** — I will carve the retrofit
+as its own block. Land the mechanism, the format, the round trip and the invariant either way.
+
+**[worker]** Block A (9.1) done, plus §8a's parked invariant. Landed the mechanism, format, round
+trip and invariant; retrofitted one live path end-to-end rather than all 134 refusal sites in
+`CommandDispatcher` — see the scope note below.
+
+**The mechanism.** `ICardRefusalReason` (`src/Callboard/Cards/ICardRefusalReason.cs`) — two
+properties, `RefusingRule`/`Remedy` — implemented by a refusal-shaped outcome case that resolved a
+real card. **Not** implemented by `CardNotFound`/`LayoutMismatch` (ruling 2: nothing to record
+against) or by `CardCorrupt`/`ToolFailure` (never refusal-shaped at all).
+
+**The format.** `<!-- callboard:refusal by=... rule=... remedy=... timestamp=... -->` — the same
+self-contained, no-body shape as `transition`/`verdict`/`authorisation`/`claim`/`limit`
+(`CardFileFormat`: `RefusalLinePrefix`/`IsRefusalLine`, added to
+`LooksLikeDelimiterOrEscapedDelimiter`). New model `CardRefusalEntry` (`by`/`rule`/`remedy`/
+`timestamp`/`UnknownFields`), a new `CardFile.Refusals` sequence (top-level, not nested under
+`BlockFields`/`SectionFields` — any card kind can be the target of a refused attempt, not just
+block/section). `rule`/`remedy` use the existing `EscapeCertificationTextValue` (space/newline/CR
+escaping, same as claim/limit text). Parser: `KnownRefusalKeys`, `ParseRefusalFields`,
+`BuildCardRefusalEntry`, wired into the same dispatch loop as every sibling line kind, including the
+body/comment-loop terminator checks and the "expected a comment header, ..." error text. Writer:
+emits `Refusals` after claims/limits, before comments.
+
+**The round trip + wire-compat corpus** (`CardFileRoundTripTests.cs`): a refusal round-trips every
+field including an escaped rule/remedy; an unrecognised refusal-line field survives a
+parse-then-write cycle verbatim (the `UnknownHeaderFields` idiom, so a refusal written by a future
+build with a field this build doesn't know is never dropped); an unrecognised `by` value fails to
+parse; body text that looks like a `callboard:refusal` delimiter round-trips as plain narrative,
+injecting no refusal entry.
+
+**The retrofit — one live path, not all of them.** `CardBlockTransitionOutcome`'s six card-addressed
+refusal-shaped cases (`UndefinedTransition`, `BaseNotRecorded`, `BaseImmutable`,
+`UndispositionedNits`, `NotABlockCard`, `RoundDisagreesWithHistory`) now implement
+`ICardRefusalReason` and record through a new `CardStore.RefuseAndRecord<TRefusal>` helper, called
+from `ApplyBlockTransitionUnderExistingLock` at each of those six return points — under the same
+lock that read the card, same anchored-path computation the write path already used, so a
+layout-mismatched card records nothing (ruling 2) and a failed write reports as `ToolFailure`, never
+a quieter refusal (ruling: "a refusal must not be reported until its record line is durable").
+`CommandOutcome.Refusal` grew optional `Rule`/`Remedy`; `CliRefusal` mirrors them as `rule`/`remedy`
+in the JSON envelope (omitted when null via the existing `WhenWritingNull` policy) — verified via
+`CommandDispatcherBlockTransitionTests`, which now asserts the envelope carries both and that the
+same pair lands on the card's `Refusals`.
+
+**Scope note — the other ~130 refusal sites in `CommandDispatcher` are not retrofitted.** I counted:
+134 `new CommandOutcome.Refusal(...)` call sites across roughly a dozen more outcome unions
+(`CardApprovalOutcome`, `CardSectionCloseOutcome`, `CardSectionVerdictOutcome`,
+`CardSectionAuthorisationOutcome`, `CardFindingRecordOutcome`, `CardNitDispositionOutcome`,
+`CardNitRaiseOutcome`, `CardRegisterDischargeOutcome`, `CardDecisionSupersedeOutcome`,
+`CardRuleCompactOutcome`, `CardRulePromoteOutcome`, `CardGateResultOutcome`,
+`CardBlockedByOutcome`, `ChangeArchiveOutcome`, `CardCreateOutcome`). Retrofitting all of them —
+interface impl + rule/remedy text + a `RefuseAndRecord`-shaped helper per outcome type + dispatcher
+wiring + tests proving each fires — is clearly more than one reviewable block on its own; per the
+brief I'm stopping here rather than half-applying it further. Blocks B–E (9.2–9.9) already touch
+some of these unions directly for their own new refusals and can wire the mechanism in as they land
+(`CardApprovalOutcome.RoleNotPermitted` for block B, the section-close/question-lifecycle unions for
+C/D, the archive gate for E). The pre-existing unions those blocks don't touch
+(`CardNitDispositionOutcome`, `CardNitRaiseOutcome`, `CardRegisterDischargeOutcome`,
+`CardDecisionSupersedeOutcome`, `CardRuleCompactOutcome`, `CardRulePromoteOutcome`,
+`CardGateResultOutcome`, `CardBlockedByOutcome`, `ChangeArchiveOutcome`, `CardCreateOutcome`) still
+need their own retrofit block(s) after block E's sweep (9.10) — 9.10's enumeration should probably
+be the thing that names exactly which refusals are and aren't yet wired to this mechanism, so I'd
+suggest that as where this gets picked back up rather than a fresh section. ❓ @architect — agreed,
+or do you want the remaining retrofit carved now as its own block(s) before B–E proceed?
+
+**The invariant** (§8a's parked note). `BlockFlowTests.cs`: two new facts over all seven
+`BlockFlowState`s — `GenericallyInvocableFrom(s)` is a subset of `AvailableFrom(s)` (by reference
+equality on the shared `BlockFlowTransition` singletons), and every transition either query returns
+for a state has `From == s`. No source change — `BlockFlowTransitions` itself already satisfied
+both; this closes the gap the supervisor named (the tables were pinned arm-by-arm, never asserted as
+an invariant).
+
+Existing tests asserting byte-identical files across a block-transition refusal
+(`CardBlockTransitionTests`, `CommandDispatcherBlockTransitionTests`, `RoundAgreesWithHistoryTests`,
+`CommandDispatcherNitTests`) updated to assert the new, stronger claim instead: exactly one
+`CardRefusalEntry` recorded with the right rule/remedy/role, and every other field (status, round,
+transitions, comments) unchanged — this is the ruling's own "note the consequence and hold it"
+landing as expected. `CardCommentImmutabilityTests`'s exhaustive `CardStore` method-surface list
+gained `RefuseAndRecord`.
+
+Completed: **9.1**, plus §8a's carried invariant (no task number of its own).
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (793/793
+tests passing, including 6 new refusal round-trip tests, 2 new invariant tests, and 8 existing tests
+updated for the new recording behaviour).
+
+→ @reviewer
+
+**[reviewer]** Block A (9.1) — **Approve.**
+
+Checked against both binding rulings and the six card-addressed cases specifically:
+
+- **Lock and durability.** `RefuseAndRecord` runs inside `ApplyBlockTransitionUnderExistingLock`'s
+  own `WithLock` callback (`CardStore.cs:392-460`) — the read that decided to refuse and the append
+  share one held lock, no re-acquire. A failed write maps to `ToolFailure`, never a refusal
+  (`CardStore.cs:544-548`); a successful write is what lets `refusal` itself be returned
+  (`CardStore.cs:541`) — so a refusal is never reported ahead of its record line landing, per
+  ruling 1. Confirmed the two `Match` arms `RefuseAndRecord` can never legitimately reach
+  (`onLayoutMismatch`, `onRoundDisagreesWithHistory`) throw rather than silently pass through —
+  right call, since a silent pass-through there would be exactly the "recording fires on a
+  tool-failure case" failure mode this block is watched for.
+- **Only card-addressed refusals record.** `RefuseAndRecord` independently re-derives the anchored
+  path (`CardStore.cs:522-526`) rather than trusting an earlier check, and reports the refusal with
+  no write when it doesn't anchor — matching `LayoutMismatch`'s own disposition, per ruling 2.
+  `CardNotFound`/`CardCorrupt`/`ToolFailure`/`LayoutMismatch` correctly do **not** implement
+  `ICardRefusalReason` (`CardBlockTransitionOutcome.cs` diff) — nothing recorded for cases with
+  nothing to record against, and no tool-failure case is dragged into the set either direction.
+- **The six card-addressed cases** (`UndefinedTransition`, `BaseNotRecorded`, `BaseImmutable`,
+  `UndispositionedNits`, `NotABlockCard`, `RoundDisagreesWithHistory`) all implement
+  `ICardRefusalReason` with a real rule/remedy pair, and all six call sites route through
+  `RefuseAndRecord` — matches the brief exactly.
+- **Format/parser/writer.** `callboard:refusal` follows the established no-body shape exactly;
+  `CardFile.Refusals` sits at top level (not nested under `BlockFields`), consistent with any card
+  kind being refusal-addressable. `IsRefusalLine` is wired into every place a sibling line kind
+  appears — the body-loop terminator, the comment-loop terminator, and the "expected a ..." error
+  text. `RoundTrips_ARefusalEntry`, the unknown-field survival test, the unrecognised-`by` failure
+  test, and the delimiter-lookalike-in-body test are all present and each asserts real behaviour, not
+  just "doesn't throw."
+- **CLI surface.** `CommandOutcome.Refusal.Rule/Remedy` and `CliRefusal.rule/remedy` are optional,
+  `WhenWritingNull`-omitted, and populated only from the retrofitted six —
+  `CommandDispatcherBlockTransitionTests` asserts the envelope's `rule`/`remedy` match what actually
+  landed on the card's `Refusals`, which is the right end-to-end proof (not just that the outcome
+  object carries the fields).
+- **Invariant test.** `GenericallyInvocableFrom_IsASubsetOfAvailableFrom_ForEveryState` and
+  `EveryTransitionEitherQueryReturnsForAState_HasFromEqualToThatState` iterate all seven states and
+  assert against `BlockFlowTransitions` itself by reference/value equality — a genuine invariant over
+  the table, not a fourth hand-restatement. Satisfies the supervisor's §8a carry-forward.
+- **Existing tests updated, not weakened.** The four byte-identical assertions this block breaks
+  (`CardBlockTransitionTests`, `CommandDispatcherBlockTransitionTests`, `RoundAgreesWithHistoryTests`,
+  `CommandDispatcherNitTests`) now assert the stronger claim — exactly one `CardRefusalEntry` with the
+  right rule/remedy/role, and every other field (status, round, transitions, comments/nit disposition)
+  unchanged. `CardCommentImmutabilityTests`'s exhaustive method list gained `RefuseAndRecord` with an
+  accurate one-line note.
+- **Scope.** Diff stays inside §9/9.1 plus the explicitly-parked §8a invariant. Makefile untouched.
+  No comment-shaped modelling of a refusal, no path touching `tasks.md`/`CLAUDE.md`/`.claude/`.
+
+Re-ran the gates myself rather than trusting the reported line:
+`BUILD_EXIT:0`, `TEST_EXIT:0` (793/793), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+
+**Architectural note, not a blocker on this block:** the scope note's open question (whether to carve
+the remaining ~130-site retrofit now or fold it into B–E/9.10) is a real decision the architect should
+close before B starts — worth resolving in `## NEXT` rather than left implicit.
+
 ## NEXT
 
-**Resume point: §9 "Process enforcement" (10 tasks, nothing built).** Working tree clean, nothing in
-flight, no part-built block, no agent running. §8a closed with a supervisor `Approve` at `2561cef`.
+**Resume point: §9 "Process enforcement", block A (9.1) — implemented, gates green, awaiting
+reviewer.** §9 is open at base `ec2d99b`; the five-block carve and the two format rulings are posted
+under `## 9.` above. Nothing is ticked and nothing is committed for §9 yet — block A's diff is
+uncommitted in the tree, pending review. §8a closed with a supervisor `Approve` at `2561cef`.
+
+**Open question for the architect:** block A's worker post asks whether the retrofit of the ~130
+remaining `CommandOutcome.Refusal` sites (across a dozen pre-existing outcome unions block A didn't
+touch) should be carved as its own block(s) now, or picked up opportunistically as blocks B–E
+(9.2–9.9) touch the unions they own and swept at 9.10. Needs an answer before B's brief.
 
 ### §8a closed — 17/17, supervisor `Approve` on the second pass
 

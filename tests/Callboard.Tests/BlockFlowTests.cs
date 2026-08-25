@@ -160,4 +160,49 @@ public sealed class BlockFlowTests
 
         Assert.False(found);
     }
+
+    // §8a section review, carried to §9 block A: "nothing asserts GenericallyInvocableFrom(s) ⊆
+    // AvailableFrom(s), or transition.From == s, across the seven states" — the tests above pin
+    // each arm by hand, which is a third hand-written restatement of the table rather than an
+    // invariant over it. Omission (a new edge added to AvailableFrom but not
+    // GenericallyInvocableFrom) fails closed on its own; this loop fences the direction that does
+    // not — commission, a one-door edge landing under the wrong state's arm — which is what bricked
+    // cards the first time (§8a).
+    private static readonly BlockFlowState[] AllStates =
+    [
+        BlockFlowState.Drafting, BlockFlowState.Briefed, BlockFlowState.Building,
+        BlockFlowState.InReview, BlockFlowState.Approved, BlockFlowState.Landed, BlockFlowState.Closed,
+    ];
+
+    [Fact]
+    public void GenericallyInvocableFrom_IsASubsetOfAvailableFrom_ForEveryState()
+    {
+        foreach (var state in AllStates)
+        {
+            var available = BlockFlowTransitions.AvailableFrom(state);
+            var invocable = BlockFlowTransitions.GenericallyInvocableFrom(state);
+
+            foreach (var transition in invocable)
+            {
+                Assert.Contains(available, candidate => ReferenceEquals(candidate, transition));
+            }
+        }
+    }
+
+    [Fact]
+    public void EveryTransitionEitherQueryReturnsForAState_HasFromEqualToThatState()
+    {
+        foreach (var state in AllStates)
+        {
+            foreach (var transition in BlockFlowTransitions.AvailableFrom(state))
+            {
+                Assert.Same(state, transition.From);
+            }
+
+            foreach (var transition in BlockFlowTransitions.GenericallyInvocableFrom(state))
+            {
+                Assert.Same(state, transition.From);
+            }
+        }
+    }
 }

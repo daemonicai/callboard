@@ -25,7 +25,15 @@ internal abstract record CommandOutcome
             onSuccess(this);
     }
 
-    internal sealed record Refusal(string Code, string Message) : CommandOutcome
+    /// <param name="Code">The machine-readable refusal code.</param>
+    /// <param name="Message">The human-readable refusal text.</param>
+    /// <param name="Rule">The rule that refused the attempt (process-enforcement: "Refusals are
+    /// explained and attributable", §9 block A) — populated only for a refusal sourced from an
+    /// outcome case that implements <see cref="Cards.ICardRefusalReason"/>; <see langword="null"/>
+    /// for every refusal this build has not yet retrofitted onto that mechanism.</param>
+    /// <param name="Remedy">What would satisfy <paramref name="Rule"/> — same population rule as
+    /// <paramref name="Rule"/>.</param>
+    internal sealed record Refusal(string Code, string Message, string? Rule = null, string? Remedy = null) : CommandOutcome
     {
         internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<Refusal, TResult> onRefusal) =>
             onRefusal(this);

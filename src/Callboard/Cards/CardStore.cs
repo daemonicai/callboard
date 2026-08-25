@@ -392,12 +392,12 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsBlockCard(card))
                 {
-                    return new CardBlockTransitionOutcome.NotABlockCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.NotABlockCard(card.Frontmatter.Kind));
                 }
 
                 if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
                 {
-                    return new CardBlockTransitionOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                    return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.RoundDisagreesWithHistory(storedRound, expectedRound));
                 }
 
                 if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
@@ -410,7 +410,7 @@ internal static class CardStore
                 var transition = available.FirstOrDefault(candidate => string.Equals(candidate.Name, transitionName, StringComparison.Ordinal));
                 if (transition is null)
                 {
-                    return new CardBlockTransitionOutcome.UndefinedTransition(currentState, available);
+                    return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.UndefinedTransition(currentState, available));
                 }
 
                 // review-certification: "A nit SHALL cease to be live only through one of these
@@ -431,19 +431,19 @@ internal static class CardStore
                 var liveNitIds = CardCommentRouting.LiveUndispositionedNitIds(card.Comments);
                 if (liveNitIds.Count > 0)
                 {
-                    return new CardBlockTransitionOutcome.UndispositionedNits(liveNitIds);
+                    return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.UndispositionedNits(liveNitIds));
                 }
 
                 var recordedBase = card.BlockFields.Base;
                 if (recordedBase is not null && baseCommit is not null && !string.Equals(recordedBase, baseCommit, StringComparison.Ordinal))
                 {
-                    return new CardBlockTransitionOutcome.BaseImmutable(recordedBase, baseCommit);
+                    return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.BaseImmutable(recordedBase, baseCommit));
                 }
 
                 var effectiveBase = recordedBase ?? baseCommit;
                 if (transition.To == BlockFlowState.Briefed && effectiveBase is null)
                 {
-                    return new CardBlockTransitionOutcome.BaseNotRecorded();
+                    return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.BaseNotRecorded());
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -500,6 +500,49 @@ internal static class CardStore
             },
             onFailure: failure =>
                 new CardBlockTransitionOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// process-enforcement: "A refusal SHALL be recorded against the card with the acting role and
+    /// the time" (§9 block A) — appends a <see cref="CardRefusalEntry"/> built from
+    /// <paramref name="refusal"/>'s own <see cref="ICardRefusalReason.RefusingRule"/>/
+    /// <see cref="ICardRefusalReason.Remedy"/> to <paramref name="card"/> and writes it back under
+    /// the lock already held by the caller (<see cref="ApplyBlockTransitionUnderExistingLock"/>),
+    /// so the record line lands under the same lock as the read that decided to refuse — then
+    /// returns <paramref name="refusal"/> unchanged so the caller's decision is what gets reported.
+    ///
+    /// <para>
+    /// <b>Two binding rulings (§9 architect ruling) shape this.</b> Only a refusal that resolved a
+    /// card at a legally anchored path has anything to record against — if
+    /// <paramref name="filePath"/> does not anchor under <paramref name="cardsRoot"/> for
+    /// <paramref name="card"/>'s own scope, this reports <paramref name="refusal"/> without a
+    /// write, the same disposition a genuine <see cref="CardBlockTransitionOutcome.LayoutMismatch"/>
+    /// already gets. And a refusal must never be reported until its record line is durable: if the
+    /// write itself fails, this returns a tool-failure instead of the refusal (ADR-0001:
+    /// enforcement unavailable is a tool-failure, never a quieter refusal).
+    /// </para>
+    /// </summary>
+    private static CardBlockTransitionOutcome RefuseAndRecord<TRefusal>(
+        string cardsRoot, CardFile card, string filePath, string? changeName, CardOwner actingRole, DateTimeOffset timestamp, TRefusal refusal)
+        where TRefusal : CardBlockTransitionOutcome, ICardRefusalReason
+    {
+        var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out _);
+        if (anchored is null)
+        {
+            return refusal;
+        }
+
+        var entry = new CardRefusalEntry(actingRole, refusal.RefusingRule, refusal.Remedy, timestamp, []);
+        var updated = card with { Refusals = [.. card.Refusals, entry] };
+        var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+        return writeResult.Match<CardBlockTransitionOutcome>(
+            onSuccess: _ => refusal,
+            onNotFound: notFound => new CardBlockTransitionOutcome.ToolFailure($"could not record refusal against '{notFound.FilePath}': card not found."),
+            onAlreadyExists: alreadyExists => new CardBlockTransitionOutcome.ToolFailure($"could not record refusal against '{alreadyExists.FilePath}': unexpected write conflict."),
+            onLayoutMismatch: static _ => throw new InvalidOperationException("unreachable: the anchored path already resolved above."),
+            onCorrupt: corrupt => new CardBlockTransitionOutcome.ToolFailure($"could not record refusal: {corrupt.Reason}"),
+            onToolFailure: toolFailure => new CardBlockTransitionOutcome.ToolFailure(toolFailure.Reason),
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: refusal recording never touches round/history."));
     }
 
     /// <summary>
