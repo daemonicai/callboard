@@ -125,6 +125,60 @@ internal static class CardFileWriter
             }
         }
 
+        // §9 block D's seven question-only fields — same "present only when set" convention as the
+        // block/section fields above, and the same guarantee that a card of any other kind never
+        // reaches here with non-default QuestionFields (CardFileParser only ever populates it for
+        // kind question).
+        var isQuestionCard = frontmatter.Kind.Match(
+            onBlock: static () => false,
+            onQuestion: static () => true,
+            onFinding: static () => false,
+            onObligation: static () => false,
+            onRule: static () => false,
+            onHazard: static () => false,
+            onDecision: static () => false,
+            onSection: static () => false);
+
+        if (isQuestionCard)
+        {
+            var questionFields = card.QuestionFields;
+
+            if (questionFields.AnsweredBy is { } answeredBy)
+            {
+                builder.Append("answered_by: ").Append(answeredBy.ToWireString()).Append('\n');
+            }
+
+            if (questionFields.AnsweredAt is { } answeredAt)
+            {
+                builder.Append("answered_at: ").Append(FormatTimestamp(answeredAt)).Append('\n');
+            }
+
+            if (questionFields.AnswerDecisionId is { } answerDecisionId)
+            {
+                builder.Append("answer_decision: ").Append(CardFileFormat.EscapeFrontmatterValue(answerDecisionId)).Append('\n');
+            }
+
+            if (questionFields.AnswerInline is { } answerInline)
+            {
+                builder.Append("answer_inline: ").Append(CardFileFormat.EscapeFrontmatterValue(answerInline)).Append('\n');
+            }
+
+            if (questionFields.DeferredBy is { } deferredBy)
+            {
+                builder.Append("deferred_by: ").Append(deferredBy.ToWireString()).Append('\n');
+            }
+
+            if (questionFields.DeferredAt is { } deferredAt)
+            {
+                builder.Append("deferred_at: ").Append(FormatTimestamp(deferredAt)).Append('\n');
+            }
+
+            if (questionFields.DeferredTarget is { } deferredTarget)
+            {
+                builder.Append("deferred_target: ").Append(CardFileFormat.EscapeFrontmatterValue(deferredTarget)).Append('\n');
+            }
+        }
+
         // §6 block A's four finding-only fields — same "present only when set" convention as the
         // block/section fields above, and the same guarantee that a card of any other kind never
         // reaches here with non-default FindingFields (CardFileParser only ever populates it for

@@ -69,6 +69,15 @@ internal static class CardFileParser
     // alongside the known line on every parse-then-write cycle, duplicating it without bound.
     private static readonly HashSet<string> RegisterOnlyFrontmatterKeys = new(RegisterCardFieldKeys.All, StringComparer.Ordinal);
 
+    // §9 block D's seven fields — known only when the card's own kind is question, the same
+    // two-pass reasoning as SectionOnlyFrontmatterKeys above (a question cannot share
+    // RegisterOnlyFrontmatterKeys — see QuestionCardFields's own doc comment for why).
+    private static readonly HashSet<string> QuestionOnlyFrontmatterKeys = new(StringComparer.Ordinal)
+    {
+        "answered_by", "answered_at", "answer_decision", "answer_inline",
+        "deferred_by", "deferred_at", "deferred_target",
+    };
+
     // The six comment-header fields this build recognises, plus the four §8 block B nit-only ones
     // (CardCommentNitFieldKeys.All — the shared declaration this set and CardFileWriter's own
     // emission both read from, the wire-key drift guard carried from §7's close). Same rule, same
@@ -194,6 +203,17 @@ internal static class CardFileParser
             onDecision: static () => false,
             onSection: static () => true);
 
+        // §9 block D: known only when the card's own kind is question, same two-pass reasoning.
+        var isQuestionCard = frontmatterResult.Frontmatter!.Kind.Match(
+            onBlock: static () => false,
+            onQuestion: static () => true,
+            onFinding: static () => false,
+            onObligation: static () => false,
+            onRule: static () => false,
+            onHazard: static () => false,
+            onDecision: static () => false,
+            onSection: static () => false);
+
         var isFindingCard = frontmatterResult.Frontmatter!.Kind.Match(
             onBlock: static () => false,
             onQuestion: static () => false,
@@ -241,6 +261,11 @@ internal static class CardFileParser
             }
 
             if (isRegisterCard && RegisterOnlyFrontmatterKeys.Contains(key))
+            {
+                continue;
+            }
+
+            if (isQuestionCard && QuestionOnlyFrontmatterKeys.Contains(key))
             {
                 continue;
             }
@@ -302,6 +327,20 @@ internal static class CardFileParser
             // registerFieldsResult.Failure is null here, so RegisterFields is guaranteed non-null
             // by BuildRegisterFields's own contract.
             registerFields = registerFieldsResult.RegisterFields!;
+        }
+
+        var questionFields = QuestionCardFields.Empty;
+        if (isQuestionCard)
+        {
+            var questionFieldsResult = BuildQuestionFields(fields);
+            if (questionFieldsResult.Failure is { } questionFieldsFailure)
+            {
+                return Failure(questionFieldsFailure);
+            }
+
+            // questionFieldsResult.Failure is null here, so QuestionFields is guaranteed non-null
+            // by BuildQuestionFields's own contract.
+            questionFields = questionFieldsResult.QuestionFields!;
         }
 
         var bodyLines = new List<string>();
@@ -567,7 +606,7 @@ internal static class CardFileParser
 
         // frontmatterResult.Failure is null here, so Frontmatter is guaranteed non-null by BuildFrontmatter's own contract.
         return new CardFileParseResult.Success(
-            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts, findingFields, registerFields, claims, limits, refusals));
+            new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts, findingFields, registerFields, claims, limits, refusals, questionFields));
     }
 
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
@@ -752,6 +791,82 @@ internal static class CardFileParser
         }
 
         return (new SectionCardFields(baseCommit, closedBy, closedAt, [], []), null);
+    }
+
+    /// <summary>
+    /// Extracts §9 block D's seven known-on-a-question-card fields from a frontmatter
+    /// <paramref name="fields"/> dictionary already confirmed to belong to a <c>question</c> card —
+    /// see the <c>isQuestionCard</c> gate in <see cref="Parse"/>, the only caller. Same "absent or
+    /// empty parses to null" convention as <see cref="BuildSectionFields"/>'s own
+    /// <c>closed_by</c>/<c>closed_at</c>: <c>answered_by</c>/<c>answered_at</c> are recorded
+    /// together (<see cref="CardStore.AnswerQuestionUnderExistingLock"/> is the only writer of
+    /// either) and <c>deferred_by</c>/<c>deferred_at</c> likewise (<see cref="CardStore.
+    /// DeferQuestionUnderExistingLock"/>), but this parser accepts any of the four alone rather than
+    /// refusing a hand-edited file — degraded-mode legibility (ADR-0003) over strict round-trip
+    /// enforcement, the same latitude every other kind-specific field builder in this type gives.
+    /// </summary>
+    private static (QuestionCardFields? QuestionFields, string? Failure) BuildQuestionFields(
+        IReadOnlyDictionary<string, string> fields)
+    {
+        CardOwner? answeredBy = null;
+        if (fields.TryGetValue("answered_by", out var answeredByText) && answeredByText.Length > 0)
+        {
+            if (!CardOwnerWireFormat.TryParse(answeredByText, out var parsedAnsweredBy))
+            {
+                return (null, $"question card has unrecognised 'answered_by': '{answeredByText}'. Recognised owners: {CardOwnerWireFormat.RecognisedValues}.");
+            }
+
+            answeredBy = parsedAnsweredBy;
+        }
+
+        DateTimeOffset? answeredAt = null;
+        if (fields.TryGetValue("answered_at", out var answeredAtText) && answeredAtText.Length > 0)
+        {
+            if (!TryParseTimestamp(answeredAtText, out var parsedAnsweredAt))
+            {
+                return (null, $"question card has invalid 'answered_at': '{answeredAtText}'");
+            }
+
+            answeredAt = parsedAnsweredAt;
+        }
+
+        var answerDecisionId = ParseOptionalFrontmatterValue(fields, "answer_decision");
+        var answerInline = ParseOptionalFrontmatterValue(fields, "answer_inline");
+
+        CardOwner? deferredBy = null;
+        if (fields.TryGetValue("deferred_by", out var deferredByText) && deferredByText.Length > 0)
+        {
+            if (!CardOwnerWireFormat.TryParse(deferredByText, out var parsedDeferredBy))
+            {
+                return (null, $"question card has unrecognised 'deferred_by': '{deferredByText}'. Recognised owners: {CardOwnerWireFormat.RecognisedValues}.");
+            }
+
+            deferredBy = parsedDeferredBy;
+        }
+
+        DateTimeOffset? deferredAt = null;
+        if (fields.TryGetValue("deferred_at", out var deferredAtText) && deferredAtText.Length > 0)
+        {
+            if (!TryParseTimestamp(deferredAtText, out var parsedDeferredAt))
+            {
+                return (null, $"question card has invalid 'deferred_at': '{deferredAtText}'");
+            }
+
+            deferredAt = parsedDeferredAt;
+        }
+
+        var deferredTarget = ParseOptionalFrontmatterValue(fields, "deferred_target");
+
+        return (new QuestionCardFields
+        {
+            AnsweredBy = answeredBy,
+            AnsweredAt = answeredAt,
+            AnswerDecisionId = answerDecisionId,
+            AnswerInline = answerInline,
+            DeferredBy = deferredBy,
+            DeferredAt = deferredAt,
+            DeferredTarget = deferredTarget,
+        }, null);
     }
 
     /// <summary>

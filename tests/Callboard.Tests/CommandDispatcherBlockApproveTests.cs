@@ -365,6 +365,40 @@ public sealed class CommandDispatcherBlockApproveTests
         Assert.Equal(path, notFound.FilePath);
     }
 
+    // §9 block D, 9.8: process-enforcement "Work cannot proceed past a stop-and-ask" — 'approve' is
+    // always a forward transition, so unlike 'block transition' there is no back-edge exemption
+    // here.
+    [Fact]
+    public void BlockApprove_BlockedByOpenProductOwnerQuestion_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        WriteOpenProductOwnerQuestion(repo.Path, "Q-0020");
+        var path = WriteInitialBlockCardBlockedBy(repo.Path, "b-0020", "B-0020", BlockFlowState.InReview, "Q-0020");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "approve", "--id", "B-0020", "--role", "reviewer", "--state", "commit-abc", "--claims", "claim one", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("blocked-by-open-product-owner-question", refusal.GetProperty("code").GetString());
+        Assert.Contains("Q-0020", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("in-review", read.Frontmatter.Status);
+        Assert.Empty(read.Claims);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
     [Fact]
     public void BlockApprove_InvalidClaimItem_Refuses()
     {
@@ -442,6 +476,35 @@ public sealed class CommandDispatcherBlockApproveTests
         var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, []);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
+    }
+
+    // §9 block D, 9.8: same shape as WriteInitialBlockCard, but with BlockedBy naming a question
+    // card — the CardApprovalOutcome.BlockedByOpenProductOwnerQuestion case's own fixture.
+    private static string WriteInitialBlockCardBlockedBy(string repoRoot, string fileStem, string id, BlockFlowState status, string blockingCardId)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Block, "Title", status.ToWireString(), CardOwner.Architect, CardScope.Change, "8", FixedNow, FixedNow);
+        var blockFields = new BlockCardFields(null, null, [], null, [blockingCardId], []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    // §9 block D, 9.8: an open question owned by the product owner — the one shape that halts a
+    // card advancing past it.
+    private static void WriteOpenProductOwnerQuestion(string repoRoot, string id)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, id.ToLowerInvariant() + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "Should we ship X?", QuestionStatus.Open.ToWireString(), CardOwner.ProductOwner,
+            CardScope.Repository, string.Empty, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory) =>

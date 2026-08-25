@@ -1975,14 +1975,29 @@ internal static class CommandParser
     /// Builds <c>obligation create</c>'s <see cref="CommandDispatcher.ParsedCommand.ObligationCreate"/>
     /// (§7 block A/C). Scope is always <see cref="CardScope.Change"/>, so <c>--change</c> is
     /// required. Unlike block A's shipped shape, this no longer goes through the shared
-    /// <see cref="ParseCardCreate"/> — <c>--owed-by</c> (register: "An obligation SHALL name the
+    /// <see cref="ParseCardCreate"/> — <c>--section</c> (register: "An obligation SHALL name the
     /// section expected to discharge it") is a required flag <see cref="ParseCardCreate"/>'s shape
     /// has no room for, the same reason <see cref="ParseHazardCreate"/> does not use it either.
     /// <b>Argv-decidable here, resolved against the record in <c>CommandDispatcher.
-    /// RunObligationCreate</c>:</b> a missing or blank <c>--owed-by</c> is refused at parse time
+    /// RunObligationCreate</c>:</b> a missing or blank <c>--section</c> is refused at parse time
     /// (O-3), naming exactly what is missing; whether the id actually resolves to a real
     /// <c>section</c> card cannot be decided from argv alone and is checked afterward, through
     /// <c>CommandDispatcher.ResolveCardReference</c>.
+    ///
+    /// <para>
+    /// <b>Renamed from <c>--owed-by</c> (§9 block D, carried item F).</b> <c>question create</c>'s
+    /// own <c>--owed-by &lt;role&gt;</c> (the role that owes the answer) and this flag used to share
+    /// one name over two different-typed values — a section id here, a role there — on a CLI an
+    /// agent reads cold with no way to tell which shape a given <c>--owed-by</c> expects without
+    /// already knowing the verb. This flag moves, not <c>question create</c>'s: <c>--section</c> is
+    /// already this exact CLI's own name for "a section id" (<c>finding record --section</c>), so
+    /// this reuses established vocabulary rather than the two-word domain phrase; <c>question
+    /// create</c>'s <c>--owed-by &lt;role&gt;</c> is register's own phrase ("continues to surface to
+    /// the role that owes its answer") and has no shorter established name to fall back to instead.
+    /// The underlying model field (<see cref="RegisterCardFields.OwedBy"/>, the wire key
+    /// <c>owed_by</c>, <see cref="Cli.CardCreateResult.OwedBy"/>) is unchanged — only the CLI flag
+    /// spelling moves.
+    /// </para>
     /// </summary>
     private static CommandDispatcher.ParseResult ParseObligationCreate(CommandDispatcher.CommandContext context)
     {
@@ -2003,7 +2018,7 @@ internal static class CommandParser
             ["--title"] = value => title = value,
             ["--role"] = value => roleText = value,
             ["--change"] = value => changeName = value,
-            ["--owed-by"] = value => owedBy = value,
+            ["--section"] = value => owedBy = value,
         });
         if (flagRefusal is not null)
         {
@@ -2037,8 +2052,8 @@ internal static class CommandParser
         if (string.IsNullOrWhiteSpace(owedBy))
         {
             return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "obligation-missing-owed-by",
-                "'obligation create' requires '--owed-by <section-id>' — an obligation cannot be raised " +
+                "obligation-missing-section",
+                "'obligation create' requires '--section <section-id>' — an obligation cannot be raised " +
                 "without naming the section expected to discharge it."));
         }
 
@@ -2096,8 +2111,9 @@ internal static class CommandParser
                 new CommandDispatcher.ParsedCommand.DecisionCreate(filePath, title, role, body, workingDirectory, timestamp));
 
     /// <summary>
-    /// <c>question</c> (§7 remediation, blocker 1). <b>Creation only</b> — see <see cref="
-    /// CommandDispatcher.ParsedCommand.QuestionCreate"/>'s own doc comment for what §9 still owns.
+    /// <c>question</c> (§7 remediation, blocker 1, creation; §9 block D, <c>answer</c>/<c>defer</c>
+    /// — the vocabulary a question's lifecycle needed once card-model's plain <c>"open"</c> literal
+    /// stopped being the whole story).
     /// </summary>
     private static CommandDispatcher.ParseResult ParseQuestion(CommandDispatcher.CommandContext context)
     {
@@ -2106,14 +2122,20 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'question' requires a subcommand. Known subcommands: create."));
+                    "'question' requires a subcommand. Known subcommands: create, answer, defer."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseQuestionCreate(context);
+            case "answer":
+                context.Arguments.TryTake();
+                return ParseQuestionAnswer(context);
+            case "defer":
+                context.Arguments.TryTake();
+                return ParseQuestionDefer(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'question' subcommand: '{subcommand}'. Known subcommands: create."));
+                    $"no such 'question' subcommand: '{subcommand}'. Known subcommands: create, answer, defer."));
         }
     }
 
@@ -2197,6 +2219,138 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.QuestionCreate(
             filePath, title, actingRole, owedByRole, body, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>question answer</c>'s <see cref="CommandDispatcher.ParsedCommand.QuestionAnswer"/>
+    /// (§9 block D, process-enforcement: "An answer must be written down"). One positional token —
+    /// the question card's own file path, the same addressing <see cref="ParseBlockTransition"/>
+    /// already uses for an existing card, since a question (unlike a block or a nit) has no
+    /// identity-resolved id surface of its own yet. <c>--decision &lt;id&gt;</c> names the
+    /// <c>decision</c> card recording the answer; the stdin body is the inline answer for the
+    /// trivial case. <b>Naming neither is refused here, at parse (Architect ruling, §9 block D) —
+    /// see <see cref="Cards.CardQuestionAnswerOutcome"/>'s own doc comment for why that refusal is
+    /// argv-decidable and therefore never card-addressed</b>, the same "argv-decidable is decided
+    /// here" discipline <see cref="ParseObligationCreate"/>'s missing-<c>--section</c> check already
+    /// follows. Stdin is still required redirected even when <c>--decision</c> is given (the same
+    /// "always read, sometimes empty" shape <see cref="ParseNitDisposition"/> already has for
+    /// <c>decline</c>) — an empty inline body alongside a named decision is not a contradiction, it
+    /// is simply an answer with nothing extra to say inline.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseQuestionAnswer(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'question answer' requires a card file path."));
+        }
+
+        string? roleText = null;
+        string? decisionId = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--role"] = value => roleText = value,
+            ["--decision"] = value => decisionId = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'question answer' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var inlineAnswer = StdinBodyReader.ReadBody(stdin!);
+
+        if (string.IsNullOrEmpty(decisionId) && string.IsNullOrWhiteSpace(inlineAnswer))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "question-answer-missing-answer",
+                "'question answer' requires either '--decision <decision-id>' naming the decision card that " +
+                "records the answer, or a non-empty inline answer on stdin — a question cannot be marked " +
+                "answered with neither."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.QuestionAnswer(
+            filePath, role, string.IsNullOrEmpty(decisionId) ? null : decisionId, string.IsNullOrWhiteSpace(inlineAnswer) ? null : inlineAnswer,
+            changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>question defer</c>'s <see cref="CommandDispatcher.ParsedCommand.QuestionDefer"/>
+    /// (§9 block D — the question status vocabulary entire, including <c>deferred</c>). Same
+    /// file-path addressing as <see cref="ParseQuestionAnswer"/>. <c>--target &lt;text&gt;</c>
+    /// (required, argv-decidable — a missing one is refused here) names the later section or change
+    /// this question is deferred to, as free text — see <see cref="Cards.QuestionCardFields.
+    /// DeferredTarget"/>'s own doc comment for why it is never resolved through <see cref="Cards.
+    /// CardIdentityResolver"/>. No stdin: deferring links to a target, it does not write new prose,
+    /// the same reason <see cref="ParseDecisionSupersede"/> never reads stdin either.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseQuestionDefer(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'question defer' requires a card file path."));
+        }
+
+        string? roleText = null;
+        string? target = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--role"] = value => roleText = value,
+            ["--target"] = value => target = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'question defer' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'question defer' requires '--target <section-or-change>' — the later section or change this " +
+                "question is deferred to."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.QuestionDefer(
+            filePath, role, target, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

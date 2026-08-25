@@ -100,6 +100,8 @@ public sealed class CardCommentImmutabilityTests
             "AddBlockedBy",                         // §5 block D: read-modify-write on BlockFields.BlockedBy only; never touches Frontmatter.Status or Comments
             "AddBlockedByUnderExistingLock",        // same, lock already held
             "AllocateIdentity",                     // §6 block B: thin Match wrapper over CardIdentityAllocator.Allocate; never touches a CardFile's Comments
+            "AnswerQuestion",                       // §9 block D: acquires the question's own lock and delegates to AnswerQuestionUnderExistingLock; never touches a CardFile itself
+            "AnswerQuestionUnderExistingLock",      // §9 block D: read-decide-write on Frontmatter.Status/QuestionFields.AnsweredBy/AnsweredAt/AnswerDecisionId/AnswerInline only; never touches Comments
             "AppendComment",                       // read-modify-write: reads, appends one comment, writes — never drops one
             "AppendCommentUnderExistingLock",       // same, lock already held by the caller
             "ApplyBlockTransition",                 // §5 block C: read-modify-write on Frontmatter.Status/BlockFields/Transitions only; Comments passes through the `card with { ... }` unchanged
@@ -112,18 +114,22 @@ public sealed class CardCommentImmutabilityTests
             "CompactRulesUnderLocks",               // §7 block F: read-decide-write on Frontmatter.Status/RegisterFields.SupersededBy/DischargedBy/DischargedAt for every absorbed rule, and RegisterFields.Absorbs for the family only; never touches Comments on any of them
             "CountRoundIncrementingTransitions",     // 8a.17: pure count over a block card's Transitions against BlockFlowTransitions.RoundIncrementingTransitionNames; never touches a CardFile
             "CreateCard",                           // §7 block A: allocates an identity, validates scope, writes one brand-new card via WriteCard — never touches an existing card's Comments, it only ever creates
+            "DeferQuestion",                        // §9 block D: acquires the question's own lock and delegates to DeferQuestionUnderExistingLock; never touches a CardFile itself
+            "DeferQuestionUnderExistingLock",        // §9 block D: read-decide-write on Frontmatter.Status/QuestionFields.DeferredBy/DeferredAt/DeferredTarget only; never touches Comments
             "DescribeUnexpectedDischargeOutcome",   // §7 block D: pure string formatter over a CardRegisterDischargeOutcome for ArchiveChange's tool-failure message; never touches a CardFile
             "DischargeRegisterCard",                // §7 block A: read-decide-write on Frontmatter.Status/RegisterFields.DischargedBy/DischargedAt only; never touches Comments
             "DischargeRegisterCardUnderExistingLock", // same, lock already held
             "DispositionNit",                       // §8 block B: role check, allocates the raised card's identity (defer/decline), then acquires the block's lock (and, for defer/decline, the raised card's) and delegates to DispositionNitUnderLocks; never touches a CardFile itself
             "DispositionNitUnderLocks",              // §8 block B: appends one disposition comment (never edits or drops the nit comment it resolves), and — for defer/decline — create-only writes a second card via AtomicWrite; for fix-before-land, read-decide-write on Frontmatter.Status/BlockFields.Round/Transitions only when the edge actually applies
+            "FindBlockingOpenProductOwnerQuestion",  // §9 block D: read-only resolution over a block card's own BlockedBy ids via CardIdentityResolver, looking for an open product-owner question; never touches a CardFile
             "IsApprovingRole",                      // §8 block A: pure predicate over CardOwner (reviewer/supervisor only), shared by RecordApproval; never touches a CardFile
             "IsArchitectRole",                       // §8 block B: pure predicate over CardOwner (architect only), shared by DispositionNit; never touches a CardFile
             "IsAuthorisingRole",                     // §8a block C: pure predicate over CardOwner (product-owner only), shared by RecordSectionAuthorisation; never touches a CardFile
             "IsBlockCard",                          // pure predicate over CardFrontmatter.Kind, shared by ApplyBlockTransition/RecordGateResult/AddBlockedBy/RemoveBlockedBy/RecordApproval; never touches a CardFile's Comments
-            "IsDecisionCard",                       // §7 block C: the IsRegisterCard counterpart narrowed to CardKind.Decision, shared by CommandDispatcher's --owed-by/--supersedes resolution and SupersedeDecisionUnderLocks; never touches a CardFile's Comments
+            "IsDecisionCard",                       // §7 block C: the IsRegisterCard counterpart narrowed to CardKind.Decision, shared by CommandDispatcher's --supersedes resolution and SupersedeDecisionUnderLocks; never touches a CardFile's Comments
             "IsFindingCard",                        // §6 block C: the IsBlockCard/IsSectionCard counterpart for CardKind.Finding, shared with CommandDispatcher.RunFindingStatus; never touches a CardFile's Comments
             "IsObligationCard",                     // §7 block D: the IsRegisterCard counterpart narrowed to CardKind.Obligation, shared by ArchiveChange's obligation scan; never touches a CardFile's Comments
+            "IsQuestionCard",                       // §9 block D: the IsBlockCard/IsSectionCard counterpart for CardKind.Question, shared by AnswerQuestion/DeferQuestion/FindBlockingOpenProductOwnerQuestion; never touches a CardFile's Comments
             "IsRegisterCard",                       // §7 block A: the IsBlockCard/IsSectionCard/IsFindingCard counterpart for the four register kinds; never touches a CardFile's Comments
             "IsRuleCard",                            // §7 block E: the IsRegisterCard counterpart narrowed to CardKind.Rule, shared by CommandDispatcher's `rule promote` resolution and PromoteRuleUnderExistingLock; never touches a CardFile's Comments
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments

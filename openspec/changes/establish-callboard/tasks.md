@@ -113,7 +113,7 @@
 - [ ] 9.4 Refuse section close over open obligations owed by that section
 - [ ] 9.5 Refuse section close over open undeferred questions
 - [ ] 9.6 Refuse section close over unresolved addressed threads, and surface threads older than one round as a prompt
-- [ ] 9.7 Refuse marking a question answered without a decision reference or an inline answer
+- [x] 9.7 Refuse marking a question answered without a decision reference or an inline answer
 - [ ] 9.8 Refuse advancing a card blocked by an open Product Owner question
 - [ ] 9.9 Refuse archive over open change-scoped obligations owed by no remaining section
 - [x] 9.10 Add a test per refusal rule demonstrating it fires, per the amended S5

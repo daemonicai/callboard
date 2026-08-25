@@ -50,6 +50,110 @@ public sealed class CommandDispatcherBlockTransitionTests
         Assert.Equal(FixedNow, entry.Timestamp);
     }
 
+    // §9 block D, 9.8: process-enforcement "Work cannot proceed past a stop-and-ask" — a forward
+    // transition (claim: briefed -> building) is refused while the card is blocked by an open
+    // question owned by the product owner, and the attempt is recorded against the block card.
+    [Fact]
+    public void BlockTransition_BlockedByOpenProductOwnerQuestion_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        WriteOpenProductOwnerQuestion(repo.Path, "Q-0001");
+        var path = WriteInitialBlockCardBlockedBy(repo.Path, "b-0016", "B-0016", BlockFlowState.Briefed, "Q-0001");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "claim", "--role", "worker", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("blocked-by-open-product-owner-question", refusal.GetProperty("code").GetString());
+        Assert.Contains("Q-0001", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("briefed", read.Frontmatter.Status);
+        Assert.Empty(read.Transitions);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
+    // §9 block D: the exemption half of the same guard — changes-requested is a back-edge (returns
+    // work to briefed, does not advance past the blocker), so it is NOT refused even while the
+    // card is blocked by the same open product-owner question.
+    [Fact]
+    public void BlockTransition_ChangesRequested_NotRefusedByOpenProductOwnerQuestion()
+    {
+        using var repo = new TempGitRepo();
+        WriteOpenProductOwnerQuestion(repo.Path, "Q-0002");
+        var directory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "b-0017.md");
+        var frontmatter = new CardFrontmatter(
+            "B-0017", CardKind.Block, "Title", BlockFlowState.InReview.ToWireString(), CardOwner.Architect, CardScope.Change, "5", FixedNow, FixedNow);
+        var blockFields = new BlockCardFields("commit-abc", null, [], 1, ["Q-0002"], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(new CardFile(frontmatter, "Body.", [], [], [], blockFields, [])), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "changes-requested", "--role", "reviewer", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("briefed", read.Frontmatter.Status);
+        Assert.Empty(read.Refusals);
+    }
+
+    // §9 block D review finding, negative half 1: a question owned by a role other than the
+    // product owner does NOT halt the card, even while open — the guard keys on ownership, not
+    // on "is a question".
+    [Fact]
+    public void BlockTransition_BlockedByOpenQuestionOwnedByNonProductOwner_NotRefused()
+    {
+        using var repo = new TempGitRepo();
+        WriteQuestion(repo.Path, "Q-0018", CardOwner.Architect, QuestionStatus.Open);
+        var path = WriteInitialBlockCardBlockedBy(repo.Path, "b-0018", "B-0018", BlockFlowState.Briefed, "Q-0018");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "claim", "--role", "worker", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("building", read.Frontmatter.Status);
+        Assert.Empty(read.Refusals);
+    }
+
+    // §9 block D review finding, negative half 2: a product-owner-owned question that is no
+    // longer open (answered here) does NOT halt the card — the guard keys on status, not merely
+    // on ownership.
+    [Fact]
+    public void BlockTransition_BlockedByAnsweredProductOwnerQuestion_NotRefused()
+    {
+        using var repo = new TempGitRepo();
+        WriteQuestion(repo.Path, "Q-0019", CardOwner.ProductOwner, QuestionStatus.Answered);
+        var path = WriteInitialBlockCardBlockedBy(repo.Path, "b-0019", "B-0019", BlockFlowState.Briefed, "Q-0019");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "claim", "--role", "worker", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("building", read.Frontmatter.Status);
+        Assert.Empty(read.Refusals);
+    }
+
     // Owed evidence: the first card-writing verb's own proof that a refusal leaves no card written
     // and no card modified — asserted on the card file's bytes, not on the outcome object (§3's
     // rule: green tests do not exercise the machine contract).
@@ -503,6 +607,50 @@ public sealed class CommandDispatcherBlockTransitionTests
         var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, []);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
+    }
+
+    // §9 block D, 9.8: same shape as WriteInitialBlockCard, but with BlockedBy naming a question
+    // card — the CardBlockTransitionOutcome.BlockedByOpenProductOwnerQuestion case's own fixture.
+    private static string WriteInitialBlockCardBlockedBy(string repoRoot, string fileStem, string id, BlockFlowState status, string blockingCardId)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Block, "Title", status.ToWireString(), CardOwner.Architect, CardScope.Change, "5", FixedNow, FixedNow);
+        var blockFields = new BlockCardFields(null, null, [], null, [blockingCardId], []);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    // §9 block D, 9.8: an open question owned by the product owner — the one shape that halts a
+    // card advancing past it.
+    private static void WriteOpenProductOwnerQuestion(string repoRoot, string id)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, id.ToLowerInvariant() + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "Should we ship X?", QuestionStatus.Open.ToWireString(), CardOwner.ProductOwner,
+            CardScope.Repository, string.Empty, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    // §9 block D review finding: the asymmetry (ownership, not kind; open, not any status) is
+    // implemented in FindBlockingOpenProductOwnerQuestion but was only ever exercised on its
+    // positive case. This writes either boundary's negative — a question that must NOT halt.
+    private static void WriteQuestion(string repoRoot, string id, CardOwner owner, QuestionStatus status)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, id.ToLowerInvariant() + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "Should we ship X?", status.ToWireString(), owner,
+            CardScope.Repository, string.Empty, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory) =>

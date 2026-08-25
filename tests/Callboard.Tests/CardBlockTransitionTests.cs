@@ -85,7 +85,8 @@ public sealed class CardBlockTransitionTests : IDisposable
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
-            onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"));
+            onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"),
+            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"));
 
         Assert.Equal(BlockFlowState.Drafting, undefined.CurrentState);
         var available = Assert.Single(undefined.Available);
@@ -333,7 +334,8 @@ public sealed class CardBlockTransitionTests : IDisposable
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Applied, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Applied, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Applied, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
-            onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected Applied, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"));
+            onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected Applied, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"),
+            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected Applied, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"));
 
     private static CardLock AssertAcquired(CardLockResult result) =>
         result.Match(

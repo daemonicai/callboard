@@ -7,10 +7,11 @@ namespace Callboard.Tests;
 /// <summary>
 /// §7 remediation, blocker 1: <c>question create</c> — creation only. Card-model already models
 /// <see cref="CardKind.Question"/> in full (scope rules, file writer, parser, wire format, identity
-/// prefix), but no CLI verb had ever constructed one before this. §9 owns everything past creation —
-/// answering, deferring, and every refusal tied to a question's own lifecycle (9.7, 9.9, 9.10) — so
-/// this covers only that a question card can be created, repository-scoped, and refuses the same
-/// wrong-scope/missing-argument shapes every block A creation verb already refuses.
+/// prefix), but no CLI verb had ever constructed one before this. §9 block D added <c>answer</c>/
+/// <c>defer</c> (see <c>CommandDispatcherQuestionAnswerTests</c>/<c>CommandDispatcherQuestionDeferTests</c>)
+/// and 9.9/9.10 remain later blocks' own — so this covers only that a question card can be created,
+/// repository-scoped, and refuses the same wrong-scope/missing-argument shapes every block A
+/// creation verb already refuses.
 /// </summary>
 public sealed class CommandDispatcherQuestionCreateTests
 {
@@ -38,6 +39,11 @@ public sealed class CommandDispatcherQuestionCreateTests
         // The response's actingRole still reports the raiser — the fact its name says — even
         // though the card itself is owned by someone else entirely.
         Assert.Equal("worker", result.GetProperty("actingRole").GetString());
+
+        // §9 block D, carried item G: the response names who owes the answer — previously omitted
+        // entirely, since a question carries no RegisterCardFields for MapCardCreateOutcome's own
+        // OwedBy read to fall back to.
+        Assert.Equal("product-owner", result.GetProperty("owedBy").GetString());
         Assert.True(File.Exists(path));
 
         var card = AssertParseSuccess(CardStore.ReadCard(path));
@@ -122,7 +128,9 @@ public sealed class CommandDispatcherQuestionCreateTests
         using var repo = new TempGitRepo();
 
         var output = new StringWriter();
-        var exitCode = RunInRepo(["question", "answer"], output, repo.Path, string.Empty);
+        // §9 block D added 'answer'/'defer' as recognised subcommands — 'frobnicate' stays
+        // genuinely unrecognised, unlike this test's own former probe ('answer').
+        var exitCode = RunInRepo(["question", "frobnicate"], output, repo.Path, string.Empty);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());

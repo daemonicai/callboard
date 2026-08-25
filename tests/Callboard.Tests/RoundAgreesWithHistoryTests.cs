@@ -299,7 +299,9 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException(
                 $"expected Applied, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
             onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException(
-                $"expected Applied, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"));
+                $"expected Applied, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"),
+            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException(
+                $"expected Applied, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"));
 
     private static CardNitDispositionOutcome.Dispositioned AssertDispositioned(CardNitDispositionOutcome outcome) =>
         outcome.Match(

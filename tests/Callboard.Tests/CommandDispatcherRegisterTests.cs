@@ -140,7 +140,7 @@ public sealed class CommandDispatcherRegisterTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["obligation", "create", path, "--title", "Settle the migration", "--role", "architect", "--change", ChangeName, "--owed-by", sectionId!],
+            ["obligation", "create", path, "--title", "Settle the migration", "--role", "architect", "--change", ChangeName, "--section", sectionId!],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -164,8 +164,8 @@ public sealed class CommandDispatcherRegisterTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
-        Assert.Equal("obligation-missing-owed-by", refusal.GetProperty("code").GetString());
-        Assert.Contains("owed-by", refusal.GetProperty("message").GetString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("obligation-missing-section", refusal.GetProperty("code").GetString());
+        Assert.Contains("--section", refusal.GetProperty("message").GetString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(path));
     }
 
@@ -179,7 +179,7 @@ public sealed class CommandDispatcherRegisterTests
         var exitCode = RunInRepo(
             [
                 "obligation", "create", path, "--title", "Settle the migration", "--role", "architect",
-                "--change", ChangeName, "--owed-by", "S-9999",
+                "--change", ChangeName, "--section", "S-9999",
             ],
             output, repo.Path, "Body.");
 
@@ -207,7 +207,7 @@ public sealed class CommandDispatcherRegisterTests
         var exitCode = RunInRepo(
             [
                 "obligation", "create", path, "--title", "Settle the migration", "--role", "architect",
-                "--change", ChangeName, "--owed-by", decisionId!,
+                "--change", ChangeName, "--section", decisionId!,
             ],
             output, repo.Path, "Body.");
 
@@ -269,7 +269,7 @@ public sealed class CommandDispatcherRegisterTests
     // One mechanical `[Theory]` rather than five hand-written near-copies: the five verbs'
     // argument shapes are not a fixed property list `RegisterCardFieldsKeyCoverageTests`-style
     // reflection could enumerate (rule needs `--scope`; hazard needs `--condition`/`--cadence`;
-    // obligation needs `--change` plus a real section id to resolve `--owed-by` against; decision
+    // obligation needs `--change` plus a real section id to resolve `--section` against; decision
     // needs neither; section needs `--change`) — that is business logic, not a reflectable shape —
     // so the data lives in one `MemberData` list instead: a sixth or seventh creation verb extends
     // that list, not a sixth or seventh copy of this method.
@@ -338,7 +338,7 @@ public sealed class CommandDispatcherRegisterTests
                 return (new[]
                 {
                     "obligation", "create", path, "--title", "Cross-check", "--role", "worker",
-                    "--change", ChangeName, "--owed-by", sectionId,
+                    "--change", ChangeName, "--section", sectionId,
                 }, path);
             }),
         };

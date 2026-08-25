@@ -31,7 +31,7 @@ public sealed class CommandDispatcherChangeArchiveTests
         RunInRepo(
             [
                 "obligation", "create", Path.Combine(repo.CardsDirectory, "o-0001.md"), "--title", "Settle the migration",
-                "--role", "architect", "--change", ChangeName, "--owed-by", sectionId,
+                "--role", "architect", "--change", ChangeName, "--section", sectionId,
             ],
             obligationOutput, repo.Path, "Body.");
         var obligationId = ExtractResultId(obligationOutput);

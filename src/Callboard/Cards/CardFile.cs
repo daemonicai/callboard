@@ -111,7 +111,8 @@ internal sealed record CardFile(
     RegisterCardFields? RegisterFields = null,
     IReadOnlyList<CardApprovalClaim>? Claims = null,
     IReadOnlyList<CardApprovalLimit>? Limits = null,
-    IReadOnlyList<CardRefusalEntry>? Refusals = null)
+    IReadOnlyList<CardRefusalEntry>? Refusals = null,
+    QuestionCardFields? QuestionFields = null)
 {
     public IReadOnlyList<CardHandover> Handovers { get; init; } = Handovers ?? [];
 
@@ -130,4 +131,9 @@ internal sealed record CardFile(
     public IReadOnlyList<CardApprovalLimit> Limits { get; init; } = Limits ?? [];
 
     public IReadOnlyList<CardRefusalEntry> Refusals { get; init; } = Refusals ?? [];
+
+    /// <summary>§9 block D's own kind-specific field bag — see <see cref="Cards.QuestionCardFields"/>'s
+    /// own doc comment for why a question cannot share <see cref="RegisterFields"/> the way the
+    /// four register kinds do.</summary>
+    public QuestionCardFields QuestionFields { get; init; } = QuestionFields ?? Cards.QuestionCardFields.Empty;
 }

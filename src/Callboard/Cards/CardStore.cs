@@ -470,6 +470,18 @@ internal static class CardStore
                     return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.BaseNotRecorded());
                 }
 
+                // process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block D, 9.8).
+                // Exempts BlockFlowTransitions.RoundIncrementingTransitionNames — changes-requested
+                // is the only one this generic applier itself resolves — because a back-edge returns
+                // the card to earlier work rather than advancing it past the blocker (Architect
+                // ruling, §9 block D DEVLOG post).
+                if (!BlockFlowTransitions.RoundIncrementingTransitionNames.Contains(transition.Name, StringComparer.Ordinal)
+                    && FindBlockingOpenProductOwnerQuestion(cardsRoot, card) is { } blockingQuestion)
+                {
+                    return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardBlockTransitionOutcome.BlockedByOpenProductOwnerQuestion(blockingQuestion.QuestionId, blockingQuestion.Title));
+                }
+
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
                 if (anchored is null)
                 {
@@ -782,6 +794,16 @@ internal static class CardStore
                 {
                     return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.UnresolvedThreadsAddressedToActor>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
                         new CardApprovalOutcome.UnresolvedThreadsAddressedToActor(actingRole, unresolvedThreadIds),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason));
+                }
+
+                // process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block D, 9.8).
+                // 'approve' is always a forward transition — there is no back-edge on this surface
+                // to exempt the way ApplyBlockTransitionUnderExistingLock exempts changes-requested.
+                if (FindBlockingOpenProductOwnerQuestion(cardsRoot, card) is { } blockingQuestion)
+                {
+                    return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.BlockedByOpenProductOwnerQuestion>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.BlockedByOpenProductOwnerQuestion(blockingQuestion.QuestionId, blockingQuestion.Title),
                         static reason => new CardApprovalOutcome.ToolFailure(reason));
                 }
 
@@ -1459,6 +1481,245 @@ internal static class CardStore
             },
             onFailure: failure =>
                 new CardBlockedByOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// Marks the question card at <paramref name="filePath"/> answered (§9 block D,
+    /// process-enforcement: "An answer must be written down") — the only door to <see cref="
+    /// QuestionStatus.Answered"/>. <paramref name="decisionId"/>/<paramref name="inlineAnswer"/>
+    /// are mutually informative, not mutually enforced here: <see cref="Callboard.Cli.CommandParser.
+    /// ParseQuestionAnswer"/> already refused a call naming neither before this is ever reached (see
+    /// <see cref="CardQuestionAnswerOutcome"/>'s own doc comment for why that refusal belongs there,
+    /// not here), and a caller that resolved <paramref name="decisionId"/> against
+    /// <see cref="CardIdentityResolver"/> (<see cref="Callboard.Cli.CommandDispatcher.
+    /// RunQuestionAnswer"/>) has already proven it names a real <c>decision</c> card by the time
+    /// this method ever sees it.
+    /// </summary>
+    internal static CardQuestionAnswerOutcome AnswerQuestion(
+        string cardsRoot, string filePath, string? decisionId, string? inlineAnswer, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => AnswerQuestionUnderExistingLock(heldLock, cardsRoot, decisionId, inlineAnswer, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardQuestionAnswerOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>The read-decide-write step of <see cref="AnswerQuestion"/>.</summary>
+    internal static CardQuestionAnswerOutcome AnswerQuestionUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string? decisionId, string? inlineAnswer, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardQuestionAnswerOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardQuestionAnswerOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsQuestionCard(card))
+                {
+                    return RefuseAndRecord<CardQuestionAnswerOutcome, CardQuestionAnswerOutcome.NotAQuestionCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardQuestionAnswerOutcome.NotAQuestionCard(card.Frontmatter.Kind),
+                        static reason => new CardQuestionAnswerOutcome.ToolFailure(reason));
+                }
+
+                if (!QuestionStatusWireFormat.TryParse(card.Frontmatter.Status, out var currentStatus))
+                {
+                    return new CardQuestionAnswerOutcome.CardCorrupt(
+                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {QuestionStatusWireFormat.RecognisedValues}.");
+                }
+
+                if (currentStatus != QuestionStatus.Open)
+                {
+                    return RefuseAndRecord<CardQuestionAnswerOutcome, CardQuestionAnswerOutcome.NotOpen>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardQuestionAnswerOutcome.NotOpen(currentStatus),
+                        static reason => new CardQuestionAnswerOutcome.ToolFailure(reason));
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardQuestionAnswerOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Status = QuestionStatus.Answered.ToWireString(), Updated = timestamp },
+                    QuestionFields = card.QuestionFields with
+                    {
+                        AnsweredBy = actingRole,
+                        AnsweredAt = timestamp,
+                        AnswerDecisionId = decisionId,
+                        AnswerInline = inlineAnswer,
+                    },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardQuestionAnswerOutcome>(
+                    onSuccess: _ => new CardQuestionAnswerOutcome.Answered(updated),
+                    onNotFound: notFound => new CardQuestionAnswerOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardQuestionAnswerOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardQuestionAnswerOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardQuestionAnswerOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardQuestionAnswerOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: a question card never carries CardFile.Transitions."));
+            },
+            onFailure: failure =>
+                new CardQuestionAnswerOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// Marks the question card at <paramref name="filePath"/> deferred to <paramref name="target"/>
+    /// (§9 block D — the question status vocabulary entire, including <c>deferred</c>, register:
+    /// "the question remains open and continues to surface to the role that owes its answer" —
+    /// unlike <see cref="AnswerQuestion"/>, deferring does not settle who must still act, it only
+    /// redirects when a section close may stop waiting on it) — the only door to <see cref="
+    /// QuestionStatus.Deferred"/>. <paramref name="target"/> is free text — see <see cref="
+    /// QuestionCardFields.DeferredTarget"/>'s own doc comment for why it is never resolved through
+    /// <see cref="CardIdentityResolver"/> the way <paramref name="decisionId"/> above is.
+    /// </summary>
+    internal static CardQuestionDeferOutcome DeferQuestion(
+        string cardsRoot, string filePath, string target, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => DeferQuestionUnderExistingLock(heldLock, cardsRoot, target, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardQuestionDeferOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>The read-decide-write step of <see cref="DeferQuestion"/>.</summary>
+    internal static CardQuestionDeferOutcome DeferQuestionUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string target, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardQuestionDeferOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardQuestionDeferOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (!IsQuestionCard(card))
+                {
+                    return RefuseAndRecord<CardQuestionDeferOutcome, CardQuestionDeferOutcome.NotAQuestionCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardQuestionDeferOutcome.NotAQuestionCard(card.Frontmatter.Kind),
+                        static reason => new CardQuestionDeferOutcome.ToolFailure(reason));
+                }
+
+                if (!QuestionStatusWireFormat.TryParse(card.Frontmatter.Status, out var currentStatus))
+                {
+                    return new CardQuestionDeferOutcome.CardCorrupt(
+                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {QuestionStatusWireFormat.RecognisedValues}.");
+                }
+
+                if (currentStatus != QuestionStatus.Open)
+                {
+                    return RefuseAndRecord<CardQuestionDeferOutcome, CardQuestionDeferOutcome.NotOpen>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardQuestionDeferOutcome.NotOpen(currentStatus),
+                        static reason => new CardQuestionDeferOutcome.ToolFailure(reason));
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardQuestionDeferOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Status = QuestionStatus.Deferred.ToWireString(), Updated = timestamp },
+                    QuestionFields = card.QuestionFields with
+                    {
+                        DeferredBy = actingRole,
+                        DeferredAt = timestamp,
+                        DeferredTarget = target,
+                    },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardQuestionDeferOutcome>(
+                    onSuccess: _ => new CardQuestionDeferOutcome.Deferred(updated),
+                    onNotFound: notFound => new CardQuestionDeferOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardQuestionDeferOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardQuestionDeferOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardQuestionDeferOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardQuestionDeferOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: a question card never carries CardFile.Transitions."));
+            },
+            onFailure: failure =>
+                new CardQuestionDeferOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// The blocking-question half of process-enforcement's "Work cannot proceed past a
+    /// stop-and-ask" (§9 block D, <c>9.8</c>): the first <c>question</c> card among
+    /// <paramref name="card"/>'s own <see cref="BlockCardFields.BlockedBy"/> ids that resolves,
+    /// still <see cref="QuestionStatus.Open"/>, owned by <see cref="CardOwner.ProductOwner"/> — or
+    /// <see langword="null"/> if none does. Resolves every id through <see cref="CardIdentityResolver.
+    /// Resolve"/> (never a hand-rolled directory walk — §7 carried item C), which searches
+    /// <see cref="CardLayout.ResolveRecordDirectories"/> in full, including archived changes: a
+    /// question is always repository-scoped (<see cref="CardScope.Repository"/>, under <see cref="
+    /// CardLayout.RegisterDirectory"/>) and is never itself archived, so this only ever matters for
+    /// the id resolving at all, not for where it happens to be found.
+    ///
+    /// <para>
+    /// <b>Only ownership decides, not kind (Architect ruling, §9 block D).</b> A card can be
+    /// <c>blocked_by</c> any kind, and a <c>question</c> owned by any role other than
+    /// <see cref="CardOwner.ProductOwner"/> does not halt anything here — it is surfaced to whoever
+    /// owes its answer, not enforced, the asymmetry <c>10.10</c> restates. This checks
+    /// <see cref="CardOwner.ProductOwner"/> ownership on a resolved <c>question</c> card
+    /// specifically (never any other kind), which is what makes it "only a Product Owner's open
+    /// question stops a card" rather than "any open question stops a card that happens to also be
+    /// owned by the Product Owner" — the two would coincide today (a question is the only kind this
+    /// build lets a caller name in <c>blocked_by</c> that carries an owner meaningfully distinct
+    /// from its raiser), but this reads <see cref="IsQuestionCard"/> and <see cref="QuestionStatus.
+    /// Open"/> explicitly rather than owner alone, so a future kind added to <c>blocked_by</c> with
+    /// its own owner does not silently start halting cards here too.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Resolution failures are conservative by omission, not by refusal (Architect ruling).</b>
+    /// A <c>blocked_by</c> id that does not resolve, resolves to more than one file, or cannot be
+    /// confirmed because some other file is unreadable is silently skipped by this check — none of
+    /// those is evidence of an <em>open Product Owner question</em>, which is the one fact this
+    /// guard exists to act on, and manufacturing a refusal out of an unrelated resolution problem
+    /// would conflate two different failures under one rule.
+    /// </para>
+    /// </summary>
+    private static (string QuestionId, string Title)? FindBlockingOpenProductOwnerQuestion(string cardsRoot, CardFile card)
+    {
+        foreach (var id in card.BlockFields.BlockedBy)
+        {
+            var resolvedQuestion = CardIdentityResolver.Resolve(cardsRoot, id).Match<CardFile?>(
+                onFound: static (_, found) => found,
+                onNotFound: static _ => null,
+                onDuplicate: static (_, _) => null,
+                onUnreadable: static (_, _) => null);
+
+            if (resolvedQuestion is not { } questionCard || !IsQuestionCard(questionCard) || questionCard.Frontmatter.Owner != CardOwner.ProductOwner)
+            {
+                continue;
+            }
+
+            if (!QuestionStatusWireFormat.TryParse(questionCard.Frontmatter.Status, out var questionStatus) || questionStatus != QuestionStatus.Open)
+            {
+                continue;
+            }
+
+            return (questionCard.Frontmatter.Id, questionCard.Frontmatter.Title);
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -3894,10 +4155,10 @@ internal static class CardStore
             // here: findingFrontmatter.Section is already a validated section card id by the time
             // this runs (RunFindingRecord's own ValidateSection call, ahead of RecordFinding), the
             // same id CommandDispatcher.RunObligationCreate would otherwise require a caller to
-            // spell out via --owed-by. A raised obligation is owed to exactly the section that
+            // spell out via --section. A raised obligation is owed to exactly the section that
             // raised it, so this is the one case where that id is already in hand rather than
             // supplied — "give that obligation a real owed_by like any other" (Architect ruling),
-            // not a free-text label, and not a second, hand-typed --owed-by a caller could get
+            // not a free-text label, and not a second, hand-typed --section a caller could get
             // wrong. A raised hazard carries no owed_by (register: only an obligation is owed to a
             // section) — the ternary is exhaustive over the only two kinds
             // FindingBlindSpotRaiseRequest's own constructor ever allows.
@@ -4146,6 +4407,21 @@ internal static class CardStore
         onSection: static () => true);
 
     /// <summary>The <see cref="IsBlockCard"/>/<see cref="IsSectionCard"/> counterpart for
+    /// <see cref="CardKind.Question"/> (§9 block D) — shared by <see cref="AnswerQuestionUnderExistingLock"/>,
+    /// <see cref="DeferQuestionUnderExistingLock"/> and the <c>blocked_by</c>-resolution check
+    /// <see cref="FindBlockingOpenProductOwnerQuestion"/> applies against every id a block card
+    /// names, so none of the three re-implements the same eight-arm match independently.</summary>
+    internal static bool IsQuestionCard(CardFile card) => card.Frontmatter.Kind.Match(
+        onBlock: static () => false,
+        onQuestion: static () => true,
+        onFinding: static () => false,
+        onObligation: static () => false,
+        onRule: static () => false,
+        onHazard: static () => false,
+        onDecision: static () => false,
+        onSection: static () => false);
+
+    /// <summary>The <see cref="IsBlockCard"/>/<see cref="IsSectionCard"/> counterpart for
     /// <see cref="CardKind.Finding"/> (§6 block C), <see langword="internal"/> for the same reason
     /// <see cref="IsSectionCard"/> is — so <see cref="Callboard.Cli.CommandDispatcher.
     /// RunFindingStatus"/> shares this predicate rather than re-implementing the same eight-arm
@@ -4177,7 +4453,7 @@ internal static class CardStore
 
     /// <summary>The <see cref="IsRegisterCard"/> counterpart narrowed to exactly
     /// <see cref="CardKind.Decision"/> (§7 block C) — shared by <see cref="Callboard.Cli.
-    /// CommandDispatcher"/>'s <c>--owed-by</c>/<c>--supersedes</c> resolution and
+    /// CommandDispatcher"/>'s <c>--supersedes</c> resolution and
     /// <see cref="SupersedeDecisionUnderLocks"/>, so neither re-implements the same eight-arm match
     /// a fifth time.</summary>
     internal static bool IsDecisionCard(CardFile card) => card.Frontmatter.Kind.Match(
