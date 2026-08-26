@@ -28191,35 +28191,52 @@ test added, edited, or removed by either fix.
 
 ## NEXT
 
-**§9 is closed — supervisor `Approve` on the third pass (`ec2d99b..8298539`).** Ten of ten boxes
-ticked, seven blocks plus three remediation rounds, suite at **894**, `GATES_EXIT:0`. **§10 is the
-next section to open** — post its base commit before briefing its first block. The supervisor verified
-the DEVLOG's own integrity this pass as well as the code's: everything through its round-two post is
-byte-identical to `3181d20` (`shasum d9e7e42c` both sides), and the only rewritten region is this one,
-which the convention permits.
+**§10 is open and in flight.** Base `3e85b98`. Two of its six blocks have landed; **block A (10.1–10.3)
+is next, and nothing is in flight right now** — the working tree is clean at `9e7cff6` and no agent is
+running. Ten of §10's ten boxes are still unticked, correctly: both landed blocks are debt blocks
+carrying no `N.M` numbers. Suite at **904**.
 
-**One thing waiting on the Product Owner before §10 can finish.** F3 — authorisation on the comment
-disposition verbs — was deferred here, and it is a **policy** the spec does not contain, not a bug to
-fix: who may resolve, promote or decline a thread, and whether `resolve` requires a body. §10 owes the
-ruling before it owes the refusal. See "Owed to §10" below.
+- `e7dda26` **block F** — the `ParsedCommand.Match` carve. `ICommandVisitor<TResult>` + `Accept`
+  replaces 36 `Func` parameters across 37 ~2200-character signatures; exhaustiveness now rides on
+  `CS0535` at every implementer. No behaviour change, no test edited, suite unmoved at 894.
+- `9e7cff6` **block D** — F3 authorisation. Closed the window that had been open since `8298539`.
 
-**§10 is not open — nothing is in flight.** No base commit has been posted, no block briefed, no agent
-run; the working tree is clean at `3b38e7c`. The carve below is a plan, not a commitment — re-read the
-spec before briefing, since it was written from a single reading of
-`specs/working-context/spec.md` and D6.
+**Remaining blocks, in order: A (10.1–10.3) → B (10.4–10.7) → C (10.8–10.10) → E.** The full carve and
+the constraints binding every block of this section are in the `[architect]` opening post under `## 10.`
+— read it before briefing, not this summary.
 
-- **Block A — 10.1, 10.2, 10.3.** The response shape itself: the four parts in the specified order, the
-  queue composed from ownership plus unresolved addressed threads, and the previous round's verdict
-  carried on a remediation. The core read.
-- **Block B — 10.4, 10.5, 10.6, 10.7.** Priority assembly with cumulative character-based measurement
-  and margin, narrative-only truncation that states every omission, and **both** budget tests. The
-  tests belong with it rather than in a block of their own: a budget mechanism that lands unmeasured
-  is the thing §9 ruling 2 was written about.
-- **Block C — 10.8, 10.9, 10.10.** The derived state summary, the refusal of any hand-entered count or
-  pin, and escalation severity derived from question ownership.
+### The three Product Owner rulings taken at §10's opening
 
-Block A does **not** need the F3 ruling — 10.2 *reads* unresolved addressed threads; F3 governs who may
-*dispose* of them. So §10 can open before that answer arrives, and only the F3 work itself waits on it.
+1. **The read path reads card files, not the index.** `context`/`state` scan
+   `CardLayout.ResolveLiveRecordDirectories`; correctness never rests on the index. This **defers** D4's
+   query-cost rationale rather than realising it — block B's two budget tests are the measurement, and
+   indexing the read path is revisited on their evidence.
+2. **The two commands are `context` and `state`.** `status` was rejected: `section status` and
+   `finding status` already spend that word twice.
+3. **F3: a thread is disposed of by its addressee or the card's owner; `comment resolve` requires a
+   body.** Shipped in `9e7cff6` and recorded in `specs/process-enforcement/spec.md`.
+
+**Deliberate under ruling 3, so nobody "fixes" it later:** a card's owner **may** dispose of a thread
+addressed to the Product Owner — addressee-only was on the table and was not chosen — and a thread with
+no `addressed_to` admits only the card's owner.
+
+### Parked from §10 block D's review — not defects, not carried by any block
+
+Both were the reviewer's own non-blocking nits, deliberately not folded into block D to keep it from
+growing. Neither blocks anything.
+
+- `CardCommentPromoteTests` has no unaddressed-thread case of its own. Covered indirectly through the
+  shared predicate `IsPermittedToDisposeThread`, which the reviewer verified has exactly two call sites;
+  the gap is a direct assertion, not coverage.
+- `RoleNotPermitted.Remedy` is duplicated verbatim between `CardCommentResolveOutcome` and
+  `CardCommentPromoteOutcome`. Worth a shared helper only if a third verb ever needs it.
+
+### `IndexPopulator.cs:249` — re-parked, and now with no reader at all
+
+§9 handed this to §10 as "the first reader of the column". Ruling 1 above means **§10 reads nothing from
+the index**, so the section card's `section = ''` row still has no reader and the fix still has no
+forcing function. It carries forward with F2's ruling attached: if the flat form is wanted, the index
+populates that column **from `CardStore.OwningSectionId`**, never as a second source of truth.
 
 ### The three findings §9 closed on — F1 and F2 fixed, F3 deferred
 
