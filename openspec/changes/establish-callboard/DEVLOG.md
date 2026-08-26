@@ -27647,6 +27647,260 @@ named. That is the ruling working.
 
 → @architect — §9 is closed. Open §10.
 
+## 10. Working context and derived state
+
+**[architect]** Base: 3e85b98 — the core read: a role-scoped working context that fits a stated budget
+and does not grow as the change lengthens, plus the derived state summary that replaces the
+hand-maintained pin.
+
+**[architect]** §10 opened. The carve parked in `## NEXT` at §9's close was written from a single
+reading and is now superseded — re-read against `specs/working-context/spec.md`, D4, D6, D7, and
+`record-retrieval`'s *derived state is never authoritative*. Three Product Owner rulings settle what
+that re-read turned up, and two debts `## NEXT` assigns to §10 had no block carrying them.
+
+### Product Owner rulings taken at §10's opening
+
+1. **The read path reads card files, not the index.** `context` and `state` scan
+   `CardLayout.ResolveLiveRecordDirectories` and answer from the primary record. Correctness never
+   rests on the index — `record-retrieval`'s *the primary record governs* is satisfied by construction
+   rather than by reconciliation. This does **not** realise D4's rationale (query cost independent of
+   narrative volume); it defers it. Block B's two budget tests are the measurement, and indexing the
+   read path is revisited on their evidence, not in advance of it.
+   - Consequence: **`IndexPopulator.cs:249`'s `section = ''` is re-parked, not fixed.** `## NEXT` named
+     §10 as its first reader; on this ruling §10 reads nothing from the index, so the column still has
+     no reader and the fix still has no forcing function. It carries forward with the ruling that
+     settled F2 attached: if the flat form is wanted, the column populates from
+     `CardStore.OwningSectionId`, not from a second source of truth.
+2. **The two commands are `context` and `state`.** `callboard context --role <role>` returns the
+   role-scoped working context; `callboard state` returns the derived summary. The spec's own nouns.
+   `status` was rejected — `section status` and `finding status` already spend that word twice.
+3. **F3's policy, deferred from §9, is ruled.** A comment thread may be disposed of — `resolve`,
+   `promote`, `decline` — by **the role the thread is addressed to, or the role that owns the card the
+   thread sits on**, and by no one else. **`comment resolve` requires a body.** An empty-bodied resolve
+   was the hole: a decline with no recorded reason, the one disposition `register` forbids.
+
+### The blocks, in order
+
+Six blocks. Three carry §10's ten tasks; three carry debt that ticks nothing and takes no `N.M`
+numbers — the DEVLOG is their record, per §3c.
+
+- **F — the `ParsedCommand.Match` carve.** 36 delegates across 37 near-identical ~2200-character
+  signatures. `## NEXT` ruled it belongs to whoever next touches the CLI surface, carved as a block for
+  it; §10 is that toucher and adds two commands to it. The supervisor overturned the safety argument —
+  delegate parameters are distinct record types, each override passes `this`, call sites use named
+  arguments, so a positional swap is a compile error. The cost is diff volume, and that is exactly why
+  it goes **first**: A and C would otherwise write into the old shape and be rewritten out of it.
+- **D — F3 authorisation.** Ruling 3 above, as a refusal in the §9 format. Live debt: the window has
+  been open since `8298539`, not since §10, so it lands before the section's own tasks rather than
+  after them.
+- **A — 10.1, 10.2, 10.3.** The response shape: the four parts in the specified order, the queue
+  composed from ownership plus unresolved addressed threads, the previous round's verdict on a
+  remediation.
+- **B — 10.4, 10.5, 10.6, 10.7.** Priority assembly with cumulative character measurement and margin,
+  narrative-only truncation that states every omission, and **both** budget tests. The tests belong
+  with the mechanism: a budget that lands unmeasured is what §9 ruling 2 was written about.
+- **C — 10.8, 10.9, 10.10.** The derived state summary, the refusal of any hand-entered count or pin,
+  escalation severity derived from question ownership.
+- **E — the register-size review's CLI surface.** Carried item B from §7: `RuleCitations`' register-size
+  review has no command reaching it and `## NEXT` says §10 owes it one. Last because it is independent
+  of everything above.
+
+### Constraints binding every block in this section
+
+- **§9 ruling 1 governs every refusal added here.** A refusal records when it asserts something about
+  the record; it reports without recording when it asserts only that the invocation was malformed.
+  Argv-decidability is not the test and neither is cost.
+- **§9 ruling 3** — a refusal must name its remedy as a command that exists.
+- **The refusal coverage gate is the standard.** Every refusal-shaped case is either in the format with
+  a test proving it fires *and* records, or a keyed, reasoned entry in `Exclusions`. `## NEXT` records
+  the gate's one known limit: **CLI-layer refusals are outside its domain, and §10 works there.**
+- **Carried item C** — anything live goes through `CardLayout.ResolveLiveRecordDirectories`, never
+  `ResolveRecordDirectories`.
+- **Carried item D** — `RuleCitations.CountCitations` is O(rules × cards) and must not go on a per-brief
+  path. `context` is a per-brief path.
+- **Carried item A stays open** — the writer/parser wire-key guard. Any new card field this section
+  adds inherits the same hazard.
+
+**[architect]** Block F briefed → @worker. **The `ParsedCommand.Match` carve.** No task numbers, ticks
+nothing — `## NEXT` parked this at §9's close as belonging to whoever next touches the CLI surface,
+carved as a block for it, and §10 is that toucher. It lands **first** in §10 so blocks A and C add
+`context` and `state` to the carved shape rather than to the old one.
+
+### The problem, stated precisely
+
+`CommandDispatcher.ParsedCommand.Match` (`src/Callboard/Cli/CommandDispatcher.cs:168`) takes **36
+delegate parameters**. The abstract declaration plus 36 overrides is **37 near-identical ~2200-character
+signatures**. Every new verb edits all 37. §10 alone adds two.
+
+**The safety argument was already litigated and settled — do not reopen it.** A reviewer reading this
+cold in §8 judged it actively harmful; the supervisor **overturned** that: the delegate parameters are
+distinct record types, each override passes `this`, and the single call site uses named arguments, so a
+positional swap is a compile error rather than a silent misdispatch. **This block is not a bug fix.**
+The cost is diff volume and nothing else, and the fix must not buy a reduction in it by giving up the
+property below.
+
+### The invariant this block must preserve
+
+**Adding a 37th case must remain a compile error at every site that consumes the union** — the reason
+the private constructor plus abstract `Match` shape was chosen over a `switch` in the first place. A
+`switch` expression over the hierarchy does not give this: it needs a discard arm, and a new case then
+falls through it silently. `ParseResult`, `CommandOutcome`, `CardKind`, `Scope` and the other unions in
+`Cards/` follow the same convention; whatever shape you land here must not make `ParsedCommand` the odd
+one out for a reader coming from those.
+
+**There is exactly one consumption site** — `Run`, at `CommandDispatcher.cs:838`
+(`ready.Command.Match(...)`). Confirm that yourself before you start; if you find a second, say so in
+the DEVLOG before proceeding, because the trade-off below assumes one.
+
+### The shape I expect, and why
+
+A **visitor interface** — `ICommandVisitor<TResult>` (or similarly named) with one method per case, and
+an abstract `Accept<TResult>(ICommandVisitor<TResult> visitor)` on `ParsedCommand`. Each case's override
+becomes one short line. Adding a case adds an interface member, which is a compile error in every
+implementer — the invariant, kept, by the same mechanism rather than a weaker one. `Run`'s single call
+site becomes one visitor implementation; keep its arms in the order they are in today so the diff reads
+as a move.
+
+**This is a recommendation, not a ruling.** If you find a shape that keeps the invariant with a smaller
+diff or fewer moving parts, take it and **say in the DEVLOG what you chose and what property carries the
+exhaustiveness**. What is not open: dropping the invariant, or a `switch` with a discard arm.
+
+### Scope — tight, and this matters
+
+- **No behaviour change whatsoever.** Not one refusal message, exit code, JSON field, or handler body
+  moves. This block is a pure restructure of how a parsed command reaches its handler.
+- **Do not add `context` or `state`.** They are blocks A and C. This block leaves the verb set exactly
+  as it is.
+- **Do not touch the parse/execute split.** `CommandParser` stays a sibling top-level class and must
+  remain unable to name a handler — read the `CommandParser` and `CommandDispatcher` class doc comments
+  before you move anything; that separation is deliberate and load-bearing, and both doc comments explain
+  what it does and does not rule out. If your shape changes what those comments assert, **update them**;
+  a doc comment that describes the old mechanism is worse than none.
+- **Do not touch `ParseResult`, `CommandOutcome`, or any union in `Cards/`.** Two delegates is not the
+  problem.
+- Existing tests must pass unchanged. If a test needs editing to compile, that is a signal the behaviour
+  moved — stop and report it rather than editing the test.
+
+### Binding constraints
+
+- **ADR-0002 / D2 — NativeAOT.** No runtime code generation, no unbounded reflection. A visitor is
+  ordinary virtual dispatch and is fine; anything that reaches for `System.Reflection`, expression
+  trees, or a source generator you have not verified AOT-clean is not.
+- **`TreatWarningsAsErrors` is on.** `make build` is the analyzer gate too.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, and quote the individual exit lines (`BUILD_EXIT`, `TEST_EXIT`,
+`FORMAT_EXIT`, `VALIDATE_EXIT`) in your DEVLOG post. The suite stood at **894** at §9's close — report
+the number you see; it should not move, and if it does, say why before I run the reviewer. Read the exit
+line, never the log.
+
+Post to the DEVLOG under `## 10.` as `[worker]`, then `→ @reviewer`.
+
+**[worker]** Block F done. Confirmed the single consumption site first: `ready.Command.Match(...)` at
+the old `CommandDispatcher.cs:838` was the only place any `ParsedCommand` reached a handler — no
+second site.
+
+**Shape chosen: the recommended visitor.** `ParsedCommand.Match<TResult>` (36 `Func<TCase, TResult>`
+parameters, 37 near-identical signatures) is replaced by `ParsedCommand.Accept<TResult>(ICommandVisitor<TResult>
+visitor)` and a new `ICommandVisitor<TResult>` interface with one `Visit` overload per case, in the
+same declaration order the old parameter list used. Each case's override collapsed from a ~2200-character
+signature to `internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);`.
+**What carries the exhaustiveness:** adding a 37th case adds an interface member, which is `CS0535`
+("does not implement interface member") at every implementer — the same "unhandled case is a compile
+error" property the private-constructor-plus-abstract-method shape gave before, kept by the same kind
+of mechanism (a compiler-enforced member list) rather than a weaker one. `ParseResult`, `CommandOutcome`
+and the other unions under `Cards/` are untouched — this is `ParsedCommand` only, consistent with the
+brief's scope line ("two delegates is not the problem").
+
+`Run`'s single call site is now `ready.Command.Accept(new CommandRunner(resolvedLockTimeout))`, where
+`CommandRunner` is a private `readonly record struct` implementing `ICommandVisitor<CommandOutcome>` —
+one line per case, arms kept in the original order so the diff reads as a move. `SectionStatus` and
+`FindingStatus` keep their original shape exactly: their `Visit` overloads call `RunSectionStatus`/
+`RunFindingStatus` with no `LockTimeout` argument, matching the `static parsed => …` arms they replace
+(those two handlers never touched the lock timeout; behaviour unchanged).
+
+**Doc comments.** Two literal `Run's dispatch match` mentions in the class doc comment and
+`RunIndexRebuild`'s doc comment named the old mechanism specifically; both now read `dispatch visitor`.
+Nothing else in either `CommandDispatcher`'s or `CommandParser`'s class doc comments named `Match` by
+identifier for `ParsedCommand` — the "matched to a handler" prose in `ParsedCommand`'s own summary is
+generic dispatch language and stays accurate. `ParseResult.Match` (2 params, `Ready`/`Refused`) is
+unchanged and its own doc-comment cref to `Match{TResult}` still resolves to itself, not to anything
+touched here. `CommandParser`'s and `CommandDispatcher`'s class doc comments about the parse/handler
+split (private handlers, separate top-level classes, `CS0122`) needed no edit — that mechanism is
+untouched by this block.
+
+**Scope check.** No behaviour change: every handler call, its arguments, and their order are identical
+to before. No verb added or removed — `context`/`state` are blocks A/C. `CommandParser`/`CommandDispatcher`
+split untouched. `ParseResult`, `CommandOutcome`, and the `Cards/` unions untouched. No existing test
+needed editing — none named `ParsedCommand.Match` in code, only in comments (`CommandDispatcherTests.cs`).
+
+10.1–10.10: none — this block carries no task numbers, per the brief.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite at **894** — unchanged
+from §9's close, as expected: no test was added, edited, or removed.
+
+→ @reviewer
+
+**[reviewer]** Block F audited. **Verdict: Approve.**
+
+**Invariant.** Confirmed by direct inspection, not just the worker's claim: `ICommandVisitor<TResult>`
+declares 36 plain `Visit` overloads with no default bodies (`CommandDispatcher.cs:759-825`) — no
+default-interface-implementation escape hatch. `ParsedCommand` keeps its private constructor
+(`CommandDispatcher.cs:167-169`), so no type outside the nesting class can add a case at all; every
+one of its 36 existing cases is `sealed record` and overrides `Accept<TResult>` with
+`visitor.Visit(this)`. `CommandRunner` is `private readonly record struct` (implicitly sealed, as all
+structs are) implementing `ICommandVisitor<CommandOutcome>` with exactly 36 `Visit` methods — no base
+class, no virtual member, nothing that could silently absorb a 37th case. Counted independently:
+36 interface members, 36 `Accept` overrides, 36 `CommandRunner` implementations — all three counts
+agree. A 37th case added to `ParsedCommand` compiles only if a 37th interface member is added and
+every implementer (today, just `CommandRunner`) implements it — `CS0535` otherwise, exactly as
+claimed. The mechanism is the same kind (compiler-enforced member list) as the old shape, not a
+weaker one.
+
+**Behaviour.** Traced every arm by hand against `git show HEAD:src/Callboard/Cli/CommandDispatcher.cs`'s
+old `Run` body (the named-argument call to the old `Match`). All 36 handler calls carry the same
+arguments in the same order: `RunVersion()`, `RunIndexRebuild(command.WorkingDirectory)`, and every
+other arm as `Run<Verb>(command, LockTimeout)`. Confirmed the specific claim: `Visit(SectionStatus)`
+calls `RunSectionStatus(command)` and `Visit(FindingStatus)` calls `RunFindingStatus(command)` — both
+with no `LockTimeout` argument, matching the old `onSectionStatus: static parsed => RunSectionStatus(parsed)`
+/ `onFindingStatus: static parsed => RunFindingStatus(parsed)` arms exactly. `Run`'s new call site
+(`CommandDispatcher.cs:950-951`) is `ready.Command.Accept(new CommandRunner(resolvedLockTimeout))` —
+one line, one visitor instance carrying the same `resolvedLockTimeout` the old delegates closed over.
+No refusal message, exit code, or JSON field is touched anywhere in the diff; `grep` for `.Match(` /
+`.Accept(` across the file shows the only `ParsedCommand` consumption site is `Run:950`, and every
+other `.Match(` in the file belongs to `ParseResult`, `CommandOutcome`, or a `Cards/` union, all
+unchanged.
+
+**Scope.** Confirmed no `context`/`state` verb added. `git diff --stat` touches exactly
+`CommandDispatcher.cs` — `ParseResult`, `CommandOutcome`, and every union under `Cards/` are
+byte-for-byte untouched, and `CommandParser` is a separate top-level class with no new access to any
+`Run<Verb>` handler (still `CS0122` from outside `CommandDispatcher`). No test file appears in the
+diff, matching the worker's report.
+
+**Doc comments.** Both literal "dispatch match" → "dispatch visitor" edits are present
+(`CommandDispatcher.cs:40`, `:623`, the class doc comment and `RunIndexRebuild`'s own). Checked the
+rest of both class doc comments by hand: neither names `Match` or any 36-parameter shape by identifier
+for `ParsedCommand`; the "exhaustively match the resulting `ParsedCommand`" and "matched to a handler"
+phrasing is generic dispatch language, still accurate under `Accept`/visitor. The new
+`ICommandVisitor<TResult>` and `CommandRunner` doc comments correctly describe `CS0535` as the carrying
+mechanism and correctly scope themselves to `ParsedCommand`, not a codebase-wide convention change.
+`ParseResult.Match`'s own doc comment and cref are untouched and still resolve to themselves.
+
+**C# idiom / AOT.** `readonly record struct CommandRunner` implementing an interface causes one boxing
+allocation when passed as `ICommandVisitor<TResult>` to `Accept` — ordinary value-type behaviour, not
+reflection or runtime codegen, and `Run` constructs exactly one `CommandRunner` per CLI invocation, so
+the allocation is a non-issue on this path. `make gates` confirms clean: `BUILD_EXIT:0 TEST_EXIT:0
+FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, quoted from my own run, not the worker's report. Test
+suite: 894, unchanged, all green — matches the worker's claim.
+
+No blockers, no nits.
+
+**Architectural note (non-blocking, for the supervisor/§10 record, not this block):** `CommandRunner`
+being a struct passed through an interface parameter means every future visitor implementation over
+`ICommandVisitor<TResult>` boxes on call — fine at one call per process today, worth a second look only
+if this interface ever gains a call site on a hot path.
+
 ## NEXT
 
 **§9 is closed — supervisor `Approve` on the third pass (`ec2d99b..8298539`).** Ten of ten boxes
