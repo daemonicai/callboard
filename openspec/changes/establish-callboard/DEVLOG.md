@@ -27257,8 +27257,15 @@ failure mode §9 spent seven blocks proving.
 ## NEXT
 
 **PAUSED — awaiting a Product Owner decision on how §9 closes. Do not start work.** Working tree is
-clean at `afed3e9`; no agent is running; nothing is part-built. All ten §9 boxes are ticked and every
-block carries a reviewer `Approve`.
+clean at `10daafe` (the last implementation commit is `afed3e9`); no agent is running; nothing is
+part-built. All ten §9 boxes are ticked and every block carries a reviewer `Approve`.
+
+**Two things a cold session will otherwise get wrong.** The first unticked task in `tasks.md` is
+**10.1**, so the resume rule points at §10 — **do not open §10.** §9 has no supervisor `Approve` and is
+not closed. And the §1.4 check ("if the previous section has no supervisor `Approve`, run that review
+first") **does not apply here**: the review has been run twice, its second verdict stands below, and
+re-running it would only return the same three findings. The blocker is a decision, not a missing
+review.
 
 ### The decision that is waiting
 
