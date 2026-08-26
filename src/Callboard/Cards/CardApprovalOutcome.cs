@@ -217,8 +217,8 @@ internal abstract record CardApprovalOutcome
         public string RefusingRule => "process-enforcement: a verdict cannot leave threads unanswered";
 
         public string Remedy =>
-            $"resolve the following thread(s) addressed to '{ActorRole.ToWireString()}' before recording this verdict: " +
-            $"{string.Join(", ", ThreadIds)}.";
+            $"resolve the following thread(s) addressed to '{ActorRole.ToWireString()}' (with 'comment resolve') before " +
+            $"recording this verdict: {string.Join(", ", ThreadIds)}.";
     }
 
     /// <summary>process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block D, 9.8) —

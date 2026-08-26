@@ -3395,6 +3395,311 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// Resolves an addressed thread by appending a comment naming what it resolves (§9 remediation,
+    /// round two — S4: give <c>9.6</c>'s "resolve … or decline with a recorded reason" and <c>9.3</c>'s
+    /// "resolve the following thread(s)" a real verb). Backs both <c>comment resolve</c> (<paramref
+    /// name="requireReason"/> <see langword="false"/>) and <c>comment decline --reason</c> (<paramref
+    /// name="requireReason"/> <see langword="true"/>, <paramref name="body"/> the required reason) —
+    /// the same "one method, two dispositions" shape <see cref="DeclineObligationUnderExistingLock"/>
+    /// itself does not need but <see cref="CardObligationDeclineOutcome.ReasonRequired"/>'s own
+    /// sibling union already establishes for a reason-mandatory case living beside a reason-optional
+    /// one. Never a mutation: <see cref="CardComment"/> offers no path to alter or remove the
+    /// resolved comment, only to append a new one naming it via <see cref="CardComment.Resolves"/> —
+    /// <see cref="DispositionNitUnderLocks"/>'s own disposition comment is the shape this reuses.
+    /// </summary>
+    internal static CardCommentResolveOutcome ResolveComment(
+        string cardsRoot, string filePath, string commentId, CardOwner actingRole, string body, bool requireReason,
+        DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => ResolveCommentUnderExistingLock(heldLock, cardsRoot, commentId, actingRole, body, requireReason, timestamp, changeName),
+            onTimedOut: timedOut => new CardCommentResolveOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>The read-decide-write step of <see cref="ResolveComment"/>. Same structural lock
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type.</summary>
+    internal static CardCommentResolveOutcome ResolveCommentUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string commentId, CardOwner actingRole, string body, bool requireReason, DateTimeOffset timestamp, string? changeName)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardCommentResolveOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardCommentResolveOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+
+                var commentIndex = -1;
+                for (var i = 0; i < card.Comments.Count; i++)
+                {
+                    if (string.Equals(card.Comments[i].Id, commentId, StringComparison.Ordinal))
+                    {
+                        commentIndex = i;
+                        break;
+                    }
+                }
+
+                if (commentIndex < 0)
+                {
+                    return RefuseAndRecord<CardCommentResolveOutcome, CardCommentResolveOutcome.CommentNotFound>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardCommentResolveOutcome.CommentNotFound(commentId),
+                        static r => new CardCommentResolveOutcome.ToolFailure(r));
+                }
+
+                if (CardCommentRouting.IsResolved(card.Comments, commentIndex))
+                {
+                    return RefuseAndRecord<CardCommentResolveOutcome, CardCommentResolveOutcome.AlreadyResolved>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardCommentResolveOutcome.AlreadyResolved(commentId),
+                        static r => new CardCommentResolveOutcome.ToolFailure(r));
+                }
+
+                // register: "Scenario: Declining requires a reason" — defended here as well as at
+                // the CLI door (see CardCommentResolveOutcome.ReasonRequired's own doc comment),
+                // checked after the two shared preconditions above so a caller missing a reason
+                // against a comment that does not exist, or is already resolved, learns the more
+                // specific fact first. Never true for 'comment resolve', which never sets it.
+                if (requireReason && string.IsNullOrWhiteSpace(body))
+                {
+                    return RefuseAndRecord<CardCommentResolveOutcome, CardCommentResolveOutcome.ReasonRequired>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardCommentResolveOutcome.ReasonRequired(filePath),
+                        static r => new CardCommentResolveOutcome.ToolFailure(r));
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardCommentResolveOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var resolvingComment = new CardComment(
+                    Id: $"resolution-{Guid.NewGuid():N}", Author: actingRole, Timestamp: timestamp, Body: body,
+                    ReplyTo: commentId, To: null, Resolves: commentId, UnknownHeaderFields: []);
+
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Updated = timestamp },
+                    Comments = [.. card.Comments, resolvingComment],
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardCommentResolveOutcome>(
+                    onSuccess: _ => new CardCommentResolveOutcome.Resolved(updated, resolvingComment),
+                    onNotFound: notFound => new CardCommentResolveOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardCommentResolveOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardCommentResolveOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardCommentResolveOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardCommentResolveOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+            },
+            onFailure: failure => new CardCommentResolveOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// Promotes an addressed thread to a new <c>question</c> or <c>decision</c> card, resolving the
+    /// thread on the original card in the same all-or-nothing write (§9 remediation, round two — S4:
+    /// give <c>9.6</c>'s "promote to a 'question'" / "promote to a 'decision'" a real verb). Two-card
+    /// write, reusing <see cref="RecordFinding"/>'s own discipline via the now-generalised <see
+    /// cref="AcquireLocksAndRecord{TOutcome}"/> — the §8a supervisor's flag against a third divergent
+    /// multi-card write shape in this type is exactly what a hand-copied fourth would have been.
+    /// </summary>
+    internal static CardCommentPromoteOutcome PromoteComment(
+        string cardsRoot, string originalFilePath, string commentId, string raisedFilePath, CardKind toKind,
+        string title, CardOwner actingRole, CardOwner? owedByRole, string body, string? changeName,
+        DateTimeOffset timestamp, TimeSpan lockTimeout)
+    {
+        var (raisedId, allocationFailure) = AllocateIdentity(cardsRoot, toKind, lockTimeout);
+        if (allocationFailure is not null)
+        {
+            return new CardCommentPromoteOutcome.ToolFailure(allocationFailure);
+        }
+
+        var raisedDirectory = Path.GetDirectoryName(raisedFilePath);
+        if (string.IsNullOrEmpty(raisedDirectory))
+        {
+            return new CardCommentPromoteOutcome.RaisedCardLayoutMismatch($"'{raisedFilePath}' has no containing directory to write into.");
+        }
+
+        Directory.CreateDirectory(raisedDirectory);
+
+        return AcquireLocksAndRecord(
+            originalFilePath, raisedFilePath, lockTimeout,
+            () => PromoteCommentUnderLocks(cardsRoot, originalFilePath, commentId, raisedFilePath, raisedId!, toKind, title, actingRole, owedByRole, body, changeName, timestamp),
+            static reason => new CardCommentPromoteOutcome.ToolFailure(reason));
+    }
+
+    /// <summary>The locked step of <see cref="PromoteComment"/> — both the original card's and the
+    /// raised card's locks are already held by the time this runs (<see cref="AcquireLocksAndRecord{TOutcome}"/>).
+    /// Directory creation already happened in <see cref="PromoteComment"/>, before either lock was
+    /// acquired.</summary>
+    private static CardCommentPromoteOutcome PromoteCommentUnderLocks(
+        string cardsRoot, string originalFilePath, string commentId, string raisedFilePath, string raisedId,
+        CardKind toKind, string title, CardOwner actingRole, CardOwner? owedByRole, string body, string? changeName, DateTimeOffset timestamp)
+    {
+        if (!File.Exists(originalFilePath))
+        {
+            return new CardCommentPromoteOutcome.CardNotFound(originalFilePath);
+        }
+
+        var current = ReadCard(originalFilePath);
+        return current.Match<CardCommentPromoteOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+
+                var commentIndex = -1;
+                for (var i = 0; i < card.Comments.Count; i++)
+                {
+                    if (string.Equals(card.Comments[i].Id, commentId, StringComparison.Ordinal))
+                    {
+                        commentIndex = i;
+                        break;
+                    }
+                }
+
+                if (commentIndex < 0)
+                {
+                    return RefuseAndRecord<CardCommentPromoteOutcome, CardCommentPromoteOutcome.CommentNotFound>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        new CardCommentPromoteOutcome.CommentNotFound(commentId),
+                        static r => new CardCommentPromoteOutcome.ToolFailure(r));
+                }
+
+                if (CardCommentRouting.IsResolved(card.Comments, commentIndex))
+                {
+                    return RefuseAndRecord<CardCommentPromoteOutcome, CardCommentPromoteOutcome.AlreadyResolved>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        new CardCommentPromoteOutcome.AlreadyResolved(commentId),
+                        static r => new CardCommentPromoteOutcome.ToolFailure(r));
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, originalFilePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardCommentPromoteOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                // The raised card's own scope is fixed by its kind (card-model: a 'question' is
+                // Repository-scoped, a 'decision' is Capability-scoped — CardScopeRules), so unlike
+                // the original comment's card, this write never needs changeName to anchor.
+                var raisedScope = toKind == CardKind.Question ? CardScope.Repository : CardScope.Capability;
+                var raisedAnchored = AnchoredCardPath.TryCreate(cardsRoot, raisedFilePath, raisedScope, changeName, out var raisedLayoutFailure);
+                if (raisedAnchored is null)
+                {
+                    return new CardCommentPromoteOutcome.RaisedCardLayoutMismatch(raisedLayoutFailure!.Reason);
+                }
+
+                if (File.Exists(raisedFilePath))
+                {
+                    return new CardCommentPromoteOutcome.RaisedCardAlreadyExists(raisedFilePath);
+                }
+
+                // A promoted question is owned by whoever owes the answer (owedByRole, required at
+                // the CLI door only for --to question — CommandParser.ParseCommentPromote); a
+                // promoted decision is owned by the acting role, exactly what 'decision create'
+                // already does. The '!' below is never reached for a decision: owedByRole is read
+                // only in the Question arm.
+                var raisedOwner = toKind == CardKind.Question ? owedByRole! : actingRole;
+                var raisedFrontmatter = new CardFrontmatter(
+                    raisedId, toKind, title, "open", raisedOwner, raisedScope, card.Frontmatter.Section, timestamp, timestamp);
+                var raisedBody = $"{body}\n\n(Promoted from a comment on {card.Frontmatter.Id}.)";
+                var raisedCardFile = new CardFile(raisedFrontmatter, raisedBody, [], [], RegisterFields: RegisterCardFields.Empty);
+                var serializedRaisedCard = CardFileWriter.Serialize(raisedCardFile);
+
+                var raisedWriteResult = AtomicWrite(raisedAnchored, serializedRaisedCard);
+                var raisedFailure = raisedWriteResult.Match<CardCommentPromoteOutcome?>(
+                    onSuccess: static _ => null,
+                    onNotFound: static notFound => new CardCommentPromoteOutcome.ToolFailure(
+                        $"unexpected 'not found' writing a brand-new card at '{notFound.FilePath}'."),
+                    onAlreadyExists: static alreadyExists => new CardCommentPromoteOutcome.RaisedCardAlreadyExists(alreadyExists.FilePath),
+                    onLayoutMismatch: static layoutMismatch => new CardCommentPromoteOutcome.RaisedCardLayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: static corrupt => new CardCommentPromoteOutcome.ToolFailure(
+                        $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
+                    onToolFailure: static toolFailure => new CardCommentPromoteOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                if (raisedFailure is not null)
+                {
+                    return raisedFailure;
+                }
+
+                var resolvingComment = new CardComment(
+                    Id: $"resolution-{Guid.NewGuid():N}", Author: actingRole, Timestamp: timestamp,
+                    Body: $"Promoted to '{toKind.ToWireString()}' {raisedId}.",
+                    ReplyTo: commentId, To: null, Resolves: commentId, UnknownHeaderFields: []);
+
+                var updatedCard = card with
+                {
+                    Frontmatter = card.Frontmatter with { Updated = timestamp },
+                    Comments = [.. card.Comments, resolvingComment],
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updatedCard));
+                return writeResult.Match<CardCommentPromoteOutcome>(
+                    onSuccess: _ => new CardCommentPromoteOutcome.Promoted(updatedCard, raisedCardFile),
+                    onNotFound: notFound =>
+                    {
+                        RollbackRaisedCommentCard(raisedFilePath, serializedRaisedCard);
+                        return new CardCommentPromoteOutcome.ToolFailure($"unexpected 'not found' writing to '{notFound.FilePath}'.");
+                    },
+                    onAlreadyExists: alreadyExists =>
+                    {
+                        RollbackRaisedCommentCard(raisedFilePath, serializedRaisedCard);
+                        return new CardCommentPromoteOutcome.ToolFailure(
+                            $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite.");
+                    },
+                    onLayoutMismatch: layoutMismatch =>
+                    {
+                        RollbackRaisedCommentCard(raisedFilePath, serializedRaisedCard);
+                        return new CardCommentPromoteOutcome.LayoutMismatch(layoutMismatch.Reason);
+                    },
+                    onCorrupt: corrupt =>
+                    {
+                        RollbackRaisedCommentCard(raisedFilePath, serializedRaisedCard);
+                        return new CardCommentPromoteOutcome.ToolFailure(
+                            $"unexpected corruption reported writing to '{corrupt.FilePath}': {corrupt.Reason}");
+                    },
+                    onToolFailure: toolFailure =>
+                    {
+                        RollbackRaisedCommentCard(raisedFilePath, serializedRaisedCard);
+                        return new CardCommentPromoteOutcome.ToolFailure(toolFailure.Reason);
+                    },
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+            },
+            onFailure: failure => new CardCommentPromoteOutcome.CardCorrupt(originalFilePath, failure.Reason));
+    }
+
+    /// <summary>All-or-nothing's other half for <see cref="PromoteComment"/> — deletes the raised
+    /// card <see cref="PromoteCommentUnderLocks"/> has already written, once the original card's own
+    /// second write, tried afterward, fails for any reason. Compare-then-delete, not delete-by-path
+    /// (the same discipline <see cref="RollbackRaisedCard"/> already established): the file is
+    /// deleted only when its current content still matches <paramref name="raisedContent"/>, the
+    /// exact bytes this call itself wrote — a mismatch is treated as a lost race, not an error.
+    /// Best-effort otherwise.</summary>
+    private static void RollbackRaisedCommentCard(string raisedFilePath, string raisedContent)
+    {
+        try
+        {
+            if (!File.Exists(raisedFilePath))
+            {
+                return;
+            }
+
+            var currentContent = File.ReadAllText(raisedFilePath, Utf8NoBom);
+            if (string.Equals(currentContent, raisedContent, StringComparison.Ordinal))
+            {
+                File.Delete(raisedFilePath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>
     /// Archives a change (§7 block D, register: "The register lives above the change" —
     /// "archiving a change SHALL act as a filter that closes its change-scoped cards and leaves
     /// cards of wider scope untouched"). <b>Nothing in transit</b>: every repository-scoped card
@@ -4427,18 +4732,24 @@ internal static class CardStore
 
         return AcquireLocksAndRecord(
             findingFilePath, raiseRequest?.FilePath, lockTimeout,
-            () => RecordFindingUnderLocks(cardsRoot, findingFilePath, findingFrontmatter, body, findingFields, raiseRequest, raisedId, changeName));
+            () => RecordFindingUnderLocks(cardsRoot, findingFilePath, findingFrontmatter, body, findingFields, raiseRequest, raisedId, changeName),
+            static reason => new CardFindingRecordOutcome.ToolFailure(reason));
     }
 
     /// <summary>
-    /// Acquires the lock(s) <see cref="RecordFinding"/> needs — one for <paramref name="findingFilePath"/>,
+    /// Acquires the lock(s) a two-card write needs — one for <paramref name="firstFilePath"/>,
     /// and, when <paramref name="raisedFilePath"/> is not <see langword="null"/> and not the same
-    /// file, a second for it — then runs <paramref name="action"/> with both held.
+    /// file, a second for it — then runs <paramref name="action"/> with both held. Generalised over
+    /// <typeparamref name="TOutcome"/> (§9 remediation, round two — S4) so <see cref="PromoteComment"/>
+    /// can share this exact discipline rather than <see cref="RecordFinding"/>'s own copy of it —
+    /// the §8a supervisor's flag against a third divergent multi-card write shape in this type is
+    /// exactly what a fourth, hand-copied acquire/probe/retry loop would have been.
+    /// <paramref name="onToolFailure"/> lets each caller mint its own union's <c>ToolFailure</c> case.
     ///
     /// <para>
     /// <b>No ordering, by design (§6 block B fifth remediation, reviewer's "cross-invocation lock
     /// ordering" finding).</b> An earlier version of this method decided which lock to acquire
-    /// first by comparing <paramref name="findingFilePath"/> and <paramref name="raisedFilePath"/>
+    /// first by comparing <paramref name="firstFilePath"/> and <paramref name="raisedFilePath"/>
     /// with <see cref="StringComparer.Ordinal"/>, on the reasoning that two different calls would
     /// always agree on the order regardless of the filesystem. That reasoning already broke once,
     /// for the single-invocation "same file, different spelling" case (block B's fourth
@@ -4459,7 +4770,7 @@ internal static class CardStore
     ///
     /// <para>
     /// <b>The shape: acquire, probe, release-and-retry — never hold while waiting.</b> This method
-    /// always attempts <paramref name="findingFilePath"/>'s lock first, <em>blocking</em> for
+    /// always attempts <paramref name="firstFilePath"/>'s lock first, <em>blocking</em> for
     /// whatever remains of <paramref name="lockTimeout"/>. Once held, if <paramref name="
     /// raisedFilePath"/> is <see langword="null"/> or names the identical file (<see cref="
     /// CardLock.CurrentlyNames"/> — the same evidence-based check the fourth remediation
@@ -4488,8 +4799,9 @@ internal static class CardStore
     /// resource this call was never actually blocked holding.
     /// </para>
     /// </summary>
-    private static CardFindingRecordOutcome AcquireLocksAndRecord(
-        string findingFilePath, string? raisedFilePath, TimeSpan lockTimeout, Func<CardFindingRecordOutcome> action)
+    private static TOutcome AcquireLocksAndRecord<TOutcome>(
+        string firstFilePath, string? raisedFilePath, TimeSpan lockTimeout, Func<TOutcome> action, Func<string, TOutcome> onToolFailure)
+        where TOutcome : class
     {
         var deadline = DateTimeOffset.UtcNow + lockTimeout;
 
@@ -4498,13 +4810,13 @@ internal static class CardStore
             var remaining = deadline - DateTimeOffset.UtcNow;
             if (remaining <= TimeSpan.Zero)
             {
-                return new CardFindingRecordOutcome.ToolFailure(
-                    $"could not acquire both locks 'finding record' needs within {lockTimeout.TotalSeconds:0.###}s — " +
+                return onToolFailure(
+                    $"could not acquire both locks this two-card write needs within {lockTimeout.TotalSeconds:0.###}s — " +
                     $"repeatedly lost the race for '{raisedFilePath}' against another concurrent write; retry.");
             }
 
-            var firstLockResult = CardLock.Acquire(findingFilePath, remaining);
-            var outcome = firstLockResult.Match<CardFindingRecordOutcome?>(
+            var firstLockResult = CardLock.Acquire(firstFilePath, remaining);
+            var outcome = firstLockResult.Match<TOutcome?>(
                 onAcquired: firstAcquired =>
                 {
                     using (firstAcquired.Lock)
@@ -4515,10 +4827,10 @@ internal static class CardStore
                         }
 
                         // No wait at all: this is the "probe" half of acquire-probe-release-retry.
-                        // A miss releases findingFilePath's lock (the using block above) and falls
+                        // A miss releases firstFilePath's lock (the using block above) and falls
                         // through to the retry below — it never blocks while still holding it.
                         var secondLockResult = CardLock.Acquire(raisedFilePath, TimeSpan.Zero);
-                        return secondLockResult.Match<CardFindingRecordOutcome?>(
+                        return secondLockResult.Match<TOutcome?>(
                             onAcquired: secondAcquired =>
                             {
                                 using (secondAcquired.Lock)
@@ -4529,9 +4841,9 @@ internal static class CardStore
                             onTimedOut: static _ => null);
                     }
                 },
-                // A genuine timeout on the finding's own lock is a real, external hold — the
-                // ordinary honest message applies unchanged, naming that lock's actual holder.
-                onTimedOut: timedOut => new CardFindingRecordOutcome.ToolFailure(timedOut.Message));
+                // A genuine timeout on the first lock is a real, external hold — the ordinary
+                // honest message applies unchanged, naming that lock's actual holder.
+                onTimedOut: timedOut => onToolFailure(timedOut.Message));
 
             if (outcome is not null)
             {

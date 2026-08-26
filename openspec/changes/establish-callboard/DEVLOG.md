@@ -26882,6 +26882,148 @@ tick, do not touch the Makefile or `CLAUDE.md`. **Post above `## NEXT` by anchor
 `^## NEXT$`, and check afterwards that exactly one remains and it is last** — this file's own preamble
 contains the string, it has caught four posts in this change, and it caught one two posts ago.
 
+**[worker]** §9 remediation, round two (S4) done. Built `comment resolve`, `comment promote --to
+question|decision`, and `comment decline --reason`, so every disposition `9.3`/`9.6` name is now a
+command a caller can run. Ticks nothing.
+
+**Store layer** (`src/Callboard/Cards/`): one new outcome union backs both `comment resolve` and
+`comment decline` — `CardCommentResolveOutcome` (`Resolved`/`CommentNotFound`/`AlreadyResolved`/
+`ReasonRequired`/the four categorical cases) — via `CardStore.ResolveComment(..., requireReason)`.
+`comment decline` is the same method with `requireReason: true` and the reason as the appended
+comment's body, the same "one method, two dispositions" shape `CardObligationDeclineOutcome.
+ReasonRequired` already established for a reason-mandatory case beside a reason-optional sibling.
+Resolution is exactly what card-model already models: an appended `CardComment` naming the one it
+`Resolves` (`CardCommentRouting.IsResolved`) — no mutation path exists to add, so none was added.
+
+`comment promote` gets its own `CardCommentPromoteOutcome` and `CardStore.PromoteComment` — the
+two-card write the brief called the hard part. **Reused `RecordFinding`'s discipline rather than
+inventing a fourth shape**, per the brief and §8a's standing flag: `AcquireLocksAndRecord` (the
+acquire/probe/release-retry loop over two locks, no ordering needed) is now `AcquireLocksAndRecord
+<TOutcome>`, generalised over the outcome type with an `onToolFailure` delegate per caller —
+`RecordFinding` itself now calls the generic form, so there is one lock-acquisition body for both
+two-card writers instead of two. `PromoteComment` writes the raised card first (create-only,
+`AtomicWrite`), then appends the resolving comment to the original; a failure on the second write
+rolls the first back by content-compare-then-delete (`RollbackRaisedCommentCard`, the same discipline
+`RollbackRaisedCard` already has for `RecordFinding`'s own raised card — named differently only to
+avoid a reflection-visible name collision the immutability test's `GetMethod` lookup would otherwise
+find ambiguous). A promoted `question` is Repository-scoped and owned by `--owed-by` (question
+create's own discipline); a promoted `decision` is Capability-scoped and owned by the acting role
+(decision create's own discipline) — neither needs `--change` to anchor its own write, since neither
+scope depends on a change name; `--change` still matters for anchoring a refusal against the
+*original* card when that one is change-scoped.
+
+**CLI** (`CommandParser`/`CommandDispatcher`): one new top-level `comment` verb with three
+subcommands. Addressing follows the brief's ruling exactly — `--id` is a card id resolved via
+`CardIdentityResolver` (kind-agnostic: `ResolveAnyCardReference`, `ResolveCardReference`'s sibling
+without a kind filter, since an addressed thread can live on any card kind) and `--comment-id` names
+the target `CardComment.Id` directly on the resolved card — no second, repo-wide resolver invented
+the way `NitResolver` exists only because `nit raise` never took a card id to begin with.
+`comment decline --reason` requires `--reason` unconditionally at the parse door, the same required-
+flag discipline block A2 drew for `rule promote --change` and block F drew for `obligation decline
+--reason`. `ParsedCommand.Match` is now at 36 delegates (was 33).
+
+**The sweep.** `CardSectionCloseOutcome.UnresolvedAddressedThread` (9.6) now names all three commands
+by their actual syntax (`comment resolve`, `comment promote --to question|decision`, `comment decline
+--reason`) instead of the bare concepts "resolve"/"promote to a 'question'"/etc. `9.3`'s shared
+`UnresolvedThreadsAddressedToActor` message (`CommandDispatcher.UnresolvedThreadsAddressedToActor`,
+reached from all three doors — `block approve`, `block transition`, `nit disposition`) and its
+matching `RefusingRule`/`Remedy` pair on all three outcome unions (`CardApprovalOutcome`,
+`CardBlockTransitionOutcome`, `CardNitDispositionOutcome`) now say "with 'comment resolve'" rather
+than bare "resolve them".
+
+**Coverage gate.** Five new card-addressed cases registered with a firing-and-recording test each
+(`CardCommentResolveOutcome.{CommentNotFound,AlreadyResolved,ReasonRequired}`,
+`CardCommentPromoteOutcome.{CommentNotFound,AlreadyResolved}`); the success cases, the four
+categorical cases on each union, and `CardCommentPromoteOutcome.{RaisedCardAlreadyExists,
+RaisedCardLayoutMismatch}` (mirroring `CardFindingRecordOutcome`'s own `BlindSpot*` disposition —
+never card-addressed, §9 block A3) are in `Exclusions` with their reasons. The hardened gate's own
+bijection confirmed the whole new surface unprompted — nothing had to be told to look at it.
+
+**Tests.** `CardCommentResolveTests`/`CardCommentPromoteTests` (store-level, the coverage gate's
+registrations) plus `CommandDispatcherCommentTests` (CLI-level: both happy paths, the `--reason`/
+`--to`/`--owed-by` door refusals, and a card-addressed refusal through the full dispatcher). The
+pre-existing `CardCommentImmutabilityTests` exhaustive `CardStore` method-surface list gained
+`PromoteComment`/`PromoteCommentUnderLocks`/`ResolveComment`/`ResolveCommentUnderExistingLock`/
+`RollbackRaisedCommentCard`.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0` (892/892
+tests passing: 875 before this block, 17 new).
+
+→ @reviewer
+
+**[reviewer]** §9 remediation, round two (S4) — **Approve.**
+
+Picked this up cold (prior reviewer unavailable); read the base post, both refusal-format rulings,
+the supervisor's section review, the S4 brief and the worker's post before touching the diff.
+
+**1. Multi-card write shape.** `AcquireLocksAndRecord<TOutcome>` (`CardStore.cs:3826-3893` vs. the
+pre-block private, single-outcome version) is a behaviour-preserving generalisation — same deadline
+loop, same "attempt first lock blocking, probe second with `TimeSpan.Zero`, release-and-retry on a
+miss" shape, same doc comment on lock ordering carried forward with `findingFilePath` renamed to
+`firstFilePath` throughout. `RecordFinding`'s call site changed only by adding `static reason => new
+CardFindingRecordOutcome.ToolFailure(reason)` as the new `onToolFailure` parameter — traced every
+branch in the diff; no lock, no ordering, no rollback behaviour moved. `RollbackRaisedCommentCard`
+matches `RollbackRaisedCard`'s discipline exactly: compare-then-delete by content, best-effort,
+swallowing only `IOException`/`UnauthorizedAccessException`. Right call, and it closes the §8a
+"third divergent shape" flag rather than adding a fourth.
+
+**2. Append-only.** `ResolveCommentUnderExistingLock`/`PromoteCommentUnderLocks` both write via
+`card with { Comments = [.. card.Comments, resolvingComment] }` — no index-based replace, no field
+mutated on the original comment. `CardCommentImmutabilityTests`' exhaustive method-surface list
+picked up all five new/changed methods with reasons naming exactly this. Confirmed on the raised-
+card path too: the new card is a fresh `AtomicWrite`, not a rewrite of anything existing.
+
+**3. The sweep.** Checked every refusal text this block touched against `CommandParser.ParseComment`'s
+actual flags: `comment resolve` (`--id`, `--comment-id`, `--role`, optional `--change`, stdin body),
+`comment decline --reason` (same plus required `--reason`), `comment promote --to question|decision`
+(same plus `--raise`, `--title`, `--owed-by` required only for `--to question`). All four rewritten
+`Remedy` strings (`CardApprovalOutcome`, `CardBlockTransitionOutcome`, `CardNitDispositionOutcome`,
+`CardSectionCloseOutcome`) name real, runnable syntax — no invented flag, no wrong verb.
+
+**4. Coverage gate.** `CardCommentResolveOutcome` (8 cases) and `CardCommentPromoteOutcome` (9 cases)
+are fully accounted: 5 registered with a firing-and-recording test apiece, 12 excluded. Traced each
+exclusion to its construction site rather than trusting the comment: `Resolved`/`Promoted` are the
+success cases; `CardNotFound`/`LayoutMismatch`/`CardCorrupt`/`ToolFailure` match every other union's
+standard four; `RaisedCardAlreadyExists`/`RaisedCardLayoutMismatch` mirror
+`CardFindingRecordOutcome.BlindSpotCardAlreadyExists`/`BlindSpotLayoutMismatch` exactly — same "no
+existing card was ever resolved at that path" reasoning, same non-`ICardRefusalReason` shape. And
+the gate isn't a paper trail: `RefusalShapedUniverseIsFullyAccountedFor` reflects every outcome
+union's cases independently of this PR's own bookkeeping and fails on anything neither registered
+nor excluded — the worker's own post confirms it caught the new surface "unprompted," and I have no
+way to add a case here that would pass silently either.
+
+**Standard pass.** ADR-0001: every new case is a returned record; `onToolFailure` throws
+`InvalidOperationException` at the CLI layer, matching the other 23 pre-existing call sites doing
+the same for tool-failure (never a refusal). ADR-0003: `AtomicWrite` (temp-then-rename) on both
+cards, one advisory lock per file, no in-place edit. NativeAOT: `CommentResolveResult`/
+`CommentPromoteResult` both registered on `CliJsonContext`'s source-generated context, no reflection
+in the product assembly (the coverage gate's own reflection is test-only, `RefusalCoverageGateTests`
+lives under `tests/`). C# idiom: sealed records, file-scoped namespace, exhaustive `Match` with no
+discard arm on both new unions. Scope: stays inside §9, no `Makefile`/`tasks.md` edit, ticks nothing
+(correct for a remediation block). Re-ran the gates myself rather than trusting the report:
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`, `make gates` → `GATES_EXIT:0`, 892/892.
+
+**Nit.** `RollbackRaisedCommentCard` constructs `new UTF8Encoding(encoderShouldEmitUTF8Identifier:
+false)` inline instead of reusing `CardStore`'s existing shared `Utf8NoBom` field (used by three
+other reads in the same file). Cosmetic only.
+
+**Architectural note — `ParsedCommand.Match`, requested assessment.** Now at 36 delegates across 37
+occurrences (36 concrete `ParsedCommand` records plus the abstract declaration) of one
+~2200-character signature, repeated verbatim. This block is the clearest evidence yet that this has
+crossed from noted (29→33) to actively harmful, not merely ugly: adding 3 delegates required
+touching that exact signature at all 37 sites, none of which carry any information beyond "add three
+more parameters in the same position" — over 30 lines of this diff are that one mechanical edit
+repeated. Two concrete costs, not just aesthetics: (a) nothing checks that all 37 copies stay
+byte-identical in delegate *order* — two same-shaped `Func<X, TResult>` params swapped between two
+occurrences would compile clean and misdispatch silently, since C# resolves this by position, not
+name; (b) every future verb's diff will keep drowning its actual logic in this boilerplate, exactly
+as this one did. Not a blocker for S4 — it did what every other record already does, correctly — but
+I'd treat it as due for a real fix at the section review: either an actual visitor/switch-expression
+dispatch that doesn't require every record to restate the whole delegate set, or splitting
+`ParsedCommand` into per-domain sub-unions so no single `Match` carries all 36.
+
+→ @architect
+
 ## NEXT
 
 **Carried to §10:** `CardStore.FindAgeingAddressedThreads` (§9 block E) computes exactly the

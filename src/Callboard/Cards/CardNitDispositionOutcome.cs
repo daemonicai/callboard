@@ -209,8 +209,8 @@ internal abstract record CardNitDispositionOutcome
         public string RefusingRule => "process-enforcement: a verdict cannot leave threads unanswered";
 
         public string Remedy =>
-            $"resolve the following thread(s) addressed to '{ActorRole.ToWireString()}' before this disposition can proceed: " +
-            $"{string.Join(", ", ThreadIds)}.";
+            $"resolve the following thread(s) addressed to '{ActorRole.ToWireString()}' (with 'comment resolve') before " +
+            $"this disposition can proceed: {string.Join(", ", ThreadIds)}.";
     }
 
     /// <summary>Enforcement itself is unavailable: a lock could not be acquired within its timeout,

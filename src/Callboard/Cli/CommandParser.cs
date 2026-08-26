@@ -42,9 +42,10 @@ internal static class CommandParser
         "question" => ParseQuestion(context),
         "change" => ParseChange(context),
         "nit" => ParseNit(context),
+        "comment" => ParseComment(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit, comment.")),
     };
 
     /// <summary>
@@ -2741,5 +2742,288 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.NitDisposition(
             nitId, role, disposition, body, raiseRequest, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// <c>comment</c> (§9 remediation, round two — S4: give <c>9.3</c>'s/<c>9.6</c>'s named
+    /// dispositions a real verb).
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseComment(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'comment' requires a subcommand. Known subcommands: resolve, promote, decline."));
+            case "resolve":
+                context.Arguments.TryTake();
+                return ParseCommentResolve(context);
+            case "promote":
+                context.Arguments.TryTake();
+                return ParseCommentPromote(context);
+            case "decline":
+                context.Arguments.TryTake();
+                return ParseCommentDecline(context);
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'comment' subcommand: '{subcommand}'. Known subcommands: resolve, promote, decline."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>comment resolve</c>'s <see cref="CommandDispatcher.ParsedCommand.CommentResolve"/>.
+    /// Addressed by <c>--id</c> (a card id, resolved through <see cref="Cards.CardIdentityResolver"/>
+    /// at execute time — the same convention every other card-to-card reference field on this
+    /// surface uses) plus <c>--comment-id</c>, naming the target <see cref="Cards.CardComment.Id"/>
+    /// directly: a comment is not a second identity space this parser resolves on its own, it is
+    /// simply looked up on the one card <c>--id</c> already names. <c>--change</c> is optional — it
+    /// only matters for anchoring a refusal recorded against a change-scoped original card, the same
+    /// shape <c>nit raise</c>/<c>nit disposition</c> already have.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseCommentResolve(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? commentId = null;
+        string? roleText = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => id = value,
+            ["--comment-id"] = value => commentId = value,
+            ["--role"] = value => roleText = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment resolve' requires '--id <card-id>'."));
+        }
+
+        if (commentId is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment resolve' requires '--comment-id <comment-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment resolve' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.CommentResolve(
+            id, commentId, role, body, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>comment decline --reason</c>'s <see cref="CommandDispatcher.ParsedCommand.
+    /// CommentDecline"/>. Same addressing as <see cref="ParseCommentResolve"/>; <c>--reason</c> is
+    /// required at this door, unconditionally — the same "required at the door a real caller uses"
+    /// discipline block A2 drew for <c>rule promote</c>'s <c>--change</c> and block F drew for
+    /// <c>obligation decline</c>'s own <c>--reason</c>. No stdin is read — the reason, not a second
+    /// narrative body, is the whole of what this verb records, the same shape <c>obligation
+    /// decline</c> already has.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseCommentDecline(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? commentId = null;
+        string? roleText = null;
+        string? reason = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => id = value,
+            ["--comment-id"] = value => commentId = value,
+            ["--role"] = value => roleText = value,
+            ["--reason"] = value => reason = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment decline' requires '--id <card-id>'."));
+        }
+
+        if (commentId is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment decline' requires '--comment-id <comment-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment decline' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment decline' requires a non-empty '--reason <text>'."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.CommentDecline(
+            id, commentId, role, reason, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>comment promote --to question|decision</c>'s <see cref="CommandDispatcher.
+    /// ParsedCommand.CommentPromote"/>. Same addressing as <see cref="ParseCommentResolve"/> for the
+    /// thread being promoted; <c>--raise &lt;path&gt;</c>/<c>--title &lt;text&gt;</c> name the new
+    /// card the same way <c>nit disposition --raise</c> already does. <c>--owed-by &lt;role&gt;</c>
+    /// is required only when <c>--to</c> is <c>question</c> — the role that owes the answer, the
+    /// same <c>question create</c> discipline (a promoted <c>decision</c> is owned by <c>--role</c>
+    /// itself, exactly what <c>decision create</c> already does, so no <c>--owed-by</c> is asked for
+    /// there). The new card's own section is inherited from the original card being promoted from —
+    /// not a second, hand-typed <c>--section</c> a caller could get wrong (the same "give it a real
+    /// field, not a free-text label" reasoning <see cref="Cards.CardStore.DispositionNit"/>'s own
+    /// raised-obligation <c>owed_by</c> already applies). Stdin is required redirected — the new
+    /// card's own body, the same discipline <c>question create</c>/<c>nit raise</c> already have.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseCommentPromote(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? commentId = null;
+        string? roleText = null;
+        string? toText = null;
+        string? raiseFilePath = null;
+        string? title = null;
+        string? owedByText = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => id = value,
+            ["--comment-id"] = value => commentId = value,
+            ["--role"] = value => roleText = value,
+            ["--to"] = value => toText = value,
+            ["--raise"] = value => raiseFilePath = value,
+            ["--title"] = value => title = value,
+            ["--owed-by"] = value => owedByText = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment promote' requires '--id <card-id>'."));
+        }
+
+        if (commentId is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment promote' requires '--comment-id <comment-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment promote' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        CardKind toKind;
+        switch (toText)
+        {
+            case "question":
+                toKind = CardKind.Question;
+                break;
+            case "decision":
+                toKind = CardKind.Decision;
+                break;
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-argument", "'comment promote' requires '--to question|decision'."));
+            default:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unrecognised-target-kind", $"unrecognised '--to' value: '{toText}'. Recognised values: question, decision."));
+        }
+
+        if (raiseFilePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment promote' requires '--raise <card-file-path>'."));
+        }
+
+        if (title is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment promote' requires '--title <text>'."));
+        }
+
+        CardOwner? owedByRole = null;
+        if (toKind == CardKind.Question)
+        {
+            if (owedByText is null)
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-argument",
+                    "'comment promote --to question' requires '--owed-by <role>' — the role that owes the " +
+                    "answer, which becomes the new card's owner."));
+            }
+
+            if (!CardOwnerWireFormat.TryParse(owedByText, out var parsedOwedBy))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unrecognised-role", $"unrecognised '--owed-by' role: '{owedByText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+            }
+
+            owedByRole = parsedOwedBy;
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.CommentPromote(
+            id, commentId, role, toKind, raiseFilePath, title, owedByRole, body, changeName, context.WorkingDirectory, context.Clock()));
     }
 }

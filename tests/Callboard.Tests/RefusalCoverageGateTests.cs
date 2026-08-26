@@ -163,6 +163,11 @@ public sealed class RefusalCoverageGateTests
         { typeof(CardSectionVerdictOutcome.RemediationBoundExceeded), (typeof(CardSectionVerdictTests), "RecordSectionVerdict_ThirdRequestChangesWithoutAuthorisation_Refuses_AndApproveDoesNotAdvanceTheBound") },
         { typeof(CardSectionVerdictOutcome.RoundDisagreesWithHistory), (typeof(CardSectionVerdictTests), "RecordSectionVerdict_RecurringTargetRoundDisagreesWithHistory_Refuses_AndRecordsAgainstTheSection") },
         { typeof(CardWriteResult.RoundDisagreesWithHistory), (typeof(CardOwnershipTransferTests), "TransferOwnership_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard") },
+        { typeof(CardCommentResolveOutcome.CommentNotFound), (typeof(CardCommentResolveTests), "ResolveComment_CommentDoesNotExist_Refuses_AndRecordsTheRefusal_AndAppendsNothing") },
+        { typeof(CardCommentResolveOutcome.AlreadyResolved), (typeof(CardCommentResolveTests), "ResolveComment_AlreadyResolved_Refuses_AndRecordsTheRefusal_AndDoesNotDoubleResolve") },
+        { typeof(CardCommentResolveOutcome.ReasonRequired), (typeof(CardCommentResolveTests), "ResolveComment_RequireReasonTrue_NoReason_Refuses_AndRecordsTheRefusal_AndDoesNotResolve") },
+        { typeof(CardCommentPromoteOutcome.CommentNotFound), (typeof(CardCommentPromoteTests), "PromoteComment_CommentDoesNotExist_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
+        { typeof(CardCommentPromoteOutcome.AlreadyResolved), (typeof(CardCommentPromoteTests), "PromoteComment_AlreadyResolved_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
     };
 
     /// <summary>
@@ -328,6 +333,26 @@ public sealed class RefusalCoverageGateTests
         { typeof(ChangeArchiveOutcome.CardsUnreadable), "ChangeArchiveOutcome entire: an architect-run, whole-directory verb — see OrphanedObligations' own doc comment." },
         { typeof(ChangeArchiveOutcome.OrphanedObligations), "ChangeArchiveOutcome entire: an architect-run, whole-directory verb — its own doc comment names this exception explicitly." },
         { typeof(ChangeArchiveOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+
+        // §9 remediation, round two (S4): CardCommentResolveOutcome (comment resolve / comment
+        // decline) and CardCommentPromoteOutcome (comment promote) — success cases and the four
+        // categorical cases, same disposition as every other union above.
+        { typeof(CardCommentResolveOutcome.Resolved), "the operation's own success case." },
+        { typeof(CardCommentResolveOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardCommentResolveOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardCommentResolveOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardCommentResolveOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardCommentPromoteOutcome.Promoted), "the operation's own success case." },
+        { typeof(CardCommentPromoteOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardCommentPromoteOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardCommentPromoteOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardCommentPromoteOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+
+        // The raised (question/decision) card's own target path either already existed or failed to
+        // anchor — no existing card was resolved there either way, the same §9 block A3 disposition
+        // CardFindingRecordOutcome's own BlindSpotCardAlreadyExists/BlindSpotLayoutMismatch have.
+        { typeof(CardCommentPromoteOutcome.RaisedCardAlreadyExists), "§9 block A3: card creation never resolves an existing card to record against." },
+        { typeof(CardCommentPromoteOutcome.RaisedCardLayoutMismatch), "§9 block A3: card creation never resolves an existing card to record against." },
     };
 
     /// <summary>Every concrete type in the product assembly that implements

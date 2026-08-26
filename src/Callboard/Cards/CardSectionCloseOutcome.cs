@@ -299,8 +299,10 @@ internal abstract record CardSectionCloseOutcome
         public string RefusingRule => "process-enforcement: section close settles its addressed threads";
 
         public string Remedy =>
-            $"card '{CardId}' carries unresolved addressed thread(s) {string.Join(", ", ThreadIds)}; resolve, promote to a 'question', " +
-            "promote to a 'decision', or decline with a recorded reason, before this section can close.";
+            $"card '{CardId}' carries unresolved addressed thread(s) {string.Join(", ", ThreadIds)}; resolve them " +
+            "(with 'comment resolve'), promote them to a 'question' or 'decision' (with 'comment promote --to " +
+            "question|decision'), or decline them with a recorded reason (with 'comment decline --reason'), " +
+            "before this section can close.";
     }
 
     /// <summary>process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block D's
