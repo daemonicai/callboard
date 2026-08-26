@@ -1164,14 +1164,14 @@ internal static class CardStore
                     }
 
                     var raisedFrontmatter = new CardFrontmatter(
-                        raisedId!, raiseRequest.Kind, raiseRequest.Title, "open", actingRole, raisedScope, card.Frontmatter.Section, timestamp, timestamp);
+                        raisedId!, raiseRequest.Kind, raiseRequest.Title, "open", actingRole, raisedScope, OwningSectionId(card.Frontmatter), timestamp, timestamp);
 
                     // An obligation raised from a declined-or-deferred nit is owed to the same
                     // section the block itself belongs to — the same "give it a real owed_by, not a
                     // free-text label" ruling RecordFinding's own blind-spot obligation already
                     // applies (§7 block C). A decision carries no owed_by at all.
                     var raisedRegisterFields = raiseRequest.Kind == CardKind.Obligation
-                        ? new RegisterCardFields(null, null, null, null, OwedBy: card.Frontmatter.Section)
+                        ? new RegisterCardFields(null, null, null, null, OwedBy: OwningSectionId(card.Frontmatter))
                         : RegisterCardFields.Empty;
 
                     var raisedBody = $"{raiseRequest.Body}\n\n(Raised from nit {nitId} on block {card.Frontmatter.Id}.)";
@@ -3605,7 +3605,7 @@ internal static class CardStore
                 // only in the Question arm.
                 var raisedOwner = toKind == CardKind.Question ? owedByRole! : actingRole;
                 var raisedFrontmatter = new CardFrontmatter(
-                    raisedId, toKind, title, "open", raisedOwner, raisedScope, card.Frontmatter.Section, timestamp, timestamp);
+                    raisedId, toKind, title, "open", raisedOwner, raisedScope, OwningSectionId(card.Frontmatter), timestamp, timestamp);
                 var raisedBody = $"{body}\n\n(Promoted from a comment on {card.Frontmatter.Id}.)";
                 var raisedCardFile = new CardFile(raisedFrontmatter, raisedBody, [], [], RegisterFields: RegisterCardFields.Empty);
                 var serializedRaisedCard = CardFileWriter.Serialize(raisedCardFile);
@@ -4894,7 +4894,7 @@ internal static class CardStore
 
             var raisedFrontmatter = new CardFrontmatter(
                 raisedId!, raiseRequest.Kind, raiseRequest.Title, "open", findingFrontmatter.Owner,
-                raisedScope, findingFrontmatter.Section, findingFrontmatter.Created, findingFrontmatter.Created);
+                raisedScope, OwningSectionId(findingFrontmatter), findingFrontmatter.Created, findingFrontmatter.Created);
 
             // The raised card's half of "each referencing the other" (§6 block B brief) — the
             // finding's own reference is FindingCardFields.BlindSpot.RaisedAs(raisedId), set by the
@@ -4923,7 +4923,7 @@ internal static class CardStore
                 onDecision: static () => false,
                 onSection: static () => false);
             var raisedRegisterFields = raisedIsObligation
-                ? new RegisterCardFields(null, null, null, null, OwedBy: findingFrontmatter.Section)
+                ? new RegisterCardFields(null, null, null, null, OwedBy: OwningSectionId(findingFrontmatter))
                 : RegisterCardFields.Empty;
             var raisedBody =
                 $"Raised from finding {findingFrontmatter.Id} — a blind spot declared while recording a clean result.\n\n{raiseRequest.Body}";
@@ -5156,6 +5156,38 @@ internal static class CardStore
         onHazard: static () => false,
         onDecision: static () => false,
         onSection: static () => true);
+
+    /// <summary>Answers "which section does this card belong to?" for an arbitrary card
+    /// (§9 remediation round three, F2). <see cref="CardFrontmatter.Section"/> is empty on a
+    /// <b>section</b> card — a section does not name itself as its own owner — so a caller that
+    /// wants the owning section of a card whose kind it has not already established must not read
+    /// <see cref="CardFrontmatter.Section"/> directly: for a section card the owning section is the
+    /// card's own <see cref="CardFrontmatter.Id"/>, and for every other kind it is
+    /// <see cref="CardFrontmatter.Section"/> as stored. Routed through <see cref="CardKind.Match"/>,
+    /// the same idiom as <see cref="IsSectionCard"/> and its siblings, so a new kind is a compile
+    /// error here rather than a silently wrong answer.
+    ///
+    /// This is deliberately <b>not</b> a stored value — <c>Id</c> and <c>Section</c> on a section
+    /// card would be two fields obliged to agree, the exact shape 8a.17's round-agrees-with-history
+    /// refusal exists to catch. Do not special-case section cards at a call site instead of calling
+    /// this; do not write <c>section</c> onto a section card's frontmatter to make this
+    /// unnecessary.
+    ///
+    /// Not for a call site that means something else — a <b>block</b> or <b>question</b> card's own
+    /// <see cref="CardFrontmatter.Section"/> matched against a <b>section</b> card's own
+    /// <see cref="CardFrontmatter.Id"/> (the section-scan join every section-scoped verb performs)
+    /// reads <see cref="CardFrontmatter.Section"/> directly and must keep doing so — passing the
+    /// section card itself through this accessor there would be a no-op at best and confusing at
+    /// worst.</summary>
+    internal static string OwningSectionId(CardFrontmatter frontmatter) => frontmatter.Kind.Match(
+        onBlock: () => frontmatter.Section,
+        onQuestion: () => frontmatter.Section,
+        onFinding: () => frontmatter.Section,
+        onObligation: () => frontmatter.Section,
+        onRule: () => frontmatter.Section,
+        onHazard: () => frontmatter.Section,
+        onDecision: () => frontmatter.Section,
+        onSection: () => frontmatter.Id);
 
     /// <summary>The <see cref="IsBlockCard"/>/<see cref="IsSectionCard"/> counterpart for
     /// <see cref="CardKind.Question"/> (§9 block D) — shared by <see cref="AnswerQuestionUnderExistingLock"/>,

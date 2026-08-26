@@ -67,6 +67,23 @@ public sealed class CardCommentPromoteTests : IDisposable
         Assert.Empty(originalOnDisk.Refusals);
     }
 
+    // §9 remediation round three, F2 — promoting a thread on a *section* card (9.6's first arm)
+    // must not link the raised question via the empty CardFrontmatter.Section a section card
+    // carries; it must resolve to the section card's own Id via CardStore.OwningSectionId.
+    [Fact]
+    public void PromoteComment_ToQuestion_OnASectionCard_LinksTheRaisedQuestionToTheSectionsOwnId()
+    {
+        var path = WriteSectionCardWithComment("s-0030", "S-0030", "thread-1", CardOwner.Reviewer);
+        var raisedPath = Path.Combine(_registerDirectory, "q-0200.md");
+
+        var outcome = CardStore.PromoteComment(
+            _root, path, "thread-1", raisedPath, CardKind.Question, "Should we ship X?", CardOwner.Reviewer,
+            CardOwner.ProductOwner, "Raised while resolving a thread.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
+
+        var promoted = AssertPromoted(outcome);
+        Assert.Equal("S-0030", promoted.RaisedCard.Frontmatter.Section);
+    }
+
     [Fact]
     public void PromoteComment_ToDecision_Promotes_OwnedByTheActingRole_NoOwedByNeeded()
     {
@@ -158,6 +175,19 @@ public sealed class CardCommentPromoteTests : IDisposable
             Id: commentId, Author: CardOwner.Architect, Timestamp: Created.AddHours(1), Body: "Original comment.",
             ReplyTo: null, To: addressedTo, Resolves: null, UnknownHeaderFields: []);
         var card = new CardFile(frontmatter, "Body.", [comment], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    private string WriteSectionCardWithComment(string fileStem, string id, string commentId, CardOwner addressedTo)
+    {
+        var path = Path.Combine(_changeDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Section, "A section card", "open", CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
+        var comment = new CardComment(
+            Id: commentId, Author: CardOwner.Architect, Timestamp: Created.AddHours(1), Body: "Original comment.",
+            ReplyTo: null, To: addressedTo, Resolves: null, UnknownHeaderFields: []);
+        var card = new CardFile(frontmatter, "Body.", [comment], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
     }

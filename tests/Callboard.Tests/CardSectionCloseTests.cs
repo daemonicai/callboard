@@ -429,6 +429,30 @@ public sealed class CardSectionCloseTests : IDisposable
         AssertClosed(outcome);
     }
 
+    // §9 remediation round three, F2 — promoting a comment on the *section card itself* (9.6's
+    // first arm) must raise a question 9.5's open-question gate can actually see: proof of the
+    // link, not just the mechanism (CardCommentPromoteTests covers the mechanism directly).
+    [Fact]
+    public void CloseSection_AQuestionPromotedFromACommentOnTheSectionCardItself_Refuses_NamingThatQuestion()
+    {
+        var sectionPath = WriteSectionCardWithComment("s-0018a", "S-0018A", "thread-1", CardOwner.Reviewer);
+        var registerDirectory = Path.Combine(_root, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(registerDirectory);
+        var raisedPath = Path.Combine(registerDirectory, "q-0300.md");
+
+        var promoteOutcome = CardStore.PromoteComment(
+            _root, sectionPath, "thread-1", raisedPath, CardKind.Question, "Should we ship X?", CardOwner.Reviewer,
+            CardOwner.ProductOwner, "Raised while resolving a thread.", ChangeName, Created, TimeSpan.FromSeconds(5));
+        var promoted = Assert.IsType<CardCommentPromoteOutcome.Promoted>(promoteOutcome);
+        Assert.Equal("S-0018A", promoted.RaisedCard.Frontmatter.Section);
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var openQuestion = Assert.IsType<CardSectionCloseOutcome.OpenUndeferredQuestion>(outcome);
+        Assert.Equal("S-0018A", openQuestion.SectionId);
+        Assert.Equal(promoted.RaisedCard.Frontmatter.Id, openQuestion.QuestionId);
+    }
+
     // process-enforcement: "Section close settles its addressed threads" (9.6, the refusal half) —
     // an unresolved comment addressed to a role, on the section card itself, refuses the close and
     // records against it.
@@ -619,6 +643,17 @@ public sealed class CardSectionCloseTests : IDisposable
         var frontmatter = new CardFrontmatter(
             id, CardKind.Section, "Title", "open", CardOwner.Architect, CardScope.Change, "5", Created, Created);
         var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    private string WriteSectionCardWithComment(string fileStem, string id, string commentId, CardOwner addressedTo)
+    {
+        var path = Path.Combine(_directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Section, "Title", "open", CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
+        var comment = new CardComment(commentId, CardOwner.Worker, Created, "please confirm", null, To: addressedTo, null, []);
+        var card = new CardFile(frontmatter, "Body.", [comment], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
     }

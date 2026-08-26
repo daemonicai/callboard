@@ -45,8 +45,8 @@ supersedes and the decision that supersedes it.
 ### Requirement: The register lives above the change
 
 Repository-scoped cards SHALL belong to the repository and SHALL NOT be owned by any change. Archiving a
-change SHALL act as a filter that closes its change-scoped cards and leaves cards of wider scope
-untouched.
+change SHALL act as a filter that relocates its change-scoped cards into the archive, exactly as
+written, and leaves cards of wider scope untouched — settling nothing.
 
 The system SHALL NOT require a carry-forward step at archive, because a handoff is a transit in which
 material can be dropped, and the only cross-change carry on record survived on human memory rather than
