@@ -41,6 +41,32 @@ The system SHALL refuse an approval attempted by a role other than `reviewer` or
 - **WHEN** the architect attempts to approve a block
 - **THEN** the system refuses and names the roles permitted to approve
 
+### Requirement: A thread is disposed of only by its addressee or the card's owner
+
+The system SHALL refuse a thread disposition — `resolve`, `promote`, or `decline` — attempted by a role
+that is neither the thread's addressee nor the owner of the card carrying it.
+
+#### Scenario: Unrelated role attempts a disposition
+
+- **WHEN** a role that is neither the thread's addressee nor the card's owner attempts to resolve,
+  promote, or decline it
+- **THEN** the system refuses and names the roles permitted to dispose of it
+
+#### Scenario: The card's owner disposes of a thread addressed to another role
+
+- **WHEN** the card's owner resolves, promotes, or declines a thread addressed to a different role
+- **THEN** the disposition proceeds
+
+### Requirement: A resolution requires a reason
+
+The system SHALL refuse a `comment resolve` invoked with no body, so that resolving is not a route
+around declining's own recorded reason.
+
+#### Scenario: Resolving with an empty body
+
+- **WHEN** `comment resolve` is invoked with no body on stdin
+- **THEN** the system refuses and states that a non-empty body is required
+
 ### Requirement: A verdict cannot leave threads unanswered
 
 The system SHALL refuse to move a card out of `in-review` while any comment addressed to the acting role

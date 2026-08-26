@@ -55,6 +55,88 @@ public sealed class CommandDispatcherCommentTests
     }
 
     [Fact]
+    public void CommentResolve_NoBody_Refuses_AtTheDoor_WithoutTouchingTheCard()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteCardWithComment(repo, "b-0008", "B-0008", "thread-1", CardOwner.Reviewer);
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "resolve", "--id", id, "--comment-id", "thread-1", "--role", "reviewer", "--change", "establish-callboard"],
+            output, repo.Path, string.Empty);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("missing-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void CommentResolve_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteCardWithComment(repo, "b-0009", "B-0009", "thread-1", CardOwner.Reviewer);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "resolve", "--id", id, "--comment-id", "thread-1", "--role", "architect", "--change", "establish-callboard"],
+            output, repo.Path, "Fixed.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("role-not-permitted", refusal.GetProperty("code").GetString());
+        Assert.NotNull(refusal.GetProperty("rule").GetString());
+        Assert.NotNull(refusal.GetProperty("remedy").GetString());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.False(CardCommentRouting.IsResolved(read.Comments, 0));
+        Assert.Single(read.Refusals);
+    }
+
+    [Fact]
+    public void CommentDecline_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteCardWithComment(repo, "b-0010", "B-0010", "thread-1", CardOwner.Architect);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "decline", "--id", id, "--comment-id", "thread-1", "--role", "reviewer", "--reason", "out of scope.", "--change", "establish-callboard"],
+            output, repo.Path, string.Empty);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("role-not-permitted", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.False(CardCommentRouting.IsResolved(read.Comments, 0));
+    }
+
+    [Fact]
+    public void CommentPromote_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteCardWithComment(repo, "b-0011", "B-0011", "thread-1", CardOwner.Reviewer);
+        var raisedPath = Path.Combine(repo.RegisterDirectory, "q-9997.md");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "promote", "--id", id, "--comment-id", "thread-1", "--role", "architect", "--to", "question",
+                "--raise", raisedPath, "--title", "A question.", "--owed-by", "product-owner", "--change", "establish-callboard"],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("role-not-permitted", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.False(File.Exists(raisedPath));
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.False(CardCommentRouting.IsResolved(read.Comments, 0));
+    }
+
+    [Fact]
     public void CommentDecline_NoReason_Refuses_AtTheDoor_WithoutTouchingTheCard()
     {
         using var repo = new TempGitRepo();
@@ -139,7 +221,7 @@ public sealed class CommandDispatcherCommentTests
 
         var exitCode = RunInRepo(
             ["comment", "resolve", "--id", id, "--comment-id", "no-such-thread", "--role", "reviewer", "--change", "establish-callboard"],
-            output, repo.Path, string.Empty);
+            output, repo.Path, "Fixed.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());

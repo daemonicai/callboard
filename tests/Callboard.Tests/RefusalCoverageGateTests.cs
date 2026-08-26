@@ -164,9 +164,11 @@ public sealed class RefusalCoverageGateTests
         { typeof(CardSectionVerdictOutcome.RoundDisagreesWithHistory), (typeof(CardSectionVerdictTests), "RecordSectionVerdict_RecurringTargetRoundDisagreesWithHistory_Refuses_AndRecordsAgainstTheSection") },
         { typeof(CardWriteResult.RoundDisagreesWithHistory), (typeof(CardOwnershipTransferTests), "TransferOwnership_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard") },
         { typeof(CardCommentResolveOutcome.CommentNotFound), (typeof(CardCommentResolveTests), "ResolveComment_CommentDoesNotExist_Refuses_AndRecordsTheRefusal_AndAppendsNothing") },
+        { typeof(CardCommentResolveOutcome.RoleNotPermitted), (typeof(CardCommentResolveTests), "ResolveComment_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal_AndDoesNotResolve") },
         { typeof(CardCommentResolveOutcome.AlreadyResolved), (typeof(CardCommentResolveTests), "ResolveComment_AlreadyResolved_Refuses_AndRecordsTheRefusal_AndDoesNotDoubleResolve") },
         { typeof(CardCommentResolveOutcome.ReasonRequired), (typeof(CardCommentResolveTests), "ResolveComment_RequireReasonTrue_NoReason_Refuses_AndRecordsTheRefusal_AndDoesNotResolve") },
         { typeof(CardCommentPromoteOutcome.CommentNotFound), (typeof(CardCommentPromoteTests), "PromoteComment_CommentDoesNotExist_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
+        { typeof(CardCommentPromoteOutcome.RoleNotPermitted), (typeof(CardCommentPromoteTests), "PromoteComment_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
         { typeof(CardCommentPromoteOutcome.AlreadyResolved), (typeof(CardCommentPromoteTests), "PromoteComment_AlreadyResolved_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
     };
 

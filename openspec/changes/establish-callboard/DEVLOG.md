@@ -27901,6 +27901,294 @@ being a struct passed through an interface parameter means every future visitor 
 `ICommandVisitor<TResult>` boxes on call — fine at one call per process today, worth a second look only
 if this interface ever gains a call site on a hot path.
 
+**[architect]** Block D briefed → @worker. **F3 — authorisation on the comment disposition verbs.** No
+task numbers, ticks nothing: §9 deferred this to §10 as live debt, and `## NEXT` records that **the
+window has been open since `8298539`**, not since §10 — the verbs shipped unauthorised in §9. It lands
+before §10's own tasks for that reason.
+
+### The hole, as it stands at `e7dda26`
+
+`comment resolve`, `comment promote` and `comment decline` (`CommandDispatcher.cs:2872`, `:2960`,
+`:2901`) authorise nothing. **Any role may dispose of any thread on any card**, including one addressed
+to the Product Owner. And `comment resolve` passes `requireReason: false` to `CardStore.ResolveComment`
+with an optional stdin body — so **an empty-bodied resolve is a decline with no recorded reason**, the
+one disposition `register` forbids. That second half is the sharper of the two: it is not a missing
+guard, it is a route around an existing one.
+
+### The Product Owner's ruling — this is policy, and it is now settled
+
+The spec was silent on who may dispose of a thread; §10's opening put it to the Product Owner and the
+ruling is:
+
+1. **A thread may be disposed of — `resolve`, `promote`, `decline` — by the role the thread is
+   addressed to, or by the role that owns the card the thread sits on. By no one else.**
+2. **`comment resolve` requires a body.**
+
+**Deliberate consequences, so nobody "fixes" them:**
+
+- **A card's owner may dispose of a thread addressed to the Product Owner.** Addressee-only was the
+  alternative on the table and was **not** chosen. Do not narrow this, and do not add a Product Owner
+  special case.
+- **A thread with no `addressed_to` can be disposed of only by the card's owner** — there is no
+  addressee for the first arm to admit. Falls out of the ruling; state it in a test rather than leaving
+  it to be inferred.
+- The acting role is what `--role` declares. §5's convention stands: the system records who declares
+  they are acting; this block restricts **who may**, which is exactly what 8.13/9.4 established as a
+  separate concern.
+
+### Where each half goes — apply §9 ruling 1, and note that it splits them
+
+This is the block's one real design question and the answer is not the same for both halves.
+
+- **The authorisation refusal asserts something about the record.** Deciding it needs the card read —
+  who owns it, who the comment is addressed to. So it **records**, in the §9 refusal format, and it
+  belongs in `CardStore`, as a new case on `CardCommentResolveOutcome` and on the promote outcome.
+  **Precedent to follow exactly: `CardApprovalOutcome.RoleNotPermitted` and
+  `CardSectionAuthorisationOutcome.RoleNotPermitted`** — same name, same `ICardRefusalReason`
+  implementation, same shape. Do not invent a new one.
+- **The missing body on `comment resolve` asserts only that the invocation was malformed.** Whether a
+  body was supplied is decidable from the invocation alone. So it **reports without recording**, at the
+  parse door — **exactly mirroring `comment decline --reason`**, which `CommandParser.ParseCommentDecline`
+  already requires there. Pass `requireReason: true` through to `CardStore.ResolveComment` as well, the
+  same defence-in-depth `decline` already has; the parse-door refusal is the one a caller will actually
+  meet.
+
+If you conclude either half lands on the other side of that line, **stop and post the argument to the
+DEVLOG before implementing it.** Getting this test wrong is what §9 spent three remediation rounds on,
+and its ruling is explicit that argv-decidability is not the test and neither is cost — ask what the
+refusal is *about*.
+
+### The spec amendment — part of this block
+
+The spec is silent here, and a refusal with no requirement behind it is precisely the drift the
+supervisor catches. Under the Product Owner's ruling, add to
+`openspec/changes/establish-callboard/specs/process-enforcement/spec.md` a requirement modelled on its
+own sibling **"Approval is refused from the wrong role"** (`:34`) — same register, same brevity:
+
+- a requirement that the system SHALL refuse a thread disposition attempted by a role that is neither
+  the thread's addressee nor the owner of the card carrying it;
+- a requirement that a resolution SHALL carry a reason, so that resolving is not a route around
+  declining's recorded reason;
+- scenarios covering: an unrelated role attempting each of the three verbs, the card owner disposing of
+  a thread addressed to another role (**permitted** — the ruling, written down), and an empty-bodied
+  resolve.
+
+`make validate` must stay green (`VALIDATE_EXIT:0`); check the requirement/scenario formatting against
+its neighbours before you run it.
+
+### Tests, and the one place you may edit existing ones
+
+- **Every existing test that resolves a comment without a body will now fail, and those you may and must
+  update.** That is a deliberate behaviour change under a Product Owner ruling, not drift — unlike block
+  F, where an edited test would have signalled a mistake. Update them to supply a body; do **not** water
+  down the new requirement to keep an old test compiling.
+- **The refusal coverage gate is the standard, not this brief** (§9 ruling 2). Each new outcome case is
+  either in the §9 refusal format with a test proving it fires **and** records, or a keyed, reasoned
+  entry in `RefusalCoverageGateTests.Exclusions`. There is no third option and the build says so.
+- Cover all three verbs, both admitted arms (addressee, card owner), the unaddressed-thread case, and
+  the empty-bodied resolve.
+
+### Binding constraints
+
+- **§9 ruling 3 — a refusal must name its remedy as a command that exists.** The remedy here names who
+  may act and the verb they would run; twice in §9 a refusal named a verb nobody had built and both
+  times the Product Owner ruled to build it rather than soften the refusal. Check the command you name
+  in the message actually exists, with the flags you give it.
+- **Carried item A stays open** — the writer/parser wire-key guard. If this block adds any persisted
+  field, it inherits that hazard; prefer not adding one.
+- **Do not add `context` or `state`** (blocks A and C), and do not touch `nit disposition` — F3 named
+  these three verbs.
+- ADR-0002 / D2 — NativeAOT: no reflection, no runtime codegen. `TreatWarningsAsErrors` is on.
+- Block F carved `ParsedCommand.Match` into `ICommandVisitor<TResult>` at `e7dda26`. You are working on
+  top of it; no new verb here, so you should not need to touch the visitor at all.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT`, `TEST_EXIT`, `FORMAT_EXIT` and `VALIDATE_EXIT`
+individually. Suite stands at **894**; report the number you see and account for the movement — this
+block should add tests. Read the exit line, never the log.
+
+Post to the DEVLOG under `## 10.` as `[worker]`, then `→ @reviewer`.
+
+**[worker]** Block D done. F3 authorisation on `comment resolve`/`promote`/`decline`, live debt since
+`8298539`.
+
+**The split, as the brief called it.** `CardCommentRouting.IsPermittedToDisposeThread(cardOwner,
+threadAddressedTo, actingRole)` is the one predicate both halves share:
+`actingRole == cardOwner || actingRole == threadAddressedTo`. The **authorisation** half needs the
+card read (to know the owner and the target comment's `To`), so it **records** — a new
+`RoleNotPermitted(AttemptedRole, CardOwnerRole, AddressedTo)` case on both `CardCommentResolveOutcome`
+and `CardCommentPromoteOutcome`, same shape as `CardApprovalOutcome.RoleNotPermitted` /
+`CardSectionAuthorisationOutcome.RoleNotPermitted` — private ctor, `ICardRefusalReason`, checked in
+`ResolveCommentUnderExistingLock`/`PromoteCommentUnderLocks` right after the comment is located (needs
+its `To`) and before `AlreadyResolved`/`ReasonRequired`: who may act is decided before what state the
+thread is in. Carries `CardOwnerRole`/`AddressedTo` too, not just `AttemptedRole` — unlike the two
+precedents, the permitted set here is per-card, not static, so the `Remedy` needs both to name it
+precisely (and a distinct message when `AddressedTo` is null: "only the card's owner may dispose of
+this thread"). The **missing-body** half is decidable from the invocation alone, so it **reports
+without recording**, at `CommandParser.ParseCommentResolve`'s own door — `if
+(string.IsNullOrWhiteSpace(body)) return Refused("missing-argument", ...)` — exactly mirroring
+`ParseCommentDecline`'s unconditional `--reason`. `RunCommentResolve` now also passes `requireReason:
+true` through to `CardStore.ResolveComment`, the same defence-in-depth `decline` already has; updated
+`ResolveComment`'s own doc comment and `CardCommentResolveOutcome.ReasonRequired`'s (both used to say
+"comment resolve never requires a reason", which the ruling makes false) rather than leave a doc
+comment describing behaviour that no longer holds.
+
+**Deliberate consequences, tested, not "fixed":** `ResolveComment_ByCardOwner_ThreadAddressedToAnotherRole_Resolves`
+and `PromoteComment_ByCardOwner_ThreadAddressedToAnotherRole_Promotes` prove the card owner may dispose
+of a thread addressed to a different role (Product Owner included) — addressee-only was rejected.
+`ResolveComment_UnaddressedThread_ByCardOwner_Resolves` / `..._ByNonOwner_Refuses` cover the
+no-`addressed_to` case: only the card's owner may dispose of it, there being no addressee to admit.
+
+**Ordering note, since it wasn't fully spelled out in the brief:** I placed the role check between
+`CommentNotFound` and `AlreadyResolved`/`ReasonRequired` (needs the comment located first, to read its
+`To`) rather than before `CommentNotFound` — mirrors `CardApprovalOutcome.RoleNotPermitted`'s "checked
+right after a successful read, no cost since the lock is already held" reasoning, adapted to this
+policy's extra dependency on which comment. Flag if that reading is wrong.
+
+**Spec.** Added two requirements to `process-enforcement/spec.md`, right after "Approval is refused
+from the wrong role" (its sibling, per the brief): "A thread is disposed of only by its addressee or
+the card's owner" (unrelated-role scenario + card-owner-disposes-thread-addressed-elsewhere scenario,
+the ruling written down) and "A resolution SHALL carry a reason" (empty-body scenario).
+`make validate` → `VALIDATE_EXIT:0`.
+
+**Coverage.** Both new `RoleNotPermitted` cases are registered in `RefusalCoverageGateTests.Registry`
+against the store-level tests above. CLI-level tests added in `CommandDispatcherCommentTests.cs` cover
+all three verbs at the door: `CommentResolve_RoleNeitherAddresseeNorCardOwner_Refuses_...`,
+`CommentDecline_RoleNeitherAddresseeNorCardOwner_Refuses_...`,
+`CommentPromote_RoleNeitherAddresseeNorCardOwner_Refuses_..._AndWritesNoRaisedCard`, plus
+`CommentResolve_NoBody_Refuses_AtTheDoor_WithoutTouchingTheCard` (the parse-door case, `missing-argument`,
+mirroring `CommentDecline_NoReason_Refuses_AtTheDoor`).
+
+**The one existing test I edited, as the brief expected:**
+`CommentResolve_CommentDoesNotExist_Refuses_AndRecordsTheRefusal` used an empty stdin body; it now
+supplies one ("Fixed.") so it still exercises `comment-not-found` rather than tripping the new
+missing-body refusal first — the deliberate behaviour change, not drift.
+
+No `context`/`state` verb touched. No touch to `nit disposition`.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite at **904** — up from 894
+(+10: 4 store-level `CardCommentResolveTests`, 2 store-level `CardCommentPromoteTests`, 4 CLI-level
+`CommandDispatcherCommentTests`), all new, all green.
+
+→ @reviewer
+
+**[reviewer]** Block D audited. **Verdict: Approve.**
+
+**Refusal completeness.** `CardCommentRouting.IsPermittedToDisposeThread(cardOwner, threadAddressedTo,
+actingRole)` (`CardCommentRouting.cs:94`) admits exactly two arms — `actingRole == cardOwner ||
+actingRole == threadAddressedTo` — no third disjunct, no `_` fallthrough. Confirmed by grep it has
+exactly two call sites: `CardStore.cs:3465` in `ResolveCommentUnderExistingLock` and `CardStore.cs:3597`
+in `PromoteCommentUnderLocks`. `comment decline` does not have a third route — `RunCommentDecline`
+(`CommandDispatcher.cs:2901`) calls the same `CardStore.ResolveComment` as `RunCommentResolve`, so the
+guard at `:3465` covers all three verbs, not just two of them. No ordering hazard: the check runs
+immediately after the comment is located (needs `.To`) and strictly before `AlreadyResolved`/
+`ReasonRequired`, i.e. before any write. Found no other `CardStore` path that appends a resolving
+comment — `RecordFinding`, `DispositionNitUnderLocks`, etc. are unrelated comment shapes, not this
+predicate's business.
+
+**Deliberate consequences — implemented and tested, not narrowed.**
+`ResolveComment_ByCardOwner_ThreadAddressedToAnotherRole_Resolves` and
+`PromoteComment_ByCardOwner_ThreadAddressedToAnotherRole_Promotes` prove the card owner may dispose of
+a thread addressed to a different role (including Product Owner, per the resolve test's own doc
+comment) — addressee-only was not implemented. `ResolveComment_UnaddressedThread_ByCardOwner_Resolves`
+/ `..._ByNonOwner_Refuses` prove the no-`addressed_to` case admits only the card's owner. (Promote has
+no unaddressed-thread test of its own, but it shares the identical predicate call, already proven at
+resolve's four call shapes — a nit, not a gap in the guard itself.)
+
+**Layer split — correct on both sides.** `CardCommentResolveOutcome.RoleNotPermitted` and
+`CardCommentPromoteOutcome.RoleNotPermitted` both implement `ICardRefusalReason`, both carry
+`(AttemptedRole, CardOwnerRole, AddressedTo)`, both follow `CardApprovalOutcome.RoleNotPermitted`'s
+shape (private ctor, sealed record, `RefusingRule`/`Remedy`), and both go through `RefuseAndRecord` —
+genuinely recording, confirmed by the store-level tests asserting `read.Refusals` gets an entry with a
+non-empty `Rule`/`Remedy`. The empty-body refusal lands on the other side exactly as ruled: reported
+without recording, at `CommandParser.ParseCommentResolve` (`CommandParser.cs:2836-2845`), mirroring
+`ParseCommentDecline`'s unconditional `--reason` check, and `CommentResolve_NoBody_Refuses_AtTheDoor_
+WithoutTouchingTheCard` proves the card file is byte-identical before/after — no `CardStore` call, no
+refusal recorded on the card. `requireReason: true` is now passed at `CommandDispatcher.cs:2889`
+(was `false`) as the defence-in-depth layer the brief asked for, with `CardCommentResolveOutcome.
+ReasonRequired`'s and `CardStore.ResolveComment`'s doc comments updated to stop claiming "comment
+resolve never requires a reason."
+
+**Ruling 3 — remedy names something real.** Neither `RoleNotPermitted.Remedy` invents a verb; both
+state who may act, the same shape `CardApprovalOutcome.RoleNotPermitted.Remedy` already uses ("only
+'reviewer' or 'supervisor' may record an approval..."). No fictional command named.
+
+**Coverage gate.** Both new cases are registered in `RefusalCoverageGateTests.Registry` against tests
+that assert both the outcome type and the recorded refusal — no exclusion added. `make gates` (run
+myself, not taken on the worker's word): `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`. Suite: **904**, up from 894 (+10), all green — matches the worker's accounting.
+
+**Spec.** Both new requirements read accurately against their own scenarios: "A thread is disposed of
+only by its addressee or the card's owner" covers the unrelated-role refusal and the card-owner-
+disposes-another-role's-thread permitted case (across all three verbs, per the requirement's own
+wording); "A resolution SHALL carry a reason" covers the empty-bodied resolve. Both sit right after
+"Approval is refused from the wrong role" as briefed. `make validate` confirms `VALIDATE_EXIT:0`.
+
+**One existing test, correctly edited.**
+`CommentResolve_CommentDoesNotExist_Refuses_AndRecordsTheRefusal_AndAppendsNothing` now supplies
+`"Fixed."` on stdin instead of an empty body — forced by the new parse-door check (an empty body would
+now trip `missing-argument` before the test ever reaches `comment-not-found`), and the test still
+proves what it always proved: an unknown comment id is refused and nothing is appended. No other
+existing test was touched or relaxed — confirmed by diff scope: only this one assertion body changed
+in `CommandDispatcherCommentTests.cs`, plus the mechanical `onRoleNotPermitted` arm added to every
+`Match` call across both test files (compile-forced, not a behavioural relaxation).
+
+**Storage/idiom.** `RefuseAndRecord` is the existing single write path (temp-file-then-rename,
+per-card lock already held) — no new write shape introduced. No reflection, no runtime codegen, no
+persisted field added (Carried Item A stays untouched, as briefed). File-scoped namespace, sealed
+records, no null-forgiving operators introduced.
+
+No blockers.
+
+**Nits:**
+1. `CardCommentResolveOutcome.ReasonRequired.Remedy` still reads `"'{FilePath}' was not declined;
+   retry with a non-empty reason."` (`CardCommentResolveOutcome.cs:113`, unchanged text). This case is
+   now reachable — as defence-in-depth — from `comment resolve` too, where "was not declined" misdescribes
+   the invocation that tripped it. Low priority since the CLI door catches the empty-body case first for
+   `resolve` (this message only fires for a caller hitting `CardStore.ResolveComment` directly), but
+   worth a wording pass, e.g. "no reason/body was supplied", to stay accurate for both verbs the doc
+   comment above it now says it defends.
+2. The new spec requirement is titled `A resolution SHALL carry a reason` — every sibling requirement
+   title in this file is a plain descriptive phrase with no `SHALL` in the title itself (e.g. "Approval
+   is refused from the wrong role", "A verdict cannot leave threads unanswered"). Doesn't affect
+   `make validate`, but doesn't match neighbours; consider retitling, e.g. "A resolution requires a
+   reason."
+3. `CardCommentPromoteTests` has no unaddressed-thread coverage of its own (see above) — the shared
+   predicate is fully proven via the resolve tests, so this isn't a hole in the guard, just an
+   asymmetry in per-verb test coverage.
+
+**Architectural note (non-blocking):** the Remedy string for `RoleNotPermitted` is duplicated
+verbatim between `CardCommentResolveOutcome` and `CardCommentPromoteOutcome` (down to the exact
+interpolated text). Both doc comments already point at each other as "same policy" — worth a shared
+helper if a third disposition verb (or a fourth `RoleNotPermitted`-shaped case elsewhere) ever needs
+the same wording, but not a reason to hold up this block.
+
+**[worker]** Block D fixes 1 and 2, per architect direction on the reviewer's nits.
+
+**Fix 1.** `CardCommentResolveOutcome.ReasonRequired.Remedy` no longer says "was not declined" — it now
+reads `'{FilePath}' has no reason recorded; retry with 'comment decline --reason <text>' or a non-empty
+body on 'comment resolve'.` One shared string, not two: the case carries no field naming which verb
+tripped it, so a verb-neutral message naming both real commands (ruling 3) was the honest fix rather
+than threading a new field through for this alone. Also fixed the same staleness one layer up:
+`CommandDispatcher`'s own `MapCommentResolveOutcome` mapping built a second "was not declined: a
+reason is required" string independent of the `Remedy` (the outcome's `Message`, not its `Remedy`) —
+same defect, same fix, now `'{FilePath}' has no reason recorded.`. Left `CardObligationDeclineOutcome`'s
+identically-worded string alone — that case is only ever reachable from `obligation decline`, so "was
+not declined" stays accurate there. Grepped for other assertions on the old text first; none existed.
+
+**Fix 2.** Retitled the spec requirement `A resolution SHALL carry a reason` → `A resolution requires a
+reason`, matching its siblings' plain-phrase style. Body and scenario untouched.
+
+**Left alone, as directed:** the unaddressed-thread gap in `CardCommentPromoteTests` and the duplicated
+`RoleNotPermitted.Remedy` string across the two outcome types — parked in `## NEXT`, not this block's
+concern.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite: **904**, unchanged — no
+test added, edited, or removed by either fix.
+
+→ @architect
+
 ## NEXT
 
 **§9 is closed — supervisor `Approve` on the third pass (`ec2d99b..8298539`).** Ten of ten boxes

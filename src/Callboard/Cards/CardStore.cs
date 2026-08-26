@@ -3397,15 +3397,18 @@ internal static class CardStore
     /// <summary>
     /// Resolves an addressed thread by appending a comment naming what it resolves (§9 remediation,
     /// round two — S4: give <c>9.6</c>'s "resolve … or decline with a recorded reason" and <c>9.3</c>'s
-    /// "resolve the following thread(s)" a real verb). Backs both <c>comment resolve</c> (<paramref
-    /// name="requireReason"/> <see langword="false"/>) and <c>comment decline --reason</c> (<paramref
-    /// name="requireReason"/> <see langword="true"/>, <paramref name="body"/> the required reason) —
-    /// the same "one method, two dispositions" shape <see cref="DeclineObligationUnderExistingLock"/>
-    /// itself does not need but <see cref="CardObligationDeclineOutcome.ReasonRequired"/>'s own
-    /// sibling union already establishes for a reason-mandatory case living beside a reason-optional
-    /// one. Never a mutation: <see cref="CardComment"/> offers no path to alter or remove the
-    /// resolved comment, only to append a new one naming it via <see cref="CardComment.Resolves"/> —
-    /// <see cref="DispositionNitUnderLocks"/>'s own disposition comment is the shape this reuses.
+    /// "resolve the following thread(s)" a real verb). Backs both <c>comment resolve</c> and
+    /// <c>comment decline --reason</c>, both always passing <paramref name="requireReason"/> <see
+    /// langword="true"/> as of §10 block D (Product Owner ruling: "comment resolve requires a body")
+    /// — the two verbs no longer differ on this parameter, only on whether <paramref name="body"/>
+    /// is a narrative resolution or a declared reason. <see cref="CardCommentResolveOutcome.
+    /// ReasonRequired"/> stays reachable from <c>comment resolve</c> as defence-in-depth even though
+    /// <see cref="Cli.CommandParser.ParseCommentResolve"/> already refuses an empty body at the
+    /// parse door, the same "required at the door, defended again on its own terms" shape <see
+    /// cref="Cli.CommandParser.ParseCommentDecline"/>'s <c>--reason</c> already has. Never a
+    /// mutation: <see cref="CardComment"/> offers no path to alter or remove the resolved comment,
+    /// only to append a new one naming it via <see cref="CardComment.Resolves"/> — <see cref="
+    /// DispositionNitUnderLocks"/>'s own disposition comment is the shape this reuses.
     /// </summary>
     internal static CardCommentResolveOutcome ResolveComment(
         string cardsRoot, string filePath, string commentId, CardOwner actingRole, string body, bool requireReason,
@@ -3452,6 +3455,20 @@ internal static class CardStore
                         static r => new CardCommentResolveOutcome.ToolFailure(r));
                 }
 
+                // process-enforcement: "A thread is disposed of only by its addressee or the
+                // card's owner" (Product Owner ruling, §10). Checked as soon as the comment (and so
+                // its addressee) is known — the same "no cost to checking after a successful
+                // ReadCard" reasoning CardApprovalOutcome.RoleNotPermitted's own doc comment gives —
+                // and before AlreadyResolved/ReasonRequired below: who may act is decided before
+                // what state the thread is in.
+                var threadAddressedTo = card.Comments[commentIndex].To;
+                if (!CardCommentRouting.IsPermittedToDisposeThread(card.Frontmatter.Owner, threadAddressedTo, actingRole))
+                {
+                    return RefuseAndRecord<CardCommentResolveOutcome, CardCommentResolveOutcome.RoleNotPermitted>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardCommentResolveOutcome.RoleNotPermitted(actingRole, card.Frontmatter.Owner, threadAddressedTo),
+                        static r => new CardCommentResolveOutcome.ToolFailure(r));
+                }
+
                 if (CardCommentRouting.IsResolved(card.Comments, commentIndex))
                 {
                     return RefuseAndRecord<CardCommentResolveOutcome, CardCommentResolveOutcome.AlreadyResolved>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -3461,9 +3478,11 @@ internal static class CardStore
 
                 // register: "Scenario: Declining requires a reason" — defended here as well as at
                 // the CLI door (see CardCommentResolveOutcome.ReasonRequired's own doc comment),
-                // checked after the two shared preconditions above so a caller missing a reason
-                // against a comment that does not exist, or is already resolved, learns the more
-                // specific fact first. Never true for 'comment resolve', which never sets it.
+                // checked after the three shared preconditions above so a caller missing a reason
+                // against a comment that does not exist, is disposed of by the wrong role, or is
+                // already resolved, learns the more specific fact first. As of §10 block D, both
+                // 'comment resolve' and 'comment decline' always pass requireReason: true — the
+                // parameter now only distinguishes "was one supplied", never "is one required".
                 if (requireReason && string.IsNullOrWhiteSpace(body))
                 {
                     return RefuseAndRecord<CardCommentResolveOutcome, CardCommentResolveOutcome.ReasonRequired>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -3567,6 +3586,18 @@ internal static class CardStore
                 {
                     return RefuseAndRecord<CardCommentPromoteOutcome, CardCommentPromoteOutcome.CommentNotFound>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
                         new CardCommentPromoteOutcome.CommentNotFound(commentId),
+                        static r => new CardCommentPromoteOutcome.ToolFailure(r));
+                }
+
+                // process-enforcement: "A thread is disposed of only by its addressee or the
+                // card's owner" (Product Owner ruling, §10) — same check, same ordering, as
+                // ResolveCommentUnderExistingLock's own (see its comment for the reasoning); the
+                // two verbs share one policy.
+                var threadAddressedTo = card.Comments[commentIndex].To;
+                if (!CardCommentRouting.IsPermittedToDisposeThread(card.Frontmatter.Owner, threadAddressedTo, actingRole))
+                {
+                    return RefuseAndRecord<CardCommentPromoteOutcome, CardCommentPromoteOutcome.RoleNotPermitted>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        new CardCommentPromoteOutcome.RoleNotPermitted(actingRole, card.Frontmatter.Owner, threadAddressedTo),
                         static r => new CardCommentPromoteOutcome.ToolFailure(r));
                 }
 

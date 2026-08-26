@@ -2833,6 +2833,17 @@ internal static class CommandParser
 
         var body = StdinBodyReader.ReadBody(stdin!);
 
+        // process-enforcement: "comment resolve requires a body" (Product Owner ruling, §10) — an
+        // empty-bodied resolve was a decline with no recorded reason, the one disposition register
+        // forbids. Decidable from the invocation alone (§9 ruling 1), so it reports without
+        // recording here at the parse door — exactly mirroring ParseCommentDecline's own
+        // unconditional '--reason' requirement below.
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment resolve' requires a non-empty body on stdin."));
+        }
+
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.CommentResolve(
             id, commentId, role, body, changeName, context.WorkingDirectory, context.Clock()));
     }

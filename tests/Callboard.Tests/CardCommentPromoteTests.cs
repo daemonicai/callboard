@@ -122,6 +122,46 @@ public sealed class CardCommentPromoteTests : IDisposable
     }
 
     [Fact]
+    public void PromoteComment_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard()
+    {
+        var path = WriteCardWithComment("b-0010", "B-0010", "thread-1", CardOwner.Reviewer);
+        var raisedPath = Path.Combine(_registerDirectory, "q-0105.md");
+
+        var outcome = CardStore.PromoteComment(
+            _root, path, "thread-1", raisedPath, CardKind.Question, "Title.", CardOwner.Architect,
+            CardOwner.ProductOwner, "Body.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
+
+        var refusal = Assert.IsType<CardCommentPromoteOutcome.RoleNotPermitted>(outcome);
+        Assert.Equal(CardOwner.Architect, refusal.AttemptedRole);
+        Assert.Equal(CardOwner.Worker, refusal.CardOwnerRole);
+        Assert.Equal(CardOwner.Reviewer, refusal.AddressedTo);
+        Assert.False(File.Exists(raisedPath));
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.False(CardCommentRouting.IsResolved(read.Comments, 0));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
+    }
+
+    /// <summary>Deliberate consequence of the Product Owner ruling (§10 block D), same as <see
+    /// cref="CardCommentResolveTests.ResolveComment_ByCardOwner_ThreadAddressedToAnotherRole_Resolves"/>:
+    /// the card's owner may promote a thread addressed to a different role.</summary>
+    [Fact]
+    public void PromoteComment_ByCardOwner_ThreadAddressedToAnotherRole_Promotes()
+    {
+        var path = WriteCardWithComment("b-0011", "B-0011", "thread-1", CardOwner.ProductOwner);
+        var raisedPath = Path.Combine(_registerDirectory, "q-0106.md");
+
+        var outcome = CardStore.PromoteComment(
+            _root, path, "thread-1", raisedPath, CardKind.Question, "Title.", CardOwner.Worker,
+            CardOwner.ProductOwner, "Body.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
+
+        AssertPromoted(outcome);
+    }
+
+    [Fact]
     public void PromoteComment_AlreadyResolved_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard()
     {
         var path = WriteCardWithComment("b-0004", "B-0004", "thread-1", CardOwner.Reviewer);
@@ -196,6 +236,7 @@ public sealed class CardCommentPromoteTests : IDisposable
         outcome.Match(
             onPromoted: static promoted => promoted,
             onCommentNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Promoted, got CommentNotFound: '{notFound.CommentId}'"),
+            onRoleNotPermitted: static roleNotPermitted => throw new Xunit.Sdk.XunitException($"expected Promoted, got RoleNotPermitted: '{roleNotPermitted.AttemptedRole.ToWireString()}'"),
             onAlreadyResolved: static already => throw new Xunit.Sdk.XunitException($"expected Promoted, got AlreadyResolved: '{already.CommentId}'"),
             onRaisedCardAlreadyExists: static alreadyExists => throw new Xunit.Sdk.XunitException($"expected Promoted, got RaisedCardAlreadyExists: '{alreadyExists.FilePath}'"),
             onRaisedCardLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Promoted, got RaisedCardLayoutMismatch: {layoutMismatch.Reason}"),

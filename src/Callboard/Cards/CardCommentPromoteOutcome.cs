@@ -10,6 +10,12 @@ namespace Callboard.Cards;
 /// mirror <see cref="CardFindingRecordOutcome"/>'s own <c>BlindSpotCardAlreadyExists</c>/
 /// <c>BlindSpotLayoutMismatch</c> exactly: neither ever resolves an existing card at the raised
 /// path, so neither is card-addressed (§9 block A3 ruling).
+///
+/// <para>
+/// <b><see cref="RoleNotPermitted"/> is refusal-shaped and records</b> — same precedent, and the
+/// same Product Owner ruling, as <see cref="CardCommentResolveOutcome.RoleNotPermitted"/>'s own
+/// doc comment records; the two verbs share one policy.
+/// </para>
 /// </summary>
 internal abstract record CardCommentPromoteOutcome
 {
@@ -20,6 +26,7 @@ internal abstract record CardCommentPromoteOutcome
     internal abstract TResult Match<TResult>(
         Func<Promoted, TResult> onPromoted,
         Func<CommentNotFound, TResult> onCommentNotFound,
+        Func<RoleNotPermitted, TResult> onRoleNotPermitted,
         Func<AlreadyResolved, TResult> onAlreadyResolved,
         Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists,
         Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch,
@@ -36,14 +43,14 @@ internal abstract record CardCommentPromoteOutcome
     /// genuine "first write succeeded, second failed" rollback case reachable at all).</param>
     internal sealed record Promoted(CardFile OriginalCard, CardFile RaisedCard) : CardCommentPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onPromoted(this);
     }
 
     /// <summary>No comment on the resolved original card carries this id. Card-addressed. Refusal-shaped.</summary>
     internal sealed record CommentNotFound(string CommentId) : CardCommentPromoteOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCommentNotFound(this);
 
         public string RefusingRule => "card-model: a comment can only be resolved by its own id";
@@ -51,10 +58,25 @@ internal abstract record CardCommentPromoteOutcome
         public string Remedy => $"comment '{CommentId}' does not exist on the resolved card; check the id and retry.";
     }
 
+    /// <summary>The acting role is neither the thread's addressee nor the card's owner. Same policy
+    /// as <see cref="CardCommentResolveOutcome.RoleNotPermitted"/> — see its doc comment for the
+    /// Product Owner ruling and the deliberate consequences it names. Card-addressed. Refusal-shaped.</summary>
+    internal sealed record RoleNotPermitted(CardOwner AttemptedRole, CardOwner CardOwnerRole, CardOwner? AddressedTo) : CardCommentPromoteOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+            onRoleNotPermitted(this);
+
+        public string RefusingRule => "process-enforcement: a thread is disposed of only by its addressee or the card's owner";
+
+        public string Remedy => AddressedTo is null
+            ? $"only the card's owner ('{CardOwnerRole.ToWireString()}') may dispose of this thread; '{AttemptedRole.ToWireString()}' attempted it."
+            : $"only '{AddressedTo.ToWireString()}' (the thread's addressee) or '{CardOwnerRole.ToWireString()}' (the card's owner) may dispose of this thread; '{AttemptedRole.ToWireString()}' attempted it.";
+    }
+
     /// <summary>The named comment already has a later comment resolving it. Refusal-shaped.</summary>
     internal sealed record AlreadyResolved(string CommentId) : CardCommentPromoteOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onAlreadyResolved(this);
 
         public string RefusingRule => "card-model: a comment resolved once cannot be resolved again";
@@ -67,7 +89,7 @@ internal abstract record CardCommentPromoteOutcome
     /// cref="CardFindingRecordOutcome.BlindSpotCardAlreadyExists"/> exactly).</summary>
     internal sealed record RaisedCardAlreadyExists(string FilePath) : CardCommentPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onRaisedCardAlreadyExists(this);
     }
 
@@ -76,7 +98,7 @@ internal abstract record CardCommentPromoteOutcome
     /// BlindSpotLayoutMismatch"/>).</summary>
     internal sealed record RaisedCardLayoutMismatch(string Reason) : CardCommentPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onRaisedCardLayoutMismatch(this);
     }
 
@@ -84,7 +106,7 @@ internal abstract record CardCommentPromoteOutcome
     /// and locking). Refusal-shaped.</summary>
     internal sealed record CardNotFound(string FilePath) : CardCommentPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardNotFound(this);
     }
 
@@ -93,14 +115,14 @@ internal abstract record CardCommentPromoteOutcome
     /// carries this case. Refusal-shaped.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardCommentPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onLayoutMismatch(this);
     }
 
     /// <summary>The original card exists but could not be parsed. Neither refusal nor tool-failure.</summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardCommentPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onCardCorrupt(this);
     }
 
@@ -108,7 +130,7 @@ internal abstract record CardCommentPromoteOutcome
     /// after every check passed. Tool-failure-shaped.</summary>
     internal sealed record ToolFailure(string Reason) : CardCommentPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onToolFailure(this);
     }
 }

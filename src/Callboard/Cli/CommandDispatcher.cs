@@ -2886,7 +2886,7 @@ internal static class CommandDispatcher
         }
 
         var outcome = CardStore.ResolveComment(
-            repoRoot, card.FilePath!, parsed.CommentId, parsed.ActingRole, parsed.Body, requireReason: false, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+            repoRoot, card.FilePath!, parsed.CommentId, parsed.ActingRole, parsed.Body, requireReason: true, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
         return MapCommentResolveOutcome(outcome, card.FilePath!);
     }
@@ -2937,11 +2937,15 @@ internal static class CommandDispatcher
             onCommentNotFound: notFound => new CommandOutcome.Refusal(
                 "comment-not-found", $"comment '{notFound.CommentId}' does not exist on '{filePath}'.",
                 notFound.RefusingRule, notFound.Remedy),
+            onRoleNotPermitted: roleNotPermitted => new CommandOutcome.Refusal(
+                "role-not-permitted",
+                $"'{filePath}' thread disposition denied for role '{roleNotPermitted.AttemptedRole.ToWireString()}'.",
+                roleNotPermitted.RefusingRule, roleNotPermitted.Remedy),
             onAlreadyResolved: already => new CommandOutcome.Refusal(
                 "comment-already-resolved", $"comment '{already.CommentId}' on '{filePath}' is already resolved.",
                 already.RefusingRule, already.Remedy),
             onReasonRequired: reasonRequired => new CommandOutcome.Refusal(
-                "reason-required", $"'{reasonRequired.FilePath}' was not declined: a reason is required.",
+                "reason-required", $"'{reasonRequired.FilePath}' has no reason recorded.",
                 reasonRequired.RefusingRule, reasonRequired.Remedy),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}'."),
@@ -2993,6 +2997,10 @@ internal static class CommandDispatcher
             onCommentNotFound: notFound => new CommandOutcome.Refusal(
                 "comment-not-found", $"comment '{notFound.CommentId}' does not exist on '{card.FilePath}'.",
                 notFound.RefusingRule, notFound.Remedy),
+            onRoleNotPermitted: roleNotPermitted => new CommandOutcome.Refusal(
+                "role-not-permitted",
+                $"'{card.FilePath}' thread disposition denied for role '{roleNotPermitted.AttemptedRole.ToWireString()}'.",
+                roleNotPermitted.RefusingRule, roleNotPermitted.Remedy),
             onAlreadyResolved: already => new CommandOutcome.Refusal(
                 "comment-already-resolved", $"comment '{already.CommentId}' on '{card.FilePath}' is already resolved.",
                 already.RefusingRule, already.Remedy),

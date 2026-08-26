@@ -81,6 +81,20 @@ internal static class CardCommentRouting
         owner == role || HasLiveThreadAddressedTo(comments, role);
 
     /// <summary>
+    /// True when <paramref name="actingRole"/> may dispose of a thread — <c>resolve</c>,
+    /// <c>promote</c>, or <c>decline</c> — addressed to <paramref name="threadAddressedTo"/> on a
+    /// card owned by <paramref name="cardOwner"/> (process-enforcement: "A thread is disposed of
+    /// only by its addressee or the card's owner", Product Owner ruling, §10). Deliberately admits
+    /// the card's owner disposing of a thread addressed to a different role — addressee-only was on
+    /// the table and was not chosen — and, when <paramref name="threadAddressedTo"/> is <see
+    /// langword="null"/>, admits only <paramref name="cardOwner"/>: there is no addressee for the
+    /// first arm to satisfy. See <see cref="CardCommentResolveOutcome.RoleNotPermitted"/>'s own doc
+    /// comment for the ruling's deliberate consequences, written down.
+    /// </summary>
+    internal static bool IsPermittedToDisposeThread(CardOwner cardOwner, CardOwner? threadAddressedTo, CardOwner actingRole) =>
+        actingRole == cardOwner || actingRole == threadAddressedTo;
+
+    /// <summary>
     /// The ids of every live thread addressed to <paramref name="role"/> — <see cref="
     /// HasLiveThreadAddressedTo"/>'s own sibling, naming the set rather than a bare boolean, the
     /// same "the refusal names the set, never a bare count" shape <see cref="LiveUndispositionedNitIds"/>

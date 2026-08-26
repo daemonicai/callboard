@@ -112,6 +112,71 @@ public sealed class CardCommentResolveTests : IDisposable
     }
 
     [Fact]
+    public void ResolveComment_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal_AndDoesNotResolve()
+    {
+        var path = WriteCardWithComment("b-0006", "B-0006", "thread-1", CardOwner.Reviewer);
+
+        var outcome = CardStore.ResolveComment(
+            _root, path, "thread-1", CardOwner.Architect, "Fixed.", requireReason: false, ResolvedAt, TimeSpan.FromSeconds(5), ChangeName);
+
+        var refusal = Assert.IsType<CardCommentResolveOutcome.RoleNotPermitted>(outcome);
+        Assert.Equal(CardOwner.Architect, refusal.AttemptedRole);
+        Assert.Equal(CardOwner.Worker, refusal.CardOwnerRole);
+        Assert.Equal(CardOwner.Reviewer, refusal.AddressedTo);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Single(read.Comments);
+        Assert.False(CardCommentRouting.IsResolved(read.Comments, 0));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
+        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
+    }
+
+    /// <summary>Deliberate consequence of the Product Owner ruling (§10 block D): the card's owner
+    /// may dispose of a thread addressed to a different role, including the Product Owner —
+    /// addressee-only was on the table and was not chosen.</summary>
+    [Fact]
+    public void ResolveComment_ByCardOwner_ThreadAddressedToAnotherRole_Resolves()
+    {
+        var path = WriteCardWithComment("b-0007", "B-0007", "thread-1", CardOwner.ProductOwner);
+
+        var outcome = CardStore.ResolveComment(
+            _root, path, "thread-1", CardOwner.Worker, "Handled.", requireReason: false, ResolvedAt, TimeSpan.FromSeconds(5), ChangeName);
+
+        AssertResolved(outcome);
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.True(CardCommentRouting.IsResolved(read.Comments, 0));
+    }
+
+    /// <summary>A thread with no <c>addressed_to</c> falls out of the ruling: there is no addressee
+    /// for the first arm to admit, so only the card's owner may dispose of it.</summary>
+    [Fact]
+    public void ResolveComment_UnaddressedThread_ByCardOwner_Resolves()
+    {
+        var path = WriteCardWithComment("b-0008", "B-0008", "thread-1", addressedTo: null);
+
+        var outcome = CardStore.ResolveComment(
+            _root, path, "thread-1", CardOwner.Worker, "Handled.", requireReason: false, ResolvedAt, TimeSpan.FromSeconds(5), ChangeName);
+
+        AssertResolved(outcome);
+    }
+
+    [Fact]
+    public void ResolveComment_UnaddressedThread_ByNonOwner_Refuses_AndRecordsTheRefusal()
+    {
+        var path = WriteCardWithComment("b-0009", "B-0009", "thread-1", addressedTo: null);
+
+        var outcome = CardStore.ResolveComment(
+            _root, path, "thread-1", CardOwner.Reviewer, "Handled.", requireReason: false, ResolvedAt, TimeSpan.FromSeconds(5), ChangeName);
+
+        var refusal = Assert.IsType<CardCommentResolveOutcome.RoleNotPermitted>(outcome);
+        Assert.Null(refusal.AddressedTo);
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.False(CardCommentRouting.IsResolved(read.Comments, 0));
+    }
+
+    [Fact]
     public void ResolveComment_RequireReasonTrue_NoReason_Refuses_AndRecordsTheRefusal_AndDoesNotResolve()
     {
         var path = WriteCardWithComment("b-0005", "B-0005", "thread-1", CardOwner.Architect);
@@ -129,11 +194,11 @@ public sealed class CardCommentResolveTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
-    private string WriteCardWithComment(string fileStem, string id, string commentId, CardOwner addressedTo)
+    private string WriteCardWithComment(string fileStem, string id, string commentId, CardOwner? addressedTo, CardOwner? cardOwner = null)
     {
         var path = Path.Combine(_changeDirectory, fileStem + ".md");
         var frontmatter = new CardFrontmatter(
-            id, CardKind.Block, "A block card", "in-review", CardOwner.Worker, CardScope.Change, "S-0001", Created, Created);
+            id, CardKind.Block, "A block card", "in-review", cardOwner ?? CardOwner.Worker, CardScope.Change, "S-0001", Created, Created);
         var comment = new CardComment(
             Id: commentId, Author: CardOwner.Architect, Timestamp: Created.AddHours(1), Body: "Original comment.",
             ReplyTo: null, To: addressedTo, Resolves: null, UnknownHeaderFields: []);
@@ -146,6 +211,7 @@ public sealed class CardCommentResolveTests : IDisposable
         outcome.Match(
             onResolved: static resolved => resolved,
             onCommentNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Resolved, got CommentNotFound: '{notFound.CommentId}'"),
+            onRoleNotPermitted: static roleNotPermitted => throw new Xunit.Sdk.XunitException($"expected Resolved, got RoleNotPermitted: '{roleNotPermitted.AttemptedRole.ToWireString()}'"),
             onAlreadyResolved: static already => throw new Xunit.Sdk.XunitException($"expected Resolved, got AlreadyResolved: '{already.CommentId}'"),
             onReasonRequired: static reasonRequired => throw new Xunit.Sdk.XunitException($"expected Resolved, got ReasonRequired: '{reasonRequired.FilePath}'"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Resolved, got CardNotFound: '{notFound.FilePath}'"),
