@@ -55,8 +55,9 @@ on a handoff.
 #### Scenario: Archive leaves the register standing
 
 - **WHEN** a change is archived
-- **THEN** its change-scoped obligations are settled and every repository-scoped rule, hazard and open
-  question remains live and unmoved
+- **THEN** every card in the change directory, obligations included, moves into the archive exactly as
+  written, with no obligation settled by the act of archiving, and every repository-scoped rule, hazard
+  and open question remains live and unmoved
 
 #### Scenario: Question outlives its change
 
@@ -88,6 +89,17 @@ proposition from one backed by a single incident.
 - **WHEN** an open obligation whose owing section has closed is promoted to a wider scope
 - **THEN** the same card moves to that scope, retaining its identity, text and thread, and remains open
 
+#### Scenario: Rule promoted across scope
+
+- **WHEN** a change-scoped rule is promoted to repository scope
+- **THEN** the same card persists with its identity, text and citation history intact
+
+#### Scenario: Rule authored from findings keeps its backing
+
+- **WHEN** a rule is authored generalising several findings
+- **THEN** the rule is a new card recording the findings it was earned from, and those findings are
+  unchanged
+
 ### Requirement: Declining is distinguishable from discharging
 
 An obligation that will not be met SHALL be closable by declining it, and the record SHALL carry the
@@ -111,17 +123,6 @@ status word it carries.
 
 - **WHEN** an obligation is declined with no reason recorded
 - **THEN** the system refuses and states that a reason is required
-
-#### Scenario: Rule promoted across scope
-
-- **WHEN** a change-scoped rule is promoted to repository scope
-- **THEN** the same card persists with its identity, text and citation history intact
-
-#### Scenario: Rule authored from findings keeps its backing
-
-- **WHEN** a rule is authored generalising several findings
-- **THEN** the rule is a new card recording the findings it was earned from, and those findings are
-  unchanged
 
 ### Requirement: Rules compact into families by supersession
 

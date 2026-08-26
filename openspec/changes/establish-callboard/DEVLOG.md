@@ -26490,6 +26490,341 @@ block F and I will not decide it myself.
 **Standing rules apply**, including the hardened gate once you build it. Gates via `make`, exit lines
 verbatim. Do not commit, do not tick, do not touch the Makefile or `CLAUDE.md`.
 
+**[worker]** §9 remediation, S1/S3 landed; **S2 mechanism, proposed before building it.**
+
+S1: `CardBlockedByOutcome`'s four post-lock cases (`NotABlockCard`, `RoundDisagreesWithHistory`,
+`AlreadyBlockedBy`, `NotBlockedBy`) now implement `ICardRefusalReason` and record, following the
+`CardGateResultOutcome`/`CardApprovalOutcome` pattern exactly — `RefuseAndRecord` at each of the two
+shared-precondition checks in `UpdateBlockedByUnderExistingLock`, and `onNoChange`'s two call sites
+(`AddBlockedByUnderExistingLock`/`RemoveBlockedByUnderExistingLock`) now record their own case. Each
+has a test asserting `Assert.Single(read.Refusals)` with rule/remedy equality, registered in the gate.
+
+S3: `RecordSectionAuthorisationUnderExistingLock`'s role check now runs immediately after a
+successful `ReadCard`, mirroring `RecordApprovalUnderExistingLock` exactly, and `RoleNotPermitted`
+records. Doc comment corrected — it now cites the ruling itself (§9 block B) rather than a stale
+"same ordering" pointer. Added the CardNotFound-before-role-check pinning test the same shape as
+`RecordApproval_CardDoesNotExist_AndRoleIsWrong_RefusesAsCardNotFound`, and updated the four-role
+theory test to assert recording.
+
+**S2.** The mechanism, reasoned from what actually made S1 invisible: the existing gate's universe is
+`Assembly.GetTypes().Where(implements ICardRefusalReason)` — a case that never declares the interface
+is outside that universe, not uncovered within it. The fix has to enumerate "every refusal-shaped
+case in every outcome union" from a universe the interface itself cannot supply, without hand-listing
+the twenty-one union type names (that hand-list is exactly the kind of thing that goes stale the way
+S1 did).
+
+Mechanically, every one of these outcome unions is discoverable without being named, from two
+structural facts already true of every one of them:
+
+1. **It is returned by a `CardStore` method.** Reflecting `typeof(CardStore).GetMethods(...)` for
+   distinct, non-generic return types, then filtering to types carrying the closed-union idiom used
+   everywhere in `Cards/` (`abstract`, with an `abstract TResult Match<TResult>(...)` declared
+   directly on the type) gets every card-mutating outcome union for free — new unions included, the
+   day a new `CardStore` method returns one.
+2. **It declares a nested `ToolFailure` case.** This is the second filter, and it is what keeps the
+   universe from also sweeping in domain value-unions that happen to be returned somewhere in
+   `CardStore` (`CardScope` surfaced this exactly — a value union with no refusal concept at all,
+   caught by the first filter alone). Every genuine outcome union in this codebase carries a
+   `ToolFailure` case by convention (ADR-0001: enforcement-unavailable is always modelled), and no
+   value union does. Confirmed against the actual codebase: this pair of filters yields exactly the
+   twenty `*Outcome` types plus `CardWriteResult` — 21 unions, 200 concrete cases — with no hand-typed
+   union name anywhere in the gate. (It also drops `CardFileParseResult` from the universe, correctly
+   — its `Success`/`Failure` are a lower-level parse primitive that every higher-level union's own
+   `CardCorrupt` case already re-reports; it is never itself a CLI-facing outcome.)
+
+For each of those 200 cases: implements `ICardRefusalReason` → covered by the existing bijection.
+Does not → must be a key in a new hand-maintained `Exclusions: Dictionary<Type, string>`, reason
+required non-empty. A new gate test asserts the three-way bijection: every discovered case is in
+exactly one of {implementor, excluded} (never both, never neither), and every `Exclusions` key is
+still a real discovered case (no stale exclusion surviving a rename/removal). Adding a union or a
+case now forces a decision in one of two visible places — the interface or the dictionary — instead
+of permitting silence in either.
+
+The 116 non-implementor cases the reflection actually found, seeded into `Exclusions` grouped by
+shared reason (matching the categories already reasoned out across §9, cited to where each was
+ruled):
+
+- **One success case per union** (21) — not refusal-shaped by definition.
+- **The four categorical cases, per union that has them** (`CardNotFound`/`LayoutMismatch`: never
+  card-addressed, §9 architect ruling "only a card-addressed refusal records"; `CardCorrupt`:
+  reported content problem, not a refusal, per every union's own doc comment; `ToolFailure`:
+  ADR-0001, enforcement-unavailable is never a refusal) — the bulk of the list.
+- **`CardWriteResult`'s pre-read cases** (`NotFound`, `AlreadyExists`, `LayoutMismatch`, `Corrupt`,
+  `ToolFailure`) — same "no card resolved yet" reasoning, plus `AlreadyExists`: the write target's
+  own path already existed, so there was never an existing card to record against.
+- **`CardCreateOutcome`/`CardFindingRecordOutcome` entire** — §9 block A3's ruling that card creation
+  never resolves an existing card to record against.
+- **The two pre-lock `RoleNotPermitted`s** (`CardNitDispositionOutcome`, `CardRuleCompactOutcome`) —
+  checked at the top of a public, unlocked entry point, genuinely before any card is resolved, unlike
+  `CardApprovalOutcome`/`CardSectionAuthorisationOutcome`'s post-lock ones.
+- **`CardRuleCompactOutcome.EmptyAbsorbSet`** — checked before any lock, §7 block F.
+- **The three pre-lock self-reference cases** (`CardDecisionSupersedeOutcome.SelfSupersession`,
+  `CardRuleCompactOutcome.SelfAbsorption`, `CardRuleCompactOutcome.DuplicateAbsorbedRule`) — resolved
+  on caller-supplied path text alone, before any lock; each has a `Resolved*`/named sibling that is
+  the post-lock, recording occurrence and is already registered.
+- **`CardNitDispositionOutcome.RaisedCardLayoutMismatch`** — the raised card's own path failed to
+  anchor; no card resolved there either.
+- **`ChangeArchiveOutcome` entire** (`ChangeNotFound`, `AlreadyArchived`, `InvalidChangeName`,
+  `CardsUnreadable`, `OrphanedObligations`) — the union's own `OrphanedObligations` doc comment
+  already states this for the whole type: an architect-run, whole-directory verb where the
+  pattern-visibility argument for recording is at its weakest, not a case-by-case accident.
+
+Provoked two ways before committing, each restored after: deleting `CardBlockedByOutcome.NotBlockedBy`
+from `Registry` alone reproduced exactly the base gate's existing failure mode (it is an
+`ICardRefusalReason` implementor, so `RefusalCoverageIsExactlyTheReflectedSet` already catches this —
+not new). Deleting `CardWriteResult.AlreadyExists` from `Exclusions` — a non-implementor, the shape S1
+actually was — is what the new `RefusalShapedUniverseIsFullyAccountedFor` test exists for, and it
+failed, naming exactly that case as neither registered nor excluded.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0`. → @reviewer
+
+**[worker]** S5/S6 landed. **S5:** "Archive leaves the register standing" now says every card in the
+change directory, obligations included, moves into the archive exactly as written, with no obligation
+settled by the act of archiving — matching `ArchiveChange`'s own doc comment ("this verb makes no
+write of its own") and `process-enforcement`'s "Archive settles orphaned obligations" gate, which
+already covers the refusal-on-orphan half. Left the requirement prose above it ("Archiving a change
+SHALL act as a filter that closes its change-scoped cards") untouched — the brief named the scenario;
+that prose reads stale too on the same evidence (no write happens at all), but it's a second finding,
+not this one, and I stayed in scope.
+
+**S6:** "Rule promoted across scope" and "Rule authored from findings keeps its backing" moved back
+under *Promotion is retrospective and preserves the link*, immediately after "Obligation promoted
+across scope"; *Declining is distinguishable from discharging* now carries only its own two scenarios.
+`openspec validate --strict`: `VALIDATE_EXIT:0`.
+
+All five items (S1, S2, S3, S5, S6) done; S4 held back per the architect's post above. Full gate run:
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (875 tests, up from 874 — S1
+added one new pinning test for `CardBlockedByOutcome.RoundDisagreesWithHistory`, S3 replaced one test
+with two without a net gain there). → @reviewer
+
+**[reviewer]** §9 remediation (S1, S2, S3, S5, S6) — **Request changes.**
+
+Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (875/875), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+Scope confirmed clean: no `Makefile`/`CLAUDE.md`/`tasks.md` touch, nothing ticked.
+
+**S2, attacked the way the original gate was attacked.**
+
+*Does discovery find every union, including one added tomorrow?* Traced `ReflectedOutcomeUnions()`
+directly: it reflects `typeof(CardStore).GetMethods(...)` (all visibilities, all statics/instances,
+declared-only) for distinct return types, keeps those that are `abstract` classes declaring an
+abstract `Match` and a nested `ToolFailure` whose `BaseType == t`. This is unconditional — a brand-new
+union built in this exact idiom and returned by any `CardStore` method (public or private) is found
+with zero code change to the gate, which is the property that matters. I looked specifically for
+what it would miss, since that's the actual question: **(a) a union returned only by a type other
+than `CardStore`** — the reflection names `CardStore` explicitly, so a hypothetical future store class
+would be invisible to it; **(b) a union not built in the exact idiom** (a non-abstract base, `Match`
+not declared directly on the type, `ToolFailure` nested more than one level deep or under a different
+name); **(c) a union reachable only through a wrapping return type** — a method returning
+`(SomeOutcome?, CardFile?)` (this codebase already has this shape, e.g. `ReadOpenChangeScopedRule`)
+would not itself register `SomeOutcome` in the reflected set, though every current union also has at
+least one method returning it bare, so this hasn't bitten yet. All three are real, and all three
+require a genuine departure from nine sections' worth of unbroken convention — bounded, not free, but
+worth naming since you asked for the shape rather than the reassurance.
+
+*Is `Exclusions` reasoned or a suppression list, checked against code rather than the strings?*
+Sampled five entries spanning different categories and traced each to its construction site:
+`CardApprovalOutcome.CardNotFound` (bare `File.Exists` before `ReadCard`, confirmed unreachable-after-read),
+`CardWriteResult.AlreadyExists` (`CardStore.cs:101-102`, the create-only ternary — bare `File.Exists`,
+no parse), `CardRuleCompactOutcome.EmptyAbsorbSet` (`CardStore.cs:3981-3984`, fires right after the
+role check, before any lock), `ChangeArchiveOutcome.CardsUnreadable` (`CardStore.cs:3508-3517`, a
+whole-directory scan collecting every unparseable path — genuinely the same shape as
+`OrphanedObligations`, not a single-card mutation), `CardNitDispositionOutcome.RaisedCardLayoutMismatch`
+(both construction sites are the *raised* card's own path, distinct from the dispositioned block
+card). All five matched their stated reason exactly. This reads as reasoned, not suppressive.
+
+*Does the 200/116/84 arithmetic hold, and are the 84 the ones you'd expect?* Counted `{ typeof(`
+occurrences in each dictionary block directly: 84 in `Registry`, 116 in `Exclusions`, summing to 200.
+More importantly, this isn't just self-consistent arithmetic — `RefusalShapedUniverseIsFullyAccountedFor`
+itself asserts the three-way partition (unaccounted-for, doubly-classified, stale exclusion) and it
+passed in the gate run above, which is a running-code proof the 200 reflected cases really do
+partition into exactly these 84 and 116, not merely that the two lists happen to sum correctly.
+
+*Would this gate have caught S1?* Directly, not by inference: the mechanism's own logic guarantees
+it — any case that is neither an `ICardRefusalReason` implementor nor an `Exclusions` key lands in
+`unaccountedFor` unconditionally, and `CardBlockedByOutcome`'s four cases pre-remediation were exactly
+that shape (real cases, discovered independently of the interface, no entry either place). The
+worker's own provocation (deleting `CardWriteResult.AlreadyExists` from `Exclusions`) reproduces this
+precise shape and failed, naming the case — confirmed reading the test logic myself, not taking the
+provocation log on faith.
+
+**S1 verified: right lock, real recording.** `UpdateBlockedByUnderExistingLock` takes `heldLock` as
+its structural precondition (`ArgumentNullException.ThrowIfNull`, `filePath = heldLock.CardPath`) —
+all four cases (`NotABlockCard`, `RoundDisagreesWithHistory` inline, `AlreadyBlockedBy`/`NotBlockedBy`
+via the two `onNoChange` callbacks) route through `RefuseAndRecord` against exactly that locked path,
+never an invented one. All four tests in `CardBlockedByTests.cs` assert `Assert.Single(read.Refusals)`
+with `By`/`Rule`/`Remedy` matched, all four registered.
+
+**S3 verified: matches B's ruling exactly.** `RecordSectionAuthorisationUnderExistingLock`: `File.Exists`
+first, role check immediately after a successful `ReadCard`, records. Both pre-lock `RoleNotPermitted`
+cases (`CardNitDispositionOutcome`, `CardRuleCompactOutcome`) confirmed still bare (no
+`ICardRefusalReason`), correctly untouched. The `[Theory]` test now asserts recording across all four
+non-Product-Owner roles, and the new `CardNotFound`-before-role-check pinning test mirrors
+`RecordApproval`'s own.
+
+**One finding, and I'd ask for it before landing — it's the same defect class this remediation
+exists to fix, found one door over.** `RecordApprovalUnderExistingLock`'s own top-level `<summary>`
+(`CardStore.cs:701-702`) still reads *"The role check is the very first thing decided, ahead of even
+`File.Exists(string)`"* — the pre-block-B ordering. The actual code, three lines below the comment,
+checks `File.Exists` first and the role second (confirmed directly), and the **inline** comment at
+the real check site (`CardStore.cs:726-735`) correctly documents the post-B order. So one file carries
+both the right answer and the stale one, and S3's own fix now cites this exact method as its ordering
+justification (*"the ordering `RecordApprovalUnderExistingLock`'s own doc comment now justifies"*) —
+pointing at a doc comment that is only half-updated. This is a one-paragraph fix with zero behavioural
+risk, but it's a live, confirmed stale citation to a reversed decision, which is precisely S3's own
+finding shape, and I don't think this remediation should land with a fresh instance of it sitting next
+to the fix.
+
+**S5/S6 verified against the spec text directly.** "Archive leaves the register standing" now reads
+"every card in the change directory, obligations included, moves into the archive exactly as written,
+with no obligation settled by the act of archiving" — matches `ArchiveChange`'s actual scan-refuse-move
+behaviour. "Rule promoted across scope" and "Rule authored from findings keeps its backing" are back
+under *Promotion is retrospective and preserves the link*, immediately after "Obligation promoted
+across scope"; *Declining is distinguishable from discharging* carries only its own two scenarios.
+`VALIDATE_EXIT:0` confirmed myself.
+
+**Ask:** fix `RecordApprovalUnderExistingLock`'s top-level summary to match its own inline comment and
+the code beneath it. Everything else — S1, S2, S3's substance, S5, S6 — is clean and does not need to
+change.
+
+→ @architect
+
+**[worker]** Reviewer's blocker fixed. `RecordApprovalUnderExistingLock`'s top-level doc comment
+still described the pre-block-B ordering (role check "the very first thing decided, ahead of even
+File.Exists", justified by citing `CompactRules`) while the code beneath it, and its own correct
+inline comment, do the opposite — checked immediately after a successful `ReadCard`. Rewrote the
+paragraph to match the method's actual behaviour and the inline comment's own reasoning (§9 block B
+ruling: neither `CompactRules`' nor `DispositionNit`'s reasons for checking role early apply here,
+since the lock is already held regardless and `IsApprovingRole` is a pure function of `CardOwner`).
+
+This also fixes what made it blocking rather than cosmetic: S3's citation on
+`RecordSectionAuthorisationUnderExistingLock` — "the ordering `RecordApprovalUnderExistingLock`'s own
+doc comment now justifies" — now points at a paragraph that actually says that, instead of a
+half-updated one still describing the reversed decision. Checked both citation sites
+(`CardSectionAuthorisationOutcome.cs:42` and `CardStore.cs:1768`) read true against the corrected
+paragraph.
+
+One paragraph changed, nothing else. Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0` (875 tests, unchanged). No commit, nothing ticked, Makefile/CLAUDE.md untouched. →
+@reviewer
+
+**[reviewer]** §9 remediation, blocker fix — **Request changes.**
+
+The code fix itself is exactly right; the DEVLOG carrying it is damaged, and that has to be fixed
+before this lands.
+
+**The three things asked, all confirmed clean.** `RecordApprovalUnderExistingLock`'s top-level
+summary (`CardStore.cs:701-716`) now reads "The role check runs immediately after a successful
+`ReadCard`, not ahead of `File.Exists(string)` the way `CompactRules` and `DispositionNit` check
+role..." — matches the code beneath it and the inline comment at the actual check site exactly.
+Diffed the whole file against `595c7c4`: the same eight hunks as my last review, byte-identical
+except this one paragraph — nothing else moved. Both citations now land on true statements:
+`CardSectionAuthorisationOutcome.cs:42` cites `CardApprovalOutcome.RoleNotPermitted` "now
+establishes" the ordering (accurate — that case's behaviour was always correct, only the method's
+summary was stale), and `CardStore.cs:1768`'s "the ordering `RecordApprovalUnderExistingLock`'s own
+doc comment now justifies" now points at a paragraph that actually says that. Re-ran every gate:
+`BUILD_EXIT:0`, `TEST_EXIT:0` (875/875, unchanged), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**What I wasn't asked to check, and found anyway: the DEVLOG's own header sentence is broken.**
+Diffed `DEVLOG.md` against `595c7c4` and the first hunk is not a new post at the bottom — it is a
+substring replace that landed **inside the file's own intro paragraph**, the exact failure mode
+A2's own remediation named by example ("the string `## NEXT` also occurs in this file's own header
+sentence, and a substring replace put two of A2's posts inside that sentence and damaged it"). The
+file currently opens:
+
+> The shared working channel for this change. Organised by `## N.` section mirroring `tasks.md`,
+> with a pinned `**[worker]** Reviewer's blocker fixed. [...the whole fix-confirmation post,
+> several paragraphs...] → @reviewer
+>
+> ## NEXT` at the bottom. Append-only; only `## NEXT` is rewritten.
+
+The original read "...with a pinned `## NEXT` at the bottom. Append-only; only `## NEXT` is
+rewritten." — confirmed directly from the diff (`git diff 595c7c4` shows the removed line verbatim).
+Nothing is lost — the append-only property holds, the content is fully readable, just spliced into
+the wrong sentence — but the worker's own fix-confirmation post is now sitting at the top of the
+file instead of under `## 9.` after my last review post, and the file's own explanation of its
+convention no longer parses as a sentence. I confirmed my own insertion point is unaffected: an
+exact whole-line match on `## NEXT` still finds exactly one occurrence, at the real heading near the
+bottom (line 26710) — the corrupted text has trailing content on the same line, so it doesn't
+collide with the anchored-line method the standing instruction requires. This post is inserted
+there safely.
+
+**Ask:** restore the header sentence to "...with a pinned `## NEXT` at the bottom. Append-only; only
+`## NEXT` is rewritten." and move the worker's "Reviewer's blocker fixed" post to its correct place
+in the `## 9.` thread, immediately after my "§9 remediation (S1, S2, S3, S5, S6)" review post. The
+code fix needs nothing further.
+
+→ @architect
+
+**[architect]** DEVLOG header repaired by me, and the recurrence itself is now a finding.
+
+The worker's fix-confirmation post was spliced into this file's own opening sentence by a substring
+match on `## NEXT` that hit the header's *description* of the convention rather than the heading. I
+have restored the sentence and moved the post to its place in the `## 9.` thread. Verified: **zero
+content deletions** against `595c7c4`, exactly one `^## NEXT` heading, in final position,
+`VALIDATE_EXIT:0`. Nothing was lost — append-only held throughout; the post was in the wrong place,
+not gone.
+
+**This is the fourth recurrence in this change, and the thread above is littered with the previous
+three** — §2 closed on it, §3 restated it as a standing rule, block A2 named it by example and its
+brief made "anchor on the heading line, never a substring" a numbered instruction, and it happened
+again anyway, two posts after the reviewer verified it had not.
+
+I am not going to write the instruction a fifth time. Note what the trap actually is, because it is
+not carelessness: **the file's own preamble documents the convention using the literal string the
+convention is about.** Any writer that searches for `## NEXT` finds the sentence explaining `## NEXT`
+before it finds `## NEXT`. The document describes itself, and the description is indistinguishable
+from the thing described to every tool that reads it. The safe anchor is `^## NEXT$` and the naive one
+is `## NEXT`, and the naive one is what anybody reaches for first.
+
+**It goes to `## NEXT` as a live hazard owed by §13, in those terms** — not as "remember to anchor
+properly", which has now failed four times, but as the concrete requirement that the append path be
+mechanical and that whatever appends verify afterwards that exactly one `^## NEXT$` heading remains in
+final position. `callboard` itself is the fix: cards are separate files with no shared anchor to
+mis-hit, which is one of the specific incumbent failures this change exists to end. Until the tool
+appends its own record, the mitigation has to be a check rather than a sentence.
+
+Recording it this way is also the honest test of §9's own thesis. The section spent seven blocks
+establishing that a rule which exists only as prose gets broken under pressure. This is that, in the
+file where the section wrote it down.
+
+**[reviewer]** §9 remediation, header repair — **Request changes.**
+
+Confirmed clean: the header sentence reads correctly again ("...with a pinned `## NEXT` at the
+bottom. Append-only; only `## NEXT` is rewritten."), `git diff 595c7c4` on `DEVLOG.md` shows zero
+content deletions, exactly one exact whole-line `## NEXT` match at the true final heading, and
+`VALIDATE_EXIT:0` confirmed myself. The code fix is untouched — `CardStore.cs`'s diff against
+`595c7c4` is the identical eight hunks, same line ranges, as my last review; nothing else in
+`git status` moved.
+
+**One thing is still out of order, and it's worth fixing before landing rather than living with:**
+the relocated `[worker]` post ("Reviewer's blocker fixed...") now sits **after** my own "§9
+remediation, blocker fix" review post, not between my two review posts. My "blocker fix" post
+explicitly discusses the fix as already applied — reads it, confirms it, then reports the header
+corruption — so it has to come *after* the worker's post chronologically, not before it. As placed
+now, the thread reads: [reviewer confirms a fix and reports damage] → [reviewer's first post] →
+[worker announces the fix that was just confirmed] → [architect's repair], which is backwards. My
+own ask on the previous post named the exact placement ("immediately after my '§9 remediation (S1,
+S2, S3, S5, S6)' review post") — the worker's post needs to move one position earlier, ahead of my
+"blocker fix" post, not after it.
+
+Everything else about the repair is exactly right. This is a one-post reorder, not a content
+problem — nothing to re-verify on the code or the gates once it's done.
+
+→ @architect
+
+**[reviewer]** §9 remediation — **Approve.**
+
+Reorder confirmed: the thread now reads forwards — my S1/S2/S3/S5/S6 review, the worker's fix, my
+confirmation of it, your header repair, my confirmation of that. Re-verified independently rather
+than taking the report on trust: `git diff 595c7c4` on `DEVLOG.md` shows zero content deletions,
+exactly one exact whole-line `## NEXT` match at the true final heading, header sentence reads
+correctly, `VALIDATE_EXIT:0`. Code and gates unchanged since my last check — `CardStore.cs`'s diff is
+still the same eight hunks, nothing else in `git status` moved.
+
+§9 remediation (S1, S2, S3, S5, S6) is clean. Land it.
+
+→ @architect
+
 ## NEXT
 
 **Carried to §10:** `CardStore.FindAgeingAddressedThreads` (§9 block E) computes exactly the

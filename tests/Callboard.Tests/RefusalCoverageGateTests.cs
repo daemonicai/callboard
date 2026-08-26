@@ -147,8 +147,13 @@ public sealed class RefusalCoverageGateTests
         { typeof(CardSectionCloseOutcome.OpenUndeferredQuestion), (typeof(CardSectionCloseTests), "CloseSection_AnOpenQuestionRaisedInTheSection_Refuses_AndRecordsTheRefusal") },
         { typeof(CardSectionCloseOutcome.UnresolvedAddressedThread), (typeof(CardSectionCloseTests), "CloseSection_AnUnresolvedAddressedThreadOnTheSectionItself_Refuses_AndRecordsTheRefusal") },
         { typeof(CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion), (typeof(CardSectionCloseTests), "CloseSection_AnApprovedBlockBlockedByAnOpenProductOwnerQuestion_Refuses_AndRecordsTheRefusal") },
+        { typeof(CardSectionAuthorisationOutcome.RoleNotPermitted), (typeof(CardSectionAuthorisationTests), "RecordSectionAuthorisation_ByAnyRoleOtherThanProductOwner_Refuses_AndRecordsTheRefusal") },
         { typeof(CardSectionAuthorisationOutcome.NotASectionCard), (typeof(CardSectionAuthorisationTests), "RecordSectionAuthorisation_TargetIsNotASectionCard_Refuses") },
         { typeof(CardSectionAuthorisationOutcome.NotAtBound), (typeof(CardSectionAuthorisationTests), "RecordSectionAuthorisation_OnABrandNewSection_RefusesWithNotAtBound") },
+        { typeof(CardBlockedByOutcome.NotABlockCard), (typeof(CardBlockedByTests), "AddBlockedBy_TargetIsNotABlockCard_Refuses_AndRecordsTheRefusal") },
+        { typeof(CardBlockedByOutcome.RoundDisagreesWithHistory), (typeof(CardBlockedByTests), "AddBlockedBy_RoundDisagreesWithHistory_Refuses_NamesBothFigures_AndRecordsTheRefusal") },
+        { typeof(CardBlockedByOutcome.AlreadyBlockedBy), (typeof(CardBlockedByTests), "AddBlockedBy_AlreadyPresent_Refuses_AndRecordsTheRefusal") },
+        { typeof(CardBlockedByOutcome.NotBlockedBy), (typeof(CardBlockedByTests), "RemoveBlockedBy_NotPresent_Refuses_AndRecordsTheRefusal") },
         { typeof(CardSectionVerdictOutcome.FindingAlreadyOwned), (typeof(CommandDispatcherSectionVerdictRemediationTests), "FindingNew_KeyAlreadyOwnedOnDisk_Refuses_CreatesNoSecondCard") },
         { typeof(CardSectionVerdictOutcome.NewFindingCardAlreadyExists), (typeof(CommandDispatcherSectionVerdictRemediationTests), "FindingNew_TargetFileAlreadyExistsOnDisk_Refuses_AndRecordsAgainstTheSection") },
         { typeof(CardSectionVerdictOutcome.NotASectionCard), (typeof(CardSectionVerdictTests), "RecordSectionVerdict_TargetIsNotASectionCard_Refuses_AndRecordsTheRefusal") },
@@ -160,12 +165,270 @@ public sealed class RefusalCoverageGateTests
         { typeof(CardWriteResult.RoundDisagreesWithHistory), (typeof(CardOwnershipTransferTests), "TransferOwnership_BlockCardWithDisagreeingRound_Refuses_AndRecordsAgainstTheCard") },
     };
 
+    /// <summary>
+    /// §9 remediation S2. Every concrete case declared non-recording, with the reason it is not
+    /// <see cref="ICardRefusalReason"/> — the deliberate half of the universe
+    /// <see cref="RefusalShapedUniverseIsFullyAccountedFor"/> checks against
+    /// <see cref="ReflectedOutcomeUnionCases"/>. This is not a suppression list: every entry here is
+    /// a considered, citable disposition (a success case, a categorical non-card-addressed case, a
+    /// pre-lock check, or an established carve-out), not a case nobody got to yet — <see
+    /// cref="RefusalShapedUniverseIsFullyAccountedFor"/> fails, naming the case, the moment a new
+    /// concrete case appears in a discovered union without landing in either this dictionary or the
+    /// <see cref="Registry"/> above. See the §9 remediation DEVLOG post (worker, "S2 — the mechanism
+    /// proposed before building it") for the reasoning behind each group below.
+    /// </summary>
+    private static readonly Dictionary<Type, string> Exclusions = new()
+    {
+        // One success case per union — not refusal-shaped by definition.
+        { typeof(CardApprovalOutcome.Approved), "the operation's own success case." },
+        { typeof(CardBlockedByOutcome.Updated), "the operation's own success case." },
+        { typeof(CardBlockTransitionOutcome.Applied), "the operation's own success case." },
+        { typeof(CardCreateOutcome.Created), "the operation's own success case." },
+        { typeof(CardDecisionSupersedeOutcome.Superseded), "the operation's own success case." },
+        { typeof(CardFindingRecordOutcome.Recorded), "the operation's own success case." },
+        { typeof(CardGateResultOutcome.Recorded), "the operation's own success case." },
+        { typeof(CardNitDispositionOutcome.Dispositioned), "the operation's own success case." },
+        { typeof(CardNitRaiseOutcome.Raised), "the operation's own success case." },
+        { typeof(CardObligationDeclineOutcome.Declined), "the operation's own success case." },
+        { typeof(CardObligationPromoteOutcome.Promoted), "the operation's own success case." },
+        { typeof(CardQuestionAnswerOutcome.Answered), "the operation's own success case." },
+        { typeof(CardQuestionDeferOutcome.Deferred), "the operation's own success case." },
+        { typeof(CardRegisterDischargeOutcome.Discharged), "the operation's own success case." },
+        { typeof(CardRuleCompactOutcome.Compacted), "the operation's own success case." },
+        { typeof(CardRulePromoteOutcome.Promoted), "the operation's own success case." },
+        { typeof(CardSectionAuthorisationOutcome.Recorded), "the operation's own success case." },
+        { typeof(CardSectionCloseOutcome.Closed), "the operation's own success case." },
+        { typeof(CardSectionVerdictOutcome.Recorded), "the operation's own success case." },
+        { typeof(CardWriteResult.Success), "the operation's own success case." },
+        { typeof(ChangeArchiveOutcome.Archived), "the operation's own success case." },
+
+        // The four categorical cases, wherever a union declares them: never card-addressed
+        // (CardNotFound/LayoutMismatch — §9 architect ruling, "only a card-addressed refusal
+        // records": no card was ever resolved at the path these report on, so there is nothing to
+        // record against), a reported content problem rather than a refusal (CardCorrupt — every
+        // union's own doc comment keeps this apart from ICardRefusalReason), or enforcement itself
+        // being unavailable (ToolFailure — ADR-0001: never a refusal).
+        { typeof(CardApprovalOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardApprovalOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardApprovalOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardApprovalOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardBlockedByOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardBlockedByOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardBlockedByOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardBlockedByOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardBlockTransitionOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardBlockTransitionOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardBlockTransitionOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardBlockTransitionOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardDecisionSupersedeOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardDecisionSupersedeOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardDecisionSupersedeOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardDecisionSupersedeOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardGateResultOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardGateResultOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardGateResultOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardGateResultOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardNitDispositionOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardNitDispositionOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardNitDispositionOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardNitDispositionOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardNitRaiseOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardNitRaiseOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardNitRaiseOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardNitRaiseOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardObligationDeclineOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardObligationDeclineOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardObligationDeclineOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardObligationDeclineOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardObligationPromoteOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardObligationPromoteOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardObligationPromoteOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardObligationPromoteOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardQuestionAnswerOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardQuestionAnswerOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardQuestionAnswerOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardQuestionAnswerOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardQuestionDeferOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardQuestionDeferOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardQuestionDeferOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardQuestionDeferOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardRegisterDischargeOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardRegisterDischargeOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardRegisterDischargeOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardRegisterDischargeOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardRuleCompactOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardRuleCompactOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardRuleCompactOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardRuleCompactOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardRulePromoteOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardRulePromoteOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardRulePromoteOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardRulePromoteOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardSectionAuthorisationOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardSectionAuthorisationOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardSectionAuthorisationOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardSectionAuthorisationOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardSectionCloseOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardSectionCloseOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardSectionCloseOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardSectionCloseOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardSectionVerdictOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardSectionVerdictOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardSectionVerdictOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardSectionVerdictOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+
+        // CardWriteResult's pre-read cases — same "no card resolved yet" reasoning, plus
+        // AlreadyExists: the write target's own path already existed, so a create-only write never
+        // resolved an existing card to record a refusal against either.
+        { typeof(CardWriteResult.NotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardWriteResult.AlreadyExists), "create-only write: the target already existed, so no existing card was resolved to record against." },
+        { typeof(CardWriteResult.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardWriteResult.Corrupt), "a reported content problem, not a refusal." },
+        { typeof(CardWriteResult.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+
+        // §9 block A3 ruling: card creation never resolves an existing card to record a refusal
+        // against — both unions are established empty of ICardRefusalReason cases, entire.
+        { typeof(CardCreateOutcome.AlreadyExists), "§9 block A3: card creation never resolves an existing card to record against." },
+        { typeof(CardCreateOutcome.LayoutMismatch), "§9 block A3: card creation never resolves an existing card to record against." },
+        { typeof(CardCreateOutcome.ScopeRefused), "§9 block A3: card creation never resolves an existing card to record against." },
+        { typeof(CardCreateOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+        { typeof(CardFindingRecordOutcome.BlindSpotCardAlreadyExists), "§9 block A3: card creation never resolves an existing card to record against." },
+        { typeof(CardFindingRecordOutcome.BlindSpotLayoutMismatch), "§9 block A3: card creation never resolves an existing card to record against." },
+        { typeof(CardFindingRecordOutcome.FindingAlreadyExists), "§9 block A3: card creation never resolves an existing card to record against." },
+        { typeof(CardFindingRecordOutcome.FindingLayoutMismatch), "§9 block A3: card creation never resolves an existing card to record against." },
+        { typeof(CardFindingRecordOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+
+        // The two pre-lock RoleNotPermitted cases: checked at the top of a public, unlocked entry
+        // point, genuinely before any card is resolved — unlike CardApprovalOutcome's and
+        // CardSectionAuthorisationOutcome's post-lock RoleNotPermitted (§9 block B/remediation S3).
+        { typeof(CardNitDispositionOutcome.RoleNotPermitted), "pre-lock: checked before any card is resolved, at the top of an unlocked entry point." },
+        { typeof(CardRuleCompactOutcome.RoleNotPermitted), "pre-lock: checked before any card is resolved, at the top of an unlocked entry point." },
+
+        // §7 block F: no rule ids were supplied at all — checked before any lock, no card resolved.
+        { typeof(CardRuleCompactOutcome.EmptyAbsorbSet), "pre-lock: no rule ids supplied, checked before any card is resolved." },
+
+        // The three pre-lock self-reference cases: resolved on caller-supplied path text alone,
+        // before any lock is requested. Each has a Resolved*/named sibling that is the post-lock,
+        // card-addressed, recording occurrence (already registered above).
+        { typeof(CardDecisionSupersedeOutcome.SelfSupersession), "pre-lock: resolved on path text alone before any lock; see ResolvedSelfSupersession for the post-lock, recording sibling." },
+        { typeof(CardRuleCompactOutcome.SelfAbsorption), "pre-lock: resolved on path text alone before any lock; see ResolvedSelfAbsorption for the post-lock, recording sibling." },
+        { typeof(CardRuleCompactOutcome.DuplicateAbsorbedRule), "pre-lock: resolved on path text alone before any lock; see ResolvedDuplicateAbsorbedRule for the post-lock, recording sibling." },
+
+        // The raised (obligation/decision) card's own target path failed to anchor — no card was
+        // resolved there either, distinct from the dispositioned block card's own LayoutMismatch.
+        { typeof(CardNitDispositionOutcome.RaisedCardLayoutMismatch), "never card-addressed — the raised card's own target path never anchored." },
+
+        // ChangeArchiveOutcome entire: an architect-run, whole-change-directory verb, not a card any
+        // agent pokes at repeatedly — the union's own OrphanedObligations doc comment states this
+        // for every case in the union, CardsUnreadable included, as a deliberate carve-out rather
+        // than a case-by-case accident.
+        { typeof(ChangeArchiveOutcome.ChangeNotFound), "ChangeArchiveOutcome entire: an architect-run, whole-directory verb — see OrphanedObligations' own doc comment." },
+        { typeof(ChangeArchiveOutcome.AlreadyArchived), "ChangeArchiveOutcome entire: an architect-run, whole-directory verb — see OrphanedObligations' own doc comment." },
+        { typeof(ChangeArchiveOutcome.InvalidChangeName), "ChangeArchiveOutcome entire: an architect-run, whole-directory verb — see OrphanedObligations' own doc comment." },
+        { typeof(ChangeArchiveOutcome.CardsUnreadable), "ChangeArchiveOutcome entire: an architect-run, whole-directory verb — see OrphanedObligations' own doc comment." },
+        { typeof(ChangeArchiveOutcome.OrphanedObligations), "ChangeArchiveOutcome entire: an architect-run, whole-directory verb — its own doc comment names this exception explicitly." },
+        { typeof(ChangeArchiveOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+    };
+
     /// <summary>Every concrete type in the product assembly that implements
     /// <see cref="ICardRefusalReason"/> — the reflected side of the bijection.</summary>
     private static IReadOnlyList<Type> ReflectedImplementors() =>
         [.. typeof(ICardRefusalReason).Assembly.GetTypes()
             .Where(static t => t is { IsClass: true, IsAbstract: false } && typeof(ICardRefusalReason).IsAssignableFrom(t))
             .OrderBy(static t => t.FullName, StringComparer.Ordinal)];
+
+    /// <summary>
+    /// §9 remediation S2. Every card-store outcome union, discovered without naming a single one:
+    /// a distinct, non-generic return type of a <see cref="CardStore"/> method, carrying the closed-
+    /// union idiom used everywhere in <c>Cards/</c> (abstract, with an abstract <c>Match&lt;TResult&gt;</c>
+    /// declared directly on the type), that also declares a nested <c>ToolFailure</c> case. The
+    /// second filter is what keeps a domain value-union that happens to be returned somewhere on
+    /// <see cref="CardStore"/> (<see cref="CardScope"/> is the one this surfaced) out of the
+    /// universe — every genuine outcome union in this codebase carries a <c>ToolFailure</c> case by
+    /// convention (ADR-0001: enforcement-unavailable is always modelled), and no value union does.
+    /// This also correctly drops <see cref="CardFileParseResult"/>: its <c>Success</c>/<c>Failure</c>
+    /// is a lower-level parse primitive every higher-level union's own <c>CardCorrupt</c> case
+    /// already re-reports, never itself a CLI-facing outcome.
+    /// </summary>
+    private static IReadOnlyList<Type> ReflectedOutcomeUnions()
+    {
+        static bool IsClosedUnionWithToolFailure(Type t) =>
+            t is { IsClass: true, IsAbstract: true }
+            && t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+                .Any(m => m.Name == "Match" && m.IsAbstract)
+            && t.GetNestedType("ToolFailure", BindingFlags.Public | BindingFlags.NonPublic) is { } toolFailure
+            && toolFailure.BaseType == t;
+
+        var returnTypes = typeof(CardStore)
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Select(m => m.ReturnType)
+            .Where(t => !t.IsGenericParameter)
+            .Distinct();
+
+        return [.. returnTypes.Where(IsClosedUnionWithToolFailure).OrderBy(static t => t.FullName, StringComparer.Ordinal)];
+    }
+
+    /// <summary>Every concrete case (a sealed record nested directly inside one of
+    /// <see cref="ReflectedOutcomeUnions"/>, deriving from it) across every discovered union — the
+    /// full refusal-shaped universe <see cref="RefusalShapedUniverseIsFullyAccountedFor"/> checks:
+    /// every one of these must be either an <see cref="ICardRefusalReason"/> implementor or a key in
+    /// <see cref="Exclusions"/>, never both, never neither.</summary>
+    private static IReadOnlyList<Type> ReflectedOutcomeUnionCases() =>
+        [.. ReflectedOutcomeUnions()
+            .SelectMany(union => union.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(nested => nested is { IsClass: true, IsAbstract: false } && nested.BaseType == union))
+            .OrderBy(static t => t.FullName, StringComparer.Ordinal)];
+
+    /// <summary>
+    /// §9 remediation S2 — the closure the base gate could not see: <see cref="ICardRefusalReason"/>
+    /// is a self-reporting universe, so a case that never declares it was invisible to
+    /// <see cref="RefusalCoverageIsExactlyTheReflectedSet"/> rather than failing it (four
+    /// <see cref="CardBlockedByOutcome"/> cases shipped through seven blocks this way). This test
+    /// checks the universe <see cref="ReflectedOutcomeUnionCases"/> discovers independently of the
+    /// interface: every case in it is in exactly one of {<see cref="ICardRefusalReason"/>
+    /// implementor, <see cref="Exclusions"/> key} — never both (a stale exclusion for a case that
+    /// now records), never neither (the exact failure mode this closes) — and every
+    /// <see cref="Exclusions"/> entry carries a non-empty reason and still names a real, currently
+    /// discovered case.
+    /// </summary>
+    [Fact]
+    public void RefusalShapedUniverseIsFullyAccountedFor()
+    {
+        var discovered = ReflectedOutcomeUnionCases();
+        var discoveredSet = new HashSet<Type>(discovered);
+
+        var unaccountedFor = discovered
+            .Where(t => !typeof(ICardRefusalReason).IsAssignableFrom(t) && !Exclusions.ContainsKey(t))
+            .ToList();
+        Assert.True(
+            unaccountedFor.Count == 0,
+            "The following refusal-shaped case(s) neither implement ICardRefusalReason nor appear in "
+            + "RefusalCoverageGateTests.Exclusions — either implement the interface and register a "
+            + "proving test, or add an Exclusions entry stating why this case does not record: "
+            + string.Join(", ", unaccountedFor.Select(static t => t.FullName)));
+
+        var doublyClassified = discovered
+            .Where(t => typeof(ICardRefusalReason).IsAssignableFrom(t) && Exclusions.ContainsKey(t))
+            .ToList();
+        Assert.True(
+            doublyClassified.Count == 0,
+            "The following case(s) both implement ICardRefusalReason and appear in Exclusions — remove "
+            + "the stale Exclusions entry now that the case records: "
+            + string.Join(", ", doublyClassified.Select(static t => t.FullName)));
+
+        var staleExclusions = Exclusions.Keys.Where(t => !discoveredSet.Contains(t)).ToList();
+        Assert.True(
+            staleExclusions.Count == 0,
+            "The following Exclusions entries no longer name a case discovered in a live outcome union — "
+            + "remove or update them: "
+            + string.Join(", ", staleExclusions.Select(static t => t.FullName)));
+
+        var emptyReasons = Exclusions.Where(kv => string.IsNullOrWhiteSpace(kv.Value)).Select(kv => kv.Key).ToList();
+        Assert.True(
+            emptyReasons.Count == 0,
+            "The following Exclusions entries carry no reason — state why the case does not record: "
+            + string.Join(", ", emptyReasons.Select(static t => t.FullName)));
+    }
 
     [Fact]
     public void RefusalCoverageIsExactlyTheReflectedSet()

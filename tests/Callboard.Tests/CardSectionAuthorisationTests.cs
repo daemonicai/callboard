@@ -58,12 +58,16 @@ public sealed class CardSectionAuthorisationTests : IDisposable
     // work-lifecycle: "The authorisation SHALL be part of the record, not a permission granted out
     // of band" — the one permission that exists to be granted from outside the agents. Every other
     // role is refused, proven for each one so an unhandled case cannot slip through as a pass.
+    // §9 remediation S3: RoleNotPermitted now records against the card, the same disposition §9
+    // block B's ruling gives CardApprovalOutcome.RoleNotPermitted — an agent attempting the
+    // Product-Owner-only authorisation verb is exactly the pattern this project's premise requires
+    // to leave a mark.
     [Theory]
     [InlineData(nameof(CardOwner.Architect))]
     [InlineData(nameof(CardOwner.Worker))]
     [InlineData(nameof(CardOwner.Reviewer))]
     [InlineData(nameof(CardOwner.Supervisor))]
-    public void RecordSectionAuthorisation_ByAnyRoleOtherThanProductOwner_RefusesWithRoleNotPermitted(string roleName)
+    public void RecordSectionAuthorisation_ByAnyRoleOtherThanProductOwner_Refuses_AndRecordsTheRefusal(string roleName)
     {
         var path = WriteInitialSectionCard("s-0002-" + roleName, "S-0002-" + roleName);
         var role = roleName switch
@@ -80,21 +84,28 @@ public sealed class CardSectionAuthorisationTests : IDisposable
         var roleNotPermitted = Assert.IsType<CardSectionAuthorisationOutcome.RoleNotPermitted>(outcome);
         Assert.Equal(role, roleNotPermitted.AttemptedRole);
 
-        // Refusal-shaped: nothing was written.
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Empty(read.SectionFields.Authorisations);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(role, recorded.By);
+        Assert.Equal(roleNotPermitted.RefusingRule, recorded.Rule);
+        Assert.Equal(roleNotPermitted.Remedy, recorded.Remedy);
     }
 
-    // The role check is the very first thing decided — checked even when the card itself does not
-    // exist, the same ordering RecordApprovalUnderExistingLock's own doc comment justifies.
+    // §9 remediation S3: the role check now runs immediately after a successful ReadCard, not
+    // ahead of File.Exists — the same ordering RecordApprovalUnderExistingLock's own doc comment
+    // establishes (§9 block B ruling). A wrong role attempted against a nonexistent card must
+    // therefore refuse as CardNotFound, not RoleNotPermitted — pinned here so a future reorder of
+    // the two checks fails a test rather than only failing open silently.
     [Fact]
-    public void RecordSectionAuthorisation_ByNonProductOwnerRole_RefusesEvenWhenNoCardExists()
+    public void RecordSectionAuthorisation_CardDoesNotExist_AndRoleIsWrong_RefusesAsCardNotFound()
     {
         var path = Path.Combine(_directory, "missing.md");
 
         var outcome = CardStore.RecordSectionAuthorisation(_root, path, "Reason.", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
 
-        Assert.IsType<CardSectionAuthorisationOutcome.RoleNotPermitted>(outcome);
+        var notFound = Assert.IsType<CardSectionAuthorisationOutcome.CardNotFound>(outcome);
+        Assert.Equal(path, notFound.FilePath);
     }
 
     // Each authorisation must itself be recorded at the bound (§8a block C remediation): the first

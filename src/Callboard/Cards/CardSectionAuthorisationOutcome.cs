@@ -37,12 +37,21 @@ internal abstract record CardSectionAuthorisationOutcome
     /// <summary>work-lifecycle: "The authorisation SHALL be part of the record, not a permission
     /// granted out of band" — only <see cref="CardOwner.ProductOwner"/> may record one (§8a block C
     /// brief: "the one permission in the system that exists to be granted from outside the
-    /// agents"). Checked first, ahead of even <see cref="File.Exists(string)"/> — the same ordering
-    /// <see cref="CardApprovalOutcome.RoleNotPermitted"/> already establishes.</summary>
-    internal sealed record RoleNotPermitted(CardOwner AttemptedRole) : CardSectionAuthorisationOutcome
+    /// agents"). Checked immediately after a successful <see cref="CardStore.ReadCard"/>, not ahead
+    /// of <see cref="File.Exists(string)"/> — the same ordering <see
+    /// cref="CardApprovalOutcome.RoleNotPermitted"/> now establishes (§9 block B reviewer/architect
+    /// ruling). Refusal-shaped and card-addressed: <c>section authorise</c> is the Product-Owner-only
+    /// verb by which a section exceeds its remediation bound, so an agent attempting it is the same
+    /// pattern as an architect approving its own work — the one attempt this project's premise
+    /// requires to leave a mark (§9 remediation S3).</summary>
+    internal sealed record RoleNotPermitted(CardOwner AttemptedRole) : CardSectionAuthorisationOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
             onRoleNotPermitted(this);
+
+        public string RefusingRule => "work-lifecycle: an authorisation is part of the record, not a permission granted out of band";
+
+        public string Remedy => $"only {CardOwner.ProductOwner.ToWireString()} may record a section authorisation; {AttemptedRole.ToWireString()} cannot.";
     }
 
     /// <summary>The target card exists and parses, but its <c>kind</c> is not <c>section</c> —

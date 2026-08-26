@@ -54,30 +54,45 @@ internal abstract record CardBlockedByOutcome
     /// names <see cref="BlockingCardId"/> — adding it again would be silently ambiguous (does the
     /// caller mean it is now blocked twice?), so this refuses rather than growing a duplicate
     /// entry <see cref="BlockCardFields"/>'s own three-door validation would then have to
-    /// tolerate.</summary>
-    internal sealed record AlreadyBlockedBy(string BlockingCardId) : CardBlockedByOutcome
+    /// tolerate. Refusal-shaped and card-addressed: fires after the card is read and the
+    /// block-card/round checks above have already passed (§9 remediation S1).</summary>
+    internal sealed record AlreadyBlockedBy(string BlockingCardId) : CardBlockedByOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onAlreadyBlockedBy(this);
+
+        public string RefusingRule => "work-lifecycle: blocked-by adds no duplicate entry";
+
+        public string Remedy => $"'{BlockingCardId}' already names this card as a blocker; nothing to add.";
     }
 
     /// <summary><see cref="CardStore.RemoveBlockedBy"/> only: the card's <c>blocked_by</c> does
-    /// not name <see cref="BlockingCardId"/> — nothing to clear.</summary>
-    internal sealed record NotBlockedBy(string BlockingCardId) : CardBlockedByOutcome
+    /// not name <see cref="BlockingCardId"/> — nothing to clear. Refusal-shaped and card-addressed:
+    /// fires after the card is read and the block-card/round checks above have already passed (§9
+    /// remediation S1).</summary>
+    internal sealed record NotBlockedBy(string BlockingCardId) : CardBlockedByOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onNotBlockedBy(this);
+
+        public string RefusingRule => "work-lifecycle: removing a blocker requires it to be present";
+
+        public string Remedy => $"'{BlockingCardId}' does not name a current blocker on this card; nothing to remove.";
     }
 
     /// <summary>The target card exists and parses, but its <c>kind</c> is not <c>block</c>.
-    /// Refusal-shaped.</summary>
-    internal sealed record NotABlockCard(CardKind Kind) : CardBlockedByOutcome
+    /// Refusal-shaped and card-addressed: fires after the card is read (§9 remediation S1).</summary>
+    internal sealed record NotABlockCard(CardKind Kind) : CardBlockedByOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onNotABlockCard(this);
+
+        public string RefusingRule => "work-lifecycle: blocked-by only applies to a block card";
+
+        public string Remedy => "target a card whose kind is 'block'.";
     }
 
     /// <summary>No card exists at the target path. Refusal-shaped.</summary>
@@ -111,11 +126,18 @@ internal abstract record CardBlockedByOutcome
     /// <see cref="CardFile.Transitions"/> history. Refusal-shaped: neither figure is privileged and
     /// neither is altered — a stored count ahead of the history and a history ahead of the count are
     /// different failures, and guessing which is right would silently destroy the evidence of
-    /// whichever was correct.</summary>
-    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardBlockedByOutcome
+    /// whichever was correct. Card-addressed: fires after the card is read and the block-card check
+    /// above has already passed (§9 remediation S1).</summary>
+    internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardBlockedByOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
             onRoundDisagreesWithHistory(this);
+
+        public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
+
+        public string Remedy =>
+            $"the recorded round ({StoredRound}) disagrees with the transition history ({ExpectedRound}); " +
+            "correct whichever was altered outside the tool before this transition can proceed.";
     }
 
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within

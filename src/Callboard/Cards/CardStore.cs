@@ -699,12 +699,18 @@ internal static class CardStore
     /// <summary>
     /// The read-decide-write step of <see cref="RecordApproval"/>. Same structural lock precondition
     /// as every other <c>*UnderExistingLock</c> method on this type — the target is
-    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>. The role check is
-    /// the very first thing decided, ahead of even <see cref="File.Exists(string)"/> — the same
-    /// ordering <see cref="CompactRules"/>'s own doc comment justifies: "role-not-permitted is a fact
-    /// about whether this call is allowed to happen at all, not about the shape of its arguments."
-    /// Everything else is validated — kind, current state, layout — before the one
-    /// <see cref="AtomicWrite"/> call that lands claims, limits, <c>reviewed_state</c> and the
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>. The role check
+    /// runs immediately after a successful <see cref="ReadCard"/>, not ahead of
+    /// <see cref="File.Exists(string)"/> the way <see cref="CompactRules"/> and
+    /// <see cref="DispositionNit"/> check role (§9 block B reviewer/architect ruling, overruling this
+    /// method's own first pass): neither of those methods' reasons for checking early apply here —
+    /// this method's one lock is already held regardless of where the check sits, and
+    /// <see cref="IsApprovingRole"/> is a pure function of <see cref="CardOwner"/> with no card
+    /// dependency, so nothing is skipped by moving it here except a read every other case in this
+    /// method already pays. Recording matters more than the reorder: a pattern of wrong-role approval
+    /// attempts is exactly the pattern process-enforcement's "so that a pattern of refusals is itself
+    /// visible" exists to catch. Everything else is validated — kind, current state, layout — before
+    /// the one <see cref="AtomicWrite"/> call that lands claims, limits, <c>reviewed_state</c> and the
     /// transition together.
     /// </summary>
     internal static CardApprovalOutcome RecordApprovalUnderExistingLock(
@@ -1382,7 +1388,10 @@ internal static class CardStore
             apply: (current, id) => current.Contains(id, StringComparer.Ordinal)
                 ? (Updated: false, Result: current)
                 : (Updated: true, Result: current.Add(id)),
-            onNoChange: id => new CardBlockedByOutcome.AlreadyBlockedBy(id));
+            onNoChange: (card, filePath, id) =>
+                RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.AlreadyBlockedBy>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                    new CardBlockedByOutcome.AlreadyBlockedBy(id),
+                    static reason => new CardBlockedByOutcome.ToolFailure(reason)));
 
     /// <summary>
     /// Removes <paramref name="blockingCardId"/> from the block card at <paramref name="filePath"/>'s
@@ -1408,7 +1417,10 @@ internal static class CardStore
             apply: (current, id) => current.Contains(id, StringComparer.Ordinal)
                 ? (Updated: true, Result: current.Remove(id))
                 : (Updated: false, Result: current),
-            onNoChange: id => new CardBlockedByOutcome.NotBlockedBy(id));
+            onNoChange: (card, filePath, id) =>
+                RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.NotBlockedBy>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                    new CardBlockedByOutcome.NotBlockedBy(id),
+                    static reason => new CardBlockedByOutcome.ToolFailure(reason)));
 
     /// <summary>
     /// The read-decide-write shape <see cref="AddBlockedByUnderExistingLock"/> and
@@ -1425,7 +1437,7 @@ internal static class CardStore
         DateTimeOffset timestamp,
         string? changeName,
         Func<ImmutableArray<string>, string, (bool Updated, ImmutableArray<string> Result)> apply,
-        Func<string, CardBlockedByOutcome> onNoChange)
+        Func<CardFile, string, string, CardBlockedByOutcome> onNoChange)
     {
         ArgumentNullException.ThrowIfNull(heldLock);
         var filePath = heldLock.CardPath;
@@ -1442,18 +1454,22 @@ internal static class CardStore
                 var card = success.Card;
                 if (!IsBlockCard(card))
                 {
-                    return new CardBlockedByOutcome.NotABlockCard(card.Frontmatter.Kind);
+                    return RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.NotABlockCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardBlockedByOutcome.NotABlockCard(card.Frontmatter.Kind),
+                        static reason => new CardBlockedByOutcome.ToolFailure(reason));
                 }
 
                 if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
                 {
-                    return new CardBlockedByOutcome.RoundDisagreesWithHistory(storedRound, expectedRound);
+                    return RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.RoundDisagreesWithHistory>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardBlockedByOutcome.RoundDisagreesWithHistory(storedRound, expectedRound),
+                        static reason => new CardBlockedByOutcome.ToolFailure(reason));
                 }
 
                 var (updated, newBlockedBy) = apply(card.BlockFields.BlockedBy, blockingCardId);
                 if (!updated)
                 {
-                    return onNoChange(blockingCardId);
+                    return onNoChange(card, filePath, blockingCardId);
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -1747,10 +1763,16 @@ internal static class CardStore
     /// <summary>
     /// The read-decide-write step of <see cref="RecordSectionAuthorisation"/>. Same structural lock
     /// precondition as every other <c>*UnderExistingLock</c> method on this type — the target is
-    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>. The role check is
-    /// the very first thing decided, ahead of even <see cref="File.Exists(string)"/> — the same
-    /// ordering <see cref="RecordApprovalUnderExistingLock"/>'s own doc comment justifies:
-    /// role-not-permitted is a fact about whether this call is allowed to happen at all.
+    /// <see cref="CardLock.CardPath"/>, not a separately supplied <c>filePath</c>. The role check
+    /// runs immediately after a successful <see cref="ReadCard"/>, not ahead of
+    /// <see cref="File.Exists(string)"/> — the ordering <see cref="RecordApprovalUnderExistingLock"/>'s
+    /// own doc comment now justifies (§9 block B reviewer/architect ruling, overruling this method's
+    /// own first pass): this method's one lock is already held regardless of where the check sits,
+    /// <see cref="IsAuthorisingRole"/> is a pure function of <see cref="CardOwner"/> with no card
+    /// dependency, so nothing is skipped by moving it here except a read every other case in this
+    /// method already pays — and recording matters more than the reorder, since a Product-Owner-only
+    /// verb attempted by another role is exactly the pattern process-enforcement's "so that a pattern
+    /// of refusals is itself visible" exists to catch (§9 remediation S3).
     ///
     /// <para>
     /// <b>§8a block C remediation, Architect ruling: recording is refused unless the section is
@@ -1769,11 +1791,6 @@ internal static class CardStore
         ArgumentNullException.ThrowIfNull(heldLock);
         var filePath = heldLock.CardPath;
 
-        if (!IsAuthorisingRole(actingRole))
-        {
-            return new CardSectionAuthorisationOutcome.RoleNotPermitted(actingRole);
-        }
-
         if (!File.Exists(filePath))
         {
             return new CardSectionAuthorisationOutcome.CardNotFound(filePath);
@@ -1784,6 +1801,14 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+
+                if (!IsAuthorisingRole(actingRole))
+                {
+                    return RefuseAndRecord<CardSectionAuthorisationOutcome, CardSectionAuthorisationOutcome.RoleNotPermitted>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardSectionAuthorisationOutcome.RoleNotPermitted(actingRole),
+                        static reason => new CardSectionAuthorisationOutcome.ToolFailure(reason));
+                }
+
                 if (!IsSectionCard(card))
                 {
                     return RefuseAndRecord<CardSectionAuthorisationOutcome, CardSectionAuthorisationOutcome.NotASectionCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,

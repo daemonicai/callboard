@@ -64,35 +64,49 @@ public sealed class CardBlockedByTests : IDisposable
         Assert.Empty(afterUnblocked.BlockFields.BlockedBy);
     }
 
+    // §9 remediation S1: CardBlockedByOutcome's four card-addressed post-lock cases (NotABlockCard,
+    // RoundDisagreesWithHistory, AlreadyBlockedBy, NotBlockedBy) now implement ICardRefusalReason and
+    // record — so a refusal here no longer leaves the card byte-identical, it appends exactly one
+    // CardRefusalEntry.
     [Fact]
-    public void AddBlockedBy_AlreadyPresent_Refuses_AndLeavesTheCardByteIdentical()
+    public void AddBlockedBy_AlreadyPresent_Refuses_AndRecordsTheRefusal()
     {
         var path = WriteInitialBlockCard("b-0002", "B-0002", BlockFlowState.Building);
         AssertUpdated(CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName));
-        var before = File.ReadAllBytes(path);
 
         var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName);
 
         var already = Assert.IsType<CardBlockedByOutcome.AlreadyBlockedBy>(outcome);
         Assert.Equal("Q-0001", already.BlockingCardId);
-        Assert.Equal(before, File.ReadAllBytes(path));
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(already.RefusingRule, recorded.Rule);
+        Assert.Equal(already.Remedy, recorded.Remedy);
+        Assert.Equal(["Q-0001"], read.BlockFields.BlockedBy);
     }
 
     [Fact]
-    public void RemoveBlockedBy_NotPresent_Refuses_AndLeavesTheCardByteIdentical()
+    public void RemoveBlockedBy_NotPresent_Refuses_AndRecordsTheRefusal()
     {
         var path = WriteInitialBlockCard("b-0003", "B-0003", BlockFlowState.Building);
-        var before = File.ReadAllBytes(path);
 
         var outcome = CardStore.RemoveBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
 
         var notBlockedBy = Assert.IsType<CardBlockedByOutcome.NotBlockedBy>(outcome);
         Assert.Equal("Q-0001", notBlockedBy.BlockingCardId);
-        Assert.Equal(before, File.ReadAllBytes(path));
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(notBlockedBy.RefusingRule, recorded.Rule);
+        Assert.Equal(notBlockedBy.Remedy, recorded.Remedy);
+        Assert.Empty(read.BlockFields.BlockedBy);
     }
 
     [Fact]
-    public void AddBlockedBy_TargetIsNotABlockCard_Refuses()
+    public void AddBlockedBy_TargetIsNotABlockCard_Refuses_AndRecordsTheRefusal()
     {
         var path = Path.Combine(_directory, "q-0001.md");
         var frontmatter = new CardFrontmatter(
@@ -103,6 +117,37 @@ public sealed class CardBlockedByTests : IDisposable
 
         var notABlock = Assert.IsType<CardBlockedByOutcome.NotABlockCard>(outcome);
         Assert.Equal(CardKind.Question, notABlock.Kind);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(notABlock.RefusingRule, recorded.Rule);
+        Assert.Equal(notABlock.Remedy, recorded.Remedy);
+    }
+
+    // work-lifecycle: "Stored round agrees with the transition history" (8a.17), applied to
+    // CardBlockedByOutcome (§9 remediation S1).
+    [Fact]
+    public void AddBlockedBy_RoundDisagreesWithHistory_Refuses_NamesBothFigures_AndRecordsTheRefusal()
+    {
+        var path = Path.Combine(_directory, "b-0006.md");
+        var frontmatter = new CardFrontmatter(
+            "B-0006", CardKind.Block, "Title", BlockFlowState.Building.ToWireString(), CardOwner.Worker, CardScope.Change, "5", Created, Created);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty with { Round = 3 }, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var disagreement = Assert.IsType<CardBlockedByOutcome.RoundDisagreesWithHistory>(outcome);
+        Assert.Equal(3, disagreement.StoredRound);
+        Assert.Equal(1, disagreement.ExpectedRound);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(disagreement.RefusingRule, recorded.Rule);
+        Assert.Equal(disagreement.Remedy, recorded.Remedy);
+        Assert.Empty(read.BlockFields.BlockedBy);
     }
 
     [Fact]
