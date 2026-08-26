@@ -27546,49 +27546,143 @@ process; it is luck, and §13's mechanical check is owed accordingly.
 Round three is now ready for its gates and commit. → supervisor re-run on `ec2d99b..HEAD` after it
 lands.
 
+**[supervisor]** **§9 re-audit, round three — `ec2d99b..HEAD` (`8298539`). Verdict: `Approve`.** §9 is
+closed. F1 and F2 are genuinely shut; F3 stands deferred to §10 by the Product Owner's ruling and I
+have not held the section on it. Three architectural notes below, none of them blocking, one of which
+is a correction to how `## NEXT` characterises F3.
+
+### The record — checked, not taken
+
+I verified the rebuild claim rather than accepting it. `git show 3181d20:…/DEVLOG.md` against the
+working file is **two hunks, both inside `## NEXT`**; the first 27,250 lines — everything through my
+own round-two re-audit — are byte-identical (`shasum` d9e7e42c on both sides). No deletion anywhere
+outside `## NEXT`, which is the one section the convention permits rewriting. The committed half of
+this section's record is sound.
+
+What no check can reach: the round-three brief, the reviewer's `Approve` and the worker's posts were
+**uncommitted** when the truncation hit, so no committed source exists to diff them against. That span
+rests on the architect post above — a disclosed provenance for each part, including the admission that
+the reviewer's post is that agent's own reproduction of itself. That disclosure is the right response
+and I am satisfied with it; I am recording the limit rather than doubting it. It also makes the §13
+anchor obligation less of a tidiness item than `## NEXT` currently frames it: the failure this time was
+recoverable because three parties happened to hold pieces, which the architect already calls luck.
+
+### F1 — closed
+
+`specs/register/spec.md:47-49` now reads *"relocates its change-scoped cards into the archive, exactly
+as written, and leaves cards of wider scope untouched — settling nothing."* No "close" and no synonym
+of settling survives; it agrees with `Archive leaves the register standing` (l.55-60) and with
+`Question outlives its change` beneath it, and it does not collide with the promotion requirement's
+"`process-enforcement` refuses an archive that would strand one" — refuse-or-relocate are compatible,
+not competing. The commit touches **four lines of that file and nothing else** in the spec tree; no
+behaviour was smuggled in under a wording fix.
+
+### F2 — closed, and the sweep is real
+
+`CardStore.OwningSectionId` (`CardStore.cs:5182`) is the accessor the Product Owner ruled for, not a
+stored value in disguise: it computes from `Kind`/`Id`/`Section`, adds no frontmatter key, writes
+nothing on read, and routes through `CardKind.Match` with all eight arms explicit, so a ninth kind is a
+compile error here.
+
+The five converted sites (`1167`, `1174`, `3608`, `4897`, `4926`) all build a **raised card's**
+`section`/`owed_by` from an existing card of arbitrary kind — the accessor's exact meaning. The four
+left alone (`2150`, `2415`, `2529`, `2682`) are the section-scan join in the other direction, a
+block/question card's own `section` matched against a section card's `id`; routing the section card
+through the accessor there would be a no-op. **Genuinely the join, not misses.** I swept the rest of
+`src/` myself: `FindingDegradationEvaluator.cs:61,69` reads a finding's own `section` (never
+`Kind.Section`); `CommandDispatcher.cs:2323` echoes raw frontmatter into the create response;
+`IndexPopulator.cs:249` mirrors it into the index column. None of the three carries owning-section
+semantics today. No other site.
+
+The tests prove the **link**, not the mechanism.
+`CardCommentPromoteTests.PromoteComment_ToQuestion_OnASectionCard_…` builds its section card the way
+the real fixtures do (`Section = string.Empty`) rather than hand-writing the field the assertion
+depends on, and `CardSectionCloseTests.CloseSection_AQuestionPromotedFromACommentOnTheSectionCardItself_Refuses_NamingThatQuestion`
+runs promote → close → `OpenUndeferredQuestion` end to end. That second one is the test that would have
+caught the original bug.
+
+**Refusal coverage as a set, re-checked after the change.** The transitions §9 makes reachable into
+9.5's open-question gate are now: a question raised directly in a section, one promoted from a comment
+on a block card, on a finding card, and — new — on the section card itself. All four now carry a
+`section` the gate at `2529` can match. A question promoted from a comment on a repository-scoped
+register card still gets an empty `section` and blocks no close; that is the correct answer, not a
+hole — the register lives above the change by the very requirement F1 just repaired. **The union is
+closed.** No CLI-surface drift: round three added no verb, no flag and no output field.
+
+The mechanical gates earned their keep again — a new `internal static` member on `CardStore` obliged an
+entry in `CardCommentImmutabilityTests`'s inventory, and that is where the reviewer's one nit surfaced.
+That is §9's second ruling working exactly as intended.
+
+### Notes for `## NEXT` — not blocking
+
+1. **The index `section` column is where F2 can reopen, and §10 is its first reader.**
+   `IndexPopulator.cs:249` mirrors `frontmatter.Section` verbatim, so a **section card's index row
+   carries `section = ''`** — the precise wrong answer F2 just eliminated from the record path. Correct
+   today only because nothing queries that column. §10's working-context response is the first consumer:
+   if it filters or joins on `cards.section` meaning "the owning section of an arbitrary card", the
+   divergence comes straight back in the index path. The brief already named the resolution — the index
+   populates **from** the accessor, the record never carries a second source of truth. Owed to §10
+   alongside F3; worth its own line in "Owed to §10" so it is a decision §10 makes deliberately rather
+   than one it inherits.
+
+2. **F3 is live now, not latent — `## NEXT` should say so.** The entry describes F2's correct
+   characterisation (latent until §10's queue lands) but leaves F3's timing unstated, which reads by
+   proximity as the same. It is not: `comment resolve`/`promote`/`decline` shipped in §9 and are
+   unauthorised **from this commit onward**. That does not change the verdict — no §9 spec requirement
+   is unmet, because the spec is silent on who may dispose of a thread, which is exactly why the
+   Product Owner's deferral is sound. But the window is open today. @architect — one clarifying clause
+   in the "Owed to §10" bullet, no more.
+
+3. `OwningSectionId`'s eight `Match` arms capture `frontmatter` rather than using the `static` lambdas
+   its neighbours do. Idiom, not correctness; the reviewer's territory if anyone's, listed only so it is
+   on the record.
+
+### §9 as closed
+
+Seven blocks, three remediation rounds, two Product-Owner-approved spec amendments, suite at 894,
+`GATES_EXIT:0`. The section's four rulings stand as written and the fourth one — *moving a standard
+mid-section obliges a sweep back over what has landed* — was proved twice more in this round: F1 was a
+sweep left half-done, and F2's fix was itself scoped as a sweep and came back with its left-alone sites
+named. That is the ruling working.
+
+→ @architect — §9 is closed. Open §10.
+
 ## NEXT
 
-**§9 remediation round three is in flight — F1 + F2.** The Product Owner has ruled: a third round
-covers F1 (the spec contradiction) and F2 (the owning-section accessor); **F3 is deferred to §10 as an
-obligation.** The brief is the last `[architect]` post above. When the block lands — reviewer
-`Approve`, gates green, committed as `fix(establish-callboard): address supervisor findings (section
-9)` — **re-run the supervisor on `ec2d99b..HEAD`**. Nothing is ticked by this block; every §9 box
-already is.
+**§9 is closed — supervisor `Approve` on the third pass (`ec2d99b..8298539`).** Ten of ten boxes
+ticked, seven blocks plus three remediation rounds, suite at **894**, `GATES_EXIT:0`. **§10 is the
+next section to open** — post its base commit before briefing its first block. The supervisor verified
+the DEVLOG's own integrity this pass as well as the code's: everything through its round-two post is
+byte-identical to `3181d20` (`shasum d9e7e42c` both sides), and the only rewritten region is this one,
+which the convention permits.
 
-**Two things a cold session will otherwise get wrong.** The first unticked task in `tasks.md` is
-**10.1**, so the resume rule points at §10 — **do not open §10.** §9 has no supervisor `Approve` and is
-not closed. And the §1.4 check ("if the previous section has no supervisor `Approve`, run that review
-first") **does not apply**: the review has been run twice, its second verdict stands above, and the
-third round answers it.
+**One thing waiting on the Product Owner before §10 can finish.** F3 — authorisation on the comment
+disposition verbs — was deferred here, and it is a **policy** the spec does not contain, not a bug to
+fix: who may resolve, promote or decline a thread, and whether `resolve` requires a body. §10 owes the
+ruling before it owes the refusal. See "Owed to §10" below.
 
-### The findings, in full
+### The three findings §9 closed on — F1 and F2 fixed, F3 deferred
 
-
-- **F1 — `specs/register/spec.md` contradicts itself.** The scenario says archiving settles nothing
-  (correct, and matches the code after §9 block F). The requirement four lines above it still says
-  archiving "SHALL act as a filter that **closes** its change-scoped cards". Two lines of spec. S5 was
-  closed in the scenario and left open in the requirement; the worker saw it and stayed in scope,
-  which was correct behaviour producing an incomplete fix.
-- **F2 — `comment promote` links the raised question to its section via `card.Frontmatter.Section`**,
-  which is empty on section cards. Promoting a thread on a *section* card — 9.6's first arm — yields a
-  question 9.5's gate can never match, so the section closes over an open question raised in it.
-  Latent today (nothing yet addresses a comment to a section card); **live the moment §10's queue
-  lands**. Its own test hand-writes `Section` onto a block card, proving the mechanism against a
-  fixture rather than the link against a real card.
-  **Product Owner ruling on the fix, already given: an encapsulated accessor, not a stored value.** One
-  function answering "which section does this card belong to?" — the card's own `Id` for a section
-  card, `Frontmatter.Section` for everything else — so every consumer sees a card that looks the same
-  regardless of kind and nothing special-cases. Storing the id on the section card was considered and
-  rejected: `Id` and `section` would be two fields obliged to agree, the exact shape 8a.17's
-  round-agrees-with-history refusal exists to catch, and it would need its own agreement check to be
-  safe. If the flat form is ever wanted for the SQLite index, the index populates its column *from* the
-  accessor rather than the record carrying a second source of truth.
-- **F3 — no authorisation on `comment resolve`/`promote`/`decline`.** Any role may dispose of any
-  thread on any card, including one addressed to the Product Owner, and `comment resolve` requires no
-  body — so an empty-bodied resolve is a decline with no recorded reason, the one disposition
-  `register` forbids. 9.6 names bulk discharge at close as its hazard and the mitigation refuses
-  nothing. **The spec is silent on who may resolve, so this is a ruling nobody has been asked for**,
-  not a violation.
+- **F1 — `specs/register/spec.md` contradicted itself. Closed in `8298539`.** The requirement said
+  archiving "closes" its change-scoped cards; its own scenario six lines below says archiving settles
+  nothing, and the code implements the scenario. The requirement now reads "relocates its
+  change-scoped cards into the archive, exactly as written … settling nothing". Round one had closed
+  S5 in the scenario and left it open in the requirement — the worker saw the requirement and stayed
+  in scope, which was correct behaviour producing an incomplete fix.
+- **F2 — the owning section of a card was computed wrongly for section cards. Closed in `8298539`.**
+  `comment promote` read `Frontmatter.Section`, which is empty on a section card, so a question
+  promoted from a comment on a section card could never match 9.5's close gate and the section would
+  close over an open question raised in it. Fixed per Product Owner ruling with an **encapsulated
+  accessor, not a stored value** — `CardStore.OwningSectionId`, routed through `CardKind.Match` with
+  all eight arms explicit, applied at the five sites meaning "the owning section of an arbitrary card"
+  and deliberately not at the four that are the section-scan join. Storing the id on the section card
+  was considered and rejected: `Id` and `section` would be two fields obliged to agree, the exact
+  shape 8a.17's round-agrees-with-history refusal exists to catch. **All four routes into 9.5's gate**
+  (direct, comment-on-block, comment-on-finding, comment-on-section) now carry a matchable `section`;
+  a question promoted from a repository-scoped register card still gets an empty one and blocks no
+  close, which is correct by the requirement F1 repaired.
+- **F3 — no authorisation on `comment resolve`/`promote`/`decline`. Deferred to §10, and open
+  *now*.** Carried in full under "Owed to §10" below.
 
 ### What the supervisor confirmed is good
 
@@ -27614,12 +27708,12 @@ arguments, so a positional swap is a compile error rather than a silent misdispa
 diff volume. **It belongs to whoever next touches the CLI surface, as a block carved for it**, not to a
 section two remediation rounds deep.
 
-### §9 as built — seven blocks plus two remediation rounds
+### §9 as built — seven blocks plus three remediation rounds
 
 `5caa2c4` A (9.1, the refusal format) · `4b40f01` A2 · `397c1c4` A3 (the retrofit, 17 unions) ·
 `1e4a918` B (9.2, 9.3) · `768aa1d` C (9.10, the coverage gate) · `41983a4` D (9.7) · `d8d3457` E (9.4,
-9.5, 9.6, 9.8) · `010007e` F (9.9) · `e10de48` remediation 1 · `afed3e9` remediation 2. Suite at
-**892**, `GATES_EXIT:0`.
+9.5, 9.6, 9.8) · `010007e` F (9.9) · `e10de48` remediation 1 · `afed3e9` remediation 2 ·
+`8298539` remediation 3 (F1 + F2). Suite at **894**, `GATES_EXIT:0`.
 
 **Two spec amendments landed mid-section**, both Product-Owner-approved: `register` gained obligation
 promotion, and a "Declining is distinguishable from discharging" requirement whose first wording the
@@ -27643,12 +27737,19 @@ Architect got wrong and corrected — `discharged` in this capability means *no 
 
 ### Carried hazard — the DEVLOG's own anchor
 
+**Upgraded after §9: this is not a tidiness problem.** Five failures of the same family now, and the
+fifth was not a misplaced post — during round three a bad `awk` splice **truncated this file to three
+lines** mid-block. It was recoverable only because three parties happened to hold different pieces:
+committed history for everything through the round-two audit, the Architect's own composition file for
+the brief, and the reviewer's context for its own post. That is luck, not process, and the next such
+splice may not be as lucky. See the `[architect]` rebuild post above §9's close.
+
 Four posts in this change have been spliced into this file's **preamble** by a substring match on
 `## NEXT`, because the preamble documents the convention using the literal string the convention is
 about. The safe anchor is `^## NEXT$`; the naive one is what everyone reaches for first. **Owed by §13
 as a mechanical check** — the append path must verify afterwards that exactly one `^## NEXT$` heading
 remains, in final position. `callboard` itself is the fix: separate card files have no shared anchor to
-mis-hit.
+mis-hit — and no single file whose loss takes the whole record with it.
 
 ### Carried from §7 — still open
 
@@ -27666,12 +27767,22 @@ assertions should root on a non-default role. **H.** Repository-scoped compactio
   addressed role. That is what 9.6's second half is *for* — an earlier surfacing, not a close-time
   exemption.
 - **F3 — authorisation on the comment disposition verbs**, deferred here by the Product Owner's ruling
-  on how §9 closes. Any role may currently resolve, promote or decline any thread on any card,
+  on how §9 closes. **The window is open from `8298539` onward, not from §10** — the verbs shipped in
+  §9 and are unauthorised today (the supervisor's note: F2's latent-until-§10 timing sits next to this
+  bullet and must not be read onto it). Any role may currently resolve, promote or decline any thread on any card,
   including one addressed to the Product Owner, and `comment resolve` requires no body — so an
   empty-bodied resolve is a decline with no recorded reason, the one disposition `register` forbids.
   The spec is silent on who may dispose of a thread, so §10 owes the **policy** first and the refusal
   second: ask the Product Owner who may resolve, and whether resolve requires a body. 9.6 names bulk
   discharge at close as its hazard and the mitigation currently refuses nothing.
+- **`IndexPopulator.cs:249` is where F2 can reopen — decide it deliberately.** It mirrors
+  `frontmatter.Section` verbatim, so a **section card's index row carries `section = ''`** — exactly the
+  wrong answer F2 removed from the record path. Harmless only because nothing queries that column yet,
+  and **§10 is its first reader**. The ruling that settled F2 already names the fix: if the flat form is
+  wanted in the index, the index populates its column **from `CardStore.OwningSectionId`** rather than
+  the row carrying a second source of truth. Do not inherit this by default.
+- Idiom only: `OwningSectionId`'s `Match` arms capture `frontmatter` where its neighbours use `static`
+  lambdas.
 
 ### Carried to §13 — `CLAUDE.md` and the agent prompts
 
