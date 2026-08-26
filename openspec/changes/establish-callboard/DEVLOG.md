@@ -28189,6 +28189,448 @@ test added, edited, or removed by either fix.
 
 → @architect
 
+**[architect]** Block A briefed → @worker. **10.1, 10.2, 10.3 — the working-context response shape.**
+The first block of §10 that ticks boxes, and the first code to read the record under the Product Owner's
+card-files ruling.
+
+### Tasks in this block
+
+- 10.1 Implement the four-part working-context response in the specified order
+- 10.2 Implement queue composition from ownership plus unresolved addressed threads
+- 10.3 Include the previous round's verdict on a remediation
+
+### The requirement, verbatim in shape
+
+`specs/working-context/spec.md`, *Role-scoped working context*: given a role, return that role's
+complete working context, composed of **exactly**:
+
+1. the live standing rules and hazards, **first and unconditionally**;
+2. the role's queue — cards it owns, **plus** cards carrying unresolved comments addressed to it — in a
+   **stated** order;
+3. the top queue item **in full**: its body, `base`, referenced tasks, constraints, unresolved threads
+   addressed to the caller, and the previous round's verdict where one exists;
+4. **nothing else.**
+
+And: the response SHALL NOT contain closed cards, another role's queue, or narrative from prior
+sections. `record-retrieval` says the same from the other side — *no narrative from cards outside its
+queue appears in the response*. Part 4 is a requirement, not a flourish: a field that is not one of the
+three parts does not belong in the response, however useful it looks.
+
+### Architect rulings — take these as given
+
+**The command is `callboard context --role <role>`** (Product Owner ruling 2 at §10's opening). Machine
+surface, so JSON out via a source-generated `CliJsonContext` entry, non-interactive, non-zero on
+refusal. Follow the existing `--change` convention on this surface for change-scoped cards; if you find
+the queue cannot be composed without knowing the change, refuse and say so rather than guessing a
+default.
+
+**Read the primary record, never the index** (Product Owner ruling 1). Scan
+`CardLayout.ResolveLiveRecordDirectories` — never `ResolveRecordDirectories`, which includes the
+archive. This is carried item C from §7 and it is not optional.
+
+**The stated order is this, and the response states it.** "In a stated order" means the response says
+what its ordering rule is, not merely that one exists:
+
+1. cards the role **owns**, oldest `updated` first;
+2. then cards it does **not** own but which carry an unresolved comment **addressed to it**, oldest such
+   comment first;
+3. ties broken by card id ascending, so the order is **total and deterministic** — same record, same
+   order, every time.
+
+Oldest-first is deliberate and follows §9's 9.6 reasoning: what has sat longest should surface first,
+not last. **The top queue item is the first element of this order** — there is no separate notion of
+"top".
+
+**"The previous round's verdict" means the block's round-scoped certification record.** Verdict entries
+(`SectionVerdictEntry`) live on **section** cards and are the supervisor's; a **block**'s equivalent is
+what §8 built — `CardFile.Claims` and `CardFile.Limits`, each carrying the `Round` it was certified in.
+So for a block card at `Round = n`, part 3 carries the claims and limits certified at round `n − 1`,
+and carries nothing where none exist. The spec's scenario is exactly this: *top item is a block at
+round 2 → the response includes the verdict recorded at round 1.*
+**If you conclude the findings recorded against the block that round are also part of "the verdict",
+post the argument to the DEVLOG and stop — do not decide it silently in either direction.** That is a
+spec-reading question, not an implementation detail.
+
+### Explicitly not in this block
+
+- **No budget, no truncation, no measurement.** That is block B (10.4–10.7) and it is the very next
+  block. **But structure for it:** B has to insert cumulative measurement between these parts and drop
+  narrative only, so assemble the response part by part in priority order rather than building it whole
+  and trimming afterwards. A shape B has to tear up is a bad shape now.
+- **No derived state summary, no escalation severity, no `state` verb.** That is block C (10.8–10.10).
+  A card **blocked by** something still appears in the queue here; whether it is *halted* is C's ruling
+  to make, not this block's.
+- Do not touch the disposition verbs; §10 block D closed those at `9e7cff6`.
+
+### Binding constraints
+
+- **Carried item D from §7** — `RuleCitations.CountCitations` is O(rules × cards). `context` is a
+  per-brief path and **must not** call it. If part 1 tempts you toward citation counting, it is the
+  wrong route.
+- **Carried item A stays open** — the writer/parser wire-key guard. Prefer adding no persisted card
+  field at all in this block; if you must, give it a single shared key declaration from the start, the
+  way `CardApprovalFieldKeys` does.
+- **§9 ruling 1 governs any refusal you add** — records if it asserts about the record, reports without
+  recording if it asserts only that the invocation was malformed. **§9 ruling 3** — name the remedy as a
+  command that exists. **The coverage gate is the standard, not this brief** (§9 ruling 2): every new
+  refusal-shaped outcome case is either in the §9 format with a test proving it fires *and* records, or
+  a keyed, reasoned entry in `Exclusions`.
+- **`## NEXT` records the gate's known limit: CLI-layer refusals are outside its domain, and this block
+  works there.** Do not take a green gate as proof your CLI-layer refusals are covered — test them
+  directly.
+- Block F carved dispatch into `ICommandVisitor<TResult>` at `e7dda26`. Adding `context` means a new
+  case, a new interface member, and a new `CommandRunner.Visit` — that is the shape working as intended,
+  not a burden to route around.
+- ADR-0002 / D2 — NativeAOT: no reflection, no runtime codegen, `System.Text.Json` source-generated
+  contexts only. `TreatWarningsAsErrors` is on.
+
+### Tests
+
+Each of the spec's three scenarios earns a test: context contains only the caller's work (and **no card
+owned solely by another role**); an addressed thread pulls a card into the queue; a prior verdict
+accompanies a remediation. Plus: closed cards excluded, the ordering rule is total and deterministic
+across a shuffled record, and part 4 — no narrative from a card outside the queue reaches the response.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT`, `TEST_EXIT`, `FORMAT_EXIT`, `VALIDATE_EXIT`
+individually. Suite stands at **904**. Read the exit line, never the log.
+
+Post to the DEVLOG under `## 10.` as `[worker]`, then `→ @reviewer`.
+
+**[worker]** Block A done. 10.1–10.3 — the four-part working-context response shape.
+
+**Read path.** `WorkingContextAssembler.Build` (new `Cards/WorkingContext.cs`) walks `CardLayout.
+ResolveLiveRecordDirectories` once, via `CardStore.ReadAllCards` — never the index, never
+`ResolveRecordDirectories`'s archive. One pass classifies every live card into the register bucket
+(open `rule`/`hazard`), the owned bucket, or the addressed-only bucket; a closed card (`CardLifecycle.
+IsClosed`, new file, one mapping per kind's own status vocabulary — see its doc comment for why
+`deferred` stays open but `answered` closes a question, and why a `finding` never closes at all in
+this build) is excluded before either bucket sees it, so a closed card can never reach the queue via
+either ownership or an addressed thread. `RuleCitations.CountCitations` is never called on this path
+(carried item D).
+
+**Ordering.** Owned cards sort by `Frontmatter.Updated` ascending; addressed-only cards sort by the
+oldest unresolved comment addressed to the role (`CardCommentRouting.OldestLiveAddressedTimestamp`,
+new sibling to `LiveThreadIdsAddressedTo`); both ties break on card id ascending. Total and
+deterministic — proven by a test that writes cards in an order unrelated to the expected result and
+re-reads the same directory twice. The response states the rule verbatim
+(`WorkingContextAssembler.QueueOrderDescription`, echoed as `context`'s own `queueOrder` field) rather
+than merely producing an order.
+
+**`--change` — decided not to add it.** The brief flagged this as conditional ("if you find the
+queue cannot be composed without knowing the change, refuse ... rather than guessing a default").
+`ResolveLiveRecordDirectories` self-discovers every live change directory from the repo root alone —
+the queue composes without a change name — so `context` takes only `--role`; `--change` was never
+registered as a known flag, so passing it trips the funnel's ordinary `unrecognised-argument`
+refusal rather than being silently accepted and ignored.
+
+**"Constraints" — a reading, stated rather than assumed.** The spec lists the top item's five parts
+as "its body, base, referenced tasks, constraints, unresolved threads addressed to the caller, and
+the previous round's verdict". `card-model` uses "constraint" once elsewhere (a section-scoped rule
+would be "a constraint in a brief") but that is scope vocabulary, not a field name, and no card model
+anywhere carries a field literally named "constraints". Read this as `BlockCardFields.BlockedBy` —
+the natural sibling to "referenced tasks" (`BlockCardFields.Tasks`): both are `block`-only fields
+already read together elsewhere, and `BlockedBy` is literally what constrains the item from
+proceeding. Flagging this reading explicitly rather than deciding it silently, since it is the one
+genuinely ambiguous field name in the brief's list — not a stop-and-ask case (no spec/design
+contradiction, no ADR at stake), but worth the reviewer's eyes.
+
+**The verdict ruling, applied literally, not extended.** Per the brief: for a block at `Round = n`,
+`topItem.previousRoundVerdict` carries exactly `CardFile.Claims`/`Limits` where `Round == n - 1`,
+nothing where `n <= 1` or none were certified that round. I did **not** conclude findings recorded
+that round are also part of "the verdict" — the brief's own text names claims and limits only, and
+nothing in review-certification's §8 shape ties a `finding` card to a block's certification record.
+Not raising this as a DEVLOG question because I did not reach the "if you conclude ... " condition at
+all — the reading the brief gives is what I implemented, without extension in either direction.
+
+**Non-block top item.** `Base`/`ReferencedTasks`/`Constraints` are `null`/empty for any top item that
+is not a `block` card — `BlockCardFields.Empty`'s own convention, not a special case added here.
+Covered by the "no card owned solely by another role" and "addressed thread pulls a card in" tests
+using `block` cards (the spec's own scenarios do); a non-block top item's shape falls out of the
+existing kind-specific-field-defaults-to-empty convention rather than needing its own test to prove
+a new behaviour.
+
+**CLI.** `context --role <role>` — new `ParsedCommand.Context` case, new `ICommandVisitor.Visit`
+member, new `CommandRunner.Visit` arm (block F's shape, exactly as expected), new `RunContext`
+handler. Read-only: no lock, no timestamp. `repo-root-not-found`, `missing-argument` and
+`unrecognised-role` all report without recording (§9 ruling 1 — none of the three ever touch a
+card), matching `index rebuild`'s own precedent for the first. No new `ICardRefusalReason`
+implementor, so `RefusalCoverageGateTests.Registry` needed no entry — confirmed by running it rather
+than assumed. New `Cli/ContextResult.cs` DTOs, registered in `CliJsonContext`
+(`ContextResult` only — nested types follow `SectionStatusResult`/`AgeingThreadResult`'s own
+precedent of not needing separate top-level registration).
+
+**One small addition outside the four parts.** `CardStore.IsHazardCard` — `IsRuleCard`'s missing
+sibling, needed to split the register bucket into `liveRules`/`liveHazards` for the response. Updated
+`CardCommentImmutabilityTests`' method-inventory test to account for it (alphabetical insertion,
+same convention every other entry there follows).
+
+**Tests.** `WorkingContextAssemblerTests.cs` (domain level, 10 tests): the three spec scenarios
+verbatim (caller-only queue, addressed thread pulls in a foreign-owned card, round-2 top item
+carries round-1 verdict) plus round-1-carries-nothing, closed-card exclusion (owned and
+addressed-only), discharged register exclusion, the shuffled-write-order determinism proof, a
+same-input-reread stability proof, and the no-narrative-leak proof (an unrelated card's body never
+reaches the result in any form). `CommandDispatcherContextTests.cs` (CLI level, 4 tests): the two
+parse-door refusals, a full four-part success shape, and the empty-queue case (`topItem` absent, not
+`null`-valued — `DefaultIgnoreCondition.WhenWritingNull` at work).
+
+10.1: response composed of exactly the four parts, in order — done.
+10.2: queue = owned ∪ addressed-only, stated total/deterministic order — done.
+10.3: previous round's verdict on the top item where one exists — done.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite at **918** — up from
+904 (+14: 10 `WorkingContextAssemblerTests`, 4 `CommandDispatcherContextTests`), all new, all green.
+
+→ @reviewer
+
+**[reviewer]** Block A (10.1–10.3) audited. **Verdict: Request changes.**
+
+Note up front: the "constraints" reading (`BlockCardFields.BlockedBy`) is with the Product Owner — not
+weighing on this verdict either way.
+
+**Blockers**
+
+1. **Rule/hazard cards owned by the requesting role leak into the queue, duplicating part 1 into part
+   2.** `src/Callboard/Cards/WorkingContext.cs:108-128` — the register-membership check (lines 108-113,
+   gated on `IsRuleCard`/`IsHazardCard` + `Open`) and the owned-bucket check (lines 124-128) both run
+   unconditionally on every live, non-closed card; nothing excludes a `rule`/`hazard` card from also
+   entering `owned`/`addressedOnly`. Traced by hand, not merely suspected: a rule owned by `worker` and
+   `open` is added to `liveRegister` at line 112, falls through the closed check (register lifecycle
+   `Open` never satisfies `CardLifecycle.IsClosed`), and then at line 124 (`card.Frontmatter.Owner ==
+   role`) is added to `owned` too — it appears in both `liveRules`/`liveHazards` **and** `queue`, and
+   could become `topItem` itself, at which point `Base`/`ReferencedTasks`/`Constraints`/
+   `PreviousRoundVerdict` are all silently empty for a card kind the top-item shape was never designed
+   around. No test in `WorkingContextAssemblerTests.cs` exercises a register-kind card whose owner
+   matches the requesting role (`WriteRegisterCard` always uses `CardOwner.Architect`; no test requests
+   context as `architect`), so this path is both live and unverified. The spec's part 1/part 2 split
+   reads as disjoint — the register is "delivered... first and unconditionally" as its own part, not as
+   a member of the queue too. Either exclude register-kind cards from queue eligibility (with a test
+   proving it) or, if double-delivery is deliberate, say so in the DEVLOG and add the test that proves
+   it — this should not land silent and unproven either way.
+
+2. **`repo-root-not-found` on `context` has no CLI-level test**, breaking this codebase's own
+   established discipline. `CommandDispatcherFindingRecordTests.cs:7-8` and similarly worded comments
+   in `CommandDispatcherBlockGateTests.cs`/`CommandDispatcherBlockedByTests.cs` state it as a rule: "own
+   repo-root-not-found site, own tests" — every refusal code a block mints gets its own CLI-level test.
+   `CommandDispatcher.cs`'s `RunContext` (~line 3691) constructs its own `repo-root-not-found` refusal,
+   but `CommandDispatcherContextTests.cs` only covers `missing-argument` and `unrecognised-role` — the
+   third of the three refusals the worker's own report names is untested. This is exactly the gap the
+   brief called out by name: "Do not take a green gate as proof your CLI-layer refusals are covered —
+   test them directly" (refusal-coverage gate doesn't reach CLI-layer refusals at all, confirmed —
+   `RunContext` never constructs an `ICardRefusalReason`, so `RefusalCoverageGateTests.Registry` has
+   nothing to catch this).
+
+**Everything else checked clean**
+
+- Part 4 "nothing else": `ContextResult` (`src/Callboard/Cli/ContextResult.cs`) carries exactly `role`,
+  `liveRules`, `liveHazards`, `queueOrder`, `queue`, `topItem` — no extra field.
+- `CardLifecycle.IsClosed` (`src/Callboard/Cards/CardLifecycle.cs:40-48`) is an exhaustive `Match` over
+  all 8 `CardKind` cases, no `_` fallthrough — confirmed against `CardKind.cs`'s own 8-arm `Match`
+  signature. Queue entries beyond the top item carry identity only (`WorkingContextQueueEntry`, no
+  `Body`) — no narrative leak.
+- Ordering is total and deterministic: `CompareByKeyThenId` (`WorkingContext.cs:189-193`) never falls
+  through to equal, ties break on `string.CompareOrdinal` of card id; `Build_SameInputWrittenInDifferent
+  FileOrder_ProducesTheSameQueueOrder` proves it's not enumeration-order-dependent. The response states
+  the rule verbatim via `queueOrder` (`WorkingContextAssemblerTests`/`CommandDispatcherContextTests`
+  both check for it, though only for non-empty, not exact text — a nit, not a blocker).
+  `OldestLiveAddressedTimestamp` (`CardCommentRouting.cs:129-146`) reads only unresolved comments
+  (`IsResolved` filter) addressed via `.To`, never body-text mentions — matches its siblings exactly. A
+  card owned by another role with only a resolved thread does not appear (no test proves this exact
+  negative directly, but it follows from `IsResolved`'s own coverage elsewhere — not requiring a
+  redundant test here).
+- Round `n-1` verdict: `PreviousRoundVerdict` (`WorkingContext.cs:170-187`) correctly floors at round 1
+  (`previousRound < 1` returns empty), and is scoped to `Claims`/`Limits` only — no findings/reports
+  extension, confirmed by grep. Off-by-one at round 1 covered by
+  `Build_TopItemIsBlockAtRoundOne_CarriesNoVerdict`.
+- Read path: `CardLayout.ResolveLiveRecordDirectories` only, never `ResolveRecordDirectories`, never the
+  index (`ReadAllCards` reads files directly) — confirmed by grep across the new files.
+  `RuleCitations.CountCitations` is not called anywhere on this path — confirmed by grep (the only other
+  call site is `CommandDispatcher.cs:3296`, an unrelated pre-existing handler).
+- CLI refusals: `missing-argument` and `unrecognised-role` are both tested directly and correctly
+  report-without-record (no `ICardRefusalReason` involved) — consistent with §9 ruling 1, since neither
+  asserts anything about the record.
+- `--change`'s omission is sound and holds with more than one active change:
+  `ResolveLiveRecordDirectories` (`CardLayout.cs:144-169`) enumerates **every** live change directory
+  under `changes/`, not just one, so the queue self-composes across concurrently active changes without
+  needing to be told which.
+- Shape for block B: `WorkingContext`'s field order (`LiveRulesAndHazards`, `Queue`, `TopItem`) mirrors
+  the priority order D6 names, and `Build` returns the fully-assembled structure rather than an
+  incrementally-trimmed one — block B's cumulative measurement walks this in priority order without
+  needing `Build` itself restructured.
+- Storage/idiom/AOT: `CardStore.IsHazardCard` mirrors `IsRuleCard`'s exhaustive 8-arm `Match` exactly;
+  `System.Text.Json` via `CliJsonContext`'s source-generated context only (`ContextResult` registered,
+  no reflection-based overload used); file-scoped namespaces, `sealed` records/classes throughout, no
+  `!` null-forgiving. `Makefile` untouched.
+- Gates verified myself: `make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+  GATES_EXIT:0`, suite at 918 (904 → +14), all green, no skips.
+
+**Nits**
+
+- `queueOrder` test coverage only checks non-empty, never the exact stated text — would catch drift in
+  `QueueOrderDescription` earlier if one test pinned the literal string.
+
+→ @worker
+
+
+**[worker]** Block A review fixes — all three items addressed.
+
+**Blocker 1 — register cards no longer leak into the queue.** `WorkingContextAssembler.Build`
+(`Cards/WorkingContext.cs`) now checks `IsRuleCard(card) || IsHazardCard(card)` **before** the
+closed-card check and unconditionally `continue`s past ownership/addressing consideration either
+way — an open rule/hazard populates `liveRegister` (when it is itself `open`) and nothing else; a
+discharged one populates neither. Part 1 is now a rule/hazard card's one and only home, structurally,
+not by the accident of also failing the closed check. Two new tests:
+`Build_OpenRuleOwnedByRequestingRole_AppearsOnlyInLiveRegister_NeverInQueue` (the exact leak the
+reviewer traced — owned by the requesting role, open, previously reached both `liveRules` and
+`queue`) and `Build_OpenRuleWithUnresolvedThreadAddressedToRequestingRole_StillNeverEntersQueue` (the
+addressed-only route to the same leak). Both assert `context.Queue`/`context.TopItem` stay empty
+while the card still appears in `LiveRulesAndHazards`.
+
+**Blocker 2 — `repo-root-not-found` on `context` now has its own CLI test.**
+`CommandDispatcherContextTests.OutsideAnyGitRepository_Refuses_WithRepoRootNotFoundCode`, same shape
+as `CommandDispatcherBlockGateTests`' own (`TempDirectory` with no `.git`, asserts the `refusal.code`
+directly) — the "own repo-root-not-found site, own test" convention now covers all three refusals
+`RunContext` can produce, not two of them.
+
+**Change 3 — "constraints" reworked to the Product Owner's ruling: the live register cards whose
+scope covers the top item.** `BlockCardFields.BlockedBy` is untouched on the model and does not
+appear in this response under any name — that surfacing (if any) is block C's call on halting, not
+this block's. New shape:
+
+- `WorkingContextTopItem.BindingConstraints` — `IReadOnlyList<(string FilePath, CardFile Card)>`, a
+  subset of `LiveRulesAndHazards` in the same id order, computed by
+  `WorkingContextAssembler.BindingConstraints`: every repository-scoped register entry (a hazard is
+  always repository-scoped per register's own two-line rule, so it always qualifies; a
+  repository-scoped rule always qualifies), plus a change-scoped rule whose own change equals the
+  top item's own change.
+- **"The top item's own change" is derived from directory placement, not the frontmatter's `scope`
+  field.** `ChangeNameForDirectory` reads it off which of `ResolveLiveRecordDirectories`'s own
+  directories a card was found under — `null` for `register/`/`decisions/`, the last path segment
+  (the same name `CardLayout.ChangesDirectory` builds it from) for every change directory. Carried on
+  `WorkingContextQueueEntry.ChangeName` (new field, internal bookkeeping only — never surfaced on any
+  queue member's own CLI shape) through to the top item, rather than re-parsed from `FilePath` a
+  second time.
+- A top item that is not itself inside any change (e.g. a `question`, repository-scoped) is bound
+  only by repository-scoped entries — there is no change for a change-scoped rule to match against
+  `null`.
+- The response states the binding rule in prose the same way `queueOrder` states part 2's ordering
+  rule: `WorkingContextAssembler.ConstraintsRuleDescription`, echoed as `topItem.constraintsRule`.
+  `Constraints` on `ContextTopItemResult` now carries `ContextRegisterCardResult` (the same shape
+  part 1 uses — id/filePath/title/body), not a bare id list, since these are literally register
+  cards.
+- **The model I found is scope coverage, not an explicit binding link** — confirmed by grep across
+  `Cards/` before choosing: no card carries a "this rule applies to card X" reference anywhere in
+  this build. Scope coverage (`CardScope.Repository`/`CardScope.Change` + directory-derived change
+  name) is the only mechanism the model has for "does this rule apply here", so I did not stop to
+  post the alternative-model question — there wasn't one to choose between.
+- Two new domain tests: `Build_TopItem_ConstraintsIncludeEveryRepositoryScopedRuleAndHazard` and
+  `Build_TopItem_ConstraintsIncludeChangeScopedRuleInSameChange_ButNotAnotherChange` (the latter also
+  proves the excluded other-change rule still appears in part 1 — only its role as *this* top item's
+  constraint is scope-gated, not its membership in the register). Plus a CLI-level assertion added to
+  `Success_EmitsAllFourPartsInOrder_WithTheStatedQueueOrder` covering `constraintsRule` and
+  `constraints` end to end.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite at **923** — up from 918
+(+5: 2 blocker-1 regression tests, 1 CLI repo-root-not-found test, 2 constraints-binding tests), all
+new, all green.
+
+→ @reviewer
+
+**[reviewer]** Block A (10.1–10.3) re-audited after fixes. **Verdict: Approve.**
+
+**Blocker 1 — resolved.** `WorkingContext.cs:108-122` now checks `IsRuleCard(card) ||
+IsHazardCard(card)` first and `continue`s unconditionally either way — the register branch does its
+own inline `Open` check and is the only path that can populate `liveRegister`; every other card falls
+through to the closed check and then to ownership/addressing. Checked the ordering concern raised in
+the brief specifically: a discharged (or unparseable-status) rule/hazard fails the register branch's
+own `Open` test, so it is excluded from `liveRegister` *and* still hits `continue`, never reaching
+`owned`/`addressedOnly` — running the register check ahead of the closed check does not reopen a route
+for a closed register card into part 2; it only removes the accidental double-membership for an *open*
+one. `Build_OpenRuleOwnedByRequestingRole_AppearsOnlyInLiveRegister_NeverInQueue` and
+`Build_OpenRuleWithUnresolvedThreadAddressedToRequestingRole_StillNeverEntersQueue`
+(`WorkingContextAssemblerTests.cs:188-216`) exercise exactly the traced leak via both routes and assert
+`Queue`/`TopItem` stay empty while the card still surfaces in `LiveRulesAndHazards`. No regression on
+the closed-card exclusion tests already in place (re-ran `Build_ClosedOwnedCard_ExcludedFromQueue` /
+`Build_ClosedCardWithUnresolvedAddressedThread_StillExcluded` mentally against the new code path —
+both still hold, since closed non-register cards never reach the register branch at all).
+
+**Blocker 2 — resolved.** `CommandDispatcherContextTests.cs:33-45`,
+`OutsideAnyGitRepository_Refuses_WithRepoRootNotFoundCode`, matches
+`CommandDispatcherBlockGateTests.cs:185-187`'s own shape exactly — `TempDirectory` with no `.git`,
+valid `--role worker` (so the door refusals don't pre-empt it), asserting `refusal.code ==
+"repo-root-not-found"` directly against `CommandDispatcher.Run`. Traced `RunContext`
+(`CommandDispatcher.cs:3703-3711`): `RepoRootResolver.Resolve` is the only thing that can produce this
+code on this path, and the test's working directory genuinely has no `.git` above it, so this is the
+real refusal path, not a stand-in. All three of `RunContext`'s refusals (`missing-argument`,
+`repo-root-not-found`, `unrecognised-role`) now have their own CLI-level test, matching this
+codebase's "own refusal site, own test" convention.
+
+**The constraints ruling — implemented as ruled, stated, tested both scopes, `BlockedBy` untouched.**
+
+- `WorkingContextAssembler.BindingConstraints` (`WorkingContext.cs`) computes exactly the Product
+  Owner's rule: every repository-scoped live register entry (a hazard always qualifies, since register
+  requires hazards to be repository-scoped; a repository-scoped rule qualifies), plus a change-scoped
+  rule whose own change equals the top item's own change. `null` top-item change (a repository-scoped
+  kind, e.g. a `question`) binds only repository-scoped entries — correct, there is no change for a
+  change-scoped rule to match against.
+- Stated in the response the same way `queueOrder` states part 2's rule:
+  `WorkingContextAssembler.ConstraintsRuleDescription` → `ContextTopItemResult.ConstraintsRule` →
+  `topItem.constraintsRule`, asserted non-empty in
+  `CommandDispatcherContextTests.Success_EmitsAllFourPartsInOrder_WithTheStatedQueueOrder`.
+- Both scopes tested at the domain level:
+  `Build_TopItem_ConstraintsIncludeEveryRepositoryScopedRuleAndHazard`
+  (`WorkingContextAssemblerTests.cs:109-120`) and
+  `Build_TopItem_ConstraintsIncludeChangeScopedRuleInSameChange_ButNotAnotherChange`
+  (`:125-147`, the latter also proving the excluded other-change rule still surfaces in part 1 — only
+  its role as *this* top item's constraint is scope-gated). CLI-level coverage added to the same success
+  test, asserting `constraints` carries `H-0001`/`R-0001` for a repository-scoped rule and hazard.
+- `BlockCardFields.BlockedBy` — grepped: still only referenced by its own pre-existing call sites
+  (§10 block D's disposition-verb work and earlier blocks' `blocked` gate handling); nothing in this
+  block's diff reads it, and it does not surface under `constraints`, `constraintsRule`, or any renamed
+  field. Confirmed by reading `ContextTopItemResult` end to end (`ContextResult.cs`) — no property
+  wraps `BlockedBy` in any form.
+- `ChangeNameForDirectory` (`WorkingContext.cs`) is the load-bearing piece and holds up: it is called
+  once per live directory in `WorkingContextAssembler.Build`'s own outer loop, on the exact directory
+  string `CardLayout.ResolveLiveRecordDirectories` returned (never a re-derived path), and only ever
+  compares that string against `RegisterDirectory`/`DecisionsDirectory` built the identical way
+  (`CombineWithLayout`'s own construction, replicated field-for-field) before falling through to
+  `Path.GetFileName` for a change directory — which is exactly the top-level `changes/<name>` segment,
+  since `ResolveLiveRecordDirectories` only ever returns that top-level directory, never a nested one.
+  Both sides of every match in `BindingConstraints` are produced by this same function, so a wrong
+  *absolute* answer would still be internally consistent (matching only requires both sides agree, not
+  that either side names anything external) — the case that would actually bite is two different change
+  directories collapsing to the same name, which cannot happen since only one path segment separates
+  `changesRoot` from each change's own directory. `Build_TopItem_ConstraintsIncludeChangeScopedRuleInSameChange_ButNotAnotherChange`
+  exercises this for real, with a genuine second change directory on disk, not a stubbed name.
+
+**Part 4, re-checked now that part 3 grew.** `ContextTopItemResult.Constraints` carries
+`ContextRegisterCardResult` — the same full-body shape part 1 already uses for `liveRules`/
+`liveHazards`. This is not a new narrative door: `BindingConstraints` is constructed strictly as a
+subset of `liveRegister` (`WorkingContext.cs`'s own `BindingConstraints` never reads any card outside
+that list), so every body reachable through `constraints` is a body already required to be present,
+in full, under `liveRules`/`liveHazards` by part 1's own "register SHALL be delivered rather than made
+available for search" rule. Duplicated across two fields, not smuggled in from a fourth source — the
+"nothing else" boundary is about what cards may contribute content, and `constraints` never draws from
+a card that isn't already one of the exactly-three parts. No other field was added to
+`ContextTopItemResult` beyond what the spec's own five-part list plus this ruling's replacement of
+"constraints" requires.
+
+**Gates verified myself.** `make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, suite at **923** (918 → +5: 2 blocker-1 regression tests, 1 CLI repo-root-not-found
+test, 2 constraints-binding tests), all green, no skips. `Makefile`/`tasks.md`/`CLAUDE.md` untouched
+in the diff.
+
+**Nits (unchanged from last round, still not blocking)**
+
+- `queueOrder`/`constraintsRule` test coverage checks non-empty, never the exact stated prose — a
+  literal-string assertion on either would catch drift in `QueueOrderDescription`/
+  `ConstraintsRuleDescription` earlier.
+
+10.1–10.3: clean. Ready for gates/tick/commit.
+
+→ @architect
+
 ## NEXT
 
 **§10 is open and in flight.** Base `3e85b98`. Two of its six blocks have landed; **block A (10.1–10.3)

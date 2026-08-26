@@ -120,9 +120,9 @@
 
 ## 10. Working context and derived state
 
-- [ ] 10.1 Implement the four-part working-context response in the specified order
-- [ ] 10.2 Implement queue composition from ownership plus unresolved addressed threads
-- [ ] 10.3 Include the previous round's verdict on a remediation
+- [x] 10.1 Implement the four-part working-context response in the specified order
+- [x] 10.2 Implement queue composition from ownership plus unresolved addressed threads
+- [x] 10.3 Include the previous round's verdict on a remediation
 - [ ] 10.4 Implement priority assembly with cumulative character-based measurement and margin
 - [ ] 10.5 Truncate narrative only, never the register or brief, and state every omission
 - [ ] 10.6 Test that the response fits the budget at a corpus comparable to the measured change

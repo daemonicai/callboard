@@ -44,4 +44,5 @@ namespace Callboard.Cli;
 [JsonSerializable(typeof(QuestionDeferResult))]
 [JsonSerializable(typeof(CommentResolveResult))]
 [JsonSerializable(typeof(CommentPromoteResult))]
+[JsonSerializable(typeof(ContextResult))]
 internal sealed partial class CliJsonContext : JsonSerializerContext;

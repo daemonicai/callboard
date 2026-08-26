@@ -5308,6 +5308,20 @@ internal static class CardStore
         onDecision: static () => false,
         onSection: static () => false);
 
+    /// <summary>The <see cref="IsRegisterCard"/> counterpart narrowed to exactly
+    /// <see cref="CardKind.Hazard"/> (§10 block A) — <see cref="Cards.WorkingContextAssembler"/>'s
+    /// register-scan shares this predicate rather than re-implementing the same eight-arm match a
+    /// seventh time.</summary>
+    internal static bool IsHazardCard(CardFile card) => card.Frontmatter.Kind.Match(
+        onBlock: static () => false,
+        onQuestion: static () => false,
+        onFinding: static () => false,
+        onObligation: static () => false,
+        onRule: static () => false,
+        onHazard: static () => true,
+        onDecision: static () => false,
+        onSection: static () => false);
+
     /// <summary>
     /// Reads and parses one card file. I/O failures (the file vanished, permissions) are caught
     /// and folded into <see cref="CardFileParseResult.Failure"/> alongside format-level failures,

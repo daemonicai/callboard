@@ -118,6 +118,34 @@ internal static class CardCommentRouting
     }
 
     /// <summary>
+    /// The timestamp of the oldest live (unresolved) comment in <paramref name="comments"/>
+    /// addressed to <paramref name="role"/>, or <see langword="null"/> when
+    /// <see cref="HasLiveThreadAddressedTo"/> is false for the same inputs — <see cref="
+    /// LiveThreadIdsAddressedTo"/>'s sibling, naming the ordering key a working-context queue sorts
+    /// an addressed-only card by (working-context, §10 block A: "cards it does not own ... oldest
+    /// such comment first") rather than a bare id set. Only <see cref="CardComment.To"/> is read,
+    /// not a role mention in body text, for the same reason every other reader in this type does.
+    /// </summary>
+    internal static DateTimeOffset? OldestLiveAddressedTimestamp(IReadOnlyList<CardComment> comments, CardOwner role)
+    {
+        DateTimeOffset? oldest = null;
+        for (var i = 0; i < comments.Count; i++)
+        {
+            if (comments[i].To != role || IsResolved(comments, i))
+            {
+                continue;
+            }
+
+            if (oldest is null || comments[i].Timestamp < oldest.Value)
+            {
+                oldest = comments[i].Timestamp;
+            }
+        }
+
+        return oldest;
+    }
+
+    /// <summary>
     /// True when the nit at <paramref name="index"/> has received a disposition (review-certification:
     /// "Nits carry a disposition", §8 block B) — some comment later in the same append order both
     /// <see cref="CardComment.Resolves"/> it and itself carries a <see cref="CardComment.Disposition"/>.

@@ -43,9 +43,10 @@ internal static class CommandParser
         "change" => ParseChange(context),
         "nit" => ParseNit(context),
         "comment" => ParseComment(context),
+        "context" => ParseContext(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit, comment.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit, comment, context.")),
     };
 
     /// <summary>
@@ -3036,5 +3037,43 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.CommentPromote(
             id, commentId, role, toKind, raiseFilePath, title, owedByRole, body, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>context</c>'s <see cref="CommandDispatcher.ParsedCommand.Context"/>: just
+    /// <c>--role</c> (required) — no positional token, no <c>--change</c> (§10 block A brief: the
+    /// queue is composed from every live directory <see cref="Cards.CardLayout.
+    /// ResolveLiveRecordDirectories"/> self-discovers, so nothing here needs a change name to
+    /// resolve). A flag this method does not recognise — including <c>--change</c>, deliberately
+    /// not registered — is left unconsumed for <see cref="CommandDispatcher.
+    /// EnforceNoUnconsumedArguments"/>'s own <c>unrecognised-argument</c> refusal to catch, the same
+    /// "peek, don't take" discipline every other parse arm here follows.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseContext(CommandDispatcher.CommandContext context)
+    {
+        string? roleText = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--role"] = value => roleText = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'context' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.Context(role, context.WorkingDirectory));
     }
 }

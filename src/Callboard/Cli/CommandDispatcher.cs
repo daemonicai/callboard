@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Callboard.Cards;
 using Callboard.Index;
@@ -742,6 +743,22 @@ internal static class CommandDispatcher
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
+
+        /// <summary>
+        /// <c>context --role &lt;role&gt;</c> (§10 block A, working-context: "given a role, the
+        /// system SHALL return that role's complete working context"). Read-only, so no timestamp
+        /// and no lock — the only two things this carries are what <see cref="Cards.
+        /// WorkingContextAssembler.Build"/> needs. No <c>--change</c>: <see cref="Cards.CardLayout.
+        /// ResolveLiveRecordDirectories"/> self-discovers every live change directory from
+        /// <see cref="WorkingDirectory"/>'s repository root alone, so the queue is composable
+        /// without one (Architect ruling, §10 block A brief: "if you find the queue cannot be
+        /// composed without knowing the change, refuse ... rather than guessing a default" — it
+        /// can, so no flag was added for one this surface would never use).
+        /// </summary>
+        internal sealed record Context(CardOwner Role, string WorkingDirectory) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
     }
 
     /// <summary>
@@ -829,6 +846,8 @@ internal static class CommandDispatcher
         TResult Visit(ParsedCommand.CommentPromote command);
 
         TResult Visit(ParsedCommand.CommentDecline command);
+
+        TResult Visit(ParsedCommand.Context command);
     }
 
     /// <summary>
@@ -925,6 +944,8 @@ internal static class CommandDispatcher
         public CommandOutcome Visit(ParsedCommand.CommentPromote command) => RunCommentPromote(command, LockTimeout);
 
         public CommandOutcome Visit(ParsedCommand.CommentDecline command) => RunCommentDecline(command, LockTimeout);
+
+        public CommandOutcome Visit(ParsedCommand.Context command) => RunContext(command);
     }
 
     internal static int Run(
@@ -3669,6 +3690,101 @@ internal static class CommandDispatcher
                     $"{flagLabel} names id '{unreadableId}', but {filePaths.Count} card file(s) elsewhere in the record could not " +
                     $"be read, so its presence cannot be confirmed or ruled out: {string.Join(", ", filePaths)}."),
                 null));
+
+    /// <summary>
+    /// <c>context --role &lt;role&gt;</c> (§10 block A, working-context: "given a role, the system
+    /// SHALL return that role's complete working context, composed of exactly" four parts). A pure
+    /// read — no lock, no timestamp — over <see cref="Cards.WorkingContextAssembler.Build"/>'s
+    /// result, mapped onto <see cref="ContextResult"/> field for field in the same order. This
+    /// handler never calls <see cref="Cards.RuleCitations.CountCitations"/> (carried item D — this
+    /// is a per-brief path). <see langword="private"/>: <see cref="CommandParser"/> cannot name
+    /// this method.
+    /// </summary>
+    private static CommandOutcome RunContext(ParsedCommand.Context parsed)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var context = WorkingContextAssembler.Build(repoRoot, parsed.Role);
+
+        return new CommandOutcome.Success(new ContextResult
+        {
+            Role = parsed.Role.ToWireString(),
+            LiveRules = [.. context.LiveRulesAndHazards.Where(static entry => CardStore.IsRuleCard(entry.Card)).Select(ToContextRegisterCardResult)],
+            LiveHazards = [.. context.LiveRulesAndHazards.Where(static entry => CardStore.IsHazardCard(entry.Card)).Select(ToContextRegisterCardResult)],
+            QueueOrder = WorkingContextAssembler.QueueOrderDescription,
+            Queue = [.. context.Queue.Select(ToContextQueueEntryResult)],
+            TopItem = context.TopItem is { } topItem ? ToContextTopItemResult(topItem) : null,
+        });
+    }
+
+    private static ContextRegisterCardResult ToContextRegisterCardResult((string FilePath, CardFile Card) entry) => new()
+    {
+        Id = entry.Card.Frontmatter.Id,
+        FilePath = entry.FilePath,
+        Title = entry.Card.Frontmatter.Title,
+        Body = entry.Card.Body,
+    };
+
+    private static ContextQueueEntryResult ToContextQueueEntryResult(WorkingContextQueueEntry entry) => new()
+    {
+        Id = entry.Card.Frontmatter.Id,
+        Kind = entry.Card.Frontmatter.Kind.ToWireString(),
+        FilePath = entry.FilePath,
+        Title = entry.Card.Frontmatter.Title,
+        Owner = entry.Card.Frontmatter.Owner.ToWireString(),
+        Updated = entry.Card.Frontmatter.Updated,
+    };
+
+    private static ContextTopItemResult ToContextTopItemResult(WorkingContextTopItem topItem)
+    {
+        var card = topItem.Card;
+
+        ContextVerdictResult? verdict = null;
+        if (topItem.PreviousRoundClaims.Count > 0 || topItem.PreviousRoundLimits.Count > 0)
+        {
+            var round = topItem.PreviousRoundClaims.Count > 0 ? topItem.PreviousRoundClaims[0].Round : topItem.PreviousRoundLimits[0].Round;
+            verdict = new ContextVerdictResult
+            {
+                Round = round,
+                Claims = [.. topItem.PreviousRoundClaims.Select(static claim => claim.Text)],
+                Limits = [.. topItem.PreviousRoundLimits.Select(static limit => limit.Text)],
+            };
+        }
+
+        return new ContextTopItemResult
+        {
+            Id = card.Frontmatter.Id,
+            Kind = card.Frontmatter.Kind.ToWireString(),
+            FilePath = topItem.FilePath,
+            Title = card.Frontmatter.Title,
+            Owner = card.Frontmatter.Owner.ToWireString(),
+            Body = card.Body,
+            Base = card.BlockFields.Base,
+            ReferencedTasks = [.. card.BlockFields.Tasks],
+            ConstraintsRule = WorkingContextAssembler.ConstraintsRuleDescription,
+            Constraints = [.. topItem.BindingConstraints.Select(ToContextRegisterCardResult)],
+            UnresolvedThreadsAddressedToCaller = [.. topItem.UnresolvedThreadIdsAddressedToCaller.Select(threadId => ToContextThreadResult(card, threadId))],
+            PreviousRoundVerdict = verdict,
+        };
+    }
+
+    private static ContextThreadResult ToContextThreadResult(CardFile card, string commentId)
+    {
+        var comment = card.Comments.First(comment => comment.Id == commentId);
+        return new ContextThreadResult
+        {
+            CommentId = comment.Id,
+            Author = comment.Author.ToWireString(),
+            Timestamp = comment.Timestamp,
+            Body = comment.Body,
+        };
+    }
 
     private static int ExitCodeFor(CommandOutcome outcome) => outcome.Match(
         onSuccess: static _ => SuccessExitCode,
