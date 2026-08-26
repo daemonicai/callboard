@@ -44,6 +44,14 @@ internal sealed class CardCreateResult : ICommandResult
     [JsonPropertyName("owedBy")]
     public string? OwedBy { get; init; }
 
+    /// <summary>The section this card was recorded under (<see cref="CardFrontmatter.Section"/>),
+    /// empty for a card raised with no <c>--section</c> — most visibly on <c>question create</c>
+    /// (§9 block F, carried from block E's review): a caller who omitted <c>--section</c> could not
+    /// previously see that fact in the response at all, the same gap block D closed for
+    /// <see cref="OwedBy"/>.</summary>
+    [JsonPropertyName("section")]
+    public required string Section { get; init; }
+
     [JsonPropertyName("actingRole")]
     public required string ActingRole { get; init; }
 

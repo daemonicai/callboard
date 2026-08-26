@@ -90,15 +90,22 @@ proposition from one backed by a single incident.
 
 ### Requirement: Declining is distinguishable from discharging
 
-An obligation that will not be met SHALL be closable by declining it with a recorded reason, and the
-record SHALL distinguish that from an obligation that was discharged. The two are different facts about
-the work and a record that conflates them cannot be read back honestly — "we decided not to" is the
-outcome most worth finding later, and it is the one a discharge would hide.
+An obligation that will not be met SHALL be closable by declining it, and the record SHALL carry the
+reason and SHALL distinguish a declined obligation from one that was met. The two are different facts
+about the work and a record that conflates them cannot be read back honestly — "we decided not to" is
+the outcome most worth finding later, and it is the one an unqualified discharge would hide.
+
+Declining SHALL NOT introduce a third lifecycle state. A declined obligation is `discharged` in the
+two-state sense this capability already defines — no longer live — and the manner of its closure is
+recorded alongside, exactly as `discharged` already means *superseded* rather than *completed* for a
+`rule` or a `decision`. The distinction the record owes its reader is why the card closed, not which
+status word it carries.
 
 #### Scenario: Obligation declined rather than met
 
 - **WHEN** an open obligation is declined with a recorded reason
-- **THEN** it stops being open, the reason is part of the record, and it is not represented as discharged
+- **THEN** it stops being open, the reason is part of the record, and the record distinguishes it from
+  an obligation that was met
 
 #### Scenario: Declining requires a reason
 

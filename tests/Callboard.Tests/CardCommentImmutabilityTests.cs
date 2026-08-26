@@ -114,9 +114,10 @@ public sealed class CardCommentImmutabilityTests
             "CompactRulesUnderLocks",               // §7 block F: read-decide-write on Frontmatter.Status/RegisterFields.SupersededBy/DischargedBy/DischargedAt for every absorbed rule, and RegisterFields.Absorbs for the family only; never touches Comments on any of them
             "CountRoundIncrementingTransitions",     // 8a.17: pure count over a block card's Transitions against BlockFlowTransitions.RoundIncrementingTransitionNames; never touches a CardFile
             "CreateCard",                           // §7 block A: allocates an identity, validates scope, writes one brand-new card via WriteCard — never touches an existing card's Comments, it only ever creates
+            "DeclineObligation",                    // §9 block F: acquires the obligation's own lock and delegates to DeclineObligationUnderExistingLock; never touches a CardFile itself
+            "DeclineObligationUnderExistingLock",   // §9 block F: read-decide-write on Frontmatter.Status/RegisterFields.DischargedBy/DischargedAt/DeclinedReason only; never touches Comments
             "DeferQuestion",                        // §9 block D: acquires the question's own lock and delegates to DeferQuestionUnderExistingLock; never touches a CardFile itself
             "DeferQuestionUnderExistingLock",        // §9 block D: read-decide-write on Frontmatter.Status/QuestionFields.DeferredBy/DeferredAt/DeferredTarget only; never touches Comments
-            "DescribeUnexpectedDischargeOutcome",   // §7 block D: pure string formatter over a CardRegisterDischargeOutcome for ArchiveChange's tool-failure message; never touches a CardFile
             "DischargeRegisterCard",                // §7 block A: read-decide-write on Frontmatter.Status/RegisterFields.DischargedBy/DischargedAt only; never touches Comments
             "DischargeRegisterCardUnderExistingLock", // same, lock already held
             "DispositionNit",                       // §8 block B: role check, allocates the raised card's identity (defer/decline), then acquires the block's lock (and, for defer/decline, the raised card's) and delegates to DispositionNitUnderLocks; never touches a CardFile itself
@@ -134,6 +135,8 @@ public sealed class CardCommentImmutabilityTests
             "IsRegisterCard",                       // §7 block A: the IsBlockCard/IsSectionCard/IsFindingCard counterpart for the four register kinds; never touches a CardFile's Comments
             "IsRuleCard",                            // §7 block E: the IsRegisterCard counterpart narrowed to CardKind.Rule, shared by CommandDispatcher's `rule promote` resolution and PromoteRuleUnderExistingLock; never touches a CardFile's Comments
             "IsSectionCard",                        // §5 block E: the IsBlockCard counterpart for CardKind.Section, shared by RecordSectionVerdict/CloseSection; never touches a CardFile's Comments
+            "PromoteObligation",                    // §9 block F: acquires the obligation's own lock, then delegates to PromoteObligationUnderExistingLock; never touches a CardFile itself
+            "PromoteObligationUnderExistingLock",   // §9 block F: exact mirror of PromoteRuleUnderExistingLock generalised to obligation — File.Move's the card to callboard/register/, then read-decide-write on Frontmatter.Scope/Updated and one appended attribution comment; appends, never edits or drops an existing comment
             "PromoteRule",                          // §7 block E: acquires the rule's own lock, then delegates to PromoteRuleUnderExistingLock; never touches a CardFile itself
             "PromoteRuleUnderExistingLock",         // §7 block E, remediation blocker 3: File.Move's the card to callboard/register/, then read-decide-write on Frontmatter.Scope/Updated and one appended attribution comment via the ordinary AnchoredCardPath/AtomicWrite path — appends, never edits or drops an existing comment
             "RaiseNit",                              // §8 remediation: acquires the block's lock and delegates to RaiseNitUnderExistingLock; never touches a CardFile itself

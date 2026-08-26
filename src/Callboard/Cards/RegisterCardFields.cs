@@ -68,6 +68,19 @@ namespace Callboard.Cards;
 /// </para>
 ///
 /// <para>
+/// <b><see cref="DeclinedReason"/> is obligation-only (§9 block F, register: "An obligation that
+/// will not be met SHALL be closable by declining it with a recorded reason, and the record SHALL
+/// distinguish that from an obligation that was discharged").</b> Declining does not add a third
+/// <see cref="RegisterLifecycleState"/> — register's own two-state-lifecycle requirement is
+/// unchanged, so a declined obligation still carries <c>status: discharged</c> and the same
+/// <see cref="DischargedBy"/>/<see cref="DischargedAt"/> every discharge records. What distinguishes
+/// "declined" from "met" is this field alone: non-<see langword="null"/> only when
+/// <see cref="CardStore.DeclineObligationUnderExistingLock"/> wrote it, <see langword="null"/> on
+/// every ordinary discharge. A reader that wants "was this actually met?" checks this field, not the
+/// status string — the status string alone can no longer answer that question, by design.
+/// </para>
+///
+/// <para>
 /// <b><see cref="Absorbs"/> is rule-only (§7 block F, register: "A family rule SHALL record the
 /// rules it absorbs, and every absorbed rule SHALL remain retrievable").</b> Holds <b>rule card
 /// ids</b>, resolved through <see cref="CardIdentityResolver"/> before <c>rule compact</c> ever
@@ -105,6 +118,12 @@ internal sealed record RegisterCardFields
     /// this field. Always resolved through <see cref="CardIdentityResolver"/> before being set —
     /// see this type's own doc comment.</summary>
     internal string? OwedBy { get; init; }
+
+    /// <summary>The reason recorded when this obligation was declined rather than discharged as
+    /// met, or <see langword="null"/> for any non-obligation register card, an obligation still
+    /// open, or one discharged as met. See this type's own doc comment for why this field — not a
+    /// third lifecycle state — is what distinguishes the two facts.</summary>
+    internal string? DeclinedReason { get; init; }
 
     /// <summary>The id of the <c>decision</c> card this decision supersedes, or
     /// <see langword="null"/> for any non-decision register card, or a decision that has not
@@ -144,7 +163,7 @@ internal sealed record RegisterCardFields
         init => _absorbs = RequireNoEmptyOrWhitespaceItems(value, nameof(Absorbs));
     }
 
-    /// <summary>The nine fields, all unset — every card that is not one of the four register
+    /// <summary>The ten fields, all unset — every card that is not one of the four register
     /// kinds, and a brand-new register card with none of them declared and not yet discharged.
     /// </summary>
     internal static readonly RegisterCardFields Empty = new(null, null, null, null);
@@ -158,7 +177,8 @@ internal sealed record RegisterCardFields
         string? Supersedes = null,
         string? SupersededBy = null,
         IReadOnlyList<string>? EarnedFrom = null,
-        IReadOnlyList<string>? Absorbs = null)
+        IReadOnlyList<string>? Absorbs = null,
+        string? DeclinedReason = null)
     {
         this.Condition = Condition;
         this.Cadence = Cadence;
@@ -167,6 +187,7 @@ internal sealed record RegisterCardFields
         this.OwedBy = OwedBy;
         this.Supersedes = Supersedes;
         this.SupersededBy = SupersededBy;
+        this.DeclinedReason = DeclinedReason;
 
         // .ToImmutableArray() copies EarnedFrom's/Absorbs's current contents now, at construction
         // time — the same "a caller's later mutation of a retained List<T> cannot reach the built
@@ -236,10 +257,11 @@ internal static class RegisterCardFieldKeys
     internal const string DischargedAt = "discharged_at";
     internal const string EarnedFrom = "earned_from";
     internal const string Absorbs = "absorbs";
+    internal const string DeclinedReason = "declined_reason";
 
     /// <summary>Every register-only frontmatter key this build recognises, in the order
     /// <see cref="CardFileWriter"/> emits them. The one list <see cref="CardFileParser"/>'s known-
     /// key set is built from — see this type's own doc comment.</summary>
     internal static readonly IReadOnlyList<string> All =
-        [Condition, Cadence, OwedBy, Supersedes, SupersededBy, DischargedBy, DischargedAt, EarnedFrom, Absorbs];
+        [Condition, Cadence, OwedBy, Supersedes, SupersededBy, DischargedBy, DischargedAt, EarnedFrom, Absorbs, DeclinedReason];
 }

@@ -123,6 +123,10 @@ public sealed class CommandDispatcherQuestionCreateTests
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.Equal(sectionId, result.GetProperty("section").GetString());
+
         var card = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(sectionId, card.Frontmatter.Section);
     }
@@ -141,6 +145,10 @@ public sealed class CommandDispatcherQuestionCreateTests
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.Equal(string.Empty, result.GetProperty("section").GetString());
+
         var card = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(string.Empty, card.Frontmatter.Section);
     }

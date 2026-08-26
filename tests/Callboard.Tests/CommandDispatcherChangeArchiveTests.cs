@@ -16,8 +16,11 @@ public sealed class CommandDispatcherChangeArchiveTests
     private const string ChangeName = "establish-callboard";
     private static readonly DateTimeOffset FixedNow = new(2026, 8, 23, 11, 0, 0, TimeSpan.Zero);
 
+    // §9 block F: an obligation owed by a section that is still open is not orphaned — it carries
+    // into the archive exactly as written, and the response reports no settling of any kind (there
+    // is none left to report).
     [Fact]
-    public void ChangeArchive_LiveChangeWithAnOpenObligation_Succeeds_AndSettlesIt()
+    public void ChangeArchive_LiveChangeWithAnOpenObligationOwedByAStillOpenSection_Succeeds_CarryingTheObligationThroughUntouched()
     {
         using var repo = new TempGitRepo();
 
@@ -44,9 +47,58 @@ public sealed class CommandDispatcherChangeArchiveTests
         var result = doc.RootElement.GetProperty("result");
         Assert.Equal(ChangeName, result.GetProperty("changeName").GetString());
         Assert.Equal("architect", result.GetProperty("actingRole").GetString());
-        var settled = result.GetProperty("settledObligationIds").EnumerateArray().Select(static e => e.GetString()).ToList();
-        Assert.Equal([obligationId], settled);
+        Assert.False(result.TryGetProperty("settledObligationIds", out _), "archive no longer settles anything of its own.");
         Assert.False(Directory.Exists(repo.CardsDirectory));
+
+        var archivedDirectory = result.GetProperty("archivedDirectory").GetString()!;
+        var obligationPath = Path.Combine(archivedDirectory, "o-0001.md");
+        var onDisk = AssertParseSuccess(CardStore.ReadCard(obligationPath));
+        Assert.Equal(obligationId, onDisk.Frontmatter.Id);
+        Assert.Equal("open", onDisk.Frontmatter.Status);
+        Assert.Null(onDisk.RegisterFields.DischargedBy);
+    }
+
+    // The gate itself, at the CLI boundary: an obligation owed by a section that has already
+    // closed refuses the whole archive, naming the obligation and the three now-real dispositions.
+    // The section closes first, while it owes nothing (9.4 already guards a close attempted while
+    // an obligation is still open) — the obligation is then raised naming that already-closed
+    // section, which is exactly the "surfaces at archive time or not at all" case
+    // process-enforcement's own scenario describes.
+    [Fact]
+    public void ChangeArchive_OpenObligationOwedByAClosedSection_Refuses_WithOrphanedObligations()
+    {
+        using var repo = new TempGitRepo();
+
+        var sectionOutput = new StringWriter();
+        RunInRepo(
+            ["section", "create", Path.Combine(repo.CardsDirectory, "s-0002.md"), "--title", "7. Register", "--role", "architect", "--change", ChangeName],
+            sectionOutput, repo.Path, "Body.");
+        var sectionId = ExtractResultId(sectionOutput);
+
+        var closeOutput = new StringWriter();
+        var closeExitCode = RunInRepo(
+            ["section", "close", Path.Combine(repo.CardsDirectory, "s-0002.md"), "--role", "architect", "--change", ChangeName],
+            closeOutput, repo.Path, string.Empty);
+        Assert.True(closeExitCode == CommandDispatcher.SuccessExitCode, $"expected section close to succeed: {closeOutput}");
+
+        var obligationOutput = new StringWriter();
+        RunInRepo(
+            [
+                "obligation", "create", Path.Combine(repo.CardsDirectory, "o-0002.md"), "--title", "Settle the migration",
+                "--role", "architect", "--change", ChangeName, "--section", sectionId,
+            ],
+            obligationOutput, repo.Path, "Body.");
+        var obligationId = ExtractResultId(obligationOutput);
+
+        var archiveOutput = new StringWriter();
+        var exitCode = RunInRepo(["change", "archive", ChangeName, "--role", "architect"], archiveOutput, repo.Path, string.Empty);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(archiveOutput.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("orphaned-obligations", refusal.GetProperty("code").GetString());
+        Assert.Contains(obligationId, refusal.GetProperty("message").GetString());
+        Assert.True(Directory.Exists(repo.CardsDirectory), "a refused archive must not have moved anything.");
     }
 
     [Fact]

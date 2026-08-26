@@ -20,6 +20,19 @@ namespace Callboard.Tests;
 /// afterwards is checked too, since <see cref="CardStore"/> never writes a card without first
 /// acquiring its lock.
 /// </para>
+///
+/// <para>
+/// <b>§9 block F: archive no longer discharges anything of its own.</b> An earlier version of this
+/// suite proved the opposite — that every open obligation in the directory was silently discharged
+/// on the way to the move. process-enforcement's "Archive settles orphaned obligations" requirement
+/// replaced that behaviour with a refusal, because discharge asserts the work was <em>met</em>, and
+/// a gate whose only exit manufactures that assertion is worse than no gate. The tests below now
+/// prove the three-way split this method actually makes: an obligation owed by a section still open
+/// carries into the archive untouched (not orphaned — 9.4 already guards that section's own close);
+/// an obligation owed by a closed section, or by no section card at all, refuses the whole archive
+/// as <see cref="ChangeArchiveOutcome.OrphanedObligations"/>; and an obligation already discharged,
+/// promoted or declined before archive time is not "open" and so is never examined at all.
+/// </para>
 /// </summary>
 public sealed class CardChangeArchiveTests : IDisposable
 {
@@ -51,35 +64,85 @@ public sealed class CardChangeArchiveTests : IDisposable
     }
 
     [Fact]
-    public void ArchiveChange_SettlesEveryOpenObligation_AndLeavesOtherChangeScopedCardsUntouched()
+    public void ArchiveChange_ObligationOwedByAStillOpenSection_CarriesIntoTheArchiveUntouched_AndLeavesOtherChangeScopedCardsUntouched()
     {
-        var obligationPath = WriteObligation("o-0001", "O-0001", RegisterLifecycleState.Open);
+        WriteSectionCard("s-0001", "S-0001", closed: false);
+        var obligationPath = WriteObligation("o-0001", "O-0001", RegisterLifecycleState.Open, owedBy: "S-0001");
+        var obligationBytesBefore = File.ReadAllBytes(obligationPath);
         var blockPath = WriteBlockCard("b-0001", "B-0001");
         var blockBytesBefore = File.ReadAllBytes(blockPath);
 
         var outcome = CardStore.ArchiveChange(_root, ChangeName, CardOwner.Architect, ArchivedAt, TimeSpan.FromSeconds(5));
 
         var archived = AssertArchived(outcome);
-        Assert.Equal("O-0001", Assert.Single(archived.SettledObligationIds));
         Assert.False(Directory.Exists(_changeDirectory));
         Assert.True(Directory.Exists(archived.ArchivedDirectory));
 
+        // Not orphaned (its section is still open) — moved exactly as written, same bytes, never
+        // discharged: this is the "no carry-forward step" scenario register gives an open question,
+        // applied here to an obligation instead.
         var archivedObligationPath = Path.Combine(archived.ArchivedDirectory, Path.GetFileName(obligationPath));
+        Assert.Equal(obligationBytesBefore, File.ReadAllBytes(archivedObligationPath));
         var obligationCard = AssertParseSuccess(CardStore.ReadCard(archivedObligationPath));
-        Assert.Equal("discharged", obligationCard.Frontmatter.Status);
-        Assert.Equal(CardOwner.Architect, obligationCard.RegisterFields.DischargedBy);
-        Assert.Equal(ArchivedAt, obligationCard.RegisterFields.DischargedAt);
+        Assert.Equal(RegisterLifecycleState.Open.ToWireString(), obligationCard.Frontmatter.Status);
+        Assert.Null(obligationCard.RegisterFields.DischargedBy);
+        Assert.Null(obligationCard.RegisterFields.DischargedAt);
 
         // The block card moved (it is inside the archived change directory now) but was never
-        // rewritten: same bytes, unlike the obligation this call deliberately settled.
+        // rewritten: same bytes.
         var archivedBlockPath = Path.Combine(archived.ArchivedDirectory, Path.GetFileName(blockPath));
         Assert.Equal(blockBytesBefore, File.ReadAllBytes(archivedBlockPath));
     }
 
     [Fact]
+    public void ArchiveChange_OpenObligationOwedByAClosedSection_RefusesAsOrphaned_AndNamesTheThreeDispositions()
+    {
+        WriteSectionCard("s-0002", "S-0002", closed: true);
+        WriteObligation("o-0005", "O-0005", RegisterLifecycleState.Open, owedBy: "S-0002");
+
+        var outcome = CardStore.ArchiveChange(_root, ChangeName, CardOwner.Architect, ArchivedAt, TimeSpan.FromSeconds(5));
+
+        var orphaned = AssertOrphanedObligations(outcome);
+        Assert.Equal(ChangeName, orphaned.ChangeName);
+        var obligation = Assert.Single(orphaned.Obligations);
+        Assert.Equal("O-0005", obligation.Id);
+        Assert.Contains("discharge", orphaned.Remedy, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("promote", orphaned.Remedy, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("decline", orphaned.Remedy, StringComparison.OrdinalIgnoreCase);
+        Assert.True(Directory.Exists(_changeDirectory), "a refused archive must not have moved anything.");
+    }
+
+    [Fact]
+    public void ArchiveChange_OpenObligationOwedByNoSectionCardAtAll_RefusesAsOrphaned()
+    {
+        // No section card of id "S-9999" exists anywhere in the directory — "owed by no remaining
+        // section" reads the same whether the section closed or never existed here at all.
+        WriteObligation("o-0006", "O-0006", RegisterLifecycleState.Open, owedBy: "S-9999");
+
+        var outcome = CardStore.ArchiveChange(_root, ChangeName, CardOwner.Architect, ArchivedAt, TimeSpan.FromSeconds(5));
+
+        var orphaned = AssertOrphanedObligations(outcome);
+        Assert.Equal("O-0006", Assert.Single(orphaned.Obligations).Id);
+    }
+
+    [Fact]
+    public void ArchiveChange_DischargedObligationOwedByAClosedSection_DoesNotBlockArchive()
+    {
+        // Only *open* obligations are ever examined — a discharged one owed by a closed section is
+        // exactly the register's own "settled" case, not this gate's concern.
+        WriteSectionCard("s-0003", "S-0003", closed: true);
+        WriteObligation("o-0007", "O-0007", RegisterLifecycleState.Discharged, owedBy: "S-0003");
+
+        var outcome = CardStore.ArchiveChange(_root, ChangeName, CardOwner.Architect, ArchivedAt, TimeSpan.FromSeconds(5));
+
+        AssertArchived(outcome);
+    }
+
+    [Fact]
     public void ArchiveChange_RepositoryScopedRule_NeverOpened_ProvenOnTheBytesAndTheModificationTime()
     {
-        WriteObligation("o-0002", "O-0002", RegisterLifecycleState.Open);
+        WriteSectionCard("s-0004", "S-0004", closed: false);
+        WriteObligation("o-0002", "O-0002", RegisterLifecycleState.Open, owedBy: "S-0004");
         var rulePath = WriteRegisterCard("r-0001", "R-0001", CardKind.Rule);
         var bytesBefore = File.ReadAllBytes(rulePath);
         var writeTimeBefore = File.GetLastWriteTimeUtc(rulePath);
@@ -209,13 +272,14 @@ public sealed class CardChangeArchiveTests : IDisposable
         Assert.True(Directory.Exists(_changeDirectory), "an unreadable card must refuse before the directory move, not after.");
     }
 
-    // Atomicity: phase one (settling obligations) stops the instant one settle fails, and the
-    // directory is never moved — a lock held by another caller on the one open obligation must
-    // leave the change fully live, not half-settled-half-moved.
+    // §9 block F: ArchiveChange no longer writes to any obligation, so a lock held elsewhere on one
+    // no longer blocks the archive at all — this is the direct behavioural consequence of removing
+    // the old settle-then-move two-phase write, pinned as its own test rather than left implicit.
     [Fact]
-    public void ArchiveChange_LockTimeoutSettlingAnObligation_LeavesTheChangeFullyLive_NotHalfMoved()
+    public void ArchiveChange_LockHeldOnAnOpenObligation_DoesNotBlockArchive_BecauseNothingIsWrittenToIt()
     {
-        var obligationPath = WriteObligation("o-0003", "O-0003", RegisterLifecycleState.Open);
+        WriteSectionCard("s-0005", "S-0005", closed: false);
+        var obligationPath = WriteObligation("o-0003", "O-0003", RegisterLifecycleState.Open, owedBy: "S-0005");
         WriteBlockCard("b-0005", "B-0005");
         var holder = AssertAcquired(CardLock.Acquire(obligationPath, TimeSpan.FromSeconds(5)));
 
@@ -223,11 +287,9 @@ public sealed class CardChangeArchiveTests : IDisposable
         {
             var outcome = CardStore.ArchiveChange(_root, ChangeName, CardOwner.Architect, ArchivedAt, TimeSpan.FromMilliseconds(200));
 
-            Assert.IsType<ChangeArchiveOutcome.ToolFailure>(outcome);
-            Assert.True(Directory.Exists(_changeDirectory), "the live directory must still exist — nothing moved.");
-            Assert.False(Directory.Exists(Path.Combine(_root, CardLayout.ArchiveDirectory.Replace('/', Path.DirectorySeparatorChar), ChangeName)));
-
-            var stillOpen = AssertParseSuccess(CardStore.ReadCard(obligationPath));
+            var archived = AssertArchived(outcome);
+            var archivedObligationPath = Path.Combine(archived.ArchivedDirectory, Path.GetFileName(obligationPath));
+            var stillOpen = AssertParseSuccess(CardStore.ReadCard(archivedObligationPath));
             Assert.Equal(RegisterLifecycleState.Open.ToWireString(), stillOpen.Frontmatter.Status);
         }
         finally
@@ -236,19 +298,18 @@ public sealed class CardChangeArchiveTests : IDisposable
         }
     }
 
-    // Reviewer's own reproduction (block D nit): phase two's Directory.Move can fail even
-    // though the pre-check found nothing at the destination — a non-directory entry placed at the
-    // exact target path passes Directory.Exists (false, since it's a file, not a directory) and
-    // then makes Directory.Move itself throw. Settle-then-move means phase one has already run by
-    // the time this happens: the obligation this test settles is discharged, not left open, which
-    // is the real documented contract — not the idealised "nothing happened" shape the lock-timeout
-    // test (phase one failing) proves instead.
+    // Atomicity: the directory move either lands whole or throws having moved nothing — a
+    // non-directory entry sabotaging the destination must leave the live directory exactly as it
+    // was, with nothing rewritten (§9 block F: there is no longer a settled-then-move split to
+    // discriminate against, since this method makes no write of its own before the move).
     [Fact]
-    public void ArchiveChange_PhaseTwoMoveFails_LeavesTheChangeLive_WithPhaseOnesSettlementAlreadyDurable()
+    public void ArchiveChange_DirectoryMoveFails_LeavesTheChangeLive_WithNothingWritten()
     {
-        var obligationPath = WriteObligation("o-0004", "O-0004", RegisterLifecycleState.Open);
+        WriteSectionCard("s-0006", "S-0006", closed: false);
+        var obligationPath = WriteObligation("o-0004", "O-0004", RegisterLifecycleState.Open, owedBy: "S-0006");
         var blockPath = WriteBlockCard("b-0006", "B-0006");
         var blockBytesBefore = File.ReadAllBytes(blockPath);
+        var obligationBytesBefore = File.ReadAllBytes(obligationPath);
 
         var archiveContainer = Path.Combine(_root, CardLayout.ArchiveDirectory.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(archiveContainer);
@@ -259,25 +320,15 @@ public sealed class CardChangeArchiveTests : IDisposable
 
         Assert.IsType<ChangeArchiveOutcome.ToolFailure>(outcome);
 
-        // The guarantee that matters: the record is not half-moved. The change directory is
-        // exactly where it was, both its cards are still found there (not vanished, not
-        // duplicated into a partially-created archive directory), and the sabotage file is
-        // undisturbed — proving Directory.Move never got far enough to touch it.
+        // The guarantee that matters: the record is not half-moved, and nothing was written —
+        // both cards are exactly as they were.
         Assert.True(Directory.Exists(_changeDirectory), "the live directory must still exist — the move never completed.");
         Assert.True(File.Exists(obligationPath));
         Assert.True(File.Exists(blockPath));
         Assert.Equal(blockBytesBefore, File.ReadAllBytes(blockPath));
+        Assert.Equal(obligationBytesBefore, File.ReadAllBytes(obligationPath));
         Assert.False(Directory.Exists(sabotagePath), "the sabotage path must still be the plain file it was — Directory.Move must not have replaced or entered it.");
         Assert.Equal("not a directory — sabotages Directory.Move's destination.", File.ReadAllText(sabotagePath));
-
-        // Settle-then-move's real contract, pinned exactly: phase one already ran and is durable
-        // even though phase two failed. An idealised "nothing happened at all" assertion here
-        // (status still "open") would be wrong and would mask a regression that skipped the move
-        // guard entirely.
-        var settled = AssertParseSuccess(CardStore.ReadCard(obligationPath));
-        Assert.Equal("discharged", settled.Frontmatter.Status);
-        Assert.Equal(CardOwner.Architect, settled.RegisterFields.DischargedBy);
-        Assert.Equal(ArchivedAt, settled.RegisterFields.DischargedAt);
 
         // Discriminates against a regression that moved the directory anyway despite the throw
         // (e.g. a caught-and-swallowed exception after a partial native move): the id must still
@@ -286,13 +337,29 @@ public sealed class CardChangeArchiveTests : IDisposable
         Assert.Equal(blockPath, found);
     }
 
-    private string WriteObligation(string fileStem, string id, RegisterLifecycleState state)
+    private string WriteObligation(string fileStem, string id, RegisterLifecycleState state, string owedBy = "S-0001")
     {
         var path = Path.Combine(_changeDirectory, fileStem + ".md");
         var frontmatter = new CardFrontmatter(
             id, CardKind.Obligation, "Settle the migration", state.ToWireString(), CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
-        var fields = new RegisterCardFields(null, null, null, null, OwedBy: "S-0001");
+        var fields = new RegisterCardFields(null, null, null, null, OwedBy: owedBy);
         var card = new CardFile(frontmatter, "Body.", [], [], RegisterFields: fields);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    private string WriteSectionCard(string fileStem, string id, bool closed)
+    {
+        var path = Path.Combine(_changeDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Section, "Title", "open", CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
+        var sectionFields = new SectionCardFields(
+            Base: null,
+            ClosedBy: closed ? CardOwner.Architect : null,
+            ClosedAt: closed ? Created : null,
+            Verdicts: [],
+            Authorisations: []);
+        var card = new CardFile(frontmatter, "Body.", [], [], SectionFields: sectionFields);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
     }
@@ -337,7 +404,18 @@ public sealed class CardChangeArchiveTests : IDisposable
             onAlreadyArchived: static already => throw new Xunit.Sdk.XunitException($"expected Archived, got AlreadyArchived: '{already.ChangeName}'"),
             onInvalidChangeName: static invalid => throw new Xunit.Sdk.XunitException($"expected Archived, got InvalidChangeName: {invalid.Reason}"),
             onCardsUnreadable: static unreadable => throw new Xunit.Sdk.XunitException($"expected Archived, got CardsUnreadable: {string.Join(", ", unreadable.FilePaths)}"),
+            onOrphanedObligations: static orphaned => throw new Xunit.Sdk.XunitException($"expected Archived, got OrphanedObligations: {orphaned.Remedy}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Archived, got ToolFailure: {toolFailure.Reason}"));
+
+    private static ChangeArchiveOutcome.OrphanedObligations AssertOrphanedObligations(ChangeArchiveOutcome outcome) =>
+        outcome.Match(
+            onArchived: static archived => throw new Xunit.Sdk.XunitException($"expected OrphanedObligations, got Archived: '{archived.ArchivedDirectory}'"),
+            onChangeNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected OrphanedObligations, got ChangeNotFound: '{notFound.ChangeName}'"),
+            onAlreadyArchived: static already => throw new Xunit.Sdk.XunitException($"expected OrphanedObligations, got AlreadyArchived: '{already.ChangeName}'"),
+            onInvalidChangeName: static invalid => throw new Xunit.Sdk.XunitException($"expected OrphanedObligations, got InvalidChangeName: {invalid.Reason}"),
+            onCardsUnreadable: static unreadable => throw new Xunit.Sdk.XunitException($"expected OrphanedObligations, got CardsUnreadable: {string.Join(", ", unreadable.FilePaths)}"),
+            onOrphanedObligations: static orphaned => orphaned,
+            onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected OrphanedObligations, got ToolFailure: {toolFailure.Reason}"));
 
     private static string AssertFound(CardIdentityResolution resolution) =>
         resolution.Match(

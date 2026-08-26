@@ -34,6 +34,7 @@ namespace Callboard.Cli;
 [JsonSerializable(typeof(DecisionSupersedeResult))]
 [JsonSerializable(typeof(ChangeArchiveResult))]
 [JsonSerializable(typeof(RulePromoteResult))]
+[JsonSerializable(typeof(ObligationDeclineResult))]
 [JsonSerializable(typeof(RuleAuthorResult))]
 [JsonSerializable(typeof(RuleCompactResult))]
 [JsonSerializable(typeof(RuleProposeCompactResult))]

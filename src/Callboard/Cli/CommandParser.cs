@@ -1957,18 +1957,133 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'obligation' requires a subcommand. Known subcommands: create, discharge."));
+                    "'obligation' requires a subcommand. Known subcommands: create, discharge, promote, decline."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseObligationCreate(context);
             case "discharge":
                 context.Arguments.TryTake();
                 return ParseRegisterDischarge(context, CardKind.Obligation, "'obligation discharge'");
+            case "promote":
+                context.Arguments.TryTake();
+                return ParseObligationPromote(context);
+            case "decline":
+                context.Arguments.TryTake();
+                return ParseObligationDecline(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'obligation' subcommand: '{subcommand}'. Known subcommands: create, discharge."));
+                    $"no such 'obligation' subcommand: '{subcommand}'. Known subcommands: create, discharge, promote, decline."));
         }
+    }
+
+    /// <summary>
+    /// Builds <c>obligation promote</c>'s <see cref="CommandDispatcher.ParsedCommand.
+    /// ObligationPromote"/> (§9 block F). Exact mirror of <see cref="ParseRulePromote"/> — <c>--id</c>
+    /// is a card id resolved at execute time, <c>--change</c> required unconditionally for the same
+    /// reason block A2's remediation made it required there (see <see cref="CommandDispatcher.
+    /// ParsedCommand.ObligationPromote"/>'s own doc comment).
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseObligationPromote(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? roleText = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => id = value,
+            ["--role"] = value => roleText = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation promote' requires '--id <card-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation promote' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (changeName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation promote' requires '--change <name>'."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.ObligationPromote(
+            id, role, changeName, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>obligation decline</c>'s <see cref="CommandDispatcher.ParsedCommand.
+    /// ObligationDecline"/> (§9 block F, register: "Scenario: Declining requires a reason").
+    /// <c>--reason</c> is required at this door, unconditionally — the same "required at the door a
+    /// real caller uses" lesson block A2's remediation drew for <c>rule promote</c>'s <c>--change</c>
+    /// (see <see cref="CommandDispatcher.ParsedCommand.ObligationDecline"/>'s own doc comment).
+    /// <c>--change</c> stays optional, same as <c>obligation discharge</c>'s own
+    /// <see cref="ParseRegisterDischarge"/> shape — a decline against a since-promoted
+    /// (repository-scoped) obligation has no change to name.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseObligationDecline(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? roleText = null;
+        string? reason = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => id = value,
+            ["--role"] = value => roleText = value,
+            ["--reason"] = value => reason = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation decline' requires '--id <card-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation decline' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'obligation decline' requires a non-empty '--reason <text>'."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.ObligationDecline(
+            id, role, reason, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

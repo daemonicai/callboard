@@ -962,6 +962,7 @@ internal static class CardFileParser
         var owedBy = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.OwedBy);
         var supersedes = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.Supersedes);
         var supersededBy = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.SupersededBy);
+        var declinedReason = ParseOptionalFrontmatterValue(fields, RegisterCardFieldKeys.DeclinedReason);
 
         var earnedFrom = fields.TryGetValue(RegisterCardFieldKeys.EarnedFrom, out var earnedFromText)
             ? CardFileFormat.SplitFrontmatterList(earnedFromText)
@@ -1001,7 +1002,7 @@ internal static class CardFileParser
             dischargedAt = parsedDischargedAt;
         }
 
-        return (new RegisterCardFields(condition, cadence, dischargedBy, dischargedAt, owedBy, supersedes, supersededBy, earnedFrom, absorbs), null);
+        return (new RegisterCardFields(condition, cadence, dischargedBy, dischargedAt, owedBy, supersedes, supersededBy, earnedFrom, absorbs, declinedReason), null);
     }
 
     private static (FindingExtent? Extent, string? Failure) ParseExtent(IReadOnlyDictionary<string, string> fields)

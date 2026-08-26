@@ -323,6 +323,11 @@ internal static class CardFileWriter
             {
                 builder.Append(RegisterCardFieldKeys.Absorbs).Append(": ").Append(CardFileFormat.JoinFrontmatterList(registerFields.Absorbs)).Append('\n');
             }
+
+            if (registerFields.DeclinedReason is { } declinedReason)
+            {
+                builder.Append(RegisterCardFieldKeys.DeclinedReason).Append(": ").Append(CardFileFormat.EscapeFrontmatterValue(declinedReason)).Append('\n');
+            }
         }
 
         // Unknown fields (a §5/§6 field this build does not model, or a hand-added line) are

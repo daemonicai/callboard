@@ -25877,6 +25877,281 @@ from D's ruling, the four standing instructions from A3, ADR-0001, ADR-0003, Nat
 **Done-gates:** `make build`/`test`/`format`/`validate`, exit lines verbatim. Do not commit, do not
 tick, do not touch the Makefile or `CLAUDE.md`.
 
+**[worker]** Block F built per the re-scoped brief.
+
+**Modelling for declined-vs-discharged (posted here before building, per the brief).** A discharged
+card, not a third `RegisterLifecycleState` — register's own "Register kinds have a two-state
+lifecycle" requirement was not amended and still binds, so a `declined` status value would directly
+contradict it. What distinguishes decline from an ordinary discharge is a new `RegisterCardFields.
+DeclinedReason` (wire key `declined_reason`), obligation-only, set only by `DeclineObligation`
+alongside the same `DischargedBy`/`DischargedAt` any discharge writes. `status` stays `open`/
+`discharged` throughout; a reader asking "was this actually met?" now has to check `DeclinedReason`,
+not the status string. Added to `RegisterCardFieldKeys.All` (so the writer/parser guard test catches
+any future drift) and to the round-trip fixture.
+
+1. **`obligation promote`/`obligation decline` built.** `CardStore.PromoteObligation` is
+   `PromoteRule`'s move-then-rewrite mechanics generalised to `obligation` (own outcome union,
+   `CardObligationPromoteOutcome`, same case shapes: `AlreadyRepositoryScoped`, `NotChangeScoped`,
+   `InvalidStatus`, `NotAnObligationCard`, `TargetAlreadyExists`, `CardNotFound`, `LayoutMismatch`,
+   `CardCorrupt`, `ToolFailure`). `CardStore.DeclineObligation` mirrors `DischargeRegisterCard`'s
+   lifecycle transition plus one more refusal, `ReasonRequired` (`CardObligationDeclineOutcome`).
+   `--change` is required unconditionally on `obligation promote` (A2's lesson: required at the door
+   a real caller uses); `--reason` is required unconditionally on `obligation decline` for the same
+   reason, and `CardStore.DeclineObligationUnderExistingLock` defends it a second time on its own
+   terms. `obligation`'s subcommands are now `create, discharge, promote, decline`.
+2. **9.9's refusal built as `ChangeArchiveOutcome.OrphanedObligations`** — refuses while any open
+   change-scoped obligation is owed by a section that has already closed (`SectionCardFields.
+   ClosedBy`/`ClosedAt` both set) or names no section card present in the directory at all ("owed by
+   no remaining section," process-enforcement's own wording). An obligation owed by a section that
+   is still open is excluded deliberately, per the scoping finding: 9.4 already guards that section's
+   own close, and it carries into the archive untouched, the same "no carry-forward step" treatment
+   register already gives an open question. **Not an `ICardRefusalReason`** — unlike most refusal
+   cases in this codebase, archive is a directory-wide scan with no single card to record against
+   (every other `ChangeArchiveOutcome` refusal, `CardsUnreadable` included, is the same), so it is
+   not in the coverage registry; its `RefusingRule`/`Remedy` are plain properties the CLI maps
+   directly, naming all three now-real dispositions by verb.
+3. **Archive's silent discharge is gone.** `ArchiveChange` now scans, refuses on any orphaned
+   obligation, and otherwise moves the directory — no write of its own, no phase-one/phase-two split
+   to fail partway through. `ChangeArchiveOutcome.Archived` no longer carries `SettledObligationIds`
+   (there is nothing left to settle); `ChangeArchiveResult`'s `settledObligationIds` field is gone
+   from the wire response to match. §7's `CardChangeArchiveTests` is rewritten, not just patched: the
+   old "every open obligation is silently discharged" test is replaced by one proving an obligation
+   owed by a still-open section survives the move untouched, plus new tests for both orphaned
+   branches (closed section; no section card at all) and one proving only *open* obligations are ever
+   examined. The old lock-timeout and phase-two-move-failure tests, which existed to pin the removed
+   settle-then-move split, are rewritten to prove the behaviour that replaced it: a lock held on an
+   obligation no longer blocks archive at all (nothing is written to it), and a failed directory move
+   leaves both cards byte-for-byte untouched rather than "settled but unmoved."
+4. **9.4's refusal text fixed** to name `obligation discharge`/`obligation promote`/`obligation
+   decline` as commands, now that all three exist — it had been naming two verbs that did not exist
+   since block E landed.
+5. **`section` added to `question create`'s response** — `CardCreateResult` (shared by all five §7
+   block A creation verbs) gains a `section` field alongside `owedBy`, populated from `Frontmatter.
+   Section`; empty when no `--section` was given, the same gap block D closed for `owedBy`.
+
+**Coverage gate**: 9 new `ICardRefusalReason` cases registered (5 for `CardObligationPromoteOutcome`,
+4 for `CardObligationDeclineOutcome`), each with its own `CardObligationPromoteTests`/
+`CardObligationDeclineTests` proof. Three pre-existing structural tests updated for the new field/
+method-surface changes: `RegisterCardFieldsRoundTripTests` (its fully-populated fixture now sets
+`DeclinedReason` too), and `CardCommentImmutabilityTests`' hand-maintained `CardStore` static-method
+inventory (`DeclineObligation(UnderExistingLock)`, `PromoteObligation(UnderExistingLock)` added;
+`DescribeUnexpectedDischargeOutcome` removed — it was `ArchiveChange`'s own helper for the discharge
+loop that no longer exists).
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`. Suite at 873. → @reviewer
+
+**[reviewer]** Block F (9.9 + `obligation promote`/`obligation decline`) — **Request changes.**
+
+Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (873/873), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**3. The declined-vs-discharged modelling does not satisfy the amended spec, and I think this is the
+real finding, not a close call.** Traced `DeclineObligationUnderExistingLock`'s actual write
+(`CardStore.cs:3352-3356`): `Frontmatter.Status = RegisterLifecycleState.Discharged.ToWireString()` —
+the card's own `status` field is set to the literal string `"discharged"`, identical to an ordinary
+discharge, with `DischargedBy`/`DischargedAt` also both set exactly as a real discharge sets them. The
+only difference is the presence of `RegisterFields.DeclinedReason`, a side field a reader has to
+already know to check.
+
+The amended requirement's own words: *"it stops being open, the reason is part of the record, and
+**it is not represented as discharged**."* The card's single most legible, canonical field — the one
+every other scan in this codebase checks first (`RegisterLifecycleStateWireFormat.TryParse(...Status,
+...)`, used identically inside this very method three lines above the write in question) — reads
+"discharged." A human or a future tool reading the raw file (ADR-0003: the record stays readable
+without this tool) sees exactly the representation the requirement says must not be produced, unless
+it already knows the `declined_reason` convention exists to look for. The requirement's own rationale
+is direct about this: *"'we decided not to' is the outcome most worth finding later, and it is the one
+a discharge would hide."* Here, the discharge-shaped `status` field is exactly what's shown; the
+distinguishing fact is a footnote. I don't think this satisfies "is not represented as discharged" —
+I think it fails it in the plain sense, not merely a stricter one. It also reintroduces, at the single
+card's level, the same failure mode the Product Owner ruling rejected at archive's level for
+discharge-only: a route past the gate that manufactures the very assertion ("this was met") the
+requirement exists to keep honest.
+
+I'm not proposing the fix — the worker's own reasoning for rejecting a third `RegisterLifecycleState`
+(§7's still-binding two-state lifecycle requirement) is sound and not mine to override — but I don't
+think a discharged card carrying a decline reason is the modelling that satisfies what you wrote. This
+needs your ruling, and I'd flag it as the one to resolve before this lands, not after.
+
+**1. `OrphanedObligations` not implementing `ICardRefusalReason` — workable to close, not free.**
+Agree the "no single card" reasoning as currently stated doesn't follow to "record against none" —
+it only rules out one arbitrary card, not each of the N obligations named. Recording against each is
+mechanically possible: this codebase already has N-card-write precedent (`CompactRules`,
+`SupersedeDecision`), both under per-card locks acquired in canonical order with rollback on partial
+failure. But it is a real addition, not a small one — the current scan reads obligations unlocked
+(`ReadAllCards` with no lock acquisition anywhere in the 9.4/9.9 region), so recording against each
+would mean: acquiring N locks in a deadlock-safe order, a fresh re-read under lock to confirm each is
+still open (the unlocked scan is a TOCTOU snapshot), N `AtomicWrite`s, and a rollback story if any of
+them fails partway — the same shape `CompactRules`' own doc comment reasons through at length. That's
+new machinery this block wasn't briefed to build, not a one-line fix. If you want it built, I'd treat
+it as its own scoped piece of work rather than a note appended here — but the current doc comment's
+"no single card" framing undersells the actual reason (it's "not without new N-card machinery," not
+"not possible"), and I'd ask for that to be corrected even if the disposition itself stands.
+
+**2. `CardChangeArchiveTests.cs`'s rewrite verified complete — nothing lost.** Diffed the old
+(`b9ba213`) and new `[Fact]` lists directly: 12 old real tests → 15 new. `ArchiveChange_
+SettlesEveryOpenObligation_...` (asserted the removed silent-discharge behaviour) is replaced by four
+tests covering exactly its ground plus the new buckets (still-open-section carries through untouched;
+closed-section refuses; no-section-card refuses; a *discharged* obligation never blocks). The two
+lock/failure-mode tests (`LockTimeoutSettlingAnObligation`, `PhaseTwoMoveFails`) are replaced 1:1 by
+tests proving the new single-phase behaviour (a lock on an obligation no longer blocks archive at
+all; a failed move leaves nothing written). Every other old test (rule/hazard/question/identity/index
+rebuild/not-found/already-archived/reserved-name/unreadable — nine of them) carried over unchanged.
+Same check on `CommandDispatcherChangeArchiveTests.cs`: one old test split cleanly into two new ones
+reflecting the two buckets, everything else untouched. No coverage gap found.
+
+**4. `SettledObligationIds` removal confirmed clean.** Grepped the whole tree — no remaining
+reference outside doc comments, and a positive test (`Assert.False(result.TryGetProperty
+("settledObligationIds", out _))`) proves the field's absence from the wire response rather than
+merely relying on the compiler to catch it. Right call: nothing is settled at archive any more, so
+the field would always be empty.
+
+**Standard pass — one confirmed gap, everything else clean.** All nine new coverage-gate
+registrations are genuine (scripted the same all-`Assert.Empty` check I've run since block C; none
+suspicious). `ChangeArchiveOutcome` is on the format entire, with `OrphanedObligations`/
+`CardsUnreadable` correctly excluded as the union's own two directory-scan cases (see item 1). `--change`
+is required unconditionally on `obligation promote` and `--reason` unconditionally on `obligation
+decline` — both checked directly in `CommandParser.cs`, matching A2's lesson exactly, with `--reason`
+defended a second time inside `CardStore` itself. 9.4's and 9.9's refusal text both now name
+`'obligation discharge'`/`'obligation promote'`/`'obligation decline'` as literal commands. ADR-0001/
+ADR-0003/NativeAOT: no reflection, `AtomicWrite`/`RefuseAndRecord` used identically to every other
+verb in this codebase.
+
+**The one gap**: `question create`'s carried-item response field (`CardCreateResult.Section`) has no
+test proving it reaches the JSON envelope. Checked the sibling carried item from block D
+(`QuestionCreate_Succeeds_RepositoryScoped_OwnedByTheOwedByRole_NotTheActingRole` explicitly asserts
+`result.GetProperty("owedBy")`) — the equivalent assertion for `section` doesn't exist anywhere; the
+three `--section`-related tests all check the re-read card's `Frontmatter.Section` only, never the
+response. The wiring itself is correct (`MapCardCreateOutcome`'s `Section = created.Card.Frontmatter.
+Section`, checked directly), so this is unproven, not broken — but it's the same "claim vs. proof" gap
+this section has spent seven blocks closing everywhere else. Ask for one assertion on
+`result.GetProperty("section")` in the existing `QuestionCreate_WithSection_...` test.
+
+**Ask:** a ruling on item 3 (I don't think the current modelling meets the spec as written), the
+`section`-in-response test, and a corrected (not necessarily different) disposition note on item 1.
+Everything else is clean and does not need to change.
+
+→ @architect
+
+**[architect]** Ruling on block F's review. Three items. The first is a correction to my own spec
+text, not to the worker's code. → @worker
+
+**1. The declined-vs-discharged modelling stands. My amendment's wording was wrong, and I have fixed
+it** (`VALIDATE_EXIT:0`).
+
+The reviewer is right that `DeclineObligationUnderExistingLock` writes `status: discharged` and that
+this collides with the words I wrote — *"it is not represented as discharged"*. What I missed when
+writing them is the requirement sitting four paragraphs above, which this change already landed:
+
+> `rule`, `hazard`, `obligation` and `decision` cards SHALL be `open` or `discharged` and SHALL NOT
+> occupy flow states. **For `rule` and `decision`, `discharged` SHALL mean superseded rather than
+> completed.**
+
+`discharged` in this capability has never meant "completed". It means **no longer live**, and the
+manner of closure is already a separate fact carried alongside — a superseded rule is `discharged` and
+you learn *why* from its supersession link, not from its status. A declined obligation carrying
+`declined_reason` is the same shape, and the worker's modelling is consistent with the capability it
+sits in rather than at odds with it.
+
+Forcing a third state to satisfy my sentence would have broken a landed requirement across four card
+kinds to fix a phrase I wrote yesterday. **The requirement now says what I meant**: declining does not
+introduce a third lifecycle state, and what the record owes its reader is *why* the card closed, not
+which status word it carries. The worker chose correctly and cited the right reason.
+
+**2. `OrphanedObligations` stays unrecorded — deliberately, and I am flagging it to the supervisor
+rather than burying it.** The reviewer is right that "no single card" does not justify "record against
+none", and right that recording against each is mechanically workable. But block A's contract is that a
+refusal is not reported until its line is durable, which over N cards means *all* N durable or the
+whole thing becomes a tool-failure — real all-or-nothing multi-card write machinery, on a failure path,
+in the last block of the section.
+
+I am not building that here, and the reason is proportion rather than principle: archive is a
+once-per-change act performed by the Architect, not a card an agent under deadline pokes at repeatedly,
+so the pattern-visibility argument that carried `RoleNotPermitted` is at its weakest. **Document the
+carve-out in the type**, in those terms — this is the one place §9 knowingly does not apply its own
+recording rule, and it should read as a decision rather than an oversight. **I will put it to the
+supervisor explicitly**; if the section's recording story does not hold together as a set, that is the
+lens that should catch it, not mine.
+
+**3. One blocker to fix: `question create`'s new `section` response field has no test proving it
+reaches the JSON envelope.** Its sibling carried item, `owedBy`, has exactly that assertion. Wiring
+that is correct but unproven is how the whole `--section` gap arrived in the first place. Add it.
+
+Everything else is confirmed clean and needs no rework: the `CardChangeArchiveTests.cs` rewrite loses
+no coverage (12→15, every scenario unchanged or replaced with a behaviour-accurate equivalent),
+`SettledObligationIds`'s removal is complete, the nine coverage-gate registrations are genuine, the new
+verbs apply A2's required-flag lesson at the CLI door, and both 9.4's and 9.9's refusal texts now name
+real commands.
+
+**[worker]** Addressed the ruling's one blocker, plus the documentation fix on item 2.
+
+1. **`question create`'s `section` response field now has a test proving it reaches the JSON
+   envelope**, mirroring `owedBy`'s own assertion — added to both
+   `QuestionCreate_WithSection_Succeeds_AndRecordsTheSectionOnTheCard` (asserts `result.section`
+   equals the resolved section id) and `QuestionCreate_WithoutSection_Succeeds_WithAnEmptySection`
+   (asserts it's the empty string when `--section` was omitted). Both assert the envelope, not just
+   the on-disk card, closing the exact gap named.
+2. **`ChangeArchiveOutcome.OrphanedObligations`'s doc comment rewritten** to the ruling's actual
+   reasoning: not "no single card to record against" (recording per-card is mechanically workable),
+   but proportion — Block A's contract demands all-or-nothing multi-card write machinery to report a
+   refusal as recorded across N obligations, and `change archive` is a once-per-change Architect act
+   rather than a card an agent hits repeatedly, so the pattern-visibility case that justifies
+   recording elsewhere in §9 (cited against `CardApprovalOutcome.RoleNotPermitted`) is at its weakest
+   here. States plainly this is a decision, not an oversight.
+3. **Item 1 (declined-vs-discharged) needed no code change** — the ruling confirmed the modelling as
+   built and corrected the spec text instead (`VALIDATE_EXIT:0` on the architect's side).
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`. Suite still at 873 (assertions added to
+existing tests, no new cases). → @reviewer
+
+**[reviewer]** Block F remediation — **Approve.**
+
+Re-ran every gate myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (873/873), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**Item 1 (declined-vs-discharged): the corrected spec text resolves my finding.** Read the amended
+`specs/register/spec.md` directly. The two-state-lifecycle requirement already says "For `rule` and
+`decision`, `discharged` SHALL mean superseded rather than completed" — my original objection was
+against the *old* decline wording ("is not represented as discharged"), which didn't square with that
+already-landed sentence. The new text — "Declining SHALL NOT introduce a third lifecycle state. A
+declined obligation is `discharged` in the two-state sense this capability already defines... and the
+manner of its closure is recorded alongside" plus the scenario's "the record distinguishes it from an
+obligation that was met" — is now internally consistent with the rest of the capability, and the code
+(`status: discharged` + `DeclinedReason`) genuinely satisfies it: the same "discharged means no longer
+live, not necessarily completed, with the reason carried alongside" shape a superseded rule or decision
+already uses. Confirmed `VALIDATE_EXIT:0` myself. No further code change needed, and none was made.
+
+**The `section` response test — resolved, and the count concern is explained, not evidence of
+anything missing.** Diffed `CommandDispatcherQuestionCreateTests.cs` against `b9ba213` directly: the
+entire change is eight added lines across the two existing tests
+(`QuestionCreate_WithSection_Succeeds_...`, `QuestionCreate_WithoutSection_Succeeds_...`) — four lines
+each, adding `using var doc = JsonDocument.Parse(...)` / `result.GetProperty("section")` assertions
+immediately after the existing exit-code check, before the pre-existing on-disk-card assertion. No
+`[Fact]` was added, none removed, nothing parameterised — the 873 count is unchanged because xUnit
+counts test methods, and no test method changed. Both assertions read the field off `doc.RootElement
+.GetProperty("result")`, the actual JSON envelope the CLI emits — not the result object in memory —
+which is exactly the gap named: `Assert.Equal(sectionId, result.GetProperty("section").GetString())`
+for the supplied case, `Assert.Equal(string.Empty, ...)` for the omitted case. Genuinely closed.
+
+**The rewritten `OrphanedObligations` doc comment reads as the decision it is, not a restatement.**
+It opens by naming and rejecting the old framing outright ("'No single card to record against' is not
+the reason: recording against every obligation named here is mechanically workable, one
+`RefuseAndRecord` call per card, the same as anywhere else in this codebase"), then states the actual
+reason in the terms you asked for: Block A's all-or-nothing contract means N obligations need real
+all-or-nothing multi-card write machinery on a failure path to report as recorded, weighed against
+`change archive` being a once-per-change Architect act rather than a card any agent hits repeatedly
+under deadline — the exact case the pattern-visibility argument (cited directly against
+`CardApprovalOutcome.RoleNotPermitted`) is weakest against. It closes by extending the same reasoning
+to `CardsUnreadable` and stating plainly that this is the one place §9 knowingly does not apply its
+own recording rule. Read cold, with no other context, it holds together as a decision a stranger could
+evaluate — which is the standard you set for it, and it meets it.
+
+**Nothing else disturbed.** `git status`/`tasks.md` confirm no `Makefile`/`CLAUDE.md` touch and `9.9`
+still unticked for you to flip; `OrphanedObligations` still correctly does not implement
+`ICardRefusalReason` — the fix was doc-comment-only, no behaviour change, matching the ruling exactly.
+
+Clean. Land it — `9.9` ticks, §9 is ten of ten.
+
+→ @architect
+
 ## NEXT
 
 **Carried to §10:** `CardStore.FindAgeingAddressedThreads` (§9 block E) computes exactly the
