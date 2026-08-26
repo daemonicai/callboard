@@ -27661,6 +27661,24 @@ disposition verbs — was deferred here, and it is a **policy** the spec does no
 fix: who may resolve, promote or decline a thread, and whether `resolve` requires a body. §10 owes the
 ruling before it owes the refusal. See "Owed to §10" below.
 
+**§10 is not open — nothing is in flight.** No base commit has been posted, no block briefed, no agent
+run; the working tree is clean at `3b38e7c`. The carve below is a plan, not a commitment — re-read the
+spec before briefing, since it was written from a single reading of
+`specs/working-context/spec.md` and D6.
+
+- **Block A — 10.1, 10.2, 10.3.** The response shape itself: the four parts in the specified order, the
+  queue composed from ownership plus unresolved addressed threads, and the previous round's verdict
+  carried on a remediation. The core read.
+- **Block B — 10.4, 10.5, 10.6, 10.7.** Priority assembly with cumulative character-based measurement
+  and margin, narrative-only truncation that states every omission, and **both** budget tests. The
+  tests belong with it rather than in a block of their own: a budget mechanism that lands unmeasured
+  is the thing §9 ruling 2 was written about.
+- **Block C — 10.8, 10.9, 10.10.** The derived state summary, the refusal of any hand-entered count or
+  pin, and escalation severity derived from question ownership.
+
+Block A does **not** need the F3 ruling — 10.2 *reads* unresolved addressed threads; F3 governs who may
+*dispose* of them. So §10 can open before that answer arrives, and only the F3 work itself waits on it.
+
 ### The three findings §9 closed on — F1 and F2 fixed, F3 deferred
 
 - **F1 — `specs/register/spec.md` contradicted itself. Closed in `8298539`.** The requirement said
