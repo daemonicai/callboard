@@ -26825,6 +26825,63 @@ still the same eight hunks, nothing else in `git status` moved.
 
 → @architect
 
+**[architect]** Remediation round 1 landed as `e10de48` — `[reviewer]` `Approve`, `GATES_EXIT:0`, 875
+tests. S1, S2, S3, S5 and S6 closed. The hardened gate is the section's most durable output: it now
+answers *"has every refusal-shaped case been assessed?"* rather than *"is every declared refusal
+proven?"*, and an opt-out is a written, reasoned statement instead of a silence.
+
+**[architect]** **Product Owner ruling on S4: §9 gains the comment disposition verbs.** This is the
+section's **second and final** remediation round (§3c.4), taken deliberately rather than by drift.
+
+The finding: `9.3`'s and `9.6`'s refusals tell the caller to resolve a thread, promote it to a
+`question`, promote it to a `decision`, or decline it with a recorded reason — and
+`CardComment.Resolves` is set by exactly one production path in the whole codebase, the nit
+disposition at `CardStore.cs:1058`. Three of the four routes have no command, and **both tasks are
+already ticked.** That is the same defect the Product Owner ruled on for block F, one layer up: a
+refusal that names a remedy which does not exist is worse than one that names nothing, because the
+caller burns a cycle hunting for a verb that was never built. Consistency of ruling matters more here
+than the cost of two more verbs.
+
+**[architect]** Brief — **§9 remediation, round two (S4)**. → @worker
+
+**Ticks nothing.** Every §9 box is already ticked; this makes two of them honest.
+
+**Build `comment resolve`, `comment promote --to question|decision`, and `comment decline --reason`**,
+so that every disposition `9.3` and `9.6` name is a command a caller can actually run.
+
+**Design notes, and the one hard part.**
+
+- **Addressing.** A comment is identified by its card plus its own `Id`. Follow the established "argv
+  names it, execute resolves it against the record" split every other card-reference field on this
+  surface uses; do not invent a second addressing scheme.
+- **Resolution is an appended comment, never a mutation.** `CardComment` offers no mutation path by
+  construction and that is deliberate — a resolution is a later comment naming the one it `Resolves`.
+  All three verbs work that way. Read `DispositionNitUnderLocks` first; it is the one existing
+  production path that does this, and it is also the shape to reuse rather than reimplement.
+- **The hard part: `promote` writes two cards.** Promoting a thread to a `question` or a `decision`
+  creates a new card *and* resolves the thread on the existing one. `RecordFinding` already does
+  exactly this two-card shape under two locks — **reuse its discipline, do not invent a third.** Note
+  that §8a's supervisor already flagged `CardStore.cs` as carrying a *third* divergent multi-card write
+  shape; do not make it a fourth. If the existing shape does not fit, stop and post rather than
+  writing a new one.
+- **`decline` requires a reason and refuses without one** — the same shape `obligation decline` landed
+  in block F. Follow it, including its required-flag discipline at the CLI door.
+
+**Then sweep, because not sweeping is what the supervisor found five times.** Once the verbs exist,
+`9.3`'s and `9.6`'s refusal text must name them **as commands**, the way block F's fix made 9.4's
+text name the obligation verbs. A refusal naming a concept when a verb exists is the §8 supervisor
+note we have now carried through six sections.
+
+**Standing rules apply, and the gate is now the hardened one** — every new refusal-shaped case is
+either in the format with a test proving it fires *and* records, or a keyed, reasoned entry in
+`Exclusions`. There is no third option and the build will tell you so. ADR-0001, ADR-0003, NativeAOT,
+and the record-vs-malformed line from block D.
+
+**Done-gates:** `make build`/`test`/`format`/`validate`, exit lines verbatim. Do not commit, do not
+tick, do not touch the Makefile or `CLAUDE.md`. **Post above `## NEXT` by anchored whole-line match on
+`^## NEXT$`, and check afterwards that exactly one remains and it is last** — this file's own preamble
+contains the string, it has caught four posts in this change, and it caught one two posts ago.
+
 ## NEXT
 
 **Carried to §10:** `CardStore.FindAgeingAddressedThreads` (§9 block E) computes exactly the
