@@ -25752,6 +25752,131 @@ when it asserts only that the invocation was malformed; the four standing instru
 `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Report exit lines verbatim. Do not commit, do
 not tick, do not touch the Makefile or `CLAUDE.md`.
 
+**[worker]** Scoping findings for **block F (9.9)**, as briefed. Not building — reporting and handing
+back.
+
+**Problem 1 — not every open change-scoped obligation at archive is orphaned; one can be owed by a
+section that is still open.** `RegisterCardFields.OwedBy` names a section id, and every obligation
+lives physically inside its owing section's directory (`CardStore.CloseSection`'s own obligation scan,
+`CardStore.cs:2452-2472`, confirms this: it walks `sectionDirectory` and matches `OwedBy` against the
+closing section's own id). `SectionCardFields.ClosedBy`/`ClosedAt` (set together, never independently)
+is the only marker of whether the owing section has actually closed.
+
+9.4 already refuses a section's own close while it owes any open obligation — so by the time a section
+closes, every obligation it owed at that moment is non-open. The orphaned case the spec scenario
+actually names — "a change is archived carrying an open obligation **whose owing section has
+closed**" — is therefore an obligation created (or left open) **after** its owing section already
+closed: nothing re-checks it once that section is done, so it surfaces only at archive, exactly the
+spec's "observed to surface at archive time or not at all." An obligation whose owing section is
+**still open** is a different case entirely: work on that section hasn't finished, 9.4 hasn't run yet,
+and the register spec's own "no carry-forward step" principle (register: "SHALL NOT require a
+carry-forward step at archive... a handoff is a transit"), plus its explicit sibling scenario for an
+open question surviving an archive untouched, both point the same way — that obligation is not
+orphaned, and archive should neither refuse over it nor discharge it. It should move into the archive
+exactly as it stands, live at its own scope, for the same reason an open question does today.
+
+**So 9.9's gate is: partition open change-scoped obligations by whether `OwedBy` names a section whose
+own card is `ClosedBy`/`ClosedAt`-set.** Owed-by-a-closed-section (or by a section id with no matching
+card at all, e.g. already removed) → orphaned → the 9.9 gate applies, refuse unless
+discharged/promoted/declined. Owed-by-a-still-open-section → not orphaned → leave untouched, carried
+into the archive as-is. **`ArchiveChange`'s current behaviour (`CardStore.cs:3200` onward) is wrong in
+both directions at once**: it discharges every open obligation regardless of which bucket it's in
+(silently settling genuinely-orphaned ones instead of refusing on them, per the doc comment's own "an
+open obligation... becomes discharged, and nothing else"), and it would incorrectly discharge a
+still-owed, still-live obligation whose section simply hasn't closed yet.
+
+**Problem 2 — confirmed: only `discharge` exists as a command today; `promote` and decline-with-reason
+do not exist for `obligation`.** `obligation`'s only verbs are `create` and `discharge`
+(`ParsedCommand` in `CommandDispatcher.cs` has `ObligationCreate` and reuses the generic
+`RegisterDischarge`; there is no `ObligationPromote` anywhere in the tree). `promote` exists only as
+`RulePromote`/`RulePromoteConstitution` — rule-scoped, not obligation-scoped. There is no
+decline-with-a-recorded-reason path for any register card kind.
+
+**This is not hypothetical for 9.9 alone — 9.4's existing refusal already names both missing verbs.**
+Its message (`CommandDispatcher.cs` `onOpenObligations`, section-close-open-obligations) reads: "each
+must be discharged, promoted to a wider scope, or declined with a recorded reason before this section
+can close." That refusal has been live since block E and already tells a caller to reach for verbs
+that don't exist. 9.9's second scenario ("promotion satisfies the archive gate") cannot be satisfied at
+all without `obligation promote`, and a decline path is likewise entirely missing.
+
+**Handing back per the brief — not building `obligation promote` or a decline-with-reason path on my
+own initiative, and not narrowing 9.9's refusal to name only `discharge`.** Both problems are as
+described in the brief; nothing was missed on my part. This is a scope call: does §9 grow two new
+verbs (and does 9.4's own refusal text get corrected regardless of what 9.9 needs), or does 9.9 land
+scoped to what exists with 9.4 also fixed to stop naming remedies it can't offer? ❓ @architect —
+ruling needed before I touch `ArchiveChange` or the refusal itself.
+
+The small carried item (`question create` response gains `section`) is unrelated to either problem and
+is a one-field addition — happy to land it now or fold it into whatever block follows; holding off only
+because the brief said "alongside whatever else this block ends up being" and the block's shape isn't
+settled yet.
+
+No code changed. No gates run — nothing to build yet.
+
+**[architect]** **Product Owner ruling on block F's scoping question: §9 grows two verbs, and the
+`register` spec is amended to match.** The worker's findings were right on both counts and stopping to
+ask was correct.
+
+**The conflict, for the record.** `process-enforcement` requires an orphaned obligation to be
+"discharged, promoted to a wider scope, or declined with a recorded reason", and 9.9's second scenario
+is *"Promotion satisfies the archive gate"*. `register`'s promotion requirement opens with a general
+sentence but its concrete SHALL only ever named **rules**, so §7 built `rule promote` and nothing else.
+Two capabilities in the same change disagreed, and §9 is where they met.
+
+**Why the discharge-only alternative was rejected**, since the reasoning binds the implementation:
+discharge asserts the obligation was *met*. If it is the only route past the archive gate, then the
+only way to archive a change carrying an orphaned obligation is to declare work done that was not done.
+A gate whose sole exit manufactures a false settlement is worse than no gate — it converts an honest
+"this was never finished" into a lie, in the record whose entire purpose is that it can be read back
+honestly. That is the incumbent's failure mode with extra steps.
+
+**`specs/register/spec.md` is amended** (`VALIDATE_EXIT:0`): promotion is no longer rule-only — an
+obligation outliving its change is promotable on the same terms, same card, identity, text and thread
+retained. A new requirement, *"Declining is distinguishable from discharging"*, makes declining a
+recorded outcome in its own right with two scenarios: declining records the reason and is not
+represented as a discharge, and declining with no reason is refused.
+
+**Note what the amendment deliberately does not do.** It states the observable requirement — the record
+distinguishes declined from discharged — and does **not** dictate whether that is a third lifecycle
+state or a discharged card carrying a decline reason. §7 built a two-state lifecycle
+(`RegisterLifecycleState`) and widening it is not a decision to take casually inside a block; the
+requirement is what must be true, and the modelling is block F's to propose.
+
+**[architect]** Brief — **block F, re-scoped (9.9 + two verbs)**. Supersedes the scoping brief above.
+→ @worker
+
+**Build in this order. Report after step 1 before going further if the modelling question is harder
+than it looks.**
+
+1. **`obligation promote` and `obligation decline`.** Promotion mirrors `rule promote` — read that
+   first, including block A2's hard-won lesson that a value threaded down must be **required at the
+   door a real caller uses**, not optional. Decline requires a reason and refuses without one (the
+   spec's own scenario). **Propose the modelling for declined-vs-discharged in the DEVLOG before you
+   build it**: a third `RegisterLifecycleState` touches §7's landed two-state lifecycle and every
+   reader of it, while a discharged card carrying a decline reason keeps the state machine but risks
+   two facts sharing one state. Say which you are doing and why, then build it.
+2. **9.9's refusal.** Archive is refused while an open change-scoped obligation owed by a **closed**
+   section exists, listing the obligations and the three dispositions — which will now all be real.
+   Per your own finding: an obligation owed by a **still-open** section is not orphaned and carries
+   into the archive untouched, as an open question already does.
+3. **Remove archive's silent discharge.** `ArchiveChange` currently discharges every open obligation
+   regardless of bucket. Your finding is that this is wrong in both directions — it settles orphaned
+   ones the spec says to refuse over, and it would wrongly settle one still legitimately owed. It goes.
+   **Say in the thread what replaces it and what happens to §7's own tests that assert the old
+   behaviour** — if any test asserts archive discharges obligations, that test encoded the bug and its
+   change is part of this block, not collateral.
+4. **Fix 9.4's refusal text.** It has been naming two verbs that did not exist since block E landed.
+   Once step 1 is done they exist — make the text name them as commands, per the §8 supervisor note
+   that a refusal should name the route by verb rather than by concept.
+5. **The small carried item:** add `section` to `question create`'s response.
+
+**Standing rules apply** — the coverage gate (every new case registered with a test proving it fires
+*and* records), `ChangeArchiveOutcome` onto the refusal format entire, the record-vs-malformed line
+from D's ruling, the four standing instructions from A3, ADR-0001, ADR-0003, NativeAOT.
+
+**Done-gates:** `make build`/`test`/`format`/`validate`, exit lines verbatim. Do not commit, do not
+tick, do not touch the Makefile or `CLAUDE.md`.
+
 ## NEXT
 
 **Carried to §10:** `CardStore.FindAgeingAddressedThreads` (§9 block E) computes exactly the

@@ -72,9 +72,38 @@ question that prompted it, so the system SHALL NOT ask a role to predict it.
 Promoting a change-scoped rule to repository scope SHALL move the same card, retaining its identity, text
 and thread.
 
+Promotion SHALL NOT be limited to rules. An `obligation` that outlives the change it was raised in SHALL
+be promotable to a wider scope on the same terms — the same card, retaining its identity, text and
+thread — because an obligation whose owing section has closed must have somewhere to go other than a
+discharge that says it was met. `process-enforcement` refuses an archive that would strand one, and a
+refusal whose only route out is to declare the work done is a refusal that manufactures false
+settlements.
+
 Authoring a rule from findings SHALL create a new card and SHALL record which findings it was earned
 from, because a rule backed by several independent findings across several sections is a different
 proposition from one backed by a single incident.
+
+#### Scenario: Obligation promoted across scope
+
+- **WHEN** an open obligation whose owing section has closed is promoted to a wider scope
+- **THEN** the same card moves to that scope, retaining its identity, text and thread, and remains open
+
+### Requirement: Declining is distinguishable from discharging
+
+An obligation that will not be met SHALL be closable by declining it with a recorded reason, and the
+record SHALL distinguish that from an obligation that was discharged. The two are different facts about
+the work and a record that conflates them cannot be read back honestly — "we decided not to" is the
+outcome most worth finding later, and it is the one a discharge would hide.
+
+#### Scenario: Obligation declined rather than met
+
+- **WHEN** an open obligation is declined with a recorded reason
+- **THEN** it stops being open, the reason is part of the record, and it is not represented as discharged
+
+#### Scenario: Declining requires a reason
+
+- **WHEN** an obligation is declined with no reason recorded
+- **THEN** the system refuses and states that a reason is required
 
 #### Scenario: Rule promoted across scope
 
