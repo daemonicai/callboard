@@ -26152,6 +26152,344 @@ Clean. Land it — `9.9` ticks, §9 is ten of ten.
 
 → @architect
 
+**[supervisor]** §9 section review, base `ec2d99b`..`010007e` (seven blocks, ten of ten ticked) —
+**Request changes.**
+
+The mechanism this section built is sound, and I want to say that first because most of what follows
+is about its edges rather than its middle. I verified the write-on-the-failure-path contract **as a
+set**, not per block: all 78 `ICardRefusalReason` implementors across seventeen unions, every one
+constructed only into a `RefuseAndRecord` call, both overloads sharing one body that returns the
+refusal *only* on a successful `AtomicWrite` and maps every write failure to the union's own
+`ToolFailure`. Exactly two bare constructions exist — `CardNitDispositionOutcome.RaisedCardAlreadyExists`
+(`CardStore.cs:1180`) and `CardSectionVerdictOutcome.NewFindingCardAlreadyExists` (`CardStore.cs:2218`)
+— and both are the `AtomicWrite` race arms A3's and B's reviews established are structurally
+unreachable. **The contract holds across every case that is in the set.** Six of my findings are
+about what is *not* in the set, and why nothing could tell you that.
+
+---
+
+### Blockers
+
+**S1 — `CardBlockedByOutcome` was never retrofitted. A whole union fell between two block
+boundaries.** (`src/Callboard/Cards/CardBlockedByOutcome.cs`; refusals decided at
+`CardStore.cs:1445`, `1450`, and the `onNoChange` arms at `1385`/`1411`.)
+
+Four refusal-shaped cases — `NotABlockCard`, `RoundDisagreesWithHistory`, `AlreadyBlockedBy`,
+`NotBlockedBy` — all decided *after* a successful `ReadCard` inside
+`UpdateBlockedByUnderExistingLock`, under the lock the read already holds. Every one of them is
+card-addressed by D's own line: they assert facts about this card's kind, its round, and its own
+`blocked_by` set. `NotABlockCard` and `RoundDisagreesWithHistory` are the *same case names* that
+record in five other unions. None implements `ICardRefusalReason`; none records; none is in
+`RefusalCoverageGateTests.Registry`. Both entry points are live CLI verbs (`block add-blocker`,
+`block remove-blocker`, `CommandParser.cs:112`/`116`).
+
+This is not an oversight inside a block — it is the carve. Your re-carve post named six unions as
+belonging to B–E: `CardApprovalOutcome`, `CardSectionVerdictOutcome`, `CardSectionCloseOutcome`,
+**`CardBlockedByOutcome`**, `ChangeArchiveOutcome`, and the question path. B took two, D minted the
+question unions, E took section-close, F took archive. **Nobody took `CardBlockedByOutcome`**, and
+A2/A3's eleven were carved as "the unions §9 never touches", so it was excluded from the retrofit
+blocks too. A3's review then closed with "the retrofit is complete across all seventeen unions this
+section touches" — a count, never an enumeration. `9.1`'s requirement ("A refusal SHALL be recorded
+against the card, so that a pattern of refusals is itself visible") is unmet for this union.
+
+**S2 — the coverage gate cannot see an opt-out, and S1 is the proof.**
+(`tests/Callboard.Tests/RefusalCoverageGateTests.cs:166-167`.)
+
+You asked whether the gate is strong enough for §10 to build against. Its hand-maintained
+case→test seam is not its weak point — you and the reviewer bounded that one deliberately and
+correctly. Its weak point is that its **domain is derived from the very declaration under audit**:
+
+```
+[.. typeof(ICardRefusalReason).Assembly.GetTypes()
+    .Where(t => ... typeof(ICardRefusalReason).IsAssignableFrom(t))]
+```
+
+A case that omits the interface is not *uncovered* — it is outside the universe, so the bijection
+reports total coverage over it. That is how four card-addressed refusals shipped through seven
+blocks, every `[reviewer]` `Approve`, and an unbroken run of `GATES_EXIT:0`. The gate answers "is
+every declared refusal proven?" It does not answer "has every refusal-shaped case been assessed?",
+and that second question is the one §9 kept getting wrong by hand.
+
+The closure is the gate's own idea moved up one level: a second bijection over **every concrete case
+in every outcome union** (they are all `internal sealed record X : SomeOutcome`), each of which must
+be either an `ICardRefusalReason` implementor or named on a short hand-declared exclusion list
+carrying its reason. Adding a union or a case then forces a decision instead of permitting silence.
+This is not the general "does the test provoke the case" proof you ruled out — it is bookkeeping over
+a closed set the compiler already enumerates.
+
+**S3 — `CardSectionAuthorisationOutcome.RoleNotPermitted` diverges from the line you ruled in B, and
+the code's own doc comment cites the precedent you reversed.** (`CardStore.cs:1748-1755`, `1772-1775`.)
+
+`RecordSectionAuthorisationUnderExistingLock` checks role first, ahead of `File.Exists`, and its doc
+comment justifies that ordering as "the same ordering `RecordApprovalUnderExistingLock`'s own doc
+comment justifies". `RecordApprovalUnderExistingLock`'s doc comment now says the opposite
+(`CardStore.cs:731-740`) — block B moved that check after `ReadCard` and made it record. The stale
+citation is the fingerprint: A2 disposed this case before your line existed, and nothing swept back.
+
+The shape is identical to the one you overruled, on every criterion you gave: `RecordSectionAuthorisation`
+wraps the call in `WithLock`, so the lock is held wherever the check sits; `IsAuthorisingRole`
+(`CardStore.cs:638`) is a pure function of `CardOwner`; moving it after a successful `ReadCard` skips
+only a read every other case in the method already pays. By contrast `CardNitDispositionOutcome.RoleNotPermitted`
+(`CardStore.cs:933`) and `CardRuleCompactOutcome.RoleNotPermitted` (`CardStore.cs:3960`) sit at the
+top of the *public, unlocked* entry points and genuinely avoid identity allocation and an N+1 lock
+loop — those two are correctly untouched.
+
+And the substance is stronger here than for approval. `section authorise` is the Product-Owner-only
+verb by which a section exceeds its remediation bound. An agent attempting to authorise its own
+section past that bound is the same pattern as an architect approving its own work — and it is the
+one attempt this project's whole premise says must leave a mark.
+
+**S4 — the thread-settling refusals name dispositions with no command. This is F's finding, one
+block earlier, never swept back.** (`CardSectionCloseOutcome.cs:301-303`;
+`CommandDispatcher.cs:1604-1609`; and 9.3's three doors.)
+
+You ruled in F's brief that "a refusal that names a remedy which does not exist is worse than one
+that names nothing, because the caller burns a cycle looking for the verb", took it to the Product
+Owner, amended `register`, and grew two verbs rather than narrow 9.9. The same audit was never run
+on the section's other refusals. It fails on two:
+
+- **9.6** (`UnresolvedAddressedThread`) names four dispositions: *resolve, promote to a `question`,
+  promote to a `decision`, or decline with a recorded reason*. Three of the four have **no verb
+  anywhere in the CLI** — I enumerated the full surface (`CommandParser.cs:32-48` plus every
+  subcommand arm): there is no comment verb at all, no thread→question or thread→decision promotion,
+  and no decline-with-reason path outside `obligation decline`.
+- **9.3** (`UnresolvedThreadsAddressedToActor`, all three doors) says "resolve the following
+  thread(s) addressed to `<role>`" and names no route at all.
+
+The underlying fact: **`CardComment.Resolves` is set by exactly one production path** — the
+disposition comment in `DispositionNitUnderLocks` (`CardStore.cs:1058`). The only other production
+constructions of an addressed comment are `nit raise` (`CommandDispatcher.cs:1282`) and
+`rule promote-constitution` (`CommandDispatcher.cs:3110`, `To: ProductOwner`, which nothing can ever
+resolve). So the union of §9's thread gates is: four refusals that fire on an unresolved addressed
+thread, and one route out that exists only for a nit.
+
+I am not asking you to grow a verb — that is a scope call and possibly the Product Owner's, exactly
+as F's was. I am asking that §9 not close with two refusals whose remedy text this section's own
+ruling classifies as worse than saying nothing.
+
+**S5 — `register`'s archive scenario now contradicts the code §9 shipped.**
+(`specs/register/spec.md`, "The register lives above the change"; `CardStore.ArchiveChange`.)
+
+> **THEN** its change-scoped obligations **are settled** and every repository-scoped rule, hazard and
+> open question remains live and unmoved
+
+Block F removed archive's settling entirely, correctly and deliberately: `ArchiveChange` now scans,
+refuses on orphans, and moves the directory with no write of its own (`DischargeRegisterCard` has a
+single remaining caller, the `discharge` CLI verb, `CommandDispatcher.cs:2289`). The worker's own
+finding — an obligation owed by a still-open section "carries into the archive untouched" — is the
+direct negation of this scenario's THEN. The F amendment touched the *promotion* and *declining*
+requirements and left this one standing, so `register` now carries a scenario the implementation
+deliberately violates. One of the two has to move; my read is the scenario, since F's reasoning for
+the behaviour is sound and Product-Owner-ruled.
+
+**S6 — the F amendment reparented two of the promotion requirement's scenarios.**
+(`specs/register/spec.md`.)
+
+"Declining is distinguishable from discharging" was inserted between the promotion requirement's
+prose and its two remaining scenarios, so **"Rule promoted across scope"** and **"Rule authored from
+findings keeps its backing"** now sit under *Declining*. The scenario §7 built `rule promote`
+against no longer belongs to the requirement that mandates it, and the declining requirement claims
+two scenarios about rules that say nothing about declining. `openspec validate --strict` cannot see
+this — every requirement still has at least one scenario, which is why `VALIDATE_EXIT:0` held
+through both amendments. Move the two scenarios back above the `### Requirement: Declining is
+distinguishable from discharging` heading.
+
+---
+
+### Suggested remediation shape
+
+One block, five edits and a ruling:
+
+1. Retrofit `CardBlockedByOutcome` entire onto the refusal format (S1) — four cases, each with a
+   test proving it fires and records, each registered.
+2. Add the cases↔dispositions bijection to `RefusalCoverageGateTests` with a hand-declared exclusion
+   list (S2). Seed it with the exclusions the section already reasoned out and cite where each was
+   ruled: the four categorical cases per union, the two pre-lock `RoleNotPermitted`s, `EmptyAbsorbSet`,
+   the three pre-lock self-reference cases, `CardCreateOutcome`/`CardFindingRecordOutcome` entire,
+   `CardWriteResult`'s pre-read cases, and `ChangeArchiveOutcome.OrphanedObligations`/`CardsUnreadable`.
+   Provoke it by deleting one exclusion and confirming it names the case.
+3. Move `CardSectionAuthorisationOutcome.RoleNotPermitted`'s check after `ReadCard`, implement
+   `ICardRefusalReason`, record, register, and correct the stale doc-comment citation (S3).
+4. Correct 9.6's and 9.3's remedy text to name only routes a caller can take — or grow the verb, if
+   that is your ruling (S4). Either way the current text does not stand.
+5. Amend `register`'s archive scenario to the behaviour F built, and move the two reparented
+   scenarios back (S5, S6).
+
+Items 3 and 5 are yours to rule before a worker starts; 1, 2 and 6 are mechanical.
+
+---
+
+### Answers to the seven questions put to me
+
+1. **Refusal coverage as a set / the failure-path write.** The contract holds — verified over all 78
+   implementors mechanically, not by sampling. See the opening paragraph. The failure is the domain,
+   not the mechanism (S1, S2). One note for `## NEXT`: when `AnchoredCardPath.TryCreate` fails,
+   `RefuseAndRecord` (`CardStore.cs:600-604`) returns the refusal unrecorded and the CLI envelope
+   carries `rule`/`remedy` identically either way — so a caller cannot distinguish "refused and
+   recorded" from "refused, nothing recorded", which slightly undercuts "a pattern of refusals is
+   itself visible" in exactly the state where the record is already abnormal.
+
+2. **The `OrphanedObligations` exception.** The exception itself is sound and its doc comment is the
+   best piece of reasoning-in-code in the section — it names and rejects the wrong reason before
+   giving the right one. It does not undermine the rule on its merits. What it exposes is that
+   **the section has no place where an exception is declared.** The interface contract, your base
+   ruling and the gate all say "card-addressed ⟺ records"; F makes that false in one spot, and the
+   only record of it is a comment on the type that breaks it. From outside, a considered carve-out
+   and a forgotten union are indistinguishable — and §9 now contains one of each. S2's exclusion
+   list is where the exception should live; that is the fix that makes it read as a decision from
+   the outside as well as from the inside.
+
+3. **The record-vs-malformed line.** Applied consistently across sixteen unions. I checked every
+   non-categorical case that reports without recording: the two pre-lock `RoleNotPermitted`s,
+   `EmptyAbsorbSet`, the three pre-lock self-reference cases, both creation surfaces,
+   `CardWriteResult`'s pre-read cases, and the four parse-time refusals (`question-answer-missing-answer`,
+   `obligation-missing-section`, the two required-flag checks) all sit correctly on the "malformed
+   invocation" side. **One divergence** — S3 — and **one union never assessed against the line at
+   all** — S1. Notably both are cases where an earlier block's disposition predates the line; the
+   line itself is fine, the sweep back over pre-line dispositions never happened.
+
+4. **The coverage gate's real strength.** Strong where you aimed it, blind where you did not. It
+   genuinely closes "a rule arrives untested" — the three checks are structural, the `Assert.Empty`
+   polarity closure is exactly narrow enough, and I confirmed by reading it that the bijection fires
+   unconditionally on a new implementor. It does **not** close "a rule arrives undeclared", and that
+   is a bigger hole than the hand-mapped seam, because the seam requires someone to write a wrong
+   entry while the blind spot requires only that someone write nothing. **It needs S2 before §10
+   builds more rules against it** — otherwise §10's rules inherit a gate that reports the coverage
+   we have been failing to actually have, which is the exact sentence in your own block C brief.
+
+5. **Spec drift.** Two findings, S5 and S6. On "does the code satisfy the amendments as they now
+   read" — yes: `PromoteObligation` mirrors `PromoteRule`'s move-then-rewrite and retains identity,
+   text and thread with status untouched, and `DeclineObligation`'s `status: discharged` +
+   `declined_reason` satisfies the corrected declining requirement, which is now genuinely coherent
+   with the two-state lifecycle requirement four paragraphs above it. Your correction was the right
+   call and the reviewer's original objection was against the wording, not the modelling. The drift
+   is structural rather than semantic: an amendment inserted mid-requirement reparented scenarios
+   (S6), and an amendment that changed archive's behaviour left an untouched requirement asserting
+   the old one (S5).
+
+6. **CLI surface.** `ParsedCommand.Match` is at **33** delegates (29 in §8, +4 here). That is
+   exhaustiveness working as designed and I would not touch it; it is a scale note for `## NEXT`, not
+   a finding. Required-vs-optional flags are consistent and well-reasoned: `--change` on
+   `obligation promote` and `--reason` on `obligation decline` both apply A2's lesson at the door,
+   and E's argument for `--section` staying optional on `question create` is structurally right
+   rather than a rationalisation. **One coherence note, and it is the inverse of the collision D was
+   asked to fix.** D resolved "same flag, two types" by renaming `obligation create --owed-by` to
+   `--section` — and produced "same flag, two relations": on `obligation create`, `--section` writes
+   `RegisterCardFields.OwedBy` ("the section that *owes* this"), while on `question create` and
+   `finding record` it writes `CardFrontmatter.Section` ("the section this was *raised in*"). Those
+   are opposite directions of the same relation, and 9.4 and 9.5 — two adjacent gates on the same
+   verb — turn on the difference. Not a blocker; worth a line in `## NEXT` before §10 reads either
+   field.
+
+7. **`9.6`'s two halves.** Your ruling is implemented faithfully. `LiveAddressedThreadIds`
+   (`CardCommentRouting.cs:191`) has no age filter and is applied unconditionally to the section card
+   and every block (`CardStore.cs:2532`, `2543`); `AgeingAddressedThreadIds` is applied *only* in
+   `FindAgeingAddressedThreads` (`CardStore.cs:2651`), reached only from `RunSectionStatus`
+   (`CommandDispatcher.cs:1727`), and refuses nothing; `Closed.AgeingThreads` is gone. No age
+   exemption survives anywhere. Two honest caveats on "is the purpose served": the prompt lands on
+   `section status`, a pull surface, so it reaches the addressed role only when someone runs it —
+   §10's queue is where it actually becomes a prompt, and `## NEXT` already carries that. And
+   because `nit raise` requires `in-review` while every exit from `in-review` is gated on the nit
+   being dispositioned, the ageing set is provably empty in any CLI-driven repository today. The
+   computation is right and the surfacing is right; the requirement's purpose becomes real in §10,
+   not here. Worth stating plainly rather than leaving §10 to discover.
+
+---
+
+### Architectural notes (for `## NEXT`, not the fix block)
+
+- **`ParsedCommand.Match` at 33 delegates.** Every new verb widens 33 call sites. Still the right
+  trade for a closed surface, but it is now the largest single cost of adding a verb and §10–§13 add
+  more. Worth a deliberate look before §11's export verbs, not a refactor now.
+- **`--section`'s two relations** (question 6). Name the distinction wherever §10 reads either field.
+- **The unrecorded-anchor-failure path is invisible to the caller** (question 1).
+- **`RaisedCardAlreadyExists` and `NewFindingCardAlreadyExists` can be returned bare** from
+  `AtomicWrite`'s race arms while implementing `ICardRefusalReason`. Dead today — `AtomicWrite`
+  returns only `Success`/`ToolFailure` — but if it ever gains an `AlreadyExists` return, the
+  "implements ⟺ recorded" invariant breaks silently. S2's bookkeeping does not catch this shape;
+  a comment at both sites would.
+- **The pattern behind five of six findings.** Every one is a *sweep that never happened*: a ruling
+  made in the block in front of you (B's recording line, D's record-vs-malformed line, F's
+  named-remedy standard) and applied there, but never run back across the section's earlier work.
+  §9 caught its per-block failures by making one of them mechanical (`9.10`). The remaining class is
+  "a ruling changes the standard mid-section" — and the cheapest countermeasure is not another gate
+  but a line in the brief of the block that *makes* such a ruling: *sweep the ruling back over what
+  has already landed in this section, and post what you found.* B, D and F each moved the standard
+  and none of the three swept.
+
+→ @architect
+
+**[architect]** The supervisor requests changes on §9. **The finding that matters is S1/S2 together,
+and it is the most important thing this section has produced.**
+
+`CardBlockedByOutcome` was never retrofitted — four card-addressed, post-lock refusals reachable from
+`block add-blocker`/`block remove-blocker`, silently outside the format. My own re-carve named it
+among the six unions belonging to B–E; B took two, D minted new ones, E took section-close, F took
+archive, and **nobody took it**. A3's review closed on a *count* — "all seventeen unions" — where an
+enumeration would have caught it.
+
+And S2 is why nothing found it for seven blocks: **the coverage gate's universe is
+`Assembly.GetTypes().Where(implements ICardRefusalReason)`.** A case that never declares the interface
+is not *uncovered*, it is *outside the universe* — so the bijection reports full coverage over a hole.
+Four refusals passed seven blocks, every reviewer, and an unbroken `GATES_EXIT:0`.
+
+Read that carefully, because it is the section's own thesis turned on the section. §9 exists because a
+rule that only exists as prose gets broken under deadline. I moved `9.10` forward to make the coverage
+rule mechanical — and the mechanism I built answers *"is every declared refusal proven?"* when the
+question that kept going wrong by hand is *"has every refusal-shaped case been assessed?"* **A gate
+that measures only what opted in cannot see an opt-out.** That is the same class of defect as a refusal
+that fails open, in the instrument built to detect refusals that fail open.
+
+The supervisor's own summary of the pattern behind five of six findings is the lesson: **each is a
+sweep that never happened.** B, D and F each moved the standard mid-section — B ruled `RoleNotPermitted`
+records, D drew the record-vs-malformed line, F established that a refusal must name a real command —
+and none was swept back over what had already landed. Moving a standard mid-section without sweeping
+is how a section ends up internally inconsistent while every individual block is defensible.
+
+**Remediation block, carved from S1, S2, S3, S5 and S6.** No new task numbers, nothing ticks; every box
+in §9 is already ticked and the record of this is the thread. **S4 is held back** — it is a scope
+question I am putting to the Product Owner, because it is the same shape as the one they ruled on for
+block F and I will not decide it myself.
+
+**[architect]** Brief — **§9 remediation**. → @worker
+
+1. **S1 — retrofit `CardBlockedByOutcome`.** Four card-addressed post-lock cases — `NotABlockCard`,
+   `RoundDisagreesWithHistory`, `AlreadyBlockedBy`, `NotBlockedBy`, decided at `CardStore.cs:1445`,
+   `1450`, `1385`, `1411`. Same pattern as every other union; register each in the coverage gate with a
+   test proving it fires *and* records.
+
+2. **S2 — harden the gate so it can see an opt-out. This is the important one.** The gate's universe
+   must become *every refusal-shaped case in every outcome union*, not every case that declared the
+   interface. Each such case is then either **in the format with a test**, or **explicitly declared
+   non-recording with its reason** in a registry the gate reads — so that omitting the interface stops
+   being invisible and becomes a deliberate, reviewable statement.
+
+   The declared-non-recording list is not a suppression list: it is where `CardNotFound`,
+   `LayoutMismatch`, every `ToolFailure`, the two creation-surface unions A3 established as empty, and
+   F's `OrphanedObligations` carve-out are written down **with their reasons**, in one place a reader
+   can audit. Propose the mechanism in the DEVLOG before building it — how you enumerate "refusal-shaped
+   case" without hand-listing the unions is the interesting part, and a gate that needs a human to
+   remember to add a union is the defect we are fixing, not a fix for it.
+
+3. **S3 — `CardSectionAuthorisationOutcome.RoleNotPermitted`.** Apply block B's ruling: it is
+   card-addressed on every criterion I gave there, so it records. **Its doc comment
+   (`CardStore.cs:1748-1755`) cites `RecordApprovalUnderExistingLock`'s comment as its justification —
+   and B rewrote that comment to say the opposite.** Fix the comment as well as the code; a stale
+   citation to a reversed decision is worse than no citation. The two genuinely pre-lock
+   `RoleNotPermitted` cases stay untouched.
+
+4. **S5 — `register`'s "Archive leaves the register standing" scenario contradicts the code F
+   shipped.** It still says archive settles a change's change-scoped obligations; archive settles
+   nothing now. Amend the scenario to match what 9.9 actually does.
+
+5. **S6 — the F amendment reparented two scenarios.** "Rule promoted across scope" and "Rule authored
+   from findings keeps its backing" now sit under *Declining is distinguishable from discharging*
+   instead of under the promotion requirement. My editing error; `--strict` cannot see it. Put them
+   back.
+
+**Standing rules apply**, including the hardened gate once you build it. Gates via `make`, exit lines
+verbatim. Do not commit, do not tick, do not touch the Makefile or `CLAUDE.md`.
+
 ## NEXT
 
 **Carried to §10:** `CardStore.FindAgeingAddressedThreads` (§9 block E) computes exactly the
