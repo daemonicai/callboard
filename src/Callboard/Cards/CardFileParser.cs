@@ -609,6 +609,56 @@ internal static class CardFileParser
             new CardFile(frontmatterResult.Frontmatter!, body, comments, unknownFrontmatterFields, handovers, blockFields, transitions, sectionFieldsWithVerdicts, findingFields, registerFields, claims, limits, refusals, questionFields));
     }
 
+    /// <summary>Register's own recognised wire values for a <c>finding</c> card's <c>status</c> —
+    /// <see cref="CardStore.RaiseFinding"/> and <see cref="CardStore.ChangeArchive"/> are the only
+    /// writers, and both always write the literal <c>open</c> (findings: a finding is never closed,
+    /// see <see cref="CardLifecycle"/>'s doc comment). No closed union backs this — the brief for
+    /// this validation (§12 block A) is explicit that a kind carrying a single fixed literal does
+    /// not earn one.</summary>
+    private const string FindingRecognisedStatuses = "open";
+
+    /// <summary>
+    /// Validates a card's own <c>status</c> against its own <paramref name="kind"/>'s wire
+    /// vocabulary before the card is ever constructed (§12 block A ruling: "register liveness
+    /// closes at the parse door"). The kind/format map mirrors <see
+    /// cref="CardLifecycle.IsClosed"/>'s own mapping rather than duplicating its shape by hand: block
+    /// and section read their own flow-state union, question its own three-state union, the four
+    /// register kinds the shared open/discharged union, and finding the one literal above. A card
+    /// whose status does not parse against its own kind's vocabulary is never handed back as a
+    /// <see cref="CardFileParseResult.Success"/> — every downstream reader that used to have to
+    /// choose a direction to fail in when a status did not parse no longer needs to, because that
+    /// card no longer exists as far as any of them are concerned.
+    /// </summary>
+    private static string? ValidateStatus(CardKind kind, string status)
+    {
+        var kindName = kind.ToWireString();
+        return kind.Match(
+            onBlock: () => BlockFlowStateWireFormat.TryParse(status, out _)
+                ? null
+                : $"unrecognised status: '{status}' for kind '{kindName}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.",
+            onQuestion: () => QuestionStatusWireFormat.TryParse(status, out _)
+                ? null
+                : $"unrecognised status: '{status}' for kind '{kindName}'. Recognised statuses: {QuestionStatusWireFormat.RecognisedValues}.",
+            onFinding: () => string.Equals(status, FindingRecognisedStatuses, StringComparison.Ordinal)
+                ? null
+                : $"unrecognised status: '{status}' for kind '{kindName}'. Recognised statuses: {FindingRecognisedStatuses}.",
+            onObligation: () => RegisterLifecycleStateWireFormat.TryParse(status, out _)
+                ? null
+                : $"unrecognised status: '{status}' for kind '{kindName}'. Recognised statuses: {RegisterLifecycleStateWireFormat.RecognisedValues}.",
+            onRule: () => RegisterLifecycleStateWireFormat.TryParse(status, out _)
+                ? null
+                : $"unrecognised status: '{status}' for kind '{kindName}'. Recognised statuses: {RegisterLifecycleStateWireFormat.RecognisedValues}.",
+            onHazard: () => RegisterLifecycleStateWireFormat.TryParse(status, out _)
+                ? null
+                : $"unrecognised status: '{status}' for kind '{kindName}'. Recognised statuses: {RegisterLifecycleStateWireFormat.RecognisedValues}.",
+            onDecision: () => RegisterLifecycleStateWireFormat.TryParse(status, out _)
+                ? null
+                : $"unrecognised status: '{status}' for kind '{kindName}'. Recognised statuses: {RegisterLifecycleStateWireFormat.RecognisedValues}.",
+            onSection: () => SectionFlowStateWireFormat.TryParse(status, out _)
+                ? null
+                : $"unrecognised status: '{status}' for kind '{kindName}'. Recognised statuses: {SectionFlowStateWireFormat.RecognisedValues}.");
+    }
+
     private static (CardFrontmatter? Frontmatter, string? Failure) BuildFrontmatter(
         IReadOnlyDictionary<string, string> fields)
     {
@@ -642,6 +692,11 @@ internal static class CardFileParser
         }
 
         var status = CardFileFormat.UnescapeFrontmatterValue(rawStatus);
+
+        if (ValidateStatus(kind, status) is { } statusFailure)
+        {
+            return (null, statusFailure);
+        }
 
         if (!fields.TryGetValue("owner", out var ownerText))
         {

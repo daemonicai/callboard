@@ -148,7 +148,7 @@ public sealed class CardShowTests
     {
         using var repo = new TempGitRepo();
         var path = Path.Combine(repo.ChangesDirectory, "b-0001.md");
-        var frontmatter = new CardFrontmatter("B-0001", CardKind.Block, "A block card", "in_review", CardOwner.Reviewer, CardScope.Change, "S-0001", Earlier, FixedNow);
+        var frontmatter = new CardFrontmatter("B-0001", CardKind.Block, "A block card", "in-review", CardOwner.Reviewer, CardScope.Change, "S-0001", Earlier, FixedNow);
         var handovers = new[] { new CardHandover(CardOwner.Architect, CardOwner.Worker, Earlier, []) };
         var blockFields = new BlockCardFields(
             Base: "base-sha",
@@ -186,7 +186,7 @@ public sealed class CardShowTests
         Assert.Equal("block", result.GetProperty("kind").GetString());
         Assert.Equal(path, result.GetProperty("filePath").GetString());
         Assert.Equal("A block card", result.GetProperty("title").GetString());
-        Assert.Equal("in_review", result.GetProperty("status").GetString());
+        Assert.Equal("in-review", result.GetProperty("status").GetString());
         Assert.Equal("reviewer", result.GetProperty("owner").GetString());
         Assert.Equal("change", result.GetProperty("scope").GetString());
         Assert.Equal("S-0001", result.GetProperty("section").GetString());
@@ -293,7 +293,7 @@ public sealed class CardShowTests
     {
         using var repo = new TempGitRepo();
         var path = Path.Combine(repo.ChangesDirectory, "f-0001.md");
-        var frontmatter = new CardFrontmatter("F-0001", CardKind.Finding, "A finding", "recorded", CardOwner.Reviewer, CardScope.Change, "S-0001", Earlier, FixedNow);
+        var frontmatter = new CardFrontmatter("F-0001", CardKind.Finding, "A finding", "open", CardOwner.Reviewer, CardScope.Change, "S-0001", Earlier, FixedNow);
         var fingerprint = new FindingExtentFingerprint([new FindingExtentFileFingerprint("src/Foo.cs", "abc123")]);
         var findingFields = new FindingCardFields(
             Instrument: "make gates",
@@ -327,7 +327,7 @@ public sealed class CardShowTests
     {
         using var repo = new TempGitRepo();
         var path = Path.Combine(repo.RegisterDirectory, "o-0001.md");
-        var frontmatter = new CardFrontmatter("O-0001", CardKind.Obligation, "An obligation", "declined", CardOwner.Architect, CardScope.Repository, string.Empty, Earlier, FixedNow);
+        var frontmatter = new CardFrontmatter("O-0001", CardKind.Obligation, "An obligation", "discharged", CardOwner.Architect, CardScope.Repository, string.Empty, Earlier, FixedNow);
         var registerFields = new RegisterCardFields(
             Condition: null,
             Cadence: null,

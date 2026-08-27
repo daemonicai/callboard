@@ -385,6 +385,42 @@ public sealed class CommandDispatcherSectionTests
         Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
+    // §12 block A round two, item 3: the envelope-category regression. CLI-level proof for the
+    // "section" command family — `onCardCorrupt` in `RunSectionClose` must return a refusal
+    // (corrupt.Reason verbatim), not throw into the tool-failure envelope. Status "closed-ish" is
+    // not a legal section flow state, so the §12 block A parse door refuses the card at read time.
+    [Fact]
+    public void SectionClose_CorruptCard_ExitsAsRefusal_WithReasonIntact()
+    {
+        using var repo = new TempGitRepo();
+        var path = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar), "s-9001.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var frontmatter = new CardFrontmatter(
+            "S-9001", CardKind.Section, "Title", "closed-ish", CardOwner.Architect, CardScope.Change,
+            ChangeName, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["section", "close", path, "--role", "architect", "--change", ChangeName],
+            output, TextReader.Null, error, isInputRedirected: true, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        Assert.NotEqual(CommandDispatcher.ToolFailureExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("card-corrupt", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString();
+        Assert.NotNull(message);
+        Assert.Contains("'closed-ish'", message, StringComparison.Ordinal);
+        Assert.Contains("'section'", message, StringComparison.Ordinal);
+        Assert.Contains(SectionFlowStateWireFormat.RecognisedValues, message, StringComparison.Ordinal);
+        Assert.True(string.IsNullOrWhiteSpace(error.ToString()));
+    }
+
     [Fact]
     public void SectionClose_WhenNoCardExistsAtThatPath_RefusesWithCardNotFoundCode()
     {

@@ -82,7 +82,6 @@ public sealed class CardRegisterDischargeTests : IDisposable
         second.Match<object?>(
             onDischarged: discharged => throw new Xunit.Sdk.XunitException("expected AlreadyDischarged, got Discharged"),
             onAlreadyDischarged: static _ => null,
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected AlreadyDischarged, got InvalidStatus: {invalid.Status}"),
             onNotARegisterCard: notARegister => throw new Xunit.Sdk.XunitException($"expected AlreadyDischarged, got NotARegisterCard({notARegister.Kind.ToWireString()})"),
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected AlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected AlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
@@ -117,7 +116,6 @@ public sealed class CardRegisterDischargeTests : IDisposable
         outcome.Match<object?>(
             onDischarged: discharged => throw new Xunit.Sdk.XunitException("expected NotARegisterCard, got Discharged"),
             onAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got AlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got InvalidStatus: {invalid.Status}"),
             onNotARegisterCard: static n => { Assert.Equal(CardKind.Block, n.Kind); return null; },
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got LayoutMismatch: {layoutMismatch.Reason}"),
@@ -133,39 +131,45 @@ public sealed class CardRegisterDischargeTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
-    // register: "SHALL NOT occupy flow states" — a hand-edited register card carrying a
-    // BlockFlowState value must not be silently treated as open (or discharged); it is reported,
-    // not swallowed. What would have to break for this to go red: DischargeRegisterCardUnderExistingLock
-    // reading card.Frontmatter.Status through anything other than RegisterLifecycleStateWireFormat.TryParse.
+    // §12 block A ruling: register liveness closes at the parse door. A register card carrying a
+    // BlockFlowState value in its own status field (register: "SHALL NOT occupy flow states") is
+    // never constructed at all — CardFileParser refuses it directly, before DischargeRegisterCard
+    // ever runs, and this reports (§9.1: a parse-door refusal reports; it does not record) rather
+    // than appending a CardRefusalEntry to a card that was never successfully read. What would have
+    // to break for this to go red: CardFileParser.BuildFrontmatter validating a register card's
+    // status through anything other than RegisterLifecycleStateWireFormat.
     [Fact]
-    public void DischargeRegisterCard_StatusIsAFlowState_RefusesRatherThanTreatingItAsOpen()
+    public void DischargeRegisterCard_StatusIsAFlowState_ReportsCardCorrupt_WithoutRecording()
     {
         var path = Path.Combine(_registerDirectory, "r-0002.md");
         var frontmatter = new CardFrontmatter(
             "R-0002", CardKind.Rule, "Title", "briefed", CardOwner.Architect, CardScope.Repository, string.Empty, Created, Created);
         var card = new CardFile(frontmatter, "Body.", [], []);
-        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var serialized = CardFileWriter.Serialize(card);
+        File.WriteAllText(path, serialized, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var outcome = CardStore.DischargeRegisterCard(_root, path, CardOwner.Architect, Created, TimeSpan.FromSeconds(5));
 
         outcome.Match<object?>(
-            onDischarged: discharged => throw new Xunit.Sdk.XunitException("expected InvalidStatus, got Discharged"),
-            onAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got AlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: static invalid => { Assert.Equal("briefed", invalid.Status); return null; },
-            onNotARegisterCard: notARegister => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got NotARegisterCard({notARegister.Kind.ToWireString()})"),
-            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardNotFound: '{notFound.FilePath}'"),
-            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got LayoutMismatch: {layoutMismatch.Reason}"),
-            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
-            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got HandEnteredDerivedState: '{handEntered.Key}'"),
-            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
+            onDischarged: discharged => throw new Xunit.Sdk.XunitException("expected CardCorrupt, got Discharged"),
+            onAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got AlreadyDischarged: '{already.FilePath}'"),
+            onNotARegisterCard: notARegister => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got NotARegisterCard({notARegister.Kind.ToWireString()})"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: static corrupt =>
+            {
+                Assert.Contains("status", corrupt.Reason, StringComparison.Ordinal);
+                Assert.Contains("'briefed'", corrupt.Reason, StringComparison.Ordinal);
+                Assert.Contains("'rule'", corrupt.Reason, StringComparison.Ordinal);
+                Assert.Contains(RegisterLifecycleStateWireFormat.RecognisedValues, corrupt.Reason, StringComparison.Ordinal);
+                return null;
+            },
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got ToolFailure: {toolFailure.Reason}"));
 
-        // Status is never touched by a refusal — only a CardRefusalEntry is appended (§9 block A2).
-        var read = AssertParseSuccess(CardStore.ReadCard(path));
-        Assert.Equal("briefed", read.Frontmatter.Status);
-        var recorded = Assert.Single(read.Refusals);
-        Assert.Equal(CardOwner.Architect, recorded.By);
-        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
-        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
+        // Parse-door refusal reports; it does not record (§9.1) — the file on disk is untouched,
+        // and it stays unreadable rather than gaining a CardRefusalEntry.
+        Assert.Equal(serialized, File.ReadAllText(path));
     }
 
     private string WriteRegisterCard(string fileStem, string id, CardKind kind, CardScope scope, RegisterCardFields fields)
@@ -187,7 +191,6 @@ public sealed class CardRegisterDischargeTests : IDisposable
         outcome.Match(
             onDischarged: static discharged => discharged,
             onAlreadyDischarged: static already => throw new Xunit.Sdk.XunitException($"expected Discharged, got AlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: static invalid => throw new Xunit.Sdk.XunitException($"expected Discharged, got InvalidStatus: {invalid.Status}"),
             onNotARegisterCard: static n => throw new Xunit.Sdk.XunitException($"expected Discharged, got NotARegisterCard({n.Kind.ToWireString()})"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Discharged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Discharged, got LayoutMismatch: {layoutMismatch.Reason}"),

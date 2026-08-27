@@ -14,7 +14,7 @@ public sealed class CardFileRoundTripTests
             Id: "B-0042",
             Kind: CardKind.Block,
             Title: "Primary record — card files",
-            Status: "in-progress",
+            Status: "building",
             Owner: CardOwner.Worker,
             Scope: CardScope.Change,
             Section: "2",
@@ -113,7 +113,7 @@ public sealed class CardFileRoundTripTests
             "B-0099",
             CardKind.Block,
             "Delimiter-lookalike body",
-            "open",
+            "drafting",
             CardOwner.Worker,
             CardScope.Change,
             "2",
@@ -157,7 +157,7 @@ public sealed class CardFileRoundTripTests
             "B-0105",
             CardKind.Block,
             "Delimiter-lookalike body",
-            "open",
+            "drafting",
             CardOwner.Worker,
             CardScope.Change,
             "4",
@@ -186,7 +186,7 @@ public sealed class CardFileRoundTripTests
         // own body goes through the same AppendContent/EscapeContentLine path (CardFileWriter),
         // so the same lookalike-injection question applies there too.
         var frontmatter = new CardFrontmatter(
-            "B-0106", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "4", Created, Updated);
+            "B-0106", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "4", Created, Updated);
 
         const string trickyCommentBody =
             "See below:\n<!-- callboard:handover by=worker to=architect timestamp=2026-08-19T09:00:00+00:00 -->";
@@ -206,7 +206,7 @@ public sealed class CardFileRoundTripTests
     public void Serialize_KeepsFrontmatterFieldsInAFixedOrder_SoADiffOfOneFieldIsOneLine()
     {
         var frontmatter = new CardFrontmatter(
-            "B-0001", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "1", Created, Updated);
+            "B-0001", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "1", Created, Updated);
         var card = new CardFile(frontmatter, "Body.", [], []);
 
         var serialized = CardFileWriter.Serialize(card);
@@ -232,7 +232,7 @@ public sealed class CardFileRoundTripTests
             "B-0100",
             CardKind.Block,
             "Multi\nline title",
-            "open",
+            "drafting",
             CardOwner.Worker,
             CardScope.Change,
             "2",
@@ -257,7 +257,7 @@ public sealed class CardFileRoundTripTests
             "B-0101",
             CardKind.Block,
             @"A title with a \backslash\ in it",
-            "open",
+            "drafting",
             CardOwner.Worker,
             CardScope.Change,
             "2",
@@ -277,7 +277,7 @@ public sealed class CardFileRoundTripTests
             "B-0102---",
             CardKind.Block,
             "Title",
-            "open",
+            "drafting",
             CardOwner.Worker,
             CardScope.Change,
             "---not-a-fence---",
@@ -299,7 +299,7 @@ public sealed class CardFileRoundTripTests
             "id: X-0001\n" +
             "kind: block\n" +
             "title: t\n" +
-            "status: open\n" +
+            "status: drafting\n" +
             "owner: worker\n" +
             "scope: change\n" +
             "section: 1\n" +
@@ -326,7 +326,7 @@ public sealed class CardFileRoundTripTests
     {
         const string raw =
             "---\n" +
-            "id: X-0002\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 1\n" +
+            "id: X-0002\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 1\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "---\n" +
             "body\n" +
@@ -391,7 +391,7 @@ public sealed class CardFileRoundTripTests
     public void RoundTrips_CommentIdAndReplyToContainingSpacesAndBackslashes()
     {
         var frontmatter = new CardFrontmatter(
-            "B-0103", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "2", Created, Updated);
+            "B-0103", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "2", Created, Updated);
 
         var comment = new CardComment(
             @"C 1\odd",
@@ -420,7 +420,7 @@ public sealed class CardFileRoundTripTests
         // fail to parse back — the same "writes but can't be read back" failure the frontmatter
         // escaping already guards against, applied here to the comment header.
         var frontmatter = new CardFrontmatter(
-            "B-0104", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "2", Created, Updated);
+            "B-0104", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "2", Created, Updated);
         var comment = new CardComment("weird -->id", CardOwner.Worker, Updated, "Body.", null, null, null, []);
         var card = new CardFile(frontmatter, "Body.", [comment], []);
 
@@ -465,7 +465,7 @@ public sealed class CardFileRoundTripTests
     public void Parse_MissingCommentFooter_Fails()
     {
         const string raw =
-            "---\nid: X-0001\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 1\ncreated: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "---\nid: X-0001\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 1\ncreated: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
             "body\n<!-- callboard:comment id=C-0001 author=worker resolved=false timestamp=2026-08-19T09:00:00+00:00 -->\nunterminated comment\n";
 
         var result = CardFileParser.Parse(raw);
@@ -477,7 +477,7 @@ public sealed class CardFileRoundTripTests
     public void RoundTrips_CardWithAHandoverSequence()
     {
         var frontmatter = new CardFrontmatter(
-            "B-0043", CardKind.Block, "Ownership handover", "in-progress", CardOwner.Supervisor, CardScope.Change, "4", Created, Updated);
+            "B-0043", CardKind.Block, "Ownership handover", "building", CardOwner.Supervisor, CardScope.Change, "4", Created, Updated);
         var first = new CardHandover(CardOwner.Architect, CardOwner.Reviewer, Updated.AddHours(1), []);
         var second = new CardHandover(CardOwner.Reviewer, CardOwner.Supervisor, Updated.AddHours(2), []);
         var card = new CardFile(frontmatter, "Body.", [], [], [first, second]);
@@ -495,7 +495,7 @@ public sealed class CardFileRoundTripTests
     public void RoundTrips_CardWithoutAHandover_LeavesTheSequenceEmpty()
     {
         var frontmatter = new CardFrontmatter(
-            "B-0044", CardKind.Block, "No handover yet", "open", CardOwner.Worker, CardScope.Change, "4", Created, Updated);
+            "B-0044", CardKind.Block, "No handover yet", "drafting", CardOwner.Worker, CardScope.Change, "4", Created, Updated);
         var card = new CardFile(frontmatter, "Body.", [], []);
 
         var serialized = CardFileWriter.Serialize(card);
@@ -509,7 +509,7 @@ public sealed class CardFileRoundTripTests
     public void RoundTrips_CardWithBothHandoversAndComments_EachSequenceIndependent()
     {
         var frontmatter = new CardFrontmatter(
-            "B-0045", CardKind.Block, "Mixed", "open", CardOwner.Reviewer, CardScope.Change, "4", Created, Updated);
+            "B-0045", CardKind.Block, "Mixed", "drafting", CardOwner.Reviewer, CardScope.Change, "4", Created, Updated);
         var comment = new CardComment("C-0001", CardOwner.Worker, Created, "Started.", null, null, null, []);
         var handover = new CardHandover(CardOwner.Architect, CardOwner.Reviewer, Updated, []);
         var card = new CardFile(frontmatter, "Body.", [comment], [], [handover]);
@@ -525,7 +525,7 @@ public sealed class CardFileRoundTripTests
     public void RoundTrips_HandoverWithAnUnrecognisedField_PreservesItVerbatim()
     {
         const string raw =
-            "---\nid: X-0002\nkind: block\ntitle: t\nstatus: open\nowner: reviewer\nscope: change\nsection: 4\n" +
+            "---\nid: X-0002\nkind: block\ntitle: t\nstatus: drafting\nowner: reviewer\nscope: change\nsection: 4\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
             "body\n" +
             "<!-- callboard:handover by=architect to=reviewer timestamp=2026-08-19T09:00:00+00:00 round=2 -->\n";
@@ -546,7 +546,7 @@ public sealed class CardFileRoundTripTests
     public void Parse_UnrecognisedHandoverByValue_Fails()
     {
         const string raw =
-            "---\nid: X-0001\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 1\n" +
+            "---\nid: X-0001\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 1\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
             "<!-- callboard:handover by=nobody to=reviewer timestamp=2026-08-19T09:00:00+00:00 -->\n";
 
@@ -559,7 +559,7 @@ public sealed class CardFileRoundTripTests
     public void Parse_HandoverMissingRequiredToField_Fails()
     {
         const string raw =
-            "---\nid: X-0003\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 1\n" +
+            "---\nid: X-0003\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 1\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
             "<!-- callboard:handover by=architect timestamp=2026-08-19T09:00:00+00:00 -->\n";
 

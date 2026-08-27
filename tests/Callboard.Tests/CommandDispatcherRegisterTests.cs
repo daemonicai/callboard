@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Callboard.Cards;
 using Callboard.Cli;
@@ -384,6 +385,44 @@ public sealed class CommandDispatcherRegisterTests
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("discharged", read.Frontmatter.Status);
+    }
+
+    // §12 block A round two, item 3: the envelope-category regression. `onCardCorrupt` in
+    // CommandDispatcher must return a refusal (corrupt.Reason verbatim), not throw into the
+    // tool-failure envelope — this is the CLI-level proof for the "register" command family,
+    // exercised through `rule discharge`. Status "briefed" is not a legal register lifecycle
+    // state, so the §12 block A parse door refuses the card at read time, and that refusal must
+    // reach the caller as `card-corrupt` with the field/value/kind/recognised-values intact.
+    [Fact]
+    public void RuleDischarge_CorruptCard_ExitsAsRefusal_WithReasonIntact()
+    {
+        using var repo = new TempGitRepo();
+        Directory.CreateDirectory(repo.RegisterDirectory);
+        var path = Path.Combine(repo.RegisterDirectory, "r-9001.md");
+        var frontmatter = new CardFrontmatter(
+            "R-9001", CardKind.Rule, "Title", "briefed", CardOwner.Architect, CardScope.Repository,
+            string.Empty, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["rule", "discharge", path, "--role", "architect"],
+            output, TextReader.Null, error, isInputRedirected: true, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        Assert.NotEqual(CommandDispatcher.ToolFailureExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("card-corrupt", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString();
+        Assert.NotNull(message);
+        Assert.Contains("'briefed'", message, StringComparison.Ordinal);
+        Assert.Contains("'rule'", message, StringComparison.Ordinal);
+        Assert.Contains(RegisterLifecycleStateWireFormat.RecognisedValues, message, StringComparison.Ordinal);
+        Assert.True(string.IsNullOrWhiteSpace(error.ToString()));
     }
 
     [Fact]

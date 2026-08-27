@@ -34,7 +34,7 @@ public sealed class IndexPopulatorTests : IDisposable
         var databasePath = IndexPaths.DatabasePath(_root);
         var comment = new CardComment("C-0001", CardOwner.Reviewer, Created, "Narrative body.", null, CardOwner.Worker, null, []);
         var frontmatter = new CardFrontmatter(
-            "B-0001", CardKind.Block, "A title", "open", CardOwner.Worker, CardScope.Change, "3", Created, Updated);
+            "B-0001", CardKind.Block, "A title", "drafting", CardOwner.Worker, CardScope.Change, "3", Created, Updated);
         WriteCard(CardScope.Change, "b-0001", new NewCardFile(frontmatter, "Body."), [comment]);
 
         var result = IndexPopulator.Populate(_root, databasePath);
@@ -51,7 +51,7 @@ public sealed class IndexPopulatorTests : IDisposable
         Assert.Equal("B-0001", reader.GetString(0));
         Assert.Equal("block", reader.GetString(1));
         Assert.Equal("A title", reader.GetString(2));
-        Assert.Equal("open", reader.GetString(3));
+        Assert.Equal("drafting", reader.GetString(3));
         Assert.Equal("worker", reader.GetString(4));
         Assert.Equal("change", reader.GetString(5));
         Assert.Equal("3", reader.GetString(6));
@@ -108,7 +108,7 @@ public sealed class IndexPopulatorTests : IDisposable
         const string commentBodySecret = "UNMISTAKABLE_COMMENT_BODY_MARKER_9c1e";
         var comment = new CardComment("C-0001", CardOwner.Worker, Created, commentBodySecret, null, null, null, []);
         var frontmatter = new CardFrontmatter(
-            "B-0003", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "3", Created, Created);
+            "B-0003", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "3", Created, Created);
         WriteCard(CardScope.Change, "b-0003", new NewCardFile(frontmatter, cardBodySecret), [comment]);
 
         IndexPopulator.Populate(_root, databasePath);
@@ -181,7 +181,7 @@ public sealed class IndexPopulatorTests : IDisposable
         var first = new CardComment("C-0001", CardOwner.Worker, Created, "First.", null, null, null, []);
         var repeated = new CardComment("C-0001", CardOwner.Reviewer, Updated, "Same id as the first.", null, null, null, []);
         var frontmatter = new CardFrontmatter(
-            "B-0010", CardKind.Block, "Has a duplicate comment id", "open", CardOwner.Worker, CardScope.Change, "3", Created, Created);
+            "B-0010", CardKind.Block, "Has a duplicate comment id", "drafting", CardOwner.Worker, CardScope.Change, "3", Created, Created);
         WriteCard(CardScope.Change, "b-0010", new NewCardFile(frontmatter, "Body."), [first, repeated]);
         WriteCard(CardScope.Change, "b-0011", GoodCard("B-0011"));
 
@@ -261,7 +261,7 @@ public sealed class IndexPopulatorTests : IDisposable
 
     private static NewCardFile GoodCard(string id) =>
         new(
-            new CardFrontmatter(id, CardKind.Block, "Title " + id, "open", CardOwner.Worker, CardScope.Change, "3", Created, Created),
+            new CardFrontmatter(id, CardKind.Block, "Title " + id, "drafting", CardOwner.Worker, CardScope.Change, "3", Created, Created),
             "Body.");
 
     private string CardPath(CardScope scope, string fileStem)

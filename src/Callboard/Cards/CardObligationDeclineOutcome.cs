@@ -9,6 +9,12 @@ namespace Callboard.Cards;
 /// the same two register-wide preconditions (register kind, non-flow-state status), plus one
 /// disposition-specific refusal <see cref="CardRegisterDischargeOutcome"/> has no counterpart for:
 /// <see cref="ReasonRequired"/>.
+///
+/// <para>
+/// <b>No <c>InvalidStatus</c> case (§12 block A).</b> See <see cref="CardRegisterDischargeOutcome"/>'s
+/// own doc comment: <see cref="CardFileParser"/> now validates a register card's own <c>status</c>
+/// at the parse door, so <see cref="CardCorrupt"/> carries that refusal's reason instead.
+/// </para>
 /// </summary>
 internal abstract record CardObligationDeclineOutcome
 {
@@ -20,7 +26,6 @@ internal abstract record CardObligationDeclineOutcome
         Func<Declined, TResult> onDeclined,
         Func<ReasonRequired, TResult> onReasonRequired,
         Func<AlreadyDischarged, TResult> onAlreadyDischarged,
-        Func<InvalidStatus, TResult> onInvalidStatus,
         Func<NotAnObligationCard, TResult> onNotAnObligationCard,
         Func<CardNotFound, TResult> onCardNotFound,
         Func<LayoutMismatch, TResult> onLayoutMismatch,
@@ -34,7 +39,7 @@ internal abstract record CardObligationDeclineOutcome
     /// decline, not a discharge asserting the work was met.</param>
     internal sealed record Declined(CardFile Card) : CardObligationDeclineOutcome
     {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onDeclined(this);
     }
 
@@ -47,7 +52,7 @@ internal abstract record CardObligationDeclineOutcome
     /// directly rather than through the CLI. Refusal-shaped.</summary>
     internal sealed record ReasonRequired(string FilePath) : CardObligationDeclineOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onReasonRequired(this);
 
         public string RefusingRule => "register: declining an obligation requires a recorded reason";
@@ -60,7 +65,7 @@ internal abstract record CardObligationDeclineOutcome
     /// silently no-op, neither of which this build accepts. Refusal-shaped.</summary>
     internal sealed record AlreadyDischarged(string FilePath) : CardObligationDeclineOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onAlreadyDischarged(this);
 
         public string RefusingRule => "register: a discharged register card cannot be discharged (or declined) again";
@@ -68,26 +73,12 @@ internal abstract record CardObligationDeclineOutcome
         public string Remedy => $"'{FilePath}' is already discharged; there is nothing further to decline.";
     }
 
-    /// <summary>The obligation's own <c>status</c> does not parse as <see cref="RegisterLifecycleState"/>
-    /// — register: "SHALL NOT occupy flow states". Refusal-shaped.</summary>
-    internal sealed record InvalidStatus(string FilePath, string Status) : CardObligationDeclineOutcome, ICardRefusalReason
-    {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
-            onInvalidStatus(this);
-
-        public string RefusingRule => "register: register cards SHALL NOT occupy flow states";
-
-        public string Remedy =>
-            $"'{FilePath}' has status '{Status}', which is not a recognised register lifecycle state " +
-            $"({RegisterLifecycleStateWireFormat.RecognisedValues}); correct the card's own 'status' field before declining it.";
-    }
-
     /// <summary>The resolved card is not an <c>obligation</c> — register's decline scenario is
     /// obligation-specific ("an obligation that will not be met"), unlike the generic four-kind
     /// discharge. Refusal-shaped.</summary>
     internal sealed record NotAnObligationCard(CardKind Kind) : CardObligationDeclineOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotAnObligationCard(this);
 
         public string RefusingRule => "register: declining applies to obligation cards";
@@ -99,7 +90,7 @@ internal abstract record CardObligationDeclineOutcome
     /// Refusal-shaped.</summary>
     internal sealed record CardNotFound(string FilePath) : CardObligationDeclineOutcome
     {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardNotFound(this);
     }
 
@@ -108,14 +99,14 @@ internal abstract record CardObligationDeclineOutcome
     /// case. Refusal-shaped.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardObligationDeclineOutcome
     {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
     /// <summary>The card exists but could not be parsed. Neither refusal nor tool-failure.</summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardObligationDeclineOutcome
     {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardCorrupt(this);
     }
 
@@ -130,7 +121,7 @@ internal abstract record CardObligationDeclineOutcome
     /// for the sibling case on the generic comment/handover surface.</summary>
     internal sealed record HandEnteredDerivedState(string Key) : CardObligationDeclineOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onHandEnteredDerivedState(this);
 
         public string RefusingRule => "working-context: no figure shall be hand-entered";
@@ -144,7 +135,7 @@ internal abstract record CardObligationDeclineOutcome
     /// failed after every check passed. Tool-failure-shaped.</summary>
     internal sealed record ToolFailure(string Reason) : CardObligationDeclineOutcome
     {
-        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Declined, TResult> onDeclined, Func<ReasonRequired, TResult> onReasonRequired, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

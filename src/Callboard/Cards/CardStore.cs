@@ -2688,6 +2688,14 @@ internal static class CardStore
                             continue;
                         }
 
+                        // The !TryParse half of this condition is unreachable: §12 block A's parse door
+                        // (CardFileParser.ValidateStatus) never hands back an obligation-kind CardFile whose
+                        // status does not parse against RegisterLifecycleStateWireFormat — a hand-edited bad
+                        // status fails to parse at all and is already caught above as obligationCorruptReason,
+                        // which returns CardCorrupt (a refusal) before this line is ever reached. That is the
+                        // fail-open door this block closes: before the parse door existed, a bad status parsed
+                        // successfully as "not open" here and was silently skipped, letting the close proceed
+                        // as if the obligation had never existed.
                         if (!RegisterLifecycleStateWireFormat.TryParse(obligationCandidate.Frontmatter.Status, out var obligationState) || !ReferenceEquals(obligationState, RegisterLifecycleState.Open))
                         {
                             continue;
@@ -3125,13 +3133,14 @@ internal static class CardStore
                         static reason => new CardRegisterDischargeOutcome.ToolFailure(reason));
                 }
 
-                // register: "SHALL NOT occupy flow states" — a real, exercised refusal, not merely
-                // a documented intention. See RegisterLifecycleState's own doc comment.
+                // register: "SHALL NOT occupy flow states" — enforced at the parse door (§12 block
+                // A): CardFileParser validates a register card's status against
+                // RegisterLifecycleStateWireFormat before the card is ever constructed, and
+                // IsRegisterCard above already confirmed this card's own kind, so this can only
+                // ever succeed.
                 if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
                 {
-                    return RefuseAndRecord<CardRegisterDischargeOutcome, CardRegisterDischargeOutcome.InvalidStatus>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
-                        new CardRegisterDischargeOutcome.InvalidStatus(filePath, card.Frontmatter.Status),
-                        static reason => new CardRegisterDischargeOutcome.ToolFailure(reason));
+                    throw new InvalidOperationException("unreachable: a register card's status is validated at the parse door.");
                 }
 
                 if (currentState == RegisterLifecycleState.Discharged)
@@ -3237,9 +3246,9 @@ internal static class CardStore
     /// </b> A card that is still <see cref="CardScope.Change"/>-scoped — the common case promotion
     /// serves — cannot be anchored by <see cref="AnchoredCardPath.TryCreate"/> without one
     /// (<see cref="CardLayout.DirectoryFor"/> requires it for that scope); without
-    /// <paramref name="changeName"/>, <see cref="CardRulePromoteOutcome.NotARuleCard"/>,
-    /// <see cref="CardRulePromoteOutcome.InvalidStatus"/> and <see cref="CardRulePromoteOutcome.
-    /// TargetAlreadyExists"/> would report their refusal but never record it — reviewer/Architect
+    /// <paramref name="changeName"/>, <see cref="CardRulePromoteOutcome.NotARuleCard"/> and
+    /// <see cref="CardRulePromoteOutcome.TargetAlreadyExists"/> would report their refusal but
+    /// never record it — reviewer/Architect
     /// ruling: "a refusal surface that records everywhere except the path most callers take is
     /// worse than one that records nowhere." The promotion move itself never uses this value — the
     /// move target is always <see cref="CardScope.Repository"/>, which needs no change name.
@@ -3275,13 +3284,14 @@ internal static class CardStore
                         static reason => new CardRulePromoteOutcome.ToolFailure(reason));
                 }
 
-                // register: "SHALL NOT occupy flow states" — the same exercised refusal every
-                // other register mutation in this codebase already enforces.
+                // register: "SHALL NOT occupy flow states" — enforced at the parse door (§12 block
+                // A): CardFileParser validates a register card's status against
+                // RegisterLifecycleStateWireFormat before the card is ever constructed, and
+                // IsRuleCard above already confirmed this card's own kind, so this can only ever
+                // succeed.
                 if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out _))
                 {
-                    return RefuseAndRecord<CardRulePromoteOutcome, CardRulePromoteOutcome.InvalidStatus>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
-                        new CardRulePromoteOutcome.InvalidStatus(originalFilePath, card.Frontmatter.Status),
-                        static reason => new CardRulePromoteOutcome.ToolFailure(reason));
+                    throw new InvalidOperationException("unreachable: a register card's status is validated at the parse door.");
                 }
 
                 // Promotion knows how to move exactly one scope pair: change -> repository.
@@ -3441,11 +3451,14 @@ internal static class CardStore
                         static reason => new CardObligationPromoteOutcome.ToolFailure(reason));
                 }
 
+                // register: "SHALL NOT occupy flow states" — enforced at the parse door (§12 block
+                // A): CardFileParser validates a register card's status against
+                // RegisterLifecycleStateWireFormat before the card is ever constructed, and
+                // IsObligationCard above already confirmed this card's own kind, so this can only
+                // ever succeed.
                 if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out _))
                 {
-                    return RefuseAndRecord<CardObligationPromoteOutcome, CardObligationPromoteOutcome.InvalidStatus>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
-                        new CardObligationPromoteOutcome.InvalidStatus(originalFilePath, card.Frontmatter.Status),
-                        static reason => new CardObligationPromoteOutcome.ToolFailure(reason));
+                    throw new InvalidOperationException("unreachable: a register card's status is validated at the parse door.");
                 }
 
                 var scopeRefusal = card.Frontmatter.Scope.Match<CardObligationPromoteOutcome?>(
@@ -3580,11 +3593,14 @@ internal static class CardStore
                         static r => new CardObligationDeclineOutcome.ToolFailure(r));
                 }
 
+                // register: "SHALL NOT occupy flow states" — enforced at the parse door (§12 block
+                // A): CardFileParser validates a register card's status against
+                // RegisterLifecycleStateWireFormat before the card is ever constructed, and
+                // IsObligationCard above already confirmed this card's own kind, so this can only
+                // ever succeed.
                 if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
                 {
-                    return RefuseAndRecord<CardObligationDeclineOutcome, CardObligationDeclineOutcome.InvalidStatus>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
-                        new CardObligationDeclineOutcome.InvalidStatus(filePath, card.Frontmatter.Status),
-                        static r => new CardObligationDeclineOutcome.ToolFailure(r));
+                    throw new InvalidOperationException("unreachable: a register card's status is validated at the parse door.");
                 }
 
                 if (currentState == RegisterLifecycleState.Discharged)
@@ -4087,6 +4103,13 @@ internal static class CardStore
                 onSuccess: success =>
                 {
                     var card = success.Card;
+                    // TryParse failing here is unreachable: §12 block A's parse door
+                    // (CardFileParser.ValidateStatus) never hands back an obligation-kind CardFile
+                    // whose status does not parse against RegisterLifecycleStateWireFormat — a
+                    // hand-edited bad status fails to parse at all, so `result` above is onFailure
+                    // and this onSuccess branch is never entered for that card. Kept as a defensive
+                    // check rather than an assert, matching the CardSectionClose obligation scan this
+                    // mirrors, so `change archive` and `section close` agree on what counts as owed.
                     if (IsObligationCard(card)
                         && RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var state)
                         && state == RegisterLifecycleState.Open)
@@ -4328,18 +4351,18 @@ internal static class CardStore
                 static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
         }
 
+        // register: "SHALL NOT occupy flow states" — enforced at the parse door (§12 block A):
+        // CardFileParser validates a register card's status against RegisterLifecycleStateWireFormat
+        // before the card is ever constructed, and IsDecisionCard above already confirmed both
+        // cards' own kind, so these can only ever succeed.
         if (!RegisterLifecycleStateWireFormat.TryParse(supersedingCard.Frontmatter.Status, out var supersedingState))
         {
-            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.InvalidStatus>(cardsRoot, supersedingCard, supersedingFilePath, changeName: null, actingRole, timestamp,
-                        new CardDecisionSupersedeOutcome.InvalidStatus(supersedingFilePath, supersedingCard.Frontmatter.Status),
-                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
+            throw new InvalidOperationException("unreachable: a register card's status is validated at the parse door.");
         }
 
         if (!RegisterLifecycleStateWireFormat.TryParse(supersededCard.Frontmatter.Status, out var supersededState))
         {
-            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.InvalidStatus>(cardsRoot, supersededCard, supersededFilePath, changeName: null, actingRole, timestamp,
-                        new CardDecisionSupersedeOutcome.InvalidStatus(supersededFilePath, supersededCard.Frontmatter.Status),
-                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
+            throw new InvalidOperationException("unreachable: a register card's status is validated at the parse door.");
         }
 
         // Both sides must be open — the superseded side because supersession discharges it exactly
@@ -4852,11 +4875,13 @@ internal static class CardStore
                 static reason => new CardRuleCompactOutcome.ToolFailure(reason)), null);
         }
 
+        // register: "SHALL NOT occupy flow states" — enforced at the parse door (§12 block A):
+        // CardFileParser validates a register card's status against RegisterLifecycleStateWireFormat
+        // before the card is ever constructed, and IsRuleCard above already confirmed this card's
+        // own kind, so this can only ever succeed.
         if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var state))
         {
-            return (RefuseAndRecord<CardRuleCompactOutcome, CardRuleCompactOutcome.InvalidStatus>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
-                        new CardRuleCompactOutcome.InvalidStatus(filePath, card.Frontmatter.Status),
-                static reason => new CardRuleCompactOutcome.ToolFailure(reason)), null);
+            throw new InvalidOperationException("unreachable: a register card's status is validated at the parse door.");
         }
 
         if (state == RegisterLifecycleState.Discharged)

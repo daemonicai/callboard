@@ -288,7 +288,7 @@ public sealed class CommandDispatcherBlockTransitionTests
     // "card-write-failed"; it now asserts the tool-failure exit and the generic tool-failure
     // envelope, the same shape index rebuild's own SQLite I/O failures already produce.
     [Fact]
-    public void BlockTransition_CorruptCard_ExitsAsToolFailure_NotARefusal()
+    public void BlockTransition_CorruptCard_ExitsAsRefusal_NotAToolFailure()
     {
         using var repo = new TempGitRepo();
         var directory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
@@ -303,15 +303,17 @@ public sealed class CommandDispatcherBlockTransitionTests
             ["block", "transition", path, "brief", "--role", "architect", "--base", "commit-abc", "--change", ChangeName],
             output, TextReader.Null, error, isInputRedirected: true, workingDirectory: repo.Path, clock: static () => FixedNow);
 
-        Assert.Equal(CommandDispatcher.ToolFailureExitCode, exitCode);
-        Assert.NotEqual(CommandDispatcher.RefusalExitCode, exitCode);
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        Assert.NotEqual(CommandDispatcher.ToolFailureExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
-        Assert.Equal("tool-failure", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
-        Assert.False(string.IsNullOrWhiteSpace(error.ToString()));
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("card-corrupt", refusal.GetProperty("code").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(refusal.GetProperty("message").GetString()));
+        Assert.True(string.IsNullOrWhiteSpace(error.ToString()));
 
-        // The card is untouched — a tool-failure means enforcement is unavailable, not that a
-        // partial write happened.
+        // The card is untouched — a corrupt-card refusal means the tool read and rejected the
+        // record, not that a partial write happened.
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 

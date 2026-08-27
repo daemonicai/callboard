@@ -282,7 +282,7 @@ public sealed class CommandDispatcherBlockedByTests
 
     // Shared site (MapBlockedByOutcome).
     [Fact]
-    public void AddBlocker_CorruptCard_ExitsAsToolFailure_NotARefusal()
+    public void AddBlocker_CorruptCard_ExitsAsRefusal_NotAToolFailure()
     {
         using var repo = new TempGitRepo();
         var directory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
@@ -296,11 +296,14 @@ public sealed class CommandDispatcherBlockedByTests
             ["block", "add-blocker", path, "Q-0001", "--role", "worker", "--change", ChangeName],
             output, TextReader.Null, error, isInputRedirected: true, workingDirectory: repo.Path, clock: static () => FixedNow);
 
-        Assert.Equal(CommandDispatcher.ToolFailureExitCode, exitCode);
-        Assert.NotEqual(CommandDispatcher.RefusalExitCode, exitCode);
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        Assert.NotEqual(CommandDispatcher.ToolFailureExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("tool-failure", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
-        Assert.False(string.IsNullOrWhiteSpace(error.ToString()));
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("card-corrupt", refusal.GetProperty("code").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(refusal.GetProperty("message").GetString()));
+        Assert.True(string.IsNullOrWhiteSpace(error.ToString()));
     }
 
     // Shared site (MapBlockedByOutcome).

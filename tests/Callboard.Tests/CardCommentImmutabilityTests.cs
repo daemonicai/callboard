@@ -211,7 +211,7 @@ public sealed class CardCommentImmutabilityTests
         {
             var timestamp = new DateTimeOffset(2026, 8, 22, 9, 0, 0, TimeSpan.Zero);
             var frontmatter = new CardFrontmatter(
-                "B-0001", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "4", timestamp, timestamp);
+                "B-0001", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "4", timestamp, timestamp);
             var comment = new CardComment("C-0001", CardOwner.Worker, timestamp, "Do not drop me.", null, null, null, []);
 
             var created = CardStore.WriteCard(root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), changeName);

@@ -1273,16 +1273,13 @@ internal static class CommandDispatcher
                 $"no card file exists at '{notFound.FilePath}' to transition."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            // Neither refusal-shaped (reviewer finding, first remediation round): a corrupt card
-            // or a broken write is not the caller being wrong, it is enforcement being
-            // unavailable — the same disposition index rebuild's own SQLite I/O failures reach by
-            // simply not being caught anywhere between the write and Run's own catch. Throwing
-            // here, rather than returning a Refusal, is what routes this to the same tool-failure
-            // exit (ToolFailureExitCode) through that same catch, instead of a mapping at this
-            // call site silently re-collapsing the two dispositions the type above went to the
-            // trouble of keeping apart.
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
+            // Refusal-shaped, not tool-failure (§12 block A, round two — supersedes this site's own
+            // prior comment): a corrupt card is enforcement running and refusing, not enforcement
+            // being unavailable — the tool read the record, the record is definitively bad, and the
+            // reason names the field, the value, the kind and the recognised values. onToolFailure
+            // below is the one that stays a throw: that disposition is genuinely "the tool could
+            // not check", the same place index rebuild's own SQLite I/O failures land.
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason),
             onBlockedByOpenProductOwnerQuestion: blocked => new CommandOutcome.Refusal(
                 "blocked-by-open-product-owner-question",
@@ -1344,9 +1341,7 @@ internal static class CommandDispatcher
                 $"no card file exists at '{notFound.FilePath}' to record a gate result on."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            // Neither refusal-shaped — same reasoning as RunBlockTransition's own mapping.
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -1430,8 +1425,7 @@ internal static class CommandDispatcher
                 $"no card file exists at '{notFound.FilePath}' to update blocked_by on."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason),
             onBlockerUnresolvable: unresolvable => new CommandOutcome.Refusal(
                 "blocker-unresolvable",
@@ -1524,8 +1518,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to approve."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason),
             onBlockedByOpenProductOwnerQuestion: blocked => new CommandOutcome.Refusal(
                 "blocked-by-open-product-owner-question",
@@ -1606,8 +1599,7 @@ internal static class CommandDispatcher
                 notUnderReview.RefusingRule, notUnderReview.Remedy),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -1707,8 +1699,7 @@ internal static class CommandDispatcher
             onRaisedCardAlreadyExists: raisedAlreadyExists => new CommandOutcome.Refusal(
                 "card-already-exists", $"a card already exists at '{raisedAlreadyExists.FilePath}'.",
                 raisedAlreadyExists.RefusingRule, raisedAlreadyExists.Remedy),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -1824,8 +1815,7 @@ internal static class CommandDispatcher
                 $"{Math.Max(boundExceeded.UnspentAuthorisations, 0)} unspent. A recorded Product Owner " +
                 "authorisation ('section authorise --role product-owner --reason <text>') would satisfy it.",
                 boundExceeded.RefusingRule, boundExceeded.Remedy),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -1921,8 +1911,7 @@ internal static class CommandDispatcher
                 $"no card file exists at '{notFound.FilePath}' to close."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a section card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -1980,8 +1969,7 @@ internal static class CommandDispatcher
                 $"authorisation{(notAtBound.UnspentAuthorisations == 1 ? "" : "s")}, so it is not currently at the " +
                 "bound. Record this once 'section verdict' has actually refused a verdict for want of one.",
                 notAtBound.RefusingRule, notAtBound.Remedy),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -2485,8 +2473,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to answer."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a question card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -2536,8 +2523,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to defer."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a question card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -2618,11 +2604,6 @@ internal static class CommandDispatcher
             }),
             onAlreadyDischarged: already => new CommandOutcome.Refusal(
                 "already-discharged", $"'{already.FilePath}' is already discharged.", already.RefusingRule, already.Remedy),
-            onInvalidStatus: invalid => new CommandOutcome.Refusal(
-                "invalid-register-status",
-                $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
-                invalid.RefusingRule, invalid.Remedy),
             onNotARegisterCard: notARegister => new CommandOutcome.Refusal(
                 "not-a-register-card",
                 $"'{filePath}' is a '{notARegister.Kind.ToWireString()}' card, not one of the register kinds " +
@@ -2637,8 +2618,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to discharge."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a register card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -2827,11 +2807,6 @@ internal static class CommandDispatcher
                 $"'{alreadyDischarged.FilePath}' is already discharged (already superseded by something else); " +
                 "a discharged decision cannot newly become another decision's successor.",
                 alreadyDischarged.RefusingRule, alreadyDischarged.Remedy),
-            onInvalidStatus: invalid => new CommandOutcome.Refusal(
-                "invalid-register-status",
-                $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
-                invalid.RefusingRule, invalid.Remedy),
             onNotADecisionCard: notADecision => WrongCardKind(
                 notADecision.FilePath, CardKind.Decision, notADecision.Kind, "'decision supersede' only applies to decision cards") with
             {
@@ -2847,8 +2822,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to supersede."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a decision card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -2897,11 +2871,6 @@ internal static class CommandDispatcher
                 $"'{notChangeScoped.FilePath}' is '{notChangeScoped.Scope.ToWireString()}'-scoped; only a " +
                 "'change'-scoped rule can be promoted to 'repository' scope.",
                 notChangeScoped.RefusingRule, notChangeScoped.Remedy),
-            onInvalidStatus: invalid => new CommandOutcome.Refusal(
-                "invalid-register-status",
-                $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
-                invalid.RefusingRule, invalid.Remedy),
             onNotARuleCard: notARule => WrongCardKind(
                 rule.FilePath!, CardKind.Rule, notARule.Kind, "'rule promote' only applies to rule cards") with
             {
@@ -2920,8 +2889,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to promote."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a rule card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -2971,11 +2939,6 @@ internal static class CommandDispatcher
                 $"'{notChangeScoped.FilePath}' is '{notChangeScoped.Scope.ToWireString()}'-scoped; only a " +
                 "'change'-scoped obligation can be promoted to 'repository' scope.",
                 notChangeScoped.RefusingRule, notChangeScoped.Remedy),
-            onInvalidStatus: invalid => new CommandOutcome.Refusal(
-                "invalid-register-status",
-                $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
-                invalid.RefusingRule, invalid.Remedy),
             onNotAnObligationCard: notAnObligation => WrongCardKind(
                 obligation.FilePath!, CardKind.Obligation, notAnObligation.Kind, "'obligation promote' only applies to obligation cards") with
             {
@@ -2994,8 +2957,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to promote."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as an obligation card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -3048,11 +3010,6 @@ internal static class CommandDispatcher
             onAlreadyDischarged: already => new CommandOutcome.Refusal(
                 "already-discharged", $"'{already.FilePath}' is already discharged; there is nothing further to decline.",
                 already.RefusingRule, already.Remedy),
-            onInvalidStatus: invalid => new CommandOutcome.Refusal(
-                "invalid-register-status",
-                $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
-                invalid.RefusingRule, invalid.Remedy),
             onNotAnObligationCard: notAnObligation => WrongCardKind(
                 obligation.FilePath!, CardKind.Obligation, notAnObligation.Kind, "'obligation decline' only applies to obligation cards") with
             {
@@ -3063,8 +3020,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to decline."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as an obligation card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -3162,8 +3118,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}'."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
 
     /// <summary>
@@ -3228,8 +3183,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}'."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -3471,6 +3425,12 @@ internal static class CommandDispatcher
                     "compaction happens at archive, performed by the architect, not proposed here.");
             }
 
+            // This branch is unreachable: §12 block A's parse door (CardFileParser.ValidateStatus)
+            // never hands back a rule-kind CardFile whose status does not parse against
+            // RegisterLifecycleStateWireFormat, and `resolved` above is already narrowed to
+            // CardKind.Rule via ResolveCardReference's IsRuleCard predicate. Kept as a defensive
+            // refusal rather than removed, so a rule read some other way still refuses instead of
+            // proceeding on an unparsed state.
             if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var state))
             {
                 return new CommandOutcome.Refusal(
@@ -3694,11 +3654,6 @@ internal static class CommandDispatcher
                 "already-discharged",
                 $"'{already.FilePath}' is already discharged; absorbing an already-discharged rule is a refusal, not a re-absorption.",
                 already.RefusingRule, already.Remedy), null),
-            onInvalidStatus: invalid => (new CommandOutcome.Refusal(
-                "invalid-register-status",
-                $"'{invalid.FilePath}' has status '{invalid.Status}', which is not a valid register lifecycle " +
-                $"state ({RegisterLifecycleStateWireFormat.RecognisedValues}) — register cards SHALL NOT occupy flow states.",
-                invalid.RefusingRule, invalid.Remedy), null),
             onNotARuleCard: notARule => (WrongCardKind(
                 notARule.FilePath, CardKind.Rule, notARule.Kind, "compaction only applies to rule cards") with
             {
@@ -3714,8 +3669,7 @@ internal static class CommandDispatcher
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to compact."), null),
             onLayoutMismatch: layoutMismatch => (new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason), null),
-            onCardCorrupt: corrupt => throw new InvalidOperationException(
-                $"card '{corrupt.FilePath}' could not be read as a rule card: {corrupt.Reason}"),
+            onCardCorrupt: corrupt => (new CommandOutcome.Refusal("card-corrupt", corrupt.Reason), null),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
 
     /// <summary>

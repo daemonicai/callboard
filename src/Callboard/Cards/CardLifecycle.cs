@@ -56,6 +56,10 @@ internal static class CardLifecycle
     private static bool IsQuestionClosed(CardFile card) =>
         QuestionStatusWireFormat.TryParse(card.Frontmatter.Status, out var state) && ReferenceEquals(state, QuestionStatus.Answered);
 
+    // The TryParse-fails-false branch is unreachable for any card reaching this method: §12 block A's
+    // parse door (CardFileParser.ValidateStatus) never hands back a register-kind CardFile whose
+    // status does not parse against RegisterLifecycleStateWireFormat. Kept as a defensive check
+    // rather than an assert, so a future kind added without updating the door fails closed here too.
     private static bool IsRegisterDischarged(CardFile card) =>
         RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var state) && ReferenceEquals(state, RegisterLifecycleState.Discharged);
 }

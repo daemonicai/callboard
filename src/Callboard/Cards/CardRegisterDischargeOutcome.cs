@@ -4,12 +4,17 @@ namespace Callboard.Cards;
 /// Closed union over how discharging a register card (§7 block A, <see cref="CardStore.
 /// DischargeRegisterCard"/>) can end. Same shape and reasoning as <see cref="CardSectionCloseOutcome"/>
 /// — <see cref="AlreadyDischarged"/> for the same reason <see cref="CardSectionCloseOutcome.
-/// AlreadyClosed"/> exists (discharging records the acting role and the time exactly once), plus
-/// <see cref="InvalidStatus"/>, which that type has no counterpart for: register's "SHALL NOT occupy
-/// flow states" means a register card's <c>status</c> can be found holding a value
-/// <see cref="RegisterLifecycleStateWireFormat.TryParse"/> does not recognise (a hand-edited flow-
-/// state value, e.g. <c>briefed</c>) in a way <see cref="SectionFlowStateWireFormat"/> — which never
-/// has to reject a value belonging to a different vocabulary sharing its own field — does not.
+/// AlreadyClosed"/> exists (discharging records the acting role and the time exactly once).
+///
+/// <para>
+/// <b>No <c>InvalidStatus</c> case (§12 block A).</b> register's "SHALL NOT occupy flow states" used
+/// to need its own case here for a register card's <c>status</c> holding a value <see
+/// cref="RegisterLifecycleStateWireFormat.TryParse"/> did not recognise. It no longer can: <see
+/// cref="CardFileParser"/> validates a register card's own <c>status</c> against <see
+/// cref="RegisterLifecycleStateWireFormat"/> at the parse door, before the card is ever constructed,
+/// so a card that reaches <see cref="Discharged"/>'s own <c>Card</c> already carries a status this
+/// union's own vocabulary recognises. <see cref="CardCorrupt"/> now carries that refusal's reason.
+/// </para>
 /// </summary>
 internal abstract record CardRegisterDischargeOutcome
 {
@@ -20,7 +25,6 @@ internal abstract record CardRegisterDischargeOutcome
     internal abstract TResult Match<TResult>(
         Func<Discharged, TResult> onDischarged,
         Func<AlreadyDischarged, TResult> onAlreadyDischarged,
-        Func<InvalidStatus, TResult> onInvalidStatus,
         Func<NotARegisterCard, TResult> onNotARegisterCard,
         Func<CardNotFound, TResult> onCardNotFound,
         Func<LayoutMismatch, TResult> onLayoutMismatch,
@@ -31,7 +35,7 @@ internal abstract record CardRegisterDischargeOutcome
     /// <c>discharged_by</c>/<c>discharged_at</c> fields.</param>
     internal sealed record Discharged(CardFile Card) : CardRegisterDischargeOutcome
     {
-        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onDischarged(this);
     }
 
@@ -39,7 +43,7 @@ internal abstract record CardRegisterDischargeOutcome
     /// not re-record a new acting role/time over the one already recorded.</summary>
     internal sealed record AlreadyDischarged(string FilePath) : CardRegisterDischargeOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onAlreadyDischarged(this);
 
         public string RefusingRule => "register: discharging a card records the acting role and the time exactly once";
@@ -47,26 +51,11 @@ internal abstract record CardRegisterDischargeOutcome
         public string Remedy => $"'{FilePath}' is already discharged; there is nothing left to discharge.";
     }
 
-    /// <summary>The target card's own <c>status</c> does not parse as <see cref="RegisterLifecycleState"/>
-    /// — register: "SHALL NOT occupy flow states", enforced here as a real, exercised refusal rather
-    /// than a documented intention. Refusal-shaped.</summary>
-    internal sealed record InvalidStatus(string FilePath, string Status) : CardRegisterDischargeOutcome, ICardRefusalReason
-    {
-        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
-            onInvalidStatus(this);
-
-        public string RefusingRule => "register: register cards SHALL NOT occupy flow states";
-
-        public string Remedy =>
-            $"'{FilePath}' has status '{Status}', which is not a recognised register lifecycle state " +
-            $"({RegisterLifecycleStateWireFormat.RecognisedValues}); correct the card's own 'status' field before discharging it.";
-    }
-
     /// <summary>The target card exists and parses, but its <c>kind</c> is not one of the four
     /// register kinds. Refusal-shaped.</summary>
     internal sealed record NotARegisterCard(CardKind Kind) : CardRegisterDischargeOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotARegisterCard(this);
 
         public string RefusingRule => "register: discharge applies only to a register card";
@@ -77,7 +66,7 @@ internal abstract record CardRegisterDischargeOutcome
     /// <summary>No card exists at the target path. Refusal-shaped.</summary>
     internal sealed record CardNotFound(string FilePath) : CardRegisterDischargeOutcome
     {
-        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardNotFound(this);
     }
 
@@ -85,14 +74,19 @@ internal abstract record CardRegisterDischargeOutcome
     /// (<see cref="AnchoredCardPath.TryCreate"/>). Refusal-shaped.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardRegisterDischargeOutcome
     {
-        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
-    /// <summary>The card exists but could not be parsed. Neither refusal nor tool-failure.</summary>
+    /// <summary>The card exists but could not be parsed — including, since §12 block A, a register
+    /// card whose own <c>status</c> does not parse against <see cref="RegisterLifecycleStateWireFormat"/>
+    /// (register: "SHALL NOT occupy flow states"): <see cref="CardFileParser"/> refuses to construct
+    /// that card at all, and <paramref name="Reason"/> is its own parse-door message, naming the
+    /// field, the offending value and the recognised values. Neither refusal nor tool-failure.
+    /// </summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardRegisterDischargeOutcome
     {
-        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardCorrupt(this);
     }
 
@@ -107,7 +101,7 @@ internal abstract record CardRegisterDischargeOutcome
     /// for the sibling case on the generic comment/handover surface.</summary>
     internal sealed record HandEnteredDerivedState(string Key) : CardRegisterDischargeOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onHandEnteredDerivedState(this);
 
         public string RefusingRule => "working-context: no figure shall be hand-entered";
@@ -121,7 +115,7 @@ internal abstract record CardRegisterDischargeOutcome
     /// its timeout, or an I/O error occurred while writing. Tool-failure-shaped.</summary>
     internal sealed record ToolFailure(string Reason) : CardRegisterDischargeOutcome
     {
-        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Discharged, TResult> onDischarged, Func<AlreadyDischarged, TResult> onAlreadyDischarged, Func<NotARegisterCard, TResult> onNotARegisterCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

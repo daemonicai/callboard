@@ -112,7 +112,7 @@ public sealed class CardStoreCorruptionTests : IDisposable
     {
         var path = Path.Combine(_directory, id + ".md");
         var frontmatter = new CardFrontmatter(
-            id.ToUpperInvariant(), CardKind.Block, "Title " + id, "open", CardOwner.Worker, CardScope.Change, "2", Created, Created);
+            id.ToUpperInvariant(), CardKind.Block, "Title " + id, "drafting", CardOwner.Worker, CardScope.Change, "2", Created, Created);
 
         var write = CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName);
         write.Match<object?>(

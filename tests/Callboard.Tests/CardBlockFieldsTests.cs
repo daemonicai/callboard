@@ -108,7 +108,7 @@ public sealed class CardBlockFieldsTests
     {
         const string raw =
             "---\n" +
-            "id: B-0301\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "id: B-0301\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "round: not-a-number\n" +
             "---\n" +
@@ -278,7 +278,7 @@ public sealed class CardBlockFieldsTests
     {
         const string raw =
             "---\n" +
-            "id: B-0303\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "id: B-0303\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "tasks: ,\n" +
             "---\n" +
@@ -300,7 +300,7 @@ public sealed class CardBlockFieldsTests
     {
         const string raw =
             "---\n" +
-            "id: B-0304\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "id: B-0304\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "blocked_by: B-0001, \n" + // second item is a single space after the comma
             "---\n" +
@@ -322,7 +322,7 @@ public sealed class CardBlockFieldsTests
     {
         const string raw =
             "---\n" +
-            "id: B-0305\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "id: B-0305\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "gate_results: build\n" + // no '=' — not "label=exitcode"
             "---\n" +
@@ -344,7 +344,7 @@ public sealed class CardBlockFieldsTests
     {
         const string raw =
             "---\n" +
-            "id: B-0306\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "id: B-0306\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "gate_results: build=not-a-number=1\n" +
             "---\n" +
@@ -375,7 +375,7 @@ public sealed class CardBlockFieldsTests
     {
         const string raw =
             "---\n" +
-            "id: B-0308\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "id: B-0308\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "gate_results: build=0,test=1\n" + // exactly the pre-B2 two-part shape — what the shipped block D binary wrote
             "---\n" +
@@ -402,7 +402,7 @@ public sealed class CardBlockFieldsTests
     {
         const string raw =
             "---\n" +
-            "id: B-0310\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "id: B-0310\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "gate_results: build=0\n" +
             "---\n" +
@@ -421,7 +421,7 @@ public sealed class CardBlockFieldsTests
     {
         const string raw =
             "---\n" +
-            "id: B-0307\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "id: B-0307\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "gate_results: build=0=1,build=1=1\n" +
             "---\n" +
@@ -447,7 +447,7 @@ public sealed class CardBlockFieldsTests
     {
         const string raw =
             "---\n" +
-            "id: B-0309\nkind: block\ntitle: t\nstatus: open\nowner: worker\nscope: change\nsection: 5\n" +
+            "id: B-0309\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "gate_results: build=0=1,build=1=2\n" +
             "---\n" +

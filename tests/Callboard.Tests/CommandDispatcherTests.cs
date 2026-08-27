@@ -347,7 +347,7 @@ public sealed class CommandDispatcherTests
         var registerDirectory = Path.Combine(repo.Path, "callboard", "register");
         Directory.CreateDirectory(registerDirectory);
         var handAuthored = new CardFrontmatter(
-            "B-0005", CardKind.Block, "Hand-authored", "open", CardOwner.Architect, CardScope.Repository,
+            "B-0005", CardKind.Block, "Hand-authored", "drafting", CardOwner.Architect, CardScope.Repository,
             string.Empty, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
         File.WriteAllText(
             Path.Combine(registerDirectory, "b-0005.md"),

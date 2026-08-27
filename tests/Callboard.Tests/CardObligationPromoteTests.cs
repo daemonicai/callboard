@@ -121,24 +121,29 @@ public sealed class CardObligationPromoteTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
+    // §12 block A ruling: register liveness closes at the parse door. An obligation card carrying
+    // a BlockFlowState value in its own status field is never constructed — CardFileParser refuses
+    // it before PromoteObligation ever runs, and this reports (§9.1) rather than recording.
     [Fact]
-    public void PromoteObligation_StatusIsAFlowState_Refuses_AndRecordsTheRefusal()
+    public void PromoteObligation_StatusIsAFlowState_ReportsCardCorrupt_WithoutRecording()
     {
         var path = Path.Combine(_changeDirectory, "o-0004.md");
         var frontmatter = new CardFrontmatter(
             "O-0004", CardKind.Obligation, "Title", "briefed", CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
         var card = new CardFile(frontmatter, "Body.", [], [], RegisterFields: new RegisterCardFields(null, null, null, null, OwedBy: "S-0001"));
-        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var serialized = CardFileWriter.Serialize(card);
+        File.WriteAllText(path, serialized, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var outcome = CardStore.PromoteObligation(_root, path, CardOwner.Architect, PromotedAt, TimeSpan.FromSeconds(5), ChangeName);
 
-        var refusal = Assert.IsType<CardObligationPromoteOutcome.InvalidStatus>(outcome);
-        Assert.Equal("briefed", refusal.Status);
+        var corrupt = Assert.IsType<CardObligationPromoteOutcome.CardCorrupt>(outcome);
+        Assert.Contains("status", corrupt.Reason, StringComparison.Ordinal);
+        Assert.Contains("'briefed'", corrupt.Reason, StringComparison.Ordinal);
+        Assert.Contains("'obligation'", corrupt.Reason, StringComparison.Ordinal);
+        Assert.Contains(RegisterLifecycleStateWireFormat.RecognisedValues, corrupt.Reason, StringComparison.Ordinal);
 
-        var read = AssertParseSuccess(CardStore.ReadCard(path));
-        var recorded = Assert.Single(read.Refusals);
-        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
-        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
+        // Parse-door refusal reports; it does not record (§9.1).
+        Assert.Equal(serialized, File.ReadAllText(path));
     }
 
     [Fact]
@@ -187,7 +192,6 @@ public sealed class CardObligationPromoteTests : IDisposable
             onPromoted: static promoted => promoted,
             onAlreadyRepositoryScoped: static already => throw new Xunit.Sdk.XunitException($"expected Promoted, got AlreadyRepositoryScoped: '{already.FilePath}'"),
             onNotChangeScoped: static n => throw new Xunit.Sdk.XunitException($"expected Promoted, got NotChangeScoped({n.Scope.ToWireString()})"),
-            onInvalidStatus: static invalid => throw new Xunit.Sdk.XunitException($"expected Promoted, got InvalidStatus: {invalid.Status}"),
             onNotAnObligationCard: static n => throw new Xunit.Sdk.XunitException($"expected Promoted, got NotAnObligationCard({n.Kind.ToWireString()})"),
             onTargetAlreadyExists: static already => throw new Xunit.Sdk.XunitException($"expected Promoted, got TargetAlreadyExists: '{already.FilePath}'"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Promoted, got CardNotFound: '{notFound.FilePath}'"),

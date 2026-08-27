@@ -98,7 +98,6 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onResolvedSelfSupersession: static id => throw new Xunit.Sdk.XunitException($"expected Superseded, got ResolvedSelfSupersession: '{id.Id}'"),
             onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got SupersededAlreadyDischarged: '{already.FilePath}'"),
             onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got InvalidStatus: {invalid.Status}"),
             onNotADecisionCard: notADecision => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got NotADecisionCard({notADecision.Kind.ToWireString()})"),
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got LayoutMismatch: {layoutMismatch.Reason}"),
@@ -132,7 +131,6 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onResolvedSelfSupersession: static id => { Assert.Equal("D-0017", id.Id); return null; },
             onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got SupersededAlreadyDischarged: '{already.FilePath}'"),
             onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got InvalidStatus: {invalid.Status}"),
             onNotADecisionCard: notADecision => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got NotADecisionCard({notADecision.Kind.ToWireString()})"),
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got LayoutMismatch: {layoutMismatch.Reason}"),
@@ -166,7 +164,6 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onResolvedSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got ResolvedSelfSupersession: '{id.Id}'"),
             onSupersededAlreadyDischarged: static _ => null,
             onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got InvalidStatus: {invalid.Status}"),
             onNotADecisionCard: notADecision => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got NotADecisionCard({notADecision.Kind.ToWireString()})"),
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
@@ -209,7 +206,6 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onResolvedSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got ResolvedSelfSupersession: '{id.Id}'"),
             onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got SupersededAlreadyDischarged: '{already.FilePath}'"),
             onSupersedingAlreadyDischarged: static _ => null,
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got InvalidStatus: {invalid.Status}"),
             onNotADecisionCard: notADecision => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got NotADecisionCard({notADecision.Kind.ToWireString()})"),
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
@@ -254,7 +250,6 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onResolvedSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got ResolvedSelfSupersession: '{id.Id}'"),
             onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got SupersededAlreadyDischarged: '{already.FilePath}'"),
             onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got InvalidStatus: {invalid.Status}"),
             onNotADecisionCard: static n => { Assert.Equal(CardKind.Rule, n.Kind); return null; },
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got LayoutMismatch: {layoutMismatch.Reason}"),
@@ -296,7 +291,6 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onResolvedSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got ResolvedSelfSupersession: '{id.Id}'"),
             onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got SupersededAlreadyDischarged: '{already.FilePath}'"),
             onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got InvalidStatus: {invalid.Status}"),
             onNotADecisionCard: static n => { Assert.Equal(CardKind.Rule, n.Kind); return null; },
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got LayoutMismatch: {layoutMismatch.Reason}"),
@@ -312,43 +306,46 @@ public sealed class CardDecisionSupersedeTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
     }
 
-    // register: "SHALL NOT occupy flow states" — the same exercised refusal every other register
-    // mutation enforces (§9 block A2 remediation: this case had no test at all before this).
     [Fact]
-    public void SupersedeDecision_SupersedingStatusIsAFlowState_Refuses_AndRecords()
+    // §12 block A ruling: register liveness closes at the parse door. A decision card carrying a
+    // BlockFlowState value in its own status field is never constructed — CardFileParser refuses
+    // it before SupersedeDecision ever runs, so this outcome's own (now unreachable)
+    // InvalidStatus case is never produced; CardCorrupt reports the parser's reason instead
+    // (§9.1: a parse-door refusal reports, it does not record).
+    public void SupersedeDecision_SupersedingStatusIsAFlowState_ReportsCardCorrupt_WithoutRecording()
     {
         var supersedingPath = Path.Combine(_decisionsDirectory, "d-0015.md");
         var supersedingFrontmatter = new CardFrontmatter(
             "D-0015", CardKind.Decision, "Title", "briefed", CardOwner.ProductOwner, CardScope.Capability, string.Empty, Created, Created);
-        File.WriteAllText(
-            supersedingPath,
-            CardFileWriter.Serialize(new CardFile(supersedingFrontmatter, "Body.", [], [], RegisterFields: RegisterCardFields.Empty)),
-            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var serialized = CardFileWriter.Serialize(new CardFile(supersedingFrontmatter, "Body.", [], [], RegisterFields: RegisterCardFields.Empty));
+        File.WriteAllText(supersedingPath, serialized, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var supersededPath = WriteDecisionCard("d-0016", "D-0016");
 
         var outcome = CardStore.SupersedeDecision(_root, supersedingPath, supersededPath, CardOwner.ProductOwner, Created, TimeSpan.FromSeconds(5));
 
         outcome.Match<object?>(
-            onSuperseded: superseded => throw new Xunit.Sdk.XunitException("expected InvalidStatus, got Superseded"),
-            onSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got SelfSupersession: '{id.Id}'"),
-            onResolvedSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ResolvedSelfSupersession: '{id.Id}'"),
-            onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got SupersededAlreadyDischarged: '{already.FilePath}'"),
-            onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: static invalid => { Assert.Equal("briefed", invalid.Status); return null; },
-            onNotADecisionCard: n => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got NotADecisionCard({n.Kind.ToWireString()})"),
-            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardNotFound: '{notFound.FilePath}'"),
-            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got LayoutMismatch: {layoutMismatch.Reason}"),
-            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
-            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got HandEnteredDerivedState: '{handEntered.Key}'"),
-            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
+            onSuperseded: superseded => throw new Xunit.Sdk.XunitException("expected CardCorrupt, got Superseded"),
+            onSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got SelfSupersession: '{id.Id}'"),
+            onResolvedSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got ResolvedSelfSupersession: '{id.Id}'"),
+            onSupersededAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got SupersededAlreadyDischarged: '{already.FilePath}'"),
+            onSupersedingAlreadyDischarged: already => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
+            onNotADecisionCard: n => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got NotADecisionCard({n.Kind.ToWireString()})"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: static corrupt =>
+            {
+                Assert.Contains("status", corrupt.Reason, StringComparison.Ordinal);
+                Assert.Contains("'briefed'", corrupt.Reason, StringComparison.Ordinal);
+                Assert.Contains("'decision'", corrupt.Reason, StringComparison.Ordinal);
+                Assert.Contains(RegisterLifecycleStateWireFormat.RecognisedValues, corrupt.Reason, StringComparison.Ordinal);
+                return null;
+            },
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got ToolFailure: {toolFailure.Reason}"));
 
-        // process-enforcement (§9 block A2 remediation): recorded against the superseding card.
-        var read = AssertParseSuccess(CardStore.ReadCard(supersedingPath));
-        var recorded = Assert.Single(read.Refusals);
-        Assert.Equal(CardOwner.ProductOwner, recorded.By);
-        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
-        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
+        // Parse-door refusal reports; it does not record (§9.1).
+        Assert.Equal(serialized, File.ReadAllText(supersedingPath));
     }
 
     private string WriteDecisionCard(string fileStem, string id)
@@ -369,7 +366,6 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onResolvedSelfSupersession: id => throw new Xunit.Sdk.XunitException($"expected Superseded, got ResolvedSelfSupersession: '{id.Id}'"),
             onSupersededAlreadyDischarged: static already => throw new Xunit.Sdk.XunitException($"expected Superseded, got SupersededAlreadyDischarged: '{already.FilePath}'"),
             onSupersedingAlreadyDischarged: static already => throw new Xunit.Sdk.XunitException($"expected Superseded, got SupersedingAlreadyDischarged: '{already.FilePath}'"),
-            onInvalidStatus: static invalid => throw new Xunit.Sdk.XunitException($"expected Superseded, got InvalidStatus: {invalid.Status}"),
             onNotADecisionCard: static n => throw new Xunit.Sdk.XunitException($"expected Superseded, got NotADecisionCard({n.Kind.ToWireString()})"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Superseded, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Superseded, got LayoutMismatch: {layoutMismatch.Reason}"),

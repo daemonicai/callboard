@@ -158,6 +158,10 @@ internal static class RuleCitations
                     continue;
                 }
 
+                // TryParse failing here is unreachable: §12 block A's parse door
+                // (CardFileParser.ValidateStatus) never hands back a rule-kind CardFile whose status
+                // does not parse against RegisterLifecycleStateWireFormat. Kept rather than asserted,
+                // so a rule read some other way still fails closed instead of being counted wrongly.
                 if (RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var state) &&
                     ReferenceEquals(state, RegisterLifecycleState.Open))
                 {
@@ -207,6 +211,10 @@ internal static class RuleCitations
                     continue;
                 }
 
+                // The !TryParse half of this condition is unreachable: §12 block A's parse door
+                // (CardFileParser.ValidateStatus) never hands back a rule-kind CardFile whose status
+                // does not parse against RegisterLifecycleStateWireFormat. Kept rather than asserted,
+                // so a rule read some other way is still excluded from the queue instead of throwing.
                 if (!RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var state) ||
                     !ReferenceEquals(state, RegisterLifecycleState.Open))
                 {

@@ -210,7 +210,7 @@ public sealed class CardOwnershipTransferTests : IDisposable
     private string WriteInitialCard(string fileStem, string id, CardOwner owner)
     {
         var path = Path.Combine(_directory, fileStem + ".md");
-        var frontmatter = new CardFrontmatter(id, CardKind.Block, "Title", "open", owner, CardScope.Change, "4", Created, Created);
+        var frontmatter = new CardFrontmatter(id, CardKind.Block, "Title", "drafting", owner, CardScope.Change, "4", Created, Created);
         AssertSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName));
         return path;
     }

@@ -266,7 +266,7 @@ public sealed class IndexInvariantTests : IDisposable
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "stress.md");
         var frontmatter = new CardFrontmatter(
-            "B-0800", CardKind.Block, "Concurrent", "open", CardOwner.Worker, CardScope.Change, "3", Created, Created);
+            "B-0800", CardKind.Block, "Concurrent", "drafting", CardOwner.Worker, CardScope.Change, "3", Created, Created);
         AssertWriteSuccess(CardStore.WriteCard(scenarioRoot, path, new NewCardFile(frontmatter, "Body."), TimeSpan.FromSeconds(5), ChangeName));
 
         var databasePath = IndexPaths.DatabasePath(scenarioRoot);
@@ -366,7 +366,16 @@ public sealed class IndexInvariantTests : IDisposable
     private void WriteCardInChange(string changeName, string fileStem, string id, CardKind kind, CardOwner owner, CardScope scope, IReadOnlyList<CardComment> comments)
     {
         var path = Path.Combine(_root, CardLayout.ChangesDirectory(changeName).Replace('/', Path.DirectorySeparatorChar), fileStem + ".md");
-        var frontmatter = new CardFrontmatter(id, kind, "Title " + id, "open", owner, scope, "3", Created, Updated);
+        var status = kind.Match(
+            onBlock: static () => "drafting",
+            onQuestion: static () => "open",
+            onFinding: static () => "open",
+            onObligation: static () => "open",
+            onRule: static () => "open",
+            onHazard: static () => "open",
+            onDecision: static () => "open",
+            onSection: static () => "open");
+        var frontmatter = new CardFrontmatter(id, kind, "Title " + id, status, owner, scope, "3", Created, Updated);
         AssertWriteSuccess(CardStore.WriteCard(_root, path, new NewCardFile(frontmatter, "Body for " + id + "."), TimeSpan.FromSeconds(5), changeName));
 
         foreach (var comment in comments)
@@ -384,7 +393,7 @@ public sealed class IndexInvariantTests : IDisposable
 
     private static NewCardFile GoodCard(string id, string title) =>
         new(
-            new CardFrontmatter(id, CardKind.Block, title, "open", CardOwner.Worker, CardScope.Change, "3", Created, Created),
+            new CardFrontmatter(id, CardKind.Block, title, "drafting", CardOwner.Worker, CardScope.Change, "3", Created, Created),
             "Body.");
 
     private static void Execute(SqliteConnection connection, string sql)

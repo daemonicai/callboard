@@ -162,6 +162,41 @@ public sealed class CommandDispatcherQuestionAnswerTests
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 
+    // §12 block A round two, item 3: the envelope-category regression. CLI-level proof for the
+    // "question" command family — `onCardCorrupt` in `RunQuestionAnswer` must return a refusal
+    // (corrupt.Reason verbatim), not throw into the tool-failure envelope. Status "answered-ish" is
+    // not a legal question status, so the §12 block A parse door refuses the card at read time.
+    [Fact]
+    public void QuestionAnswer_CorruptCard_ExitsAsRefusal_WithReasonIntact()
+    {
+        using var repo = new TempGitRepo();
+        var path = Path.Combine(repo.RegisterDirectory, "q-9001.md");
+        var frontmatter = new CardFrontmatter(
+            "Q-9001", CardKind.Question, "Title", "answered-ish", CardOwner.ProductOwner,
+            CardScope.Repository, string.Empty, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        var exitCode = CommandDispatcher.Run(
+            ["question", "answer", path, "--role", "product-owner"],
+            output, new StringReader("Yes."), error, isInputRedirected: true, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        Assert.NotEqual(CommandDispatcher.ToolFailureExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("card-corrupt", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString();
+        Assert.NotNull(message);
+        Assert.Contains("'answered-ish'", message, StringComparison.Ordinal);
+        Assert.Contains("'question'", message, StringComparison.Ordinal);
+        Assert.Contains(QuestionStatusWireFormat.RecognisedValues, message, StringComparison.Ordinal);
+        Assert.True(string.IsNullOrWhiteSpace(error.ToString()));
+    }
+
     private static string WriteOpenQuestion(TempGitRepo repo, string fileStem, string id, CardOwner owner)
     {
         var path = Path.Combine(repo.RegisterDirectory, fileStem + ".md");

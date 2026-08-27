@@ -272,6 +272,38 @@ public sealed class CardChangeArchiveTests : IDisposable
         Assert.True(Directory.Exists(_changeDirectory), "an unreadable card must refuse before the directory move, not after.");
     }
 
+    // §12 block A round two, item 2: "change archive (:4092) and state now agreeing about whether
+    // the same obligation is owed." Before §12 block A's parse door, this obligation's own
+    // hand-edited bad status made the two disagree — `ArchiveChange`'s :4092 `TryParse` failed
+    // closed (not "Open", so not counted as owed; the archive would have proceeded) while `state`'s
+    // route through `CardLifecycle.IsClosed` → `IsRegisterDischarged` failed open (not
+    // `Discharged`, so treated as still live and owed) — the same obligation, two contradictory
+    // answers, from the same command surface a caller would run one after the other. The parse door
+    // removes the disagreement by removing the card before either site ever runs its own check: both
+    // now see the same read failure, so neither can claim a disposition the other one contradicts.
+    [Fact]
+    public void ArchiveChange_ObligationWithAHandEditedBadStatus_AgreesWithState_NeitherClaimsItIsSettled()
+    {
+        WriteSectionCard("s-corrupt-obligation", "S-CORRUPT", closed: false);
+        var obligationPath = Path.Combine(_changeDirectory, "o-corrupt.md");
+        var frontmatter = new CardFrontmatter(
+            "O-CORRUPT", CardKind.Obligation, "Settle the migration", "briefed", CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
+        var fields = new RegisterCardFields(null, null, null, null, OwedBy: "S-CORRUPT");
+        var card = new CardFile(frontmatter, "Body.", [], [], RegisterFields: fields);
+        File.WriteAllText(obligationPath, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        // Archive's side: refuses, does not silently treat the obligation as settled and move on.
+        var archiveOutcome = CardStore.ArchiveChange(_root, ChangeName, CardOwner.Architect, ArchivedAt, TimeSpan.FromSeconds(5));
+        var unreadable = Assert.IsType<ChangeArchiveOutcome.CardsUnreadable>(archiveOutcome);
+        Assert.Contains(unreadable.FilePaths, path => string.Equals(path, obligationPath, StringComparison.Ordinal));
+        Assert.True(Directory.Exists(_changeDirectory), "a card the archive cannot read must refuse before the move, not after.");
+
+        // State's side: does not silently claim the same obligation is live/owed either — a card
+        // that fails to parse is excluded from both dispositions, not asserted into one of them.
+        var state = DerivedStateAssembler.Build(_root);
+        Assert.DoesNotContain(state.LiveObligations, entry => entry.Card.Frontmatter.Id == "O-CORRUPT");
+    }
+
     // §9 block F: ArchiveChange no longer writes to any obligation, so a lock held elsewhere on one
     // no longer blocks the archive at all — this is the direct behavioural consequence of removing
     // the old settle-then-move two-phase write, pinned as its own test rather than left implicit.

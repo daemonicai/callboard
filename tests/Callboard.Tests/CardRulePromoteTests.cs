@@ -137,7 +137,6 @@ public sealed class CardRulePromoteTests : IDisposable
             onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected AlreadyRepositoryScoped, got Promoted"),
             onAlreadyRepositoryScoped: static _ => null,
             onNotChangeScoped: n => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got NotChangeScoped({n.Scope.ToWireString()})"),
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got InvalidStatus: {invalid.Status}"),
             onNotARuleCard: notARule => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got NotARuleCard({notARule.Kind.ToWireString()})"),
             onTargetAlreadyExists: already => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got TargetAlreadyExists: '{already.FilePath}'"),
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got CardNotFound: '{notFound.FilePath}'"),
@@ -175,7 +174,6 @@ public sealed class CardRulePromoteTests : IDisposable
             onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected NotChangeScoped, got Promoted"),
             onAlreadyRepositoryScoped: already => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got AlreadyRepositoryScoped: '{already.FilePath}'"),
             onNotChangeScoped: static n => { Assert.Equal(CardScope.Capability, n.Scope); return null; },
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got InvalidStatus: {invalid.Status}"),
             onNotARuleCard: notARule => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got NotARuleCard({notARule.Kind.ToWireString()})"),
             onTargetAlreadyExists: already => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got TargetAlreadyExists: '{already.FilePath}'"),
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got CardNotFound: '{notFound.FilePath}'"),
@@ -211,7 +209,6 @@ public sealed class CardRulePromoteTests : IDisposable
             onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected NotARuleCard, got Promoted"),
             onAlreadyRepositoryScoped: already => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got AlreadyRepositoryScoped: '{already.FilePath}'"),
             onNotChangeScoped: n => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got NotChangeScoped({n.Scope.ToWireString()})"),
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got InvalidStatus: {invalid.Status}"),
             onNotARuleCard: static n => { Assert.Equal(CardKind.Obligation, n.Kind); return null; },
             onTargetAlreadyExists: already => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got TargetAlreadyExists: '{already.FilePath}'"),
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got CardNotFound: '{notFound.FilePath}'"),
@@ -234,35 +231,38 @@ public sealed class CardRulePromoteTests : IDisposable
     // register: "SHALL NOT occupy flow states" — the same exercised refusal every other register
     // mutation already enforces, extended here to promotion.
     [Fact]
-    public void PromoteRule_StatusIsAFlowState_Refuses()
+    public void PromoteRule_StatusIsAFlowState_ReportsCardCorrupt_WithoutRecording()
     {
         var path = Path.Combine(_changeDirectory, "r-0003.md");
         var frontmatter = new CardFrontmatter(
             "R-0003", CardKind.Rule, "Title", "briefed", CardOwner.Architect, CardScope.Change, string.Empty, Created, Created);
         var card = new CardFile(frontmatter, "Body.", [], [], RegisterFields: RegisterCardFields.Empty);
-        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var serialized = CardFileWriter.Serialize(card);
+        File.WriteAllText(path, serialized, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var outcome = CardStore.PromoteRule(_root, path, CardOwner.Architect, PromotedAt, TimeSpan.FromSeconds(5), ChangeName);
 
         outcome.Match<object?>(
-            onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected InvalidStatus, got Promoted"),
-            onAlreadyRepositoryScoped: already => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got AlreadyRepositoryScoped: '{already.FilePath}'"),
-            onNotChangeScoped: n => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got NotChangeScoped({n.Scope.ToWireString()})"),
-            onInvalidStatus: static invalid => { Assert.Equal("briefed", invalid.Status); return null; },
-            onNotARuleCard: notARule => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got NotARuleCard({notARule.Kind.ToWireString()})"),
-            onTargetAlreadyExists: already => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got TargetAlreadyExists: '{already.FilePath}'"),
-            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardNotFound: '{notFound.FilePath}'"),
-            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got LayoutMismatch: {layoutMismatch.Reason}"),
-            onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
-            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got HandEnteredDerivedState: '{handEntered.Key}'"),
-            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
+            onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected CardCorrupt, got Promoted"),
+            onAlreadyRepositoryScoped: already => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got AlreadyRepositoryScoped: '{already.FilePath}'"),
+            onNotChangeScoped: n => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got NotChangeScoped({n.Scope.ToWireString()})"),
+            onNotARuleCard: notARule => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got NotARuleCard({notARule.Kind.ToWireString()})"),
+            onTargetAlreadyExists: already => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got TargetAlreadyExists: '{already.FilePath}'"),
+            onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got CardNotFound: '{notFound.FilePath}'"),
+            onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onCardCorrupt: static corrupt =>
+            {
+                Assert.Contains("status", corrupt.Reason, StringComparison.Ordinal);
+                Assert.Contains("'briefed'", corrupt.Reason, StringComparison.Ordinal);
+                Assert.Contains("'rule'", corrupt.Reason, StringComparison.Ordinal);
+                Assert.Contains(RegisterLifecycleStateWireFormat.RecognisedValues, corrupt.Reason, StringComparison.Ordinal);
+                return null;
+            },
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected CardCorrupt, got ToolFailure: {toolFailure.Reason}"));
 
-        // process-enforcement (§9 block A2 remediation): recorded now that changeName anchors.
-        var read = AssertParseSuccess(CardStore.ReadCard(path));
-        var recorded = Assert.Single(read.Refusals);
-        Assert.Equal(CardOwner.Architect, recorded.By);
-        Assert.False(string.IsNullOrWhiteSpace(recorded.Rule));
-        Assert.False(string.IsNullOrWhiteSpace(recorded.Remedy));
+        // Parse-door refusal reports; it does not record (§9.1) — nothing moved, nothing rewritten.
+        Assert.Equal(serialized, File.ReadAllText(path));
     }
 
     // Phase one's own failure guarantee: a file already occupies the target basename in
@@ -282,7 +282,6 @@ public sealed class CardRulePromoteTests : IDisposable
             onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected TargetAlreadyExists, got Promoted"),
             onAlreadyRepositoryScoped: already => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got AlreadyRepositoryScoped: '{already.FilePath}'"),
             onNotChangeScoped: n => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got NotChangeScoped({n.Scope.ToWireString()})"),
-            onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got InvalidStatus: {invalid.Status}"),
             onNotARuleCard: notARule => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got NotARuleCard({notARule.Kind.ToWireString()})"),
             onTargetAlreadyExists: static _ => null,
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got CardNotFound: '{notFound.FilePath}'"),
@@ -337,7 +336,6 @@ public sealed class CardRulePromoteTests : IDisposable
                 onPromoted: static _ => throw new Xunit.Sdk.XunitException("expected ToolFailure, got Promoted"),
                 onAlreadyRepositoryScoped: already => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got AlreadyRepositoryScoped: '{already.FilePath}'"),
                 onNotChangeScoped: n => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got NotChangeScoped({n.Scope.ToWireString()})"),
-                onInvalidStatus: invalid => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got InvalidStatus: {invalid.Status}"),
                 onNotARuleCard: notARule => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got NotARuleCard({notARule.Kind.ToWireString()})"),
                 onTargetAlreadyExists: already => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got TargetAlreadyExists: '{already.FilePath}'"),
                 onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got CardNotFound: '{notFound.FilePath}'"),
@@ -392,7 +390,6 @@ public sealed class CardRulePromoteTests : IDisposable
             onPromoted: static promoted => promoted,
             onAlreadyRepositoryScoped: static already => throw new Xunit.Sdk.XunitException($"expected Promoted, got AlreadyRepositoryScoped: '{already.FilePath}'"),
             onNotChangeScoped: static n => throw new Xunit.Sdk.XunitException($"expected Promoted, got NotChangeScoped({n.Scope.ToWireString()})"),
-            onInvalidStatus: static invalid => throw new Xunit.Sdk.XunitException($"expected Promoted, got InvalidStatus: {invalid.Status}"),
             onNotARuleCard: static notARule => throw new Xunit.Sdk.XunitException($"expected Promoted, got NotARuleCard({notARule.Kind.ToWireString()})"),
             onTargetAlreadyExists: static already => throw new Xunit.Sdk.XunitException($"expected Promoted, got TargetAlreadyExists: '{already.FilePath}'"),
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Promoted, got CardNotFound: '{notFound.FilePath}'"),

@@ -377,6 +377,40 @@ public sealed class CardSectionCloseTests : IDisposable
         Assert.Equal(openObligations.Remedy, recorded.Remedy);
     }
 
+    // §12 block A round two, item 2 (the one the reviewer named "must not be negotiated down"):
+    // the regression test for CardStore.cs:2691's fail-open door. Before §12 block A's parse door,
+    // an obligation carrying an unparseable status hit this method's own `continue` and was
+    // silently excluded from the count, letting the close land with the debt still owed. The parse
+    // door closes it one step earlier: the card fails to parse at all, and CardStore.CloseSection's
+    // own earlier obligation-scan read (immediately above :2691) already returns CardCorrupt before
+    // the `continue` line is ever reached. This is what proves the door is closed, not merely
+    // argued to be: if :2691's `continue` becomes reachable again (the parse door regresses, or a
+    // second write path starts writing obligations without going through it), this test goes red
+    // by landing a successful close instead of refusing one.
+    [Fact]
+    public void CloseSection_AnOwedObligationWithAHandEditedBadStatus_RefusesAsCardCorrupt_NotSilentlySkipped()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0016b", "S-0016B");
+        var obligationPath = Path.Combine(_directory, "o-0001b.md");
+        var obligationFrontmatter = new CardFrontmatter(
+            "O-0001B", CardKind.Obligation, "Discharge the debt", "briefed", CardOwner.Worker, CardScope.Change, string.Empty, Created, Created);
+        var obligationCard = new CardFile(
+            obligationFrontmatter, "Body.", [], [], RegisterFields: new RegisterCardFields(null, null, null, null, OwedBy: "S-0016B"));
+        File.WriteAllText(obligationPath, CardFileWriter.Serialize(obligationCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var corrupt = Assert.IsType<CardSectionCloseOutcome.CardCorrupt>(outcome);
+        Assert.Equal(obligationPath, corrupt.FilePath);
+        Assert.Contains("'briefed'", corrupt.Reason, StringComparison.Ordinal);
+        Assert.Contains("'obligation'", corrupt.Reason, StringComparison.Ordinal);
+        Assert.Contains(RegisterLifecycleStateWireFormat.RecognisedValues, corrupt.Reason, StringComparison.Ordinal);
+
+        // The close did not land — a corrupt-card refusal is not a partial write.
+        var read = AssertParseSuccess(CardStore.ReadCard(sectionPath));
+        Assert.NotEqual("closed", read.Frontmatter.Status);
+    }
+
     // process-enforcement: "Section close settles its obligations" — a discharged obligation owed
     // by the section does not block the close.
     [Fact]

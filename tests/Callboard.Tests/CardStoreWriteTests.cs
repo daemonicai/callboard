@@ -144,7 +144,7 @@ public sealed class CardStoreWriteTests : IDisposable
         // genuinely unmodelled key rather than one of them.)
         var raw =
             "---\n" +
-            "id: B-0006\nkind: block\ntitle: Title\nstatus: open\nowner: worker\nscope: change\nsection: 2\n" +
+            "id: B-0006\nkind: block\ntitle: Title\nstatus: drafting\nowner: worker\nscope: change\nsection: 2\n" +
             "created: 2026-08-20T09:00:00+00:00\nupdated: 2026-08-20T09:00:00+00:00\n" +
             "future-field: B-0001\n" +
             "---\n" +
@@ -330,7 +330,7 @@ public sealed class CardStoreWriteTests : IDisposable
     public void AppendComment_CardCarryingAReservedDerivedStateKey_Refuses_AndRecordsAgainstTheCard()
     {
         var path = Path.Combine(_directory, "b-0011.md");
-        var frontmatter = new CardFrontmatter("B-0011", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "2", Created, Created);
+        var frontmatter = new CardFrontmatter("B-0011", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "2", Created, Created);
         var card = new CardFile(frontmatter, "Body.", [], [("next_step", "do the thing")]);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         var comment = new CardComment("C-0001", CardOwner.Worker, Created.AddHours(1), "Done.", null, null, null, []);
@@ -412,12 +412,12 @@ public sealed class CardStoreWriteTests : IDisposable
 
     private static NewCardFile SampleCard(string id, string body = "Body.") =>
         new(
-            new CardFrontmatter(id, CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "2", Created, Created),
+            new CardFrontmatter(id, CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "2", Created, Created),
             body);
 
     private static NewCardFile RepositoryScopedCard(string id) =>
         new(
-            new CardFrontmatter(id, CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Repository, string.Empty, Created, Created),
+            new CardFrontmatter(id, CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Repository, string.Empty, Created, Created),
             "Body.");
 
     private static void AssertSuccess(CardWriteResult result) =>

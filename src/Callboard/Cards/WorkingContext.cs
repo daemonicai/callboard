@@ -157,6 +157,10 @@ internal static class WorkingContextAssembler
                 // parts.
                 if (CardStore.IsRuleCard(card) || CardStore.IsHazardCard(card))
                 {
+                    // TryParse failing here is unreachable: §12 block A's parse door
+                    // (CardFileParser.ValidateStatus) never hands back a rule/hazard CardFile whose
+                    // status does not parse against RegisterLifecycleStateWireFormat. Kept rather
+                    // than asserted, so a card read some other way still falls out of the queue.
                     if (RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var registerState)
                         && ReferenceEquals(registerState, RegisterLifecycleState.Open))
                     {
