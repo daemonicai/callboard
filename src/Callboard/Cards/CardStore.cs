@@ -1550,6 +1550,129 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// <c>block base</c> (§13, work-lifecycle: "Blocks carry their brief context" — "The system
+    /// SHALL provide a command that records <c>base</c> against a block ... base SHALL NOT be one a
+    /// role writes by hand"). The door <c>block transition</c>'s own refusal (<see
+    /// cref="CardBlockTransitionOutcome.BaseNotRecorded"/>) has named since §5 without one existing
+    /// — see <see cref="CardBlockRecordBaseOutcome"/>'s own doc comment for why its cases are not
+    /// near-duplicates of <see cref="CardBlockTransitionOutcome"/>'s despite sharing text and codes
+    /// with two of them.
+    /// </summary>
+    internal static CardBlockRecordBaseOutcome RecordBase(
+        string cardsRoot, string filePath, string baseCommit, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => RecordBaseUnderExistingLock(heldLock, cardsRoot, baseCommit, actingRole, timestamp, changeName),
+            onTimedOut: timedOut => new CardBlockRecordBaseOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>
+    /// The read-decide-write step of <see cref="RecordBase"/>. Same structural lock precondition as
+    /// every other <c>*UnderExistingLock</c> method on this type — the target is <see cref="
+    /// CardLock.CardPath"/>, not a separately supplied <paramref name="filePath"/>-shaped
+    /// parameter (there is none here; <see cref="CardLock.CardPath"/> is the only path used).
+    /// </summary>
+    internal static CardBlockRecordBaseOutcome RecordBaseUnderExistingLock(
+        CardLock heldLock, string cardsRoot, string baseCommit, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardBlockRecordBaseOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardBlockRecordBaseOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardBlockRecordBaseOutcome, CardBlockRecordBaseOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardBlockRecordBaseOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardBlockRecordBaseOutcome.ToolFailure(reason));
+                }
+
+                if (!IsBlockCard(card))
+                {
+                    return RefuseAndRecord<CardBlockRecordBaseOutcome, CardBlockRecordBaseOutcome.NotABlockCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardBlockRecordBaseOutcome.NotABlockCard(card.Frontmatter.Kind),
+                        static reason => new CardBlockRecordBaseOutcome.ToolFailure(reason));
+                }
+
+                if (!RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
+                {
+                    return RefuseAndRecord<CardBlockRecordBaseOutcome, CardBlockRecordBaseOutcome.RoundDisagreesWithHistory>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardBlockRecordBaseOutcome.RoundDisagreesWithHistory(storedRound, expectedRound),
+                        static reason => new CardBlockRecordBaseOutcome.ToolFailure(reason));
+                }
+
+                if (!BlockFlowStateWireFormat.TryParse(card.Frontmatter.Status, out var currentState))
+                {
+                    return new CardBlockRecordBaseOutcome.CardCorrupt(
+                        filePath, $"unrecognised status: '{card.Frontmatter.Status}'. Recognised statuses: {BlockFlowStateWireFormat.RecognisedValues}.");
+                }
+
+                // Architect ruling item 3: recording is allowed only while the card is at
+                // 'drafting'. Checked before BaseImmutable below even though a card past drafting
+                // always already carries a recorded base (BaseNotRecorded refuses the transition
+                // that would otherwise leave it) — this names the more specific, more useful fact
+                // (which state the card is in) rather than folding it into "base already recorded".
+                if (currentState != BlockFlowState.Drafting)
+                {
+                    return RefuseAndRecord<CardBlockRecordBaseOutcome, CardBlockRecordBaseOutcome.NotAtDrafting>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardBlockRecordBaseOutcome.NotAtDrafting(currentState),
+                        static reason => new CardBlockRecordBaseOutcome.ToolFailure(reason));
+                }
+
+                // work-lifecycle: "Base does not change once recorded" / "Recording the same
+                // base again is not a change" (Product Owner ruling, remediation on 13.3 — the
+                // requirement prose says base SHALL NOT *change*, twice, and an identical resupply
+                // changes nothing). Same mismatch-only condition ApplyBlockTransitionUnderExistingLock
+                // already applies to its own '--base' — matched here deliberately, so the
+                // 'base-immutable' code and rule text shared by both sites describe the same
+                // condition at both. A retry that resupplies exactly what is already recorded
+                // falls through to the ordinary write below: same value, no refusal, so an agent
+                // that cannot tell whether an earlier call landed can ask again without being
+                // punished for asking.
+                if (card.BlockFields.Base is { } recordedBase && !string.Equals(recordedBase, baseCommit, StringComparison.Ordinal))
+                {
+                    return RefuseAndRecord<CardBlockRecordBaseOutcome, CardBlockRecordBaseOutcome.BaseImmutable>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardBlockRecordBaseOutcome.BaseImmutable(recordedBase, baseCommit),
+                        static reason => new CardBlockRecordBaseOutcome.ToolFailure(reason));
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardBlockRecordBaseOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var updated = card with
+                {
+                    Frontmatter = card.Frontmatter with { Updated = timestamp },
+                    BlockFields = card.BlockFields with { Base = baseCommit },
+                };
+
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardBlockRecordBaseOutcome>(
+                    onSuccess: _ => new CardBlockRecordBaseOutcome.Recorded(updated, baseCommit, actingRole),
+                    onNotFound: notFound => new CardBlockRecordBaseOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => new CardBlockRecordBaseOutcome.LayoutMismatch(
+                        $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite."),
+                    onLayoutMismatch: layoutMismatch => new CardBlockRecordBaseOutcome.LayoutMismatch(layoutMismatch.Reason),
+                    onCorrupt: corrupt => new CardBlockRecordBaseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardBlockRecordBaseOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
+            },
+            onFailure: failure =>
+                new CardBlockRecordBaseOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
     /// Adds <paramref name="blockingCardId"/> to the block card at <paramref name="filePath"/>'s
     /// <c>blocked_by</c> set (work-lifecycle: "Blocked is derived, not stored", §5 block D). Never
     /// touches <see cref="CardFrontmatter.Status"/> — see <see cref="CardBlockedByOutcome"/>'s own

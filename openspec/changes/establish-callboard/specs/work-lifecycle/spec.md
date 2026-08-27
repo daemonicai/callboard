@@ -111,10 +111,15 @@ a role writes by hand. Once recorded, that command SHALL refuse to change it.
 - **WHEN** a block is moved to `briefed` with no `base` recorded
 - **THEN** the system refuses and states that a brief must name the commit it was carved against
 
-#### Scenario: Base is recorded once
+#### Scenario: Base does not change once recorded
 
-- **WHEN** a role records a `base` commit against a block that already has one
+- **WHEN** a role records a `base` commit that differs from the one a block already carries
 - **THEN** the system refuses, names the recorded value, and leaves it unchanged
+
+#### Scenario: Recording the same base again is not a change
+
+- **WHEN** a role records the `base` commit a block already carries
+- **THEN** the system does not refuse, and the recorded value is unchanged
 
 ### Requirement: Gate results are recorded as exit codes
 

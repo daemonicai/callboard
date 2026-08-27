@@ -156,6 +156,8 @@ public sealed class CardCommentImmutabilityTests
             "RecordFindingUnderLocks",              // same: writes the raised card (if any) then the finding, both create-only via AtomicWrite, rolling the raised card back (by content, not by path) on the finding's own write failing — never an edit or drop of an existing comment
             "RecordApproval",                       // §8 block A: role check, then acquires the block's lock and delegates to RecordApprovalUnderExistingLock; never touches a CardFile itself
             "RecordApprovalUnderExistingLock",      // §8 block A: read-decide-write on Frontmatter.Status/BlockFields.ReviewedState/Transitions/Claims/Limits only, in one write with the transition; never touches Comments
+            "RecordBase",                            // §13, work-lifecycle: "Blocks carry their brief context" — read-decide-write on BlockFields.Base only; never touches Comments
+            "RecordBaseUnderExistingLock",           // same, lock already held
             "RecordGateResult",                     // §5 block D: read-modify-write on BlockFields.GateResults only; never touches Frontmatter.Status or Comments — see the structural argument in GateStatus's doc comment
             "RecordGateResultUnderExistingLock",    // same, lock already held
             "RecordIdentityAlreadyBorneRefusal",    // §13, card-model: "SHALL refuse to issue an identity that a card in the record already bears" — acquires the lock of the card already bearing the contested identity and delegates to RefuseAndRecord; appends one CardRefusalEntry to that card's Refusals, never touches Comments on it or on the card being created (there isn't one)

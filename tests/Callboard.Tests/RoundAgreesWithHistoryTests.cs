@@ -259,6 +259,28 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
         Assert.Equal(disagreement.Remedy, refusal.Remedy);
     }
 
+    // §13: 'block base' is another non-transition writer this ruling covers.
+    [Fact]
+    public void RecordBase_BlockCardWithDisagreeingRound_Refuses_NamesBothFigures_AltersNeither()
+    {
+        var path = WriteBlockCard("b-0009", "B-0009", BlockFlowState.Drafting, round: 2, transitions: []);
+
+        var outcome = CardStore.RecordBase(_root, path, "commit-abc", CardOwner.Architect, Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName);
+
+        var disagreement = Assert.IsType<CardBlockRecordBaseOutcome.RoundDisagreesWithHistory>(outcome);
+        Assert.Equal(2, disagreement.StoredRound);
+        Assert.Equal(1, disagreement.ExpectedRound);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(2, read.BlockFields.Round);
+        Assert.Equal("base-commit", read.BlockFields.Base);
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, refusal.By);
+        Assert.Equal(Created.AddHours(1), refusal.Timestamp);
+        Assert.Equal(disagreement.RefusingRule, refusal.Rule);
+        Assert.Equal(disagreement.Remedy, refusal.Remedy);
+    }
+
     // A read is unaffected by the refusal: a card the tool refuses to write to is not a card it
     // refuses to describe.
     [Fact]

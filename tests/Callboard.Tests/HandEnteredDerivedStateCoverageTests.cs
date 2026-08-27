@@ -521,6 +521,28 @@ public sealed class HandEnteredDerivedStateCoverageTests : IDisposable
         Assert.Empty(read.Comments);
     }
 
+    /// <summary>§13, work-lifecycle: "Blocks carry their brief context" — <c>CardStore.RecordBase</c>'s
+    /// own reuse of the guard, reported as its own outcome case (see <see cref="Cards.
+    /// CardBlockRecordBaseOutcome"/>'s own doc comment for why it is not a near-duplicate of <see
+    /// cref="Cards.CardBlockTransitionOutcome"/>'s cases).</summary>
+    [Fact]
+    public void RecordBase_CardCarryingAReservedKey_Refuses_AndRecords()
+    {
+        var path = WriteTaintedCard(_changesDirectory, "b-0021", "B-0021", CardKind.Block, CardOwner.Worker, scopeOverride: null);
+
+        var outcome = CardStore.RecordBase(_root, path, "commit-abc", CardOwner.Worker, Now, TimeSpan.FromSeconds(5), ChangeName);
+
+        var handEntered = Assert.IsType<CardBlockRecordBaseOutcome.HandEnteredDerivedState>(outcome);
+        Assert.Equal(ReservedKey, handEntered.Key);
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, refusal.By);
+        Assert.Equal(handEntered.RefusingRule, refusal.Rule);
+        Assert.Equal(handEntered.Remedy, refusal.Remedy);
+        Assert.Equal((ReservedKey, ReservedValue), Assert.Single(read.UnknownFrontmatterFields));
+        Assert.Null(read.BlockFields.Base);
+    }
+
     // --- fixtures --------------------------------------------------------------------------
 
     private static string WriteTaintedCard(string directory, string fileStem, string id, CardKind kind, CardOwner owner, CardScope? scopeOverride = null)

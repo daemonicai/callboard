@@ -20,6 +20,7 @@ namespace Callboard.Cli;
 [JsonSerializable(typeof(IndexRebuildIdentityCounterViolation))]
 [JsonSerializable(typeof(BlockTransitionResult))]
 [JsonSerializable(typeof(BlockGateResult))]
+[JsonSerializable(typeof(BlockBaseResult))]
 [JsonSerializable(typeof(BlockedByResult))]
 [JsonSerializable(typeof(BlockApproveResult))]
 [JsonSerializable(typeof(BlockApprovalClaimResult))]

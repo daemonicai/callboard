@@ -95,9 +95,10 @@ internal static class CommandParser
 
     /// <summary>
     /// <c>block</c>'s only job is routing to a subcommand: <c>create</c> (§13, the door work-
-    /// lifecycle's "Every block card is minted by the tool" names), <c>transition</c>, <c>gate</c>
-    /// (§5 block D), <c>add-blocker</c> and <c>remove-blocker</c> (§5 block D). Same peek-don't-take
-    /// shape as <see cref="ParseIndex"/>, same reason.
+    /// lifecycle's "Every block card is minted by the tool" names), <c>base</c> (§13, the door
+    /// "Blocks carry their brief context" names), <c>transition</c>, <c>gate</c> (§5 block D),
+    /// <c>add-blocker</c> and <c>remove-blocker</c> (§5 block D). Same peek-don't-take shape as
+    /// <see cref="ParseIndex"/>, same reason.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseBlock(CommandDispatcher.CommandContext context)
     {
@@ -106,10 +107,13 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'block' requires a subcommand. Known subcommands: create, transition, gate, add-blocker, remove-blocker, approve."));
+                    "'block' requires a subcommand. Known subcommands: create, base, transition, gate, add-blocker, remove-blocker, approve."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseBlockCreate(context);
+            case "base":
+                context.Arguments.TryTake();
+                return ParseBlockBase(context);
             case "transition":
                 context.Arguments.TryTake();
                 return ParseBlockTransition(context);
@@ -130,8 +134,69 @@ internal static class CommandParser
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: create, transition, gate, add-blocker, remove-blocker, approve."));
+                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: create, base, transition, gate, add-blocker, remove-blocker, approve."));
         }
+    }
+
+    /// <summary>
+    /// Builds <c>block base --base &lt;sha&gt;</c>'s <see cref="CommandDispatcher.ParsedCommand.
+    /// BlockBase"/> (§13, work-lifecycle: "Blocks carry their brief context" — the recording door
+    /// <c>block transition</c>'s own refusal has named since §5 without one existing). Path-
+    /// addressed, not <c>--id</c> (Architect ruling item 1): one positional token (card file path),
+    /// same convention as <see cref="ParseBlockGate"/> and <see cref="ParseBlockTransition"/>, the
+    /// two verbs this sits between. <c>--base</c> is required and unvalidated beyond presence — the
+    /// same shape <see cref="ParseBlockTransition"/>'s own optional <c>--base</c> already has
+    /// (Architect ruling item 5: no git validation, matching what <c>block transition --base</c>
+    /// does today).
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseBlockBase(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block base' requires a card file path."));
+        }
+
+        string? baseCommit = null;
+        string? roleText = null;
+        string? changeName = null;
+
+        // One combined ConsumeKnownFlags call, not ParseRoleAndChangeFlags plus a second pass for
+        // '--base' (ParseBlockTransition's own shape, matched here): ConsumeKnownFlags' loop stops
+        // at the first flag it does not recognise, so a caller writing '--base' before '--role'
+        // would break a two-call composition before '--role' was ever reached.
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--base"] = value => baseCommit = value,
+            ["--role"] = value => roleText = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (baseCommit is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block base' requires '--base <commit>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block base' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.BlockBase(
+            filePath, baseCommit, role, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

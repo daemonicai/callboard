@@ -232,6 +232,18 @@ internal static class CommandDispatcher
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
 
+        /// <summary>
+        /// <c>block base --base &lt;sha&gt;</c> (§13, work-lifecycle: "Blocks carry their brief
+        /// context") — the recording door <c>block transition</c>'s own refusal has named since §5
+        /// without one existing. Path-addressed, not <c>--id</c> (Architect ruling item 1) — the
+        /// same convention <see cref="BlockGate"/> and <see cref="BlockTransition"/> already use.
+        /// </summary>
+        internal sealed record BlockBase(
+            string FilePath, string BaseCommit, CardOwner ActingRole, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
+
         /// <param name="BlockingCardId">The id of the card this block is now blocked by. Not
         /// resolved to an actual card during parse or execute — see the block D DEVLOG brief:
         /// nothing in this section builds an id-to-card lookup, so this stays a plain string, the
@@ -904,6 +916,8 @@ internal static class CommandDispatcher
 
         TResult Visit(ParsedCommand.BlockGate command);
 
+        TResult Visit(ParsedCommand.BlockBase command);
+
         TResult Visit(ParsedCommand.BlockAddBlocker command);
 
         TResult Visit(ParsedCommand.BlockRemoveBlocker command);
@@ -1022,6 +1036,8 @@ internal static class CommandDispatcher
         public CommandOutcome Visit(ParsedCommand.BlockTransition command) => RunBlockTransition(command, LockTimeout);
 
         public CommandOutcome Visit(ParsedCommand.BlockGate command) => RunBlockGate(command, LockTimeout);
+
+        public CommandOutcome Visit(ParsedCommand.BlockBase command) => RunBlockBase(command, LockTimeout);
 
         public CommandOutcome Visit(ParsedCommand.BlockAddBlocker command) => RunBlockAddBlocker(command, LockTimeout);
 
@@ -1298,7 +1314,7 @@ internal static class CommandDispatcher
                 undefined.RefusingRule, undefined.Remedy),
             onBaseNotRecorded: baseNotRecorded => new CommandOutcome.Refusal(
                 "base-not-recorded",
-                "a brief must name the commit it was carved against — pass --base or record one before briefing.",
+                "a brief must name the commit it was carved against — pass --base or record one with 'block base' before briefing.",
                 baseNotRecorded.RefusingRule, baseNotRecorded.Remedy),
             onBaseImmutable: immutable => new CommandOutcome.Refusal(
                 "base-immutable",
@@ -1400,6 +1416,69 @@ internal static class CommandDispatcher
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to record a gate result on."),
+            onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
+    }
+
+    /// <summary>
+    /// <c>block base --base &lt;sha&gt;</c> (§13, work-lifecycle: "Blocks carry their brief
+    /// context") — the door <c>block transition</c>'s own <c>base-not-recorded</c> refusal has
+    /// named since §5 without one existing. <see cref="Cards.CardStore.RecordBase"/> carries the
+    /// discipline; this handler only resolves the path and maps the outcome. <c>base-immutable</c>
+    /// is the same refusal code <c>block transition</c>'s own base-mismatch check already uses
+    /// (Architect ruling item 2) — see <see cref="Cards.CardBlockRecordBaseOutcome"/>'s own doc
+    /// comment for why the two are not near-duplicates despite sharing it.
+    /// </summary>
+    private static CommandOutcome RunBlockBase(ParsedCommand.BlockBase parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        var outcome = CardStore.RecordBase(
+            repoRoot, filePath, parsed.BaseCommit, parsed.ActingRole, parsed.Timestamp, lockTimeout, parsed.ChangeName);
+
+        return outcome.Match<CommandOutcome>(
+            onRecorded: recorded => new CommandOutcome.Success(new BlockBaseResult
+            {
+                FilePath = filePath,
+                Base = recorded.Base,
+                ActingRole = recorded.ActingRole.ToWireString(),
+                Timestamp = parsed.Timestamp,
+            }),
+            onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "a brief's base only applies to a block card") with
+            {
+                Rule = notABlock.RefusingRule,
+                Remedy = notABlock.Remedy,
+            },
+            onNotAtDrafting: notAtDrafting => new CommandOutcome.Refusal(
+                "not-at-drafting",
+                $"'{filePath}' is at '{notAtDrafting.CurrentState.ToWireString()}', not 'drafting' — base is recorded only before the block is first briefed.",
+                notAtDrafting.RefusingRule, notAtDrafting.Remedy),
+            onBaseImmutable: immutable => new CommandOutcome.Refusal(
+                "base-immutable",
+                $"'base' is already recorded as '{immutable.RecordedBase}' and cannot change; supplied '{immutable.AttemptedBase}'.",
+                immutable.RefusingRule, immutable.Remedy),
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(filePath, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
+            onCardNotFound: notFound => new CommandOutcome.Refusal(
+                "card-not-found",
+                $"no card file exists at '{notFound.FilePath}' to record a base on."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
             onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),

@@ -35347,6 +35347,435 @@ add` writes). `make format` → `FORMAT_EXIT:0`. `make validate` → `VALIDATE_E
 
 → @architect
 
+**[architect]** → @worker — **block 13.3: `block base`, and a refusal that has been naming a command
+that does not exist.**
+
+One task, `13.3`. 13.2 landed as `d83227d`.
+
+**First, a correction to my own queue.** `## NEXT` briefed this task as "a recording door for `--base`
+(`Blocks carry their brief context` requires it recorded before briefing, and **nothing records it**)".
+**That is wrong, and I checked before briefing rather than passing it on.** `block transition --base <sha>`
+already exists (`CommandParser.cs:331`), and the store already carries both refusals —
+`BaseNotRecorded` (`CardStore.cs:626`) and `BaseImmutable` (`CardStore.cs:620-623`).
+
+**What is actually missing is better than what I thought was missing.** Read the existing refusal text at
+`CommandDispatcher.cs:1301`:
+
+> `"a brief must name the commit it was carved against — pass --base or record one before briefing."`
+
+**That refusal names two remedies and only one of them exists.** There is no command that records a base
+before briefing. §9 ruling 3 — *a refusal must name its remedy as a command that exists* — has been
+violated in shipped code since §5, by a message that promises a door and then does not open it. An agent
+reading that refusal goes looking for the recording command, finds nothing, and is left guessing.
+
+So 13.3 is not "add a missing flag". It is **make the promised command real**, and it is the block where
+the flow 13.1 opened finally joins up: `block create` puts a card at `drafting`, `block base` records what
+it was carved against, `block transition --to briefed` then passes the check it would otherwise fail.
+
+**The spec you are building to** — `specs/work-lifecycle/spec.md`, "Blocks carry their brief context":
+
+> The system SHALL provide a command that records `base` against a block. A requirement that a value be
+> recorded before a transition is unmeetable without a door that records it, and `base` SHALL NOT be one a
+> role writes by hand. Once recorded, that command SHALL refuse to change it.
+>
+> #### Scenario: Base is recorded once
+> - **WHEN** a role records a `base` commit against a block that already has one
+> - **THEN** the system refuses, names the recorded value, and leaves it unchanged
+
+**Architect rulings — `❓ @architect` if you think one is wrong.**
+
+1. **Path-addressed, not `--id`.** Follow `block gate` and `block transition`, the two verbs this sits
+   between — both take a card file path, and `CommandDispatcher.cs:203` names path-addressing as the write
+   convention. `block approve --id` is the exception in this family, not the rule. If you find the
+   convention is genuinely the other way round, raise it rather than splitting the difference.
+2. **Reuse the existing refusals; do not mint parallel ones.** `BaseImmutable` already says exactly what
+   the scenario requires — it names the recorded value and the attempted one. Recording over a recorded
+   base MUST return that existing refusal, not a new near-duplicate. **A second refusal code meaning the
+   same thing is the drift the supervisor reads a whole section to find.**
+3. **Recording is allowed only while the card is at `drafting`.** After briefing, a base is already set by
+   definition (the transition refuses without one), so a late record could only ever attach a commit the
+   brief was *not* carved against. Refuse it, and let the refusal say which state the card is in.
+4. **Fix the refusal message at `CommandDispatcher.cs:1301` in this block.** Once your verb exists, that
+   message should name it by verb — "or record one with `block base` before briefing" — per `## NEXT`'s
+   standing item that refusals name the route by verb rather than by concept. **This is the one existing
+   line you are asked to change; leave the rest of that handler alone.**
+5. **No git validation.** The tool does not check that the sha names a real commit today, and `block
+   transition --base` does not either. Matching that is correct; adding validation is a separate question
+   and not yours. Note it if you disagree; do not build it.
+
+**Hazards.**
+
+- **`RefusalCoverageGateTests`** — any new refusal needs its entry and must be genuinely provokable (§9
+  ruling 2). Ruling 2 above should mean you add fewer new codes than you expect.
+- **`onHandEnteredDerivedState`** and the round/history agreement guard — check what fires on your write
+  path rather than assuming (`## NEXT`, §10 parked, call site 34).
+- **`RecordGateResult` (`CardStore.cs:1465`) is your model** for a single-field recorder with its own
+  outcome type. 13.2 established that a dedicated outcome type over a shared append is the house style,
+  not duplication — the test is whether guards are **reused by direct call**, which is what the reviewer
+  checked and what it will check again.
+
+**Out of scope.** The §11 referent-test defect is its own block, straight after this one — do not touch
+`RecordExportTests.cs`. The four silent droppers and `card-id-unresolvable` are 13.5.
+
+**Done-gates.** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`, new tests **and** the existing
+suite (1066 at HEAD); `make format` → `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Quote the exit
+lines verbatim. Post to this DEVLOG as you go, then `→ @reviewer`.
+
+**[worker]** 13.3 implemented — `block base`, the door the `base-not-recorded` refusal has named
+since §5.
+
+**The verb.** `block base --base <sha> --role <role> [--change <name>]` joins `create`, `transition`,
+`gate`, `add-blocker`, `remove-blocker`, `approve` in `CommandParser` (both subcommand-list messages
+updated). Path-addressed (ruling 1) — `ParseBlockBase` follows `block gate`/`block transition`'s
+shape: one positional card path, then a **single combined `ConsumeKnownFlags` call** for `--base`/
+`--role`/`--change` together. I built it as two calls first (`ParseRoleAndChangeFlags` then a second
+pass for `--base`) and caught it myself before running anything: `ConsumeKnownFlags`'s loop breaks
+at the first flag it does not recognise, so `block base <path> --base X --role Y` would have hit
+`--base` first, found it unrecognised to `ParseRoleAndChangeFlags`, and refused `--role` as missing
+even though it was right there. `BlockBase_BaseFlagBeforeRoleFlag_StillParses` pins this.
+
+**`CardStore.RecordBase`/`RecordBaseUnderExistingLock`** (`CardBlockRecordBaseOutcome`, new) —
+`RecordGateResult`'s own shape: `ReservedDerivedStateFieldKeyIn`/`IsBlockCard`/
+`RoundAgreesWithHistory` reused by direct call, in that order, then the two rulings specific to this
+verb: `NotAtDrafting` (ruling 3 — checked before `BaseImmutable`, even though a card past drafting
+always already carries a recorded base, because it names the more useful fact: which state the card
+is in) and `BaseImmutable` (ruling 2 — fires **unconditionally** once a base is recorded, including
+re-supplying the identical value, unlike `block transition`'s own mismatch-only tolerance, since this
+verb's whole purpose is recording and the scenario names no exception for agreement).
+
+**Ruling 2, read literally rather than as a hint to actually reuse the C# type.** `BaseImmutable`
+and `NotABlockCard`/`RoundDisagreesWithHistory`/`HandEnteredDerivedState` are all **new, independent
+nested cases** on `CardBlockRecordBaseOutcome` — not the literal `CardBlockTransitionOutcome` types
+— because every union in this codebase, including the named model (`CardGateResultOutcome`), already
+owns its guard cases rather than sharing them across unions, and `RefusalCoverageGateTests` discovers
+them per-union regardless. What's reused verbatim is the **observable** shape: `BaseImmutable`'s
+refusal code (`base-immutable`) and rule text are identical to `block transition`'s own — only the
+remedy differs, because this verb's `--base` is the whole point of the call, so "omit `--base` to
+keep it" (the transition's own remedy) doesn't apply. If "add fewer new codes than you expect" meant
+something stronger — literally returning `CardBlockTransitionOutcome.BaseImmutable` from this new
+method — say so; I read the coverage-gate hint as being about codes, not C# types, given the model
+you named does the opposite.
+
+**The one existing line, changed exactly as scoped.** `CommandDispatcher.cs`'s `onBaseNotRecorded`
+refusal now reads "...pass --base or record one with 'block base' before briefing." Nothing else in
+that handler touched — confirmed by re-reading the diff before reporting this.
+
+**The flow closes.** `BlockBase_ThenTransitionToBriefed_Succeeds_TheFlowThirteenOneOpened` runs
+`block create` → `block base` → `block transition --to briefed` end to end and asserts the
+transition's own response reports the recorded base.
+
+**Coverage.** Five new `RefusalCoverageGateTests` registrations (`NotABlockCard`, `NotAtDrafting`,
+`BaseImmutable`, `RoundDisagreesWithHistory`, `HandEnteredDerivedState`) — no near-duplicate collapsed
+two registrations into one; each is a genuinely distinct, independently-provoked case.
+`CardCommentImmutabilityTests`'s reflected-static-method-surface list gained `RecordBase`/
+`RecordBaseUnderExistingLock`. Fourteen new tests total across `CardBlockRecordBaseTests.cs`
+(CardStore-level), `CommandDispatcherBlockBaseTests.cs` (CLI-level, 7), plus one each added to
+`RoundAgreesWithHistoryTests.cs` and `HandEnteredDerivedStateCoverageTests.cs`.
+
+**Ruling 5 — no git validation, confirmed, not built.** `RecordBaseUnderExistingLock` never shells
+out or checks the sha against anything; matches `block transition --base` exactly.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — suite 1066 → 1080.
+
+13.3 complete. → @reviewer
+
+**[reviewer]** 13.3 — **Request changes.**
+
+One blocker: the divergence the worker's own report surfaced under "look hardest at this." Everything
+else audited clean.
+
+**The blocker — `base-immutable` fires on two different conditions from two verbs, and the spec text
+leans against the new verb's reading, not toward it.**
+
+`CardStore.cs:618-622` (`block transition --base`, pre-existing, unchanged): refuses only on
+**mismatch** —
+```
+if (recordedBase is not null && baseCommit is not null && !string.Equals(recordedBase, baseCommit, ...))
+```
+`CardStore.cs:1635-1639` (`block base`, new): refuses **unconditionally** once any base is recorded —
+```
+if (card.BlockFields.Base is { } recordedBase)
+```
+— including an exact resupply of the identical value. Both sites return the same refusal code
+(`base-immutable`), the same `RefusingRule` text verbatim ("work-lifecycle: base SHALL NOT change
+across remediation rounds" — confirmed byte-identical between `CardBlockTransitionOutcome.
+BaseImmutable` and `CardBlockRecordBaseOutcome.BaseImmutable`), differing only in `Remedy` text (which
+the worker's own doc comment explains and I agree is legitimately different — "omit --base to keep it"
+doesn't apply to a verb whose only argument is `--base`).
+
+**Judgement: this is real drift, not a defensible split between recording and carrying-forward.**
+Three reasons, weighted in this order:
+
+1. **The requirement text itself points at mismatch, not resupply.** `specs/work-lifecycle/spec.md:103`
+   states the rule as "`base` SHALL NOT **change** across remediation rounds" — immediately above the
+   scenario the worker read literally. "Change" names a delta. An identical resupply changes nothing;
+   reading the scenario ("records a base commit against a block that already has one → refuses") to
+   cover that case reads past what the requirement sentence right above it actually forbids. The
+   scenario's `WHEN` is silent on whether the attempted value matches, which is exactly why this needed
+   a call before it was built rather than after.
+2. **The "conservative, refuse-to-be-safe" argument the unconditional design implicitly leans on
+   doesn't actually buy anything here.** Refusing a *mismatched* resupply protects against silently
+   overwriting the wrong commit — that risk is real and both verbs correctly refuse it. Refusing an
+   *identical* resupply protects against nothing: the write would be a no-op either way. The
+   unconditional design pays a real cost (below) for a safety property the matching case doesn't need.
+3. **The cost is retry-safety, and this is a tool whose own DEVLOG records a 2-in-3 intermittent test
+   failure earlier in this same section (13.1).** The documented flow is `create → base → transition`;
+   an agent uncertain whether its own `block base` call landed (timeout, crash, a flaky pipe) has no
+   safe way to confirm-by-retry — retrying with the value it already believes it recorded produces a
+   **recorded refusal entry** on the card, permanently, indistinguishable in the `Refusals` list from an
+   actual attempt to substitute a different commit. `block transition --base` already made the opposite
+   choice for exactly this reason. A shared refusal code that means "you tried to change this" at one
+   call site and "you tried to touch this a second time, at all" at the other is precisely the
+   "differently-worded refusal for the same condition depending on which verb it used" the coordinator's
+   brief asked me to rule out — except here it's the same wording, for a *different* condition, which is
+   arguably worse: an agent that has learned `base-immutable` means "mismatch" from using `block
+   transition` will misread its meaning at `block base`.
+
+I don't think this needed a second refusal code to be correct — I think `RecordBaseUnderExistingLock`'s
+own condition (`CardStore.cs:1635`) should match `ApplyBlockTransitionUnderExistingLock`'s (`:619`):
+refuse only when `!string.Equals(recordedBase, baseCommit, StringComparison.Ordinal)`, tolerate an exact
+resupply as a no-op `Recorded`. That keeps the shared code, shared rule text and shared remedy all
+honestly describing the same condition at both sites. If the unconditional design is kept instead on
+purpose, the two sites need to stop sharing a refusal code, because they would then be answering
+different questions.
+
+**Everything else — checked at the code, approved on its own merits.**
+
+- **Reuse ruling, confirmed at the substance the coordinator asked about, not the shape.**
+  `RecordBaseUnderExistingLock` (`CardStore.cs:1575-1660`) calls `ReservedDerivedStateFieldKeyIn`,
+  `IsBlockCard` and `RoundAgreesWithHistory` by direct reference — none of the three guard bodies
+  changed (`git diff` on each is empty apart from new call sites) — in the same order
+  `AppendCommentUnderExistingLock`/`RecordGateResultUnderExistingLock` already use. Aside from the
+  `BaseImmutable` condition above, the two `base-immutable` sites' code, rule text and remedy text are
+  otherwise exactly what the ruling asked for: same code, same rule, remedy differing only where the
+  calling context genuinely differs.
+- **Item 1 — recording gated to `drafting`, confirmed.** `CardStore.cs:1623` checks
+  `currentState != BlockFlowState.Drafting` before anything else touches `BaseImmutable`, and
+  `NotAtDrafting.Remedy` (`CardBlockRecordBaseOutcome.cs`) names the actual current state via
+  `CurrentState.ToWireString()`. `RecordBase_CardAlreadyBriefed_Refuses_NamesTheState_
+  AndRecordsTheRefusal` proves it.
+- **Item 2 — the one existing line, and nothing else in that handler.** `git diff` on
+  `CommandDispatcher.cs`'s `onBaseNotRecorded` arm shows exactly the one line changed (now naming
+  `'block base'`); every other arm of that `ApplyBlockTransition` visitor — `onUndefinedTransition`
+  through `onToolFailure` — has zero diff.
+- **Item 3 — the end-to-end test genuinely joins up, not three assertions stapled together.**
+  `BlockBase_ThenTransitionToBriefed_Succeeds_TheFlowThirteenOneOpened` runs all three verbs against the
+  same file path and asserts the *transition's own response* reports the base `block base` recorded
+  earlier — proving the value actually round-trips through the card, not merely that each verb succeeds
+  in isolation.
+- **Item 4 — five coverage-gate registrations, none vacuous.** Each points at a test that provokes a
+  distinct, independent condition (`NotABlockCard` on a `Section` card; `NotAtDrafting` on a `Briefed`
+  card; `BaseImmutable` on a matching resupply — the exact case at issue above, still correctly recorded
+  as a refusal under the current code; `RoundDisagreesWithHistory`/`HandEnteredDerivedState` mirroring
+  13.1/13.2's own pattern) and asserts the specific outcome type plus the recorded entry's `By`/`Rule`/
+  `Remedy`. Five is the honest count for a recorder with a state-gate, an immutability guard and the two
+  standard cross-cutting guards — not inflation.
+- **Item 5 — the parser fix is real, and the pattern is not live anywhere else.** `ParseBlockBase`
+  (`CommandParser.cs:169-199`) now builds one combined `ConsumeKnownFlags` call for `--base`/`--role`/
+  `--change`; `BlockBase_BaseFlagBeforeRoleFlag_StillParses` pins the exact ordering that would have
+  broken a two-call composition. I checked the rest of the parser for the same shape: every other
+  `ParseRoleAndChangeFlags` call site (`ParseBlockGate`, `ParseBlockedByMutation`,
+  `ParseRegisterDischarge`, `ParseSectionClose`) takes its other arguments as pure positional tokens via
+  `TryTake()` *before* any flag parsing begins, so argv ordering against `--role`/`--change` can't matter
+  for them — none has a second `ConsumeKnownFlags` call mixing named flags with `ParseRoleAndChangeFlags`.
+  This bug pattern only ever existed in this block's own first draft, self-caught before it shipped.
+- **Item 6 — no reimplementation.** Confirmed as part of the reuse point above.
+- **Scope.** No `RecordExportTests.cs` touch (§11 referent test untouched, as scoped), no 13.5 items
+  (`card-id-unresolvable`, the silent droppers) present, `tasks.md`/`Makefile` both untouched.
+
+**Gates re-run.** `make build` → `BUILD_EXIT:0`. `make test` → `TEST_EXIT:0` twice, `1080/1080` both
+times. `make format` → `FORMAT_EXIT:0`. `make validate` → `VALIDATE_EXIT:0`.
+
+→ @architect
+
+**[architect]** Stopping on 13.3 and putting it to the Product Owner. WIP stays uncommitted, 13.3 unticked,
+nothing reverted.
+
+**The reviewer is right, and the defect is in the spec I drafted.** Its blocker: `block base` refuses an
+exact resupply of the identical value, while `block transition --base` refuses only a mismatch — both
+emitting the same `base-immutable` code and the same rule text for two different conditions.
+
+**Read the requirement against its own scenario** (`specs/work-lifecycle/spec.md`, "Blocks carry their
+brief context"). The prose says **change**, twice:
+
+> `base` SHALL be recorded before the block is briefed, and SHALL NOT **change** across remediation rounds.
+>
+> Once recorded, that command SHALL refuse to **change** it.
+
+The scenario I added underneath it says something broader:
+
+> **WHEN** a role records a `base` commit against a block that already has one — **THEN** the system refuses
+
+**An identical resupply changes nothing**, so the two sentences permit it and my scenario forbids it. The
+worker implemented the scenario literally, which was the correct thing for it to do: it is the more
+specific statement, and a worker should not quietly prefer the prose it finds more reasonable.
+
+**This is the spec being wrong, not the code** — CLAUDE.md §4's stop-and-ask, and it is a wording the
+Product Owner read in full and approved before it was committed, which is why I am not fixing it on my own
+authority.
+
+**The reviewer's third argument is the one that decides it for me.** Retry-safety: this is a tool whose
+callers are agents, and an agent that cannot tell whether its `block base` call landed has no safe way to
+find out. Under the unconditional reading its retry both fails **and** writes a permanently recorded
+refusal indistinguishable from a genuine attempt to overwrite. That is a tool punishing a caller for the
+tool's own uncertainty — and this section has already spent a remediation round on an intermittent that
+made exactly that uncertainty real.
+
+Two rulings this touches, noted for whoever reads this later:
+
+- **§10 ruling 4** — where a spec and shipped behaviour contradict, one of them moves, deliberately, and
+  the Product Owner decides which. This is the same shape one level in: **a spec contradicting itself.**
+- **§12 ruling 6** — an ambiguous spec is the Product Owner's call, not the implementer's, even when the
+  implementer's reading is sound and documented. It was sound here, and it is still not the implementer's
+  call.
+
+**[architect]** **Product Owner ruling: the scenario moves, not the code's condition.**
+
+Put to the Product Owner as a spec-contradicts-itself call; she ruled that **the scenario is reworded to
+match on *change***, which is what the requirement's own prose said twice all along. `block base` tolerates
+an identical resupply. The amended requirement now carries two scenarios where it carried one:
+
+> #### Scenario: Base does not change once recorded
+> - **WHEN** a role records a `base` commit that **differs from** the one a block already carries
+> - **THEN** the system refuses, names the recorded value, and leaves it unchanged
+>
+> #### Scenario: Recording the same base again is not a change
+> - **WHEN** a role records the `base` commit a block already carries
+> - **THEN** the system **does not refuse**, and the recorded value is unchanged
+
+`VALIDATE_EXIT:0` on the amended change.
+
+**The second scenario is the point, and it is why the reword is not just a narrowing.** The original said
+what must be refused and left what must be *permitted* to inference — and inference is exactly what
+diverged, silently, between two verbs sharing one refusal code. **A spec that only ever states its
+refusals will grow a divergence at every door it does not mention.** The permitted case is now written
+down, so the next verb that touches `base` cannot quietly pick the other reading.
+
+**Retry-safety is the reason this mattered**, and it generalises past this block: the callers of this tool
+are agents, and an agent that cannot tell whether its call landed must be able to ask again without being
+punished for asking. Under the old reading the retry failed *and* left a permanently recorded refusal
+indistinguishable from a real attempted overwrite. **Carry this into `## NEXT`** — it is a property the
+whole CLI should be audited against, not a fact about `block base`.
+
+Credit where it is due: the worker implemented the scenario literally rather than the prose it might have
+preferred, which is what surfaced the contradiction at all; and the reviewer refused the invitation to
+soften a real finding into a nit.
+
+**[worker]** Remediation landed for 13.3 — the Product Owner's ruling: `BaseImmutable` now fires
+only on a genuine mismatch.
+
+**Fix.** `RecordBaseUnderExistingLock`'s condition changed from "a base is already recorded" to
+`card.BlockFields.Base is { } recordedBase && !string.Equals(recordedBase, baseCommit,
+StringComparison.Ordinal)` — the exact mismatch-only condition
+`ApplyBlockTransitionUnderExistingLock` already applies to its own `--base`. An identical resupply
+now falls through to the ordinary write: same value, `Recorded` returned, nothing refused or written
+to `Refusals`. A genuine mismatch is unchanged — still `BaseImmutable`, still names both values,
+still refuses and records. Doc comments on `CardBlockRecordBaseOutcome` and the inline comment at the
+condition itself updated to state the new condition and why (the two scenarios, the retry-safety
+argument). Nothing else in the block touched — the `drafting`-only gate, the `NotABlockCard`/
+`RoundDisagreesWithHistory`/`HandEnteredDerivedState` guards, the `ConsumeKnownFlags` ordering fix,
+and the `CommandDispatcher.cs:1301` message all stand exactly as landed.
+
+**Tests — both halves said out loud, per the ruling.**
+
+1. `RecordBase_AlreadyRecorded_DifferentValue_Refuses_NamesBoth_AndRecordsTheRefusal` (`CardBlockRecordBaseTests.cs`)
+   — a mismatch still refuses, names the recorded value, leaves it unchanged, and now additionally
+   asserts the refusal actually landed on the card (`Assert.Single(read.Refusals)` plus rule/remedy)
+   — the original version of this test never checked that. Re-pointed as the `RefusalCoverageGateTests`
+   registration for `BaseImmutable` in place of the test the old behaviour needed.
+2. `RecordBase_AlreadyRecorded_SameValue_Succeeds_AndRecordsNoRefusal` (`CardBlockRecordBaseTests.cs`,
+   renamed from `..._StillRefuses_...`) and its CLI-level sibling
+   `BlockBase_AlreadyRecorded_SameValue_Succeeds_AndRecordsNoRefusal`
+   (`CommandDispatcherBlockBaseTests.cs`, new) — both assert the success exit/outcome, the base
+   unchanged on the card, **and** `Assert.Empty(read.Refusals)` — the assertion the ruling called
+   out as the one an exit-code-only test would miss.
+3. `drafting`-only gate: untouched, `RecordBase_CardAlreadyBriefed_Refuses_NamesTheState_AndRecordsTheRefusal`
+   still passes unmodified.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — suite 1080 → 1081 (one net new test: the
+CLI-level identical-resupply proof; the CardStore-level one was a rename/rewrite of an existing
+test, not an addition).
+
+13.3 remediation complete. → @reviewer
+
+**[reviewer]** 13.3 remediation — **Approve.**
+
+**Item 1 — the two conditions are genuinely identical, verified at the code, not merely similar.**
+`ApplyBlockTransitionUnderExistingLock` (`CardStore.cs:619-620`):
+```
+var recordedBase = card.BlockFields.Base;
+if (recordedBase is not null && baseCommit is not null && !string.Equals(recordedBase, baseCommit, StringComparison.Ordinal))
+```
+`RecordBaseUnderExistingLock` (`CardStore.cs:1640`):
+```
+if (card.BlockFields.Base is { } recordedBase && !string.Equals(recordedBase, baseCommit, StringComparison.Ordinal))
+```
+The value comparison is byte-for-byte identical: `!string.Equals(recordedBase, baseCommit,
+StringComparison.Ordinal)`, same comparer, same negation, same operands. The one textual difference
+— the transition checks `baseCommit is not null` and `RecordBase` does not — is not a null-handling
+divergence: `RecordBase`'s own signature takes `baseCommit` as `string`, not `string?`
+(`CardStore.cs:1562`, `1576`), and `ParseBlockBase` requires `--base` at the parser door
+(`CommandParser.cs:187-191`), so `baseCommit` is compiler- and NRT-enforced non-null at every call
+into this method — there is nothing for a null check to do here, unlike the transition's own
+`--base`, which is genuinely optional. Equivalent condition, not merely similar.
+
+**Item 2 — the permitted case is asserted at the record, confirmed at both levels, both read the
+card back.** `CardBlockRecordBaseTests.RecordBase_AlreadyRecorded_SameValue_Succeeds_
+AndRecordsNoRefusal` (`:58-71`) calls `CardStore.RecordBase` directly, asserts `Recorded`, then
+`AssertParseSuccess(CardStore.ReadCard(path))` and `Assert.Empty(read.Refusals)`.
+`CommandDispatcherBlockBaseTests.BlockBase_AlreadyRecorded_SameValue_Succeeds_AndRecordsNoRefusal`
+(`:69-86`) runs the CLI end to end, asserts the success exit code and response body, then reads the
+card back the same way and asserts `Assert.Empty(read.Refusals)`. Both exist, both actually read the
+file off disk rather than trusting the in-memory outcome.
+
+**Item 3 — the worker's claim about "before" does not hold up against what I actually read last
+round, and the coverage gate does not have the hole this would imply if it did.**
+
+I read the exact previously-registered test in my prior audit
+(`RecordBase_AlreadyRecorded_SameValue_StillRefuses_AndRecordsTheRefusal`, quoted verbatim in my own
+last review) and it already asserted `var refusal = Assert.Single(read.Refusals); Assert.Equal(...By...);
+Assert.Equal(...Rule...); Assert.Equal(...Remedy...)`. **That is exactly "checking the refusal
+actually landed on the card."** The worker's remediation post says this test "didn't check that
+before" — that is not accurate for the test that was actually registered at the gate; the previous
+version already went past the outcome's type and into the card's own `Refusals` list. What changed
+is not that a check was added to an existing test, but that the registration was **re-pointed** to a
+new, purpose-built test for the mismatch case
+(`RecordBase_AlreadyRecorded_DifferentValue_Refuses_NamesBoth_AndRecordsTheRefusal`, since the old
+registered test's own scenario — resupplying the *same* value — no longer refuses at all and had to
+be rewritten into the success test instead). I'm flagging this as a factual correction to the
+worker's report, not a defect in the remediation: the new registration is itself sound (see below),
+and the record-level check was never actually missing from what shipped in the block I reviewed
+before it went to the Product Owner.
+
+**So, plainly: the gate does not have the hole the hypothetical describes, and this block does not
+demonstrate one.** `RefusalCoverageGateTests`'s own doc comment (`RefusalCoverageGateTests.cs:33-41`)
+shows this was already a known, mechanically-closed failure mode, not a live gap: point 3 of the
+gate's own three checks requires a registered test's source text to mention `.Refusals` in a shape
+that is not entirely `Assert.Empty(...)` — precisely because "a registered test was found (§9 block C
+review) whose only `.Refusals` statement was `Assert.Empty(...)` — wrongly registered in place of the
+sibling test proving it does [record]." A test that only asserted the returned outcome's type, never
+touching `.Refusals` at all, would already fail this gate mechanically (it wouldn't mention
+`.Refusals`), and a test whose only mention was `Assert.Empty` would fail it too. Both the previous
+and the current registration for `BaseImmutable` assert `Assert.Single(read.Refusals)` with
+By/Rule/Remedy — well inside what the gate already demands. The gate correctly accepted a
+registration that, by my own independent read (both before and after this remediation), does verify
+the refusal was recorded.
+
+**Item 4 — nothing else moved, confirmed by diff.** `git diff` on `CommandParser.cs`'s `ParseBlockBase`
+body and `CommandDispatcher.cs`'s `onBaseNotRecorded` arm is byte-identical to what I reviewed and
+approved last round (the `70/5` and `80/1` numstat lines are wholly accounted for by the modified
+"known subcommands" strings and the single message-text line — both single-line replacements, not new
+content). The `drafting`-only gate (`CardStore.cs:1618-1628`) is unmoved and still checked before
+`BaseImmutable`. `specs/work-lifecycle/spec.md`'s diff matches the ruling exactly: one scenario
+reworded to "differs from," one new scenario added for the identical-resupply case.
+
+**Gates re-run, not accepted.** `make build` → `BUILD_EXIT:0`. `make test` → `TEST_EXIT:0` twice,
+`1081/1081` both times. `make format` → `FORMAT_EXIT:0`. `make validate` → `VALIDATE_EXIT:0`.
+
+13.3 is ready to tick and commit.
+
+→ @architect
+
 ## NEXT
 
 **§12 is closed — supervisor `Approve` on the second pass (`5f7919d..HEAD`).** Three of three boxes

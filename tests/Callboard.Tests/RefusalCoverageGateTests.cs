@@ -189,6 +189,11 @@ public sealed class RefusalCoverageGateTests
         { typeof(CardCommentAppendOutcome.ReplyToNotFound), (typeof(CommandDispatcherCommentTests), "CommentAdd_ReplyToACommentNotOnThisCard_Refuses_AndRecordsTheRefusal") },
         { typeof(CardCommentAppendOutcome.RoundDisagreesWithHistory), (typeof(RoundAgreesWithHistoryTests), "AddComment_BlockCardWithDisagreeingRound_Refuses_NamesBothFigures_AltersNeither") },
         { typeof(CardCommentAppendOutcome.HandEnteredDerivedState), (typeof(HandEnteredDerivedStateCoverageTests), "AddComment_CardCarryingAReservedKey_Refuses_AndRecords") },
+        { typeof(CardBlockRecordBaseOutcome.NotABlockCard), (typeof(CardBlockRecordBaseTests), "RecordBase_NonBlockCard_Refuses_AndRecordsTheRefusal") },
+        { typeof(CardBlockRecordBaseOutcome.NotAtDrafting), (typeof(CardBlockRecordBaseTests), "RecordBase_CardAlreadyBriefed_Refuses_NamesTheState_AndRecordsTheRefusal") },
+        { typeof(CardBlockRecordBaseOutcome.BaseImmutable), (typeof(CardBlockRecordBaseTests), "RecordBase_AlreadyRecorded_DifferentValue_Refuses_NamesBoth_AndRecordsTheRefusal") },
+        { typeof(CardBlockRecordBaseOutcome.RoundDisagreesWithHistory), (typeof(RoundAgreesWithHistoryTests), "RecordBase_BlockCardWithDisagreeingRound_Refuses_NamesBothFigures_AltersNeither") },
+        { typeof(CardBlockRecordBaseOutcome.HandEnteredDerivedState), (typeof(HandEnteredDerivedStateCoverageTests), "RecordBase_CardCarryingAReservedKey_Refuses_AndRecords") },
     };
 
     /// <summary>
@@ -382,6 +387,14 @@ public sealed class RefusalCoverageGateTests
         { typeof(CardCommentAppendOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
         { typeof(CardCommentAppendOutcome.CardCorrupt), "a reported content problem, not a refusal." },
         { typeof(CardCommentAppendOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
+
+        // §13: block base (CardBlockRecordBaseOutcome) — its own success case and the same three
+        // categorical dispositions every other single-field recorder's union carries.
+        { typeof(CardBlockRecordBaseOutcome.Recorded), "the operation's own success case." },
+        { typeof(CardBlockRecordBaseOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardBlockRecordBaseOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardBlockRecordBaseOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardBlockRecordBaseOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
     };
 
     /// <summary>Every concrete type in the product assembly that implements
