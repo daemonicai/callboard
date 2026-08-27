@@ -222,9 +222,10 @@ internal abstract record CardApprovalOutcome
     }
 
     /// <summary>process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block D, 9.8) —
-    /// the card names <paramref name="QuestionId"/>, still <see cref="QuestionStatus.Open"/> and
-    /// owned by <see cref="CardOwner.ProductOwner"/>, among its own <see cref="BlockCardFields.
-    /// BlockedBy"/>. <c>approve</c> is always a forward transition — unlike <see cref="
+    /// the card names <paramref name="QuestionId"/>, not closed under <see cref="CardLifecycle.
+    /// IsClosed"/> (open or deferred — §10 remediation, round two: deferring a Product Owner
+    /// question does not lift the halt) and owned by <see cref="CardOwner.ProductOwner"/>, among
+    /// its own <see cref="BlockCardFields.BlockedBy"/>. <c>approve</c> is always a forward transition — unlike <see cref="
     /// CardBlockTransitionOutcome"/>'s own copy of this case, there is no back-edge arm on this
     /// surface to exempt (Architect ruling, §9 block D). Refusal-shaped and card-addressed: fires
     /// after the nit/round/thread checks above have already passed — recorded.</summary>

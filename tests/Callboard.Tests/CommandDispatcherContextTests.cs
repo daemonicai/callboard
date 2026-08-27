@@ -135,6 +135,49 @@ public sealed class CommandDispatcherContextTests
             blockedCard.GetProperty("haltedByQuestionId").GetString());
     }
 
+    // §10 remediation, round two, S2 — a deferred Product Owner question still halts (Product
+    // Owner ruling: deferring does not lift the halt). Same shape as the open-question agreement
+    // test above, deferred rather than open — context and state must still agree.
+    [Fact]
+    public void TopItem_BlockedByDeferredProductOwnerQuestion_ReportsHalted_AndAgreesWithState()
+    {
+        using var repo = new TempGitRepo();
+        WriteQuestion(repo, "Q-0004", CardOwner.ProductOwner, "deferred");
+        var (_, blockId) = WriteBlockedBlock(repo, "b-halted-deferred", "B-0005", CardOwner.Worker, "briefed", FixedNow, ["Q-0004"]);
+
+        var topItem = Context(repo, "worker").GetProperty("topItem");
+        Assert.Equal(blockId, topItem.GetProperty("id").GetString());
+        Assert.Equal(["Q-0004"], topItem.GetProperty("blockedBy").EnumerateArray().Select(e => e.GetString()).ToArray());
+        Assert.True(topItem.GetProperty("halted").GetBoolean());
+        Assert.Equal("Q-0004", topItem.GetProperty("haltedByQuestionId").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(topItem.GetProperty("haltedByQuestionTitle").GetString()));
+
+        var blockedCard = State(repo).GetProperty("blockedCards").EnumerateArray().Single(e => e.GetProperty("id").GetString() == blockId);
+        Assert.True(blockedCard.GetProperty("halted").GetBoolean());
+        Assert.Equal(
+            topItem.GetProperty("haltedByQuestionId").GetString(),
+            blockedCard.GetProperty("haltedByQuestionId").GetString());
+    }
+
+    // An answered Product Owner question halts nothing — deferral is the only non-terminal state
+    // that still blocks; answered is genuinely closed.
+    [Fact]
+    public void TopItem_BlockedByAnsweredProductOwnerQuestion_ReportsNotHalted_AndAgreesWithState()
+    {
+        using var repo = new TempGitRepo();
+        WriteQuestion(repo, "Q-0005", CardOwner.ProductOwner, "answered");
+        var (_, blockId) = WriteBlockedBlock(repo, "b-answered", "B-0006", CardOwner.Worker, "briefed", FixedNow, ["Q-0005"]);
+
+        var topItem = Context(repo, "worker").GetProperty("topItem");
+        Assert.Equal(["Q-0005"], topItem.GetProperty("blockedBy").EnumerateArray().Select(e => e.GetString()).ToArray());
+        Assert.False(topItem.GetProperty("halted").GetBoolean());
+        Assert.False(topItem.TryGetProperty("haltedByQuestionId", out _));
+        Assert.False(topItem.TryGetProperty("haltedByQuestionTitle", out _));
+
+        var blockedCard = State(repo).GetProperty("blockedCards").EnumerateArray().Single(e => e.GetProperty("id").GetString() == blockId);
+        Assert.False(blockedCard.GetProperty("halted").GetBoolean());
+    }
+
     // A top item blocked only by another role's question is blocked but not halted — and again
     // context and state must agree.
     [Fact]

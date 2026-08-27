@@ -399,6 +399,33 @@ public sealed class CommandDispatcherBlockApproveTests
         Assert.Equal(remedy, recorded.Remedy);
     }
 
+    // §10 remediation, round two, S2: a deferred product-owner question halts approval exactly as
+    // an open one does — deferring does not lift the halt (Product Owner ruling). Same shape as
+    // the open-question test above, deferred rather than open.
+    [Fact]
+    public void BlockApprove_BlockedByDeferredProductOwnerQuestion_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        WriteDeferredProductOwnerQuestion(repo.Path, "Q-0021");
+        var path = WriteInitialBlockCardBlockedBy(repo.Path, "b-0021", "B-0021", BlockFlowState.InReview, "Q-0021");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "approve", "--id", "B-0021", "--role", "reviewer", "--state", "commit-abc", "--claims", "claim one", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("blocked-by-open-product-owner-question", refusal.GetProperty("code").GetString());
+        Assert.Contains("Q-0021", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+
+        var read2 = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("in-review", read2.Frontmatter.Status);
+        Assert.Empty(read2.Claims);
+        Assert.Single(read2.Refusals);
+    }
+
     [Fact]
     public void BlockApprove_InvalidClaimItem_Refuses()
     {
@@ -495,13 +522,21 @@ public sealed class CommandDispatcherBlockApproveTests
 
     // §9 block D, 9.8: an open question owned by the product owner — the one shape that halts a
     // card advancing past it.
-    private static void WriteOpenProductOwnerQuestion(string repoRoot, string id)
+    private static void WriteOpenProductOwnerQuestion(string repoRoot, string id) =>
+        WriteProductOwnerQuestion(repoRoot, id, QuestionStatus.Open);
+
+    // §10 remediation, round two, S2: a deferred question owned by the product owner still halts —
+    // deferring does not lift the halt (Product Owner ruling).
+    private static void WriteDeferredProductOwnerQuestion(string repoRoot, string id) =>
+        WriteProductOwnerQuestion(repoRoot, id, QuestionStatus.Deferred);
+
+    private static void WriteProductOwnerQuestion(string repoRoot, string id, QuestionStatus status)
     {
         var directory = Path.Combine(repoRoot, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, id.ToLowerInvariant() + ".md");
         var frontmatter = new CardFrontmatter(
-            id, CardKind.Question, "Should we ship X?", QuestionStatus.Open.ToWireString(), CardOwner.ProductOwner,
+            id, CardKind.Question, "Should we ship X?", status.ToWireString(), CardOwner.ProductOwner,
             CardScope.Repository, string.Empty, FixedNow, FixedNow);
         var card = new CardFile(frontmatter, "Body.", [], []);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

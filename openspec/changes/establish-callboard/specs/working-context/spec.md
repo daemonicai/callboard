@@ -43,6 +43,11 @@ be a requirement of the response and not a target it may exceed.
 Where content would exceed the budget, the system SHALL shorten narrative only. It SHALL NOT shorten the
 register or the brief, and SHALL state explicitly that it has truncated and what it truncated.
 
+Where the register and the brief **alone** — with all narrative already dropped — still exceed the
+budget, the system SHALL deliver both whole rather than shorten either, and SHALL state that the budget
+was exceeded and which of the two drove it. This is the one case the budget may be exceeded; every other
+case is governed by the paragraph above.
+
 #### Scenario: Oversized content is truncated in the narrative
 
 - **WHEN** a card's accumulated thread would push the response past its budget
@@ -53,6 +58,12 @@ register or the brief, and SHALL state explicitly that it has truncated and what
 
 - **WHEN** any part of a response is omitted for budget
 - **THEN** the response states that omission
+
+#### Scenario: The register and brief alone exceed the budget
+
+- **WHEN** the register and the brief, with all narrative already dropped, still exceed the budget
+- **THEN** the response delivers both whole, states that the budget was exceeded, and names which of the
+  two drove the overage
 
 ### Requirement: Working-context cost does not grow with the change
 
@@ -99,3 +110,8 @@ owned by any other role SHALL leave the cards it blocks free to proceed on other
 
 - **WHEN** an open question owned by the reviewer blocks a card
 - **THEN** that card remains available for work on fronts the question does not block
+
+#### Scenario: A deferred Product Owner question still halts
+
+- **WHEN** a question owned by the Product Owner is deferred rather than answered, and it blocks a card
+- **THEN** that card is still reported as halted pending the answer — deferring does not lift the halt

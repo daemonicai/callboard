@@ -228,9 +228,10 @@ internal abstract record CardBlockTransitionOutcome
     }
 
     /// <summary>process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block D, 9.8) —
-    /// the card names <paramref name="QuestionId"/>, still <see cref="QuestionStatus.Open"/> and
-    /// owned by <see cref="CardOwner.ProductOwner"/>, among its own <see cref="BlockCardFields.
-    /// BlockedBy"/>. Fires only for a forward transition — never for <c>changes-requested</c>, the
+    /// the card names <paramref name="QuestionId"/>, not closed under <see cref="CardLifecycle.
+    /// IsClosed"/> (open or deferred — §10 remediation, round two: deferring a Product Owner
+    /// question does not lift the halt) and owned by <see cref="CardOwner.ProductOwner"/>, among
+    /// its own <see cref="BlockCardFields.BlockedBy"/>. Fires only for a forward transition — never for <c>changes-requested</c>, the
     /// one back-edge this generic applier itself resolves (Architect ruling, §9 block D: back-edges
     /// return a card to earlier work, they do not advance it past the blocker; see
     /// <see cref="CardStore.ApplyBlockTransitionUnderExistingLock"/>'s own guard for the exact

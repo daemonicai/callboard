@@ -523,6 +523,33 @@ public sealed class CardSectionCloseTests : IDisposable
         Assert.Equal(blocked.Remedy, recorded.Remedy);
     }
 
+    // §10 remediation, round two, S2: a deferred product-owner question blocks section-driven
+    // landing exactly as an open one does — deferring does not lift the halt (Product Owner
+    // ruling). Same shape as the open-question test above, deferred rather than open.
+    [Fact]
+    public void CloseSection_AnApprovedBlockBlockedByADeferredProductOwnerQuestion_Refuses_AndRecordsTheRefusal()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0027", "S-0027");
+        WriteDeferredProductOwnerQuestion("q-0006", "Q-0006");
+        var blockPath = Path.Combine(_directory, "b-0025.md");
+        var blockFrontmatter = new CardFrontmatter(
+            "B-0025", CardKind.Block, "A block", "approved", CardOwner.Architect, CardScope.Change, "S-0027", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: null, BlockedBy: ["Q-0006"], GateResults: []);
+        var blockCard = new CardFile(blockFrontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var blocked = Assert.IsType<CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion>(outcome);
+        Assert.Equal("B-0025", blocked.BlockId);
+        Assert.Equal("Q-0006", blocked.QuestionId);
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(blockPath)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(blocked.RefusingRule, recorded.Rule);
+        Assert.Equal(blocked.Remedy, recorded.Remedy);
+    }
+
     // process-enforcement: "Section close settles its addressed threads" — a fresh unresolved
     // addressed thread (never survived a round boundary) refuses the close.
     [Fact]
@@ -634,6 +661,21 @@ public sealed class CardSectionCloseTests : IDisposable
         var frontmatter = new CardFrontmatter(
             id, CardKind.Question, "Should we ship X?", QuestionStatus.Open.ToWireString(), CardOwner.ProductOwner, CardScope.Repository, string.Empty, Created, Created);
         var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    // §10 remediation, round two, S2: a deferred question owned by the product owner — deferring
+    // does not lift the halt (Product Owner ruling).
+    private void WriteDeferredProductOwnerQuestion(string fileStem, string id)
+    {
+        var registerDirectory = Path.Combine(_root, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(registerDirectory);
+        var path = Path.Combine(registerDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "Should we ship X?", QuestionStatus.Deferred.ToWireString(), CardOwner.ProductOwner, CardScope.Repository, string.Empty, Created, Created);
+        var card = new CardFile(
+            frontmatter, "Body.", [], [],
+            QuestionFields: new QuestionCardFields { DeferredBy = CardOwner.Worker, DeferredAt = Created, DeferredTarget = "a later change" });
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 

@@ -85,6 +85,33 @@ public sealed class CommandDispatcherBlockTransitionTests
         Assert.Equal(remedy, recorded.Remedy);
     }
 
+    // §10 remediation, round two, S2: a deferred product-owner question halts advancement exactly
+    // as an open one does — deferring does not lift the halt (Product Owner ruling). Same shape as
+    // the open-question test above, deferred rather than open.
+    [Fact]
+    public void BlockTransition_BlockedByDeferredProductOwnerQuestion_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        WriteQuestion(repo.Path, "Q-0022", CardOwner.ProductOwner, QuestionStatus.Deferred);
+        var path = WriteInitialBlockCardBlockedBy(repo.Path, "b-0022", "B-0022", BlockFlowState.Briefed, "Q-0022");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "claim", "--role", "worker", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("blocked-by-open-product-owner-question", refusal.GetProperty("code").GetString());
+        Assert.Contains("Q-0022", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+
+        var read2 = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("briefed", read2.Frontmatter.Status);
+        Assert.Empty(read2.Transitions);
+        Assert.Single(read2.Refusals);
+    }
+
     // §9 block D: the exemption half of the same guard — changes-requested is a back-edge (returns
     // work to briefed, does not advance past the blocker), so it is NOT refused even while the
     // card is blocked by the same open product-owner question.
@@ -626,17 +653,8 @@ public sealed class CommandDispatcherBlockTransitionTests
 
     // §9 block D, 9.8: an open question owned by the product owner — the one shape that halts a
     // card advancing past it.
-    private static void WriteOpenProductOwnerQuestion(string repoRoot, string id)
-    {
-        var directory = Path.Combine(repoRoot, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
-        Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, id.ToLowerInvariant() + ".md");
-        var frontmatter = new CardFrontmatter(
-            id, CardKind.Question, "Should we ship X?", QuestionStatus.Open.ToWireString(), CardOwner.ProductOwner,
-            CardScope.Repository, string.Empty, FixedNow, FixedNow);
-        var card = new CardFile(frontmatter, "Body.", [], []);
-        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-    }
+    private static void WriteOpenProductOwnerQuestion(string repoRoot, string id) =>
+        WriteQuestion(repoRoot, id, CardOwner.ProductOwner, QuestionStatus.Open);
 
     // §9 block D review finding: the asymmetry (ownership, not kind; open, not any status) is
     // implemented in FindBlockingOpenProductOwnerQuestion but was only ever exercised on its

@@ -30492,6 +30492,297 @@ The options:
 
 Whichever way this goes, **the two definitions must be reconciled to one**, and `context`/`state` must
 both read it — that part is not optional and does not depend on the ruling.
+**[architect]** ❗ **Product Owner rulings received on S1 and S2.** Both as recommended.
+
+- **S1 — amend the spec.** The sanctioned overage is written into
+  `specs/working-context/spec.md` as a requirement; the behaviour stands.
+- **S2 — deferring a Product Owner question does *not* lift the halt.** A deferred Product Owner
+  question still halts the cards it blocks.
+
+**[architect]** Remediation block (round two) briefed → @worker. **S1 and S2.** No task numbers, ticks
+nothing. This is §10's **second and final** remediation round under §3c.4's two-round cap — after the
+supervisor re-runs, a further `Request changes` goes to the Product Owner, not to a third block.
+
+### S1 — write the overage into the spec
+
+`specs/working-context/spec.md`'s *Working context fits a stated budget* currently says the budget "SHALL
+be a requirement of the response and not a target it may exceed", while the tool ships a permanent,
+tested path returning `exceededCeiling: true`. The behaviour is not a bug — it is forced by the same
+requirement's own prohibition on shortening the register or the brief. **The spec is what moves.**
+
+Amend that requirement to state the sanctioned case: where the register and the brief **alone** exceed
+the budget, both are delivered whole, all narrative is dropped, and **the response states the overage and
+what drove it**. Add a scenario covering it. Keep the existing prohibition intact for every other case —
+this is a narrow carve-out for the one situation the other requirements make unavoidable, **not** a
+licence to exceed the budget generally, and the amended text must not read as one.
+
+`make validate` must stay green. Match the register and brevity of the requirement's neighbours.
+
+### S2 — one definition of "an open question", and deferral does not lift the halt
+
+Two definitions disagree today inside one `state` response:
+
+- `CardLifecycle.IsQuestionClosed` (`CardLifecycle.cs:56-57`) — **answered only**. Its doc comment
+  records why: process-enforcement's "the close proceeds and the question remains open against its
+  target" means a deferred question is deliberately still live.
+- `CardStore.FindBlockingOpenProductOwnerQuestion` (`CardStore.cs:1852`) — requires status **`Open`**,
+  so it silently **excludes** deferred.
+
+**Reconcile to the first.** A question is closed when it is **answered**, and at no other time; deferral
+does not close it and does not lift the halt. Postponing an answer is not deciding that the work may
+proceed — that is the Product Owner's ruling.
+
+**Read this next part carefully — it reaches beyond §10.** `FindBlockingOpenProductOwnerQuestion` has
+**five** callers, and only two of them are §10's:
+
+- `DerivedState.cs:117` (`state`) and `WorkingContext.cs:208` (`context`) — §10's read paths.
+- `CardStore.cs:541`, `:881`, `:2961` — **§9's 9.8 refusals**, which refuse advancing or approving a card
+  blocked by an open Product Owner question.
+
+So fixing the predicate makes those three §9 refusals **stricter**: a card blocked by a *deferred*
+Product Owner question will now also be refused advancement and approval. **That is correct and it is the
+point** — if deferral does not lift the halt, it cannot lift the block either, or the tool would report a
+card as halted and then let it advance. §9's requirement text says "an open Product Owner question", and
+under the reconciled definition deferred *is* open, so the requirement still reads true; only the
+implementation's reading of "open" changes.
+
+**Do this deliberately and prove it:**
+- Make the change at the **predicate**, so all five callers move together. Do not special-case §10's two.
+- **Check the existing §9 tests.** Any that assert a deferred Product Owner question permits advancement
+  encode the old reading and must be updated — but **read each one before changing it**: if a test
+  asserts something the ruling does not touch, leave it. Report in your post exactly which tests you
+  changed and why.
+- Add a scenario to `specs/working-context/spec.md`'s *Escalation severity is derived from ownership*
+  recording that a deferred Product Owner question still halts. The requirement already has no deferral
+  carve-out, so this makes explicit what it already implies rather than changing it.
+- Check whether `specs/process-enforcement/spec.md`'s own wording around 9.8 needs the same explicitness.
+  If it reads true as written, leave it and say so.
+
+### Tests
+
+- S1: the overage case still behaves as before, and the spec now has a requirement and scenario it
+  answers to.
+- S2: a deferred Product Owner question halts its dependents in **both** `context` and `state`, and the
+  two **agree** — extend the agreement tests the last round added rather than writing new parallel ones.
+  A deferred Product Owner question refuses advancement and approval at the three §9 sites. An
+  **answered** question halts nothing and blocks nothing.
+
+### Constraints
+
+- Standing §10 constraints all still apply — see the opening `[architect]` post under `## 10.`
+- **This block changes shipped §9 behaviour.** Say so plainly in your post, list every §9 test you
+  touched, and do not let the change ride in unremarked — the supervisor will be looking at it and it is
+  the one place this round could do damage.
+- ADR-0002 / D2 — NativeAOT: no reflection, no runtime codegen, source-generated JSON only.
+  `TreatWarningsAsErrors` is on.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT`, `TEST_EXIT`, `FORMAT_EXIT`, `VALIDATE_EXIT`
+individually. Suite stands at **979**. Read the exit line, never the log.
+
+Post to the DEVLOG under `## 10.` as `[worker]`, then `→ @reviewer`.
+
+**[worker]** §10 remediation, round two — S1 and S2 done.
+
+**S1 — spec amended, no code change.** `specs/working-context/spec.md`'s *Working context fits a
+stated budget* gets one new paragraph, placed after the existing truncation prohibition and before
+its scenarios: "Where the register and the brief **alone** — with all narrative already dropped —
+still exceed the budget, the system SHALL deliver both whole rather than shorten either, and SHALL
+state that the budget was exceeded and which of the two drove it. This is the one case the budget
+may be exceeded; every other case is governed by the paragraph above." Added scenario "The register
+and brief alone exceed the budget". Matched to `CommandDispatcher.cs:4046-4075`'s existing
+`BuildBudgetedContextResult`/`overageStatement` behaviour exactly — states the overage, names the
+driver via `DescribeOverageDriver`, names `rule review` as the remedy. Kept every other case's
+prohibition (shorten narrative only, never register or brief) untouched — read the new paragraph
+back against the requirement's opening two paragraphs and it reads as a narrow carve-out, not a
+general licence, which was the brief's own bar. `make validate` → `VALIDATE_EXIT:0`.
+
+**S2 — reconciled to `CardLifecycle.IsQuestionClosed`'s reading, at the predicate.**
+`CardStore.FindBlockingOpenProductOwnerQuestion` (`CardStore.cs:1852`, was
+`!QuestionStatusWireFormat.TryParse(...) || questionStatus != QuestionStatus.Open`) now reads
+`CardLifecycle.IsClosed(questionCard)` — the same "closed" that `IsQuestionClosed`'s own doc comment
+already reasons out for question cards (answered only; deferred is deliberately still live), reused
+rather than re-derived a second way. One change, all five callers move together:
+`DerivedState.cs:117` and `WorkingContext.cs:208` (§10's read paths, unchanged call sites — they
+already called through this predicate) and `CardStore.cs:541`, `:881`, `:2965` (§9's three 9.8
+refusal sites: block transition, block approve, section-driven landing). Updated the three doc
+comments that named `QuestionStatus.Open` literally
+(`FindBlockingOpenProductOwnerQuestion`'s own, `CardApprovalOutcome.BlockedByOpenProductOwnerQuestion`'s,
+`CardBlockTransitionOutcome.BlockedByOpenProductOwnerQuestion`'s) to say "not closed under
+`CardLifecycle.IsClosed` (open or deferred)" instead. Left
+`CardSectionCloseOutcome.OpenUndeferredQuestion`'s own doc comment and the "Section close settles
+its questions" requirement (9.5) untouched — that is a different check (a question *raised in* the
+closing section, not one *blocking* a card), and it already permits a deferred question to close;
+that permission is not this ruling's target and the brief's ruling does not reach it.
+
+**§9 tests checked — none encoded the old reading.** I read every existing test at the three 9.8
+sites (`CommandDispatcherBlockTransitionTests.cs`, `CommandDispatcherBlockApproveTests.cs`,
+`CardSectionCloseTests.cs`) plus `CardBlockTransitionTests.cs`,
+`CardSectionCloseConcurrencyTests.cs`, `RoundAgreesWithHistoryTests.cs`,
+`RefusalCoverageGateTests.cs`, `BlockLifecycleIntegrationTests.cs`. None constructs a `blocked_by`
+question card at `deferred` status and asserts advancement succeeds — the only existing `Deferred`
+fixtures are `CardSectionCloseTests.cs`'s own 9.5 "a question deferred *in the closing section* does
+not refuse" tests, which are the different, correctly-untouched check above. **No existing test was
+changed for correctness; I only refactored two duplicated `WriteOpenProductOwnerQuestion` helpers**
+(`CommandDispatcherBlockApproveTests.cs`, `CommandDispatcherBlockTransitionTests.cs`) to share a
+status-parameterised helper so the new deferred fixtures could reuse it, and added the section-close
+file's own `WriteDeferredProductOwnerQuestion` alongside its existing `WriteOpenProductOwnerQuestion`
+— no assertion in any pre-existing test method changed.
+
+**New tests, one per site plus the agreement pair:**
+- `CommandDispatcherContextTests.cs`: `TopItem_BlockedByDeferredProductOwnerQuestion_ReportsHalted_AndAgreesWithState`
+  and `TopItem_BlockedByAnsweredProductOwnerQuestion_ReportsNotHalted_AndAgreesWithState` — both
+  extend the existing `context`/`state` agreement pair the last round added (same shape: assert on
+  `context`'s `topItem`, then assert `state`'s matching `blockedCards` entry agrees), deferred and
+  answered as the two new cases alongside the round's existing open/non-Product-Owner pair.
+- `CommandDispatcherBlockTransitionTests.cs`: `BlockTransition_BlockedByDeferredProductOwnerQuestion_Refuses_AndRecordsTheRefusal`.
+- `CommandDispatcherBlockApproveTests.cs`: `BlockApprove_BlockedByDeferredProductOwnerQuestion_Refuses_AndRecordsTheRefusal`.
+- `CardSectionCloseTests.cs`: `CloseSection_AnApprovedBlockBlockedByADeferredProductOwnerQuestion_Refuses_AndRecordsTheRefusal`.
+
+**This block changes shipped §9 behaviour, deliberately, per the Product Owner's ruling.** Before
+this block, a block card `blocked_by` a *deferred* Product Owner question could still `claim`,
+`approve`, or land via section close — after, all three refuse with
+`blocked-by-open-product-owner-question`, identically to an *open* one. No existing §9 test asserted
+the old (permissive) behaviour, so none needed correcting — the gap was untested, not
+misasserted, which is exactly what the supervisor's finding named.
+
+**Spec check on `process-enforcement`'s 9.8 wording, as asked.** "The system SHALL refuse to
+advance a card blocked by an open question owned by the Product Owner" reads true as written under
+the reconciled definition — it never said "status literally `open`", and the ruling only changed
+what "open" means at the implementation, not the requirement's own words. Left it, per the brief's
+own instruction to leave it if it reads true.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite at **984** — up from
+979 by 5 (two `context`/`state` agreement tests, one each at the three 9.8 sites).
+
+No task numbers — remediation block, round two, per the brief.
+
+→ @reviewer
+
+**[architect]** Recording the Product Owner's reasoning behind S2, because it generalises past this
+section and the ruling alone does not carry it:
+
+> *Me not answering a question is a halting state. Work that requires an answer cannot continue without
+> one, so it's the right decision.*
+
+**A deferred question is not a lighter kind of open — it is the same halt with the answer postponed.**
+That is why the reconciliation had to reach §9's three 9.8 refusal sites rather than stopping at §10's
+two read paths: a tool that *reports* a card halted and then *lets it advance* is describing a state it
+does not enforce, which is precisely the failure mode `callboard` exists to remove from the incumbent.
+
+It also settles the open question the remediation brief left for the worker — whether
+`process-enforcement`'s 9.8 wording needed the same explicitness. It does not. "An open Product Owner
+question" already means what it says; deferred is open. **The code had quietly narrowed the requirement,
+and the spec was right all along.** The worker reached the same conclusion independently and left that
+wording untouched.
+
+**[reviewer]** §10 remediation, round two (S1, S2) audited — uncommitted working tree against
+`d398a15`. **Verdict: Approve.**
+
+### S1 — spec amendment checked against the shipped code
+
+`specs/working-context/spec.md`'s new paragraph and scenario describe `BuildBudgetedContextResult`
+(`src/Callboard/Cli/CommandDispatcher.cs:4046-4075`) accurately: narrative is dropped to zero
+(`kept == 0`) before the overage path is even reached; the returned result states the character
+count, the overage, and names the driver (`DescribeOverageDriver`) and the remedy (`rule review`,
+now that block E gives it a CLI surface). "The brief" as used in the requirement matches what the
+code actually keeps whole under overage — the top item's structural fields (`blockedBy`, thread
+metadata) survive, only narrative comment bodies are gone — so the requirement and the code agree on
+what "brief" covers.
+
+Read as a whole, the requirement stays narrow: paragraph two's prohibition on shortening the
+register or the brief is untouched, and the new paragraph is explicitly gated on "with all narrative
+already dropped" — a fresh read does not land on "the budget is optional," it lands on "the budget is
+inviolable except in the one case narrative alone cannot save it." The new scenario states the same
+condition as the requirement (register+brief alone, narrative already gone) with no daylight between
+them — no F1-shaped contradiction. `make validate` → `VALIDATE_EXIT:0`, confirmed. No code change
+accompanies this amendment, as briefed.
+
+### S2 — predicate reconciliation
+
+`CardStore.FindBlockingOpenProductOwnerQuestion` (`CardStore.cs:1852`) now reads
+`CardLifecycle.IsClosed(questionCard)` in place of the old `status != Open` test. Traced
+`CardLifecycle.IsClosed` (`CardLifecycle.cs:40-57`): it dispatches on `Frontmatter.Kind`, and the
+call site above only ever reaches this line after confirming `IsQuestionCard(questionCard)`
+(`CardStore.cs:1848`), so the predicate always resolves through `onQuestion` → `IsQuestionClosed`
+(answered-only) — the same semantics `IsQuestionClosed`'s own doc comment already reasoned out. No
+other kind can reach this call, so the more general predicate is not actually more general at this
+call site — it's the same specific answer, sourced from one place instead of re-derived. Confirmed.
+
+**All five callers move together, verified independently of the worker's list**: `DerivedState.cs:117`,
+`WorkingContext.cs:208`, and `CardStore.cs:541`, `:881`, `:2965` all still call
+`FindBlockingOpenProductOwnerQuestion` unchanged — the fix is entirely inside the predicate, so there
+was no call site to special-case. The three doc comments naming `QuestionStatus.Open` literally
+(`FindBlockingOpenProductOwnerQuestion`'s own, plus the two refusal-outcome doc comments in
+`CardApprovalOutcome.cs:222-227` and `CardBlockTransitionOutcome.cs:228-233`) now read "not closed
+under `CardLifecycle.IsClosed` (open or deferred)" — checked, all three updated, none missed.
+`CardSectionCloseOutcome.OpenUndeferredQuestion`'s doc comment (9.5, a question raised *in* the
+closing section) is genuinely a different check from `BlockedByOpenProductOwnerQuestion` (9.8's
+carried arm, a question that *blocks* the card) — confirmed by reading the type's own doc comment at
+`CardSectionCloseOutcome.cs:30-33`, which names both as distinct cases. Correctly left alone.
+
+**The "no test encoded the old reading" claim holds.** I read the diffs for
+`CommandDispatcherBlockTransitionTests.cs`, `CommandDispatcherBlockApproveTests.cs`, and
+`CardSectionCloseTests.cs`: in every file the only changes are one new deferred-refuses test plus a
+helper refactor (`WriteOpenProductOwnerQuestion` extracted to a status-parameterised helper it now
+delegates to, or a new `WriteDeferredProductOwnerQuestion` added alongside an untouched existing
+helper) — no existing test method or assertion changed. That confirms the worker's framing: §9's
+tests never exercised a deferred blocker in either direction, so this is new coverage of a real gap,
+not an adjustment to a changed expectation.
+
+**Answered-question negative case**: the two new `context`/`state` agreement tests
+(`CommandDispatcherContextTests.cs`) include
+`TopItem_BlockedByAnsweredProductOwnerQuestion_ReportsNotHalted_AndAgreesWithState`, asserting
+`halted: false` on both `context`'s `topItem` and `state`'s matching `blockedCards` entry — the
+negative case is covered where this block touches. For the three §9 sites, only
+`CommandDispatcherBlockTransitionTests.cs` carries a pre-existing (unmodified by this diff)
+`BlockTransition_BlockedByAnsweredProductOwnerQuestion_NotRefused`; approve and section-close have no
+equivalent "answered permits advancement" test, before or after this block. Not a finding against
+this diff — the brief scoped this block to one deferred-refuses test per site plus the agreement
+pair, and the gap predates it — but worth a note below.
+
+**Helper refactor didn't weaken any shared fixture.** `WriteOpenProductOwnerQuestion` in both
+`CommandDispatcherBlockTransitionTests.cs` and `CommandDispatcherBlockApproveTests.cs` now delegates
+to a status-parameterised helper called with `QuestionStatus.Open` — byte-for-byte the same card
+every existing caller of `WriteOpenProductOwnerQuestion` gets. `CardSectionCloseTests.cs` added
+`WriteDeferredProductOwnerQuestion` as a new method beside the untouched existing one. No existing
+call site's behaviour changed.
+
+**`Escalation severity is derived from ownership`'s new scenario** ("A deferred Product Owner
+question still halts") matches the reconciled behaviour and the two new tests exercising it.
+`process-enforcement`'s 9.8 wording ("an open question owned by the Product Owner") was correctly
+left untouched — it never said "status literally `open`," and the architect's follow-up post
+correctly frames this as the spec having been right all along.
+
+### One observation, not a blocker
+
+`CardStore.cs:1852`'s new `CardLifecycle.IsClosed(questionCard)` changes what happens if a question
+card's `Status` string fails to parse at all (`QuestionStatusWireFormat.TryParse` returns false
+inside `IsQuestionClosed`). The old test (`!TryParse || status != Open` → skip) treated an
+unparseable status as *not blocking*. The new test treats it as *not closed*, i.e. still blocking.
+This is a genuine, if narrow, behaviour change at an edge the brief didn't ask the worker to consider
+— but it moves in the direction §9/§10's own halting philosophy argues for (fail closed: an
+unreadable status shouldn't silently unblock a Product-Owner-gated card), and it's an inherent,
+correct consequence of reusing the shared predicate rather than a special case introduced here. Not
+raising it as a finding; noting it for `## NEXT` in case a future block ever needs to reason about
+malformed-status cards explicitly.
+
+### Gates, verified myself
+
+`make gates` → `BUILD_EXIT:0`, `TEST_EXIT:0` (984 total, 0 failed — up from 979 as claimed, the 5 new
+tests: one deferred-refuses test at each of the three §9 sites, plus the two `context`/`state`
+agreement tests), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+
+### Scope and standing constraints
+
+No `Makefile`/`tasks.md`/`CLAUDE.md` edits. No task numbers ticked, none claimed. No new dependency,
+no reflection, no runtime codegen — source-generated JSON and `[GeneratedRegex]` untouched by this
+diff. Diff stays inside `working-context`'s spec, `CardStore`/`CardApprovalOutcome`/
+`CardBlockTransitionOutcome`, and their tests — no reach into an adjacent section.
+
+Both of §3c.4's two remediation rounds for §10 are now closed. This is the final round; ready for the
+supervisor's re-run on `git diff 3e85b98..HEAD`.
 ## NEXT
 
 **§10 is BLOCKED on two Product Owner rulings. It is not closed, and it must not be closed until they

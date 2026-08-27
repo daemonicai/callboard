@@ -1793,9 +1793,13 @@ internal static class CardStore
     /// <summary>
     /// The blocking-question half of process-enforcement's "Work cannot proceed past a
     /// stop-and-ask" (§9 block D, <c>9.8</c>): the first <c>question</c> card among
-    /// <paramref name="card"/>'s own <see cref="BlockCardFields.BlockedBy"/> ids that resolves,
-    /// still <see cref="QuestionStatus.Open"/>, owned by <see cref="CardOwner.ProductOwner"/> — or
-    /// <see langword="null"/> if none does. Resolves every id through <see cref="CardIdentityResolver.
+    /// <paramref name="card"/>'s own <see cref="BlockCardFields.BlockedBy"/> ids that resolves, is
+    /// not closed under <see cref="CardLifecycle.IsClosed"/> — i.e. not yet <see
+    /// cref="QuestionStatus.Answered"/>, which per <see cref="CardLifecycle"/>'s own doc comment
+    /// means a <see cref="QuestionStatus.Deferred"/> question still counts here (§10 remediation,
+    /// round two, Product Owner ruling: deferring does not lift the halt) — owned by <see
+    /// cref="CardOwner.ProductOwner"/>. <see langword="null"/> if none does. Resolves every id
+    /// through <see cref="CardIdentityResolver.
     /// Resolve"/> (never a hand-rolled directory walk — §7 carried item C), which searches
     /// <see cref="CardLayout.ResolveRecordDirectories"/> in full, including archived changes: a
     /// question is always repository-scoped (<see cref="CardScope.Repository"/>, under <see cref="
@@ -1812,9 +1816,9 @@ internal static class CardStore
     /// question stops a card" rather than "any open question stops a card that happens to also be
     /// owned by the Product Owner" — the two would coincide today (a question is the only kind this
     /// build lets a caller name in <c>blocked_by</c> that carries an owner meaningfully distinct
-    /// from its raiser), but this reads <see cref="IsQuestionCard"/> and <see cref="QuestionStatus.
-    /// Open"/> explicitly rather than owner alone, so a future kind added to <c>blocked_by</c> with
-    /// its own owner does not silently start halting cards here too.
+    /// from its raiser), but this reads <see cref="IsQuestionCard"/> and <see cref="CardLifecycle.
+    /// IsClosed"/> explicitly rather than owner alone, so a future kind added to <c>blocked_by</c>
+    /// with its own owner does not silently start halting cards here too.
     /// </para>
     ///
     /// <para>
@@ -1849,7 +1853,7 @@ internal static class CardStore
                 continue;
             }
 
-            if (!QuestionStatusWireFormat.TryParse(questionCard.Frontmatter.Status, out var questionStatus) || questionStatus != QuestionStatus.Open)
+            if (CardLifecycle.IsClosed(questionCard))
             {
                 continue;
             }
