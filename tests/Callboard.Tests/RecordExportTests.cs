@@ -198,6 +198,21 @@ public sealed class RecordExportTests
     // comment's own id, defined by that same id appearing in another comment's own header, inside
     // the exported document itself. A reader with no tool and no other file open must be able to
     // find the definition of every name the document uses.
+    //
+    // §11 remediation, round two (post-13.3): the property above was checked by regexing the
+    // *rendered document* for anything shaped like `**[role id]**` to build the defined-id set —
+    // which let a comment's own free-text BODY manufacture a definition nothing on the card
+    // actually provided (13.2's worker proved this reachable end to end via `comment resolve`,
+    // live since §9). Architect ruling 1: defined ids now come from the `CardFile` itself — the
+    // fixture's own `comments` array — never from prose. Architect ruling 2: taking ids from the
+    // card proves a referent points at a real comment but stops proving the *document* renders a
+    // definition for each, so that half is checked explicitly below, against the rendered text,
+    // rather than dropped. Architect ruling 4: the referent scan still reads the document (what
+    // the document says is the whole point) but is now scoped to each card's own `### thread`
+    // section — see <see cref="ThreadSections"/> for why that scoping is sound structurally, not
+    // just by convention. The concrete fixture proving the old behaviour was a false pass — a
+    // comment body shaped like a definition, next to a referent naming an id nothing defines — is
+    // <see cref="SectionExport_ACommentBodyShapedLikeADefinition_DoesNotManufactureOne"/>.
     [Fact]
     public void SectionExport_EveryThreadReferent_ResolvesToADefinitionInTheSameDocument()
     {
@@ -224,12 +239,20 @@ public sealed class RecordExportTests
 
         var text = File.ReadAllText(outPath);
 
-        var definedIds = Regex.Matches(text, @"\*\*\[[a-z][a-z-]*\s+(\S+)\]\*\*")
-            .Select(match => match.Groups[1].Value)
-            .ToHashSet(StringComparer.Ordinal);
+        // Architect ruling 1: the truth, not a regex over prose.
+        var definedIds = comments.Select(static comment => comment.Id).ToHashSet(StringComparer.Ordinal);
 
-        var referents = Regex.Matches(text, @"\((?:replies to|resolves) ([^)]+)\)")
-            .Select(match => match.Groups[1].Value)
+        // Architect ruling 2, the half a card-sourced definedIds set alone stops proving: the
+        // document must actually render a definition for every comment the card carries, in the
+        // same "**[author id]**" shape AppendThread (RecordExportRenderer.cs) itself emits.
+        foreach (var comment in comments)
+        {
+            Assert.Contains($"**[{comment.Author.ToWireString()} {comment.Id}]**", text, StringComparison.Ordinal);
+        }
+
+        var referents = ThreadSections(text)
+            .SelectMany(static section => Regex.Matches(section, @"\((?:replies to|resolves) ([^)]+)\)")
+                .Select(static match => match.Groups[1].Value))
             .ToList();
 
         // The fixture must actually exercise the property under test — a fixture with no
@@ -243,6 +266,80 @@ public sealed class RecordExportTests
             Assert.Contains(referent, definedIds);
         }
     }
+
+    // §11 remediation, round two — the concrete fixture the ruling asked for: a comment BODY
+    // containing a `**[reviewer c-9]**`-shaped string, next to a referent naming `c-9` where no
+    // comment `c-9` exists on the card. Under the old, now-removed regex-over-rendered-prose
+    // definedIds computation, the body text alone would have manufactured a definition for `c-9`
+    // and the dangling referent below would have wrongly resolved — verified directly, not left to
+    // guesswork: temporarily restoring that old computation
+    // (`Regex.Matches(text, @"\*\*\[[a-z][a-z-]*\s+(\S+)\]\*\*")...`) in place of the `comments.
+    // Select(...)` line below and running this exact fixture reports `Assert.DoesNotContain("c-9",
+    // definedIds)` FAILING — definedIds wrongly contains "c-9", read straight off the comment body.
+    // Restoring the fix reports it PASSING. Both runs recorded in the DEVLOG post landing this
+    // fix.
+    [Fact]
+    public void SectionExport_ACommentBodyShapedLikeADefinition_DoesNotManufactureOne()
+    {
+        using var repo = new TempGitRepo();
+
+        var sectionPath = Path.Combine(repo.ChangesDirectory, "s-0002.md");
+        var sectionFrontmatter = new CardFrontmatter("S-0002", CardKind.Section, "A section", "open", CardOwner.Architect, CardScope.Change, string.Empty, Earlier, Earlier);
+        WriteCard(sectionPath, new CardFile(sectionFrontmatter, "Body.", [], []));
+
+        var blockPath = Path.Combine(repo.ChangesDirectory, "b-0002.md");
+        var blockFrontmatter = new CardFrontmatter("B-0002", CardKind.Block, "A trap fixture", "in-review", CardOwner.Architect, CardScope.Change, "S-0002", Middle, FixedNow);
+        var comments = new[]
+        {
+            new CardComment("c-1", CardOwner.Worker, Middle, "Quoting a colleague verbatim: **[reviewer c-9]** looked fine to them.", null, CardOwner.Reviewer, null, []),
+            new CardComment("c-2", CardOwner.Reviewer, FixedNow, "Following up on an earlier remark.", "c-9", CardOwner.Worker, null, []),
+        };
+        WriteCard(blockPath, new CardFile(blockFrontmatter, "Block body.", comments, []));
+
+        var outPath = Path.Combine(repo.Path, "out-trap.md");
+        var exitCode = CommandDispatcher.Run(
+            ["section", "export", "S-0002", "--out", outPath], new StringWriter(), TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+
+        var text = File.ReadAllText(outPath);
+
+        // The trap really is in the rendered document, not only in the fixture's own source —
+        // this is what makes the old regex-over-prose approach vulnerable to it at all.
+        Assert.Contains("**[reviewer c-9]**", text, StringComparison.Ordinal);
+
+        // Architect ruling 1, the fix under test: sourced from the CardFile, "c-9" is correctly
+        // absent — no comment on this card carries that id, regardless of what any comment's body
+        // happens to say.
+        var definedIds = comments.Select(static comment => comment.Id).ToHashSet(StringComparer.Ordinal);
+        Assert.DoesNotContain("c-9", definedIds);
+
+        // The referent naming "c-9" is genuinely there, in c-2's own header — a real dangling
+        // reference, not a fixture that forgot to include one.
+        var referents = ThreadSections(text)
+            .SelectMany(static section => Regex.Matches(section, @"\((?:replies to|resolves) ([^)]+)\)")
+                .Select(static match => match.Groups[1].Value))
+            .ToList();
+        Assert.Contains("c-9", referents);
+    }
+
+    // Architect ruling 4: the referent scan reads the rendered document — what the document says
+    // is the whole point — but unscoped, it is exactly as vulnerable to prose as the old defined-id
+    // regex was: a comment body containing literal text like "(replies to c-2)" would register a
+    // false referent too. Scoping is sound here, not just by convention: AppendThread
+    // (RecordExportRenderer.cs) is always the last subsection <see cref="RecordExportRenderer.
+    // AppendCard"/> renders for a card, so the text from one "### thread" marker up to the next
+    // "## " card-level heading (or the end of the document) is exactly, and only, that card's own
+    // thread — never prose from a kind-fields section, and never another card's thread. Unscoped,
+    // this scan would still be *stricter* rather than falsely green (a false referent it manufactures
+    // has to actually resolve to pass), which is why the Architect's ruling made scoping optional
+    // rather than a correctness requirement — done here because the fix is structurally clean, not
+    // because leaving it unscoped would have been wrong.
+    private static IEnumerable<string> ThreadSections(string text) =>
+        Regex.Matches(text, @"### thread
+
+(.*?)(?=
+## |\z)", RegexOptions.Singleline)
+            .Select(static match => match.Groups[1].Value);
 
     // §11 block C reviewer finding: SectionExport_IsByteIdentical_AcrossTwoRuns below only proves
     // two runs over an *unchanged* directory agree with each other — a fixture whose cards all

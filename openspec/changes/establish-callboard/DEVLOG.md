@@ -35776,6 +35776,202 @@ reworded to "differs from," one new scenario added for the identical-resupply ca
 
 → @architect
 
+**[architect]** → @worker — **block: the referent property test takes its definitions from prose.**
+Carved from `## NEXT`'s §11 entry, not from a task. 13.3 landed as `1790eea`.
+
+**This block ticks nothing.** Every box in §13 that this touches is either already ticked or belongs to a
+later task. The finding and the fix live here; that is the record.
+
+**The defect.** `RecordExportTests.SectionExport_EveryThreadReferent_ResolvesToADefinitionInTheSameDocument`
+(`tests/Callboard.Tests/RecordExportTests.cs:202`) builds its set of *defined* comment ids by regex over
+the **rendered document**:
+
+```csharp
+var definedIds = Regex.Matches(text, @"\*\*\[[a-z][a-z-]*\s+(\S+)\]\*\*")
+```
+
+Any text anywhere in the export matching that shape counts as a definition — **including a comment body**.
+So a body containing the literal `**[reviewer c-2]**` manufactures a definition of `c-2` that no comment
+provides, and the test's central assertion passes on it. **It passes when it should fail**, which is worth
+less than no test at all, because it is read as coverage.
+
+**It is reachable today and this is not hypothetical.** 13.2's worker reproduced it end to end through the
+CLI and established that **`comment resolve` has taken an unconstrained stdin body since §9** — so this has
+been live in shipped code for four sections. `comment add` widened the door; it did not open it.
+
+**What the test is actually for**, from its own comment, and it is a property worth keeping:
+
+> A reader with no tool and no other file open must be able to find the definition of every name the
+> document uses.
+
+**Architect rulings.**
+
+1. **Defined ids come from the `CardFile`, never from rendered prose.** The fixture knows exactly which
+   comments exist; that is the truth, and prose cannot be allowed to add to it. This is `## NEXT`'s stated
+   fix and it also retires the `(\S+)` whitespace-in-an-id assumption on the definition side.
+2. **Do not lose the half the regex was doing honestly.** Taking ids from the card proves referents point
+   at real comments, but no longer proves the **document renders a definition for each**. Both halves must
+   hold: for every comment the card carries, assert its definition actually appears in the exported text;
+   then assert every referent the document uses is one of those ids. Dropping the second half would trade
+   a false pass for a blind spot.
+3. **Add the fixture that proves it.** A comment whose **body** contains a `**[reviewer c-9]**`-shaped
+   string, plus a referent naming `c-9` where no comment `c-9` exists. **Verify both directions and say so
+   in your post**: it must fail against the current test and pass against the fixed one. 13.1's remediation
+   set that bar and it is the bar here — a regression test nobody has watched fail is a guess.
+4. **The referent side still reads the document, and that is correct** — what the document says is the
+   whole point. But note its scan is likewise unscoped (`## NEXT`: "unscoped to `### thread`"), so a body
+   containing `(replies to c-2)` registers a false *referent*. That direction makes the test **stricter**,
+   not weaker, so it is not a false pass — **scope it if it is clean to do so, and if it is not, say so
+   plainly in your post rather than half-doing it.** I would rather have it named than smeared.
+5. **Test-only block.** No `src/` change. If fixing the test convinces you the *renderer* is wrong — that
+   it should be escaping or scoping something — **stop and post `❓ @architect`.** That would be a genuine
+   finding and a different block, and it is not yours to fold in.
+
+**Out of scope.** 13.4 hook boundary, 13.5, 13.6, 13.7. Touch no other test.
+
+**Done-gates.** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`, the whole suite (1081 at HEAD);
+`make format` → `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Quote the exit lines verbatim. Post
+to this DEVLOG as you go, then `→ @reviewer`.
+
+**[worker]** §11 referent-test fix implemented — test-only, `RecordExportTests.cs` the only file
+touched besides this post. Ticks nothing.
+
+**The fix.** `SectionExport_EveryThreadReferent_ResolvesToADefinitionInTheSameDocument`'s
+`definedIds` now comes from `comments.Select(c => c.Id).ToHashSet(...)` — the fixture's own
+`CardFile`, never a regex over rendered prose (ruling 1). The half that lost — "the document
+actually renders a definition for each" — is checked back in explicitly: for every comment in the
+fixture, `Assert.Contains($"**[{author} {id}]**", text)` against the rendered output (ruling 2).
+Referents still read the document (ruling 4's "that is correct") but are now scoped to each card's
+own `### thread` section via a new `ThreadSections` helper — sound structurally, not by convention:
+`AppendThread` (`RecordExportRenderer.cs`) is always the last subsection a card renders, so the text
+from one `### thread` marker to the next `## ` heading (or end of document) is exactly, and only,
+that card's own thread. Scoping was optional per the ruling (unscoped would have made the test
+stricter, not falsely green) — done because it was clean, not because leaving it unscoped would
+have been wrong.
+
+**The fixture, and both directions verified, not guessed.** New
+`SectionExport_ACommentBodyShapedLikeADefinition_DoesNotManufactureOne`: a comment whose body
+contains `**[reviewer c-9]**` verbatim, next to a second comment whose `--reply-to`-shaped field
+names `c-9` — a real dangling referent, since no comment on the card carries that id. I ran both
+directions rather than asserting it from the diff:
+
+- **Against the old computation** (temporarily swapped `definedIds` back to
+  `Regex.Matches(text, @"\*\*\[[a-z][a-z-]*\s+(\S+)\]\*\*")...`, ran, then reverted): **failed**
+  — `Assert.DoesNotContain("c-9", definedIds)` reported `Set: ["c-1", "c-9", "c-2"] Found: "c-9"`,
+  i.e. the body text alone manufactured the definition, exactly the reachable defect 13.2 traced to
+  `comment resolve` since §9.
+- **Against the fix** (the code now in the tree): **passed** — `definedIds` correctly excludes
+  `c-9`; the dangling referent is still asserted present (`Assert.Contains("c-9", referents)`), so
+  the fixture isn't accidentally inert.
+
+**No `src/` change.** The renderer itself is untouched — nothing in fixing this test suggested it
+should escape or scope anything; the defect was entirely in how the test read the renderer's output
+back.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — suite 1081 → 1082.
+
+§11 referent-test fix complete. → @reviewer
+
+**[reviewer]** §11 referent-test fix — **Approve.**
+
+I reproduced the defect and the fix independently, against the real renderer, rather than trusting
+the worker's report of having watched it fail — the method the block itself demanded of the fixture
+it added.
+
+**Method.** Built a scratch repo outside this working tree, wrote a section card and a block card by
+hand carrying exactly the fixture's shape (a comment whose body contains `**[reviewer c-9]**`
+verbatim, a second comment whose `reply-to` genuinely names `c-9`, which no comment on the card
+carries), ran the real `callboard section export` binary against it, and applied both the old and
+new `definedIds`/`ThreadSections` logic to the actual rendered output in a standalone script — not
+the test project, so nothing in the repository was touched to do this.
+
+**Item 1 — the restored half is real, not vacuous.** Every comment's `**[{author} {id}]**` string is
+present verbatim in my own real export output (e.g. `**[architect comment-9be852c2a9084690b6232a5be15dd398]**`),
+matching `Assert.Contains($"**[{comment.Author.ToWireString()} {comment.Id}]**", text, ...)` exactly.
+This is a real string match against renderer output — if `AppendThread` (`RecordExportRenderer.cs:419`)
+stopped emitting a comment's definition, or changed its format, this assertion would fail. Confirmed
+the specific blind spot the coordinator named did not reopen.
+
+**Item 2 — the discrimination is real, confirmed independently rather than accepted.** Applying the
+exact old regex (`\*\*\[[a-z][a-z-]*\s+(\S+)\]\*\*`, copied verbatim from the diff) to my own real
+export output: `definedIds.Contains("c-9")` is **true** — the body text alone manufactures the
+definition, exactly the reachable defect. Applying the fix's own computation
+(`comments.Select(c => c.Id)`): `c-9` is correctly absent, since neither real comment on the fixture
+card carries that id. I did not need to trust the worker's report of the exact xunit failure message
+to establish this — the underlying set membership is independently reproduced from first principles
+against a real binary's real output, which is stronger evidence than re-running the same test project
+twice.
+
+**Item 3 — the `ThreadSections` premise holds structurally, not only for this fixture's shapes.**
+Read `RecordExportRenderer.AppendCard` (`:64-88`) directly: the call order is
+`AppendKindFields → AppendSequences → AppendThread`, unconditional, no branch after `AppendThread`,
+for every card kind — this is a hard structural guarantee, not an accident of what block/section
+cards happen to render. More: `grep -n '"## \|"### '` across the whole renderer file shows exactly
+**one** place a `## ` (level-2) heading is ever emitted — `AppendCard`'s own per-card header
+(`:67`) — every other heading in the file (`### block fields`, `### section fields`, `### thread`,
+etc.) is level-3. So a `## ` can only ever mark the start of the *next* card; `ThreadSections`'s
+`(?=\n## |\z)` boundary cannot mistake anything else in the document for one. My own real export
+output (two cards, two `### thread` blocks) confirms this empirically too: `ThreadSections` returned
+exactly two sections, each holding exactly that card's own two comments, correctly bounded at the
+next `## ` heading and at end-of-file respectively.
+
+**One residual worth naming for `## NEXT`, not a blocker.** The structural guarantee above holds for
+everything the *renderer* emits, but a comment **body** that happens to contain a literal line
+starting `## ` would still terminate `ThreadSections`'s non-greedy capture early, silently dropping
+whatever follows in that card's own thread from the scanned text — a referent hiding after such a
+line would go unchecked, not because it resolves, but because the scope truncated before reaching
+it. This is narrower and differently-shaped than the defect this block fixes (it would drop coverage,
+not manufacture a false definition), and it does not affect this block's own fixture or its actual
+correctness — but it is the same class of risk (prose forging document structure) landing on the new
+boundary instead of the old one. Worth a line in `## NEXT` for whoever next touches this test; not
+worth reopening this block for.
+
+**Item 4 — I agree the renderer needs no change.** Confirmed independently above: the renderer's own
+heading discipline (exactly one `## ` emitter, `AppendThread` always last) is sound, and nothing in
+either direction of this fix — the definedIds source or the referent scoping — required or implied a
+renderer-side fix. No `❓ @architect` warranted; the defect was entirely in how the test read output
+back, as the worker reported.
+
+**Item 5 — the fixed test still fails for the right reasons, and the residual above is the only way
+it has narrowed.** The property under test — every referent resolves to a real definition, and every
+real comment's definition actually renders — is unchanged in scope: `definedIds` now can only ever be
+too small relative to the (correct) truth (it is exactly the truth), never manufactured from
+adversarial input; the render-side check (item 1) still independently proves the document itself, not
+just the fixture's own data, carries each definition. The one narrowing is the residual named above,
+which is about referent *coverage* inside a thread, not about false definitions — the core defect this
+block exists to close is closed, structurally, not just for the fixture's own shapes.
+
+**Scope and gates.** `git status`/`git diff --stat` confirm only `RecordExportTests.cs` and the
+DEVLOG changed — no `src/` touch, no other test file, `tasks.md`/`Makefile` both untouched, matching
+the block's own "ticks nothing" framing. Gates re-run: `make build` → `BUILD_EXIT:0`; a targeted run
+of all 16 `RecordExportTests` → all green; `make test` (full suite) → `TEST_EXIT:0`, `1082/1082`;
+`make format` → `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`.
+
+→ @architect
+
+**[architect]** Referent-test block closed. Reviewer `Approve`, `GATES_EXIT:0`, committed. Ticks nothing —
+carved from `## NEXT`, not from a task.
+
+**What the review did is the part worth recording.** It did not audit the diff and agree with it. It built
+a scratch repo outside the working tree, hand-wrote a card carrying the fixture's exact trap shape, ran the
+real `callboard section export` binary against it, and applied **both** the old and new computations to
+that real output. The old regex returns `definedIds.Contains("c-9") == true` against genuine renderer
+output — the defect reproduced from first principles, against a real binary, without relying on the
+worker's report of an xunit message. That is the standard for confirming a regression test discriminates:
+**not "the report says it failed", but "I made it fail".**
+
+It also checked the `ThreadSections` premise structurally rather than against the fixture: `AppendCard`
+calls `AppendThread` unconditionally last for every kind, and `AppendThread` is the only emitter of a `## `
+heading anywhere in the renderer — every other heading is `### `. So the scoping holds by the renderer's
+own discipline, not by the shapes this fixture happens to produce.
+
+**One residual, parked deliberately, and it is the same family as the defect just fixed:** a comment body
+containing a literal line starting `## ` could truncate the scoped capture early, silently dropping later
+referents from the scan. **Differently shaped from what was fixed** — it loses coverage rather than
+manufacturing a false definition, so it fails safe rather than green — but it is still a document-parsing
+assumption about text a caller controls, in a test that exists precisely because one of those was wrong.
+Recorded in `## NEXT`.
+
 ## NEXT
 
 **§12 is closed — supervisor `Approve` on the second pass (`5f7919d..HEAD`).** Three of three boxes
