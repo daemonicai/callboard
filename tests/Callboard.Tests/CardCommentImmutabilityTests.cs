@@ -99,6 +99,8 @@ public sealed class CardCommentImmutabilityTests
         {
             "AddBlockedBy",                         // §5 block D: read-modify-write on BlockFields.BlockedBy only; never touches Frontmatter.Status or Comments
             "AddBlockedByUnderExistingLock",        // same, lock already held
+            "AddComment",                            // §13: comment add's own read-decide-write — appends exactly one comment via `card with { Comments = [.. card.Comments, comment] }`, the same shape AppendCommentUnderExistingLock already uses; never edits or drops an existing comment
+            "AddCommentUnderExistingLock",           // same, lock already held
             "AllocateIdentity",                     // §6 block B: thin Match wrapper over CardIdentityAllocator.Allocate; never touches a CardFile's Comments
             "AnswerQuestion",                       // §9 block D: acquires the question's own lock and delegates to AnswerQuestionUnderExistingLock; never touches a CardFile itself
             "AnswerQuestionUnderExistingLock",      // §9 block D: read-decide-write on Frontmatter.Status/QuestionFields.AnsweredBy/AnsweredAt/AnswerDecisionId/AnswerInline only; never touches Comments

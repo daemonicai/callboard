@@ -148,7 +148,7 @@
 ## 13. Integration with the Apply Workflow
 
 - [x] 13.1 Implement `block create` — the door that mints a task-implementing block at `drafting`
-- [ ] 13.2 Implement `comment add` — append an ordinary comment to a card, optionally addressed
+- [x] 13.2 Implement `comment add` — append an ordinary comment to a card, optionally addressed
 - [ ] 13.3 Implement `block base` — record, once, the commit a block's brief was carved against
 - [ ] 13.4 Extend the hook boundary to deny agent writes to the card store
 - [ ] 13.5 Verify the record stays readable and the loop proceeds unenforced when the tool cannot run

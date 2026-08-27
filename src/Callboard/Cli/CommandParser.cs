@@ -2972,7 +2972,8 @@ internal static class CommandParser
 
     /// <summary>
     /// <c>comment</c> (§9 remediation, round two — S4: give <c>9.3</c>'s/<c>9.6</c>'s named
-    /// dispositions a real verb).
+    /// dispositions a real verb; §13 adds <c>add</c>, the door that starts a thread rather than
+    /// only disposing of one).
     /// </summary>
     private static CommandDispatcher.ParseResult ParseComment(CommandDispatcher.CommandContext context)
     {
@@ -2981,7 +2982,10 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'comment' requires a subcommand. Known subcommands: resolve, promote, decline."));
+                    "'comment' requires a subcommand. Known subcommands: add, resolve, promote, decline."));
+            case "add":
+                context.Arguments.TryTake();
+                return ParseCommentAdd(context);
             case "resolve":
                 context.Arguments.TryTake();
                 return ParseCommentResolve(context);
@@ -2994,8 +2998,97 @@ internal static class CommandParser
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'comment' subcommand: '{subcommand}'. Known subcommands: resolve, promote, decline."));
+                    $"no such 'comment' subcommand: '{subcommand}'. Known subcommands: add, resolve, promote, decline."));
         }
+    }
+
+    /// <summary>
+    /// Builds <c>comment add</c>'s <see cref="CommandDispatcher.ParsedCommand.CommentAdd"/> (§13,
+    /// card-model: "The verbs that dispose of a thread SHALL NOT be the only ones that can start
+    /// one"). Addressed by <c>--id</c>, resolved without a kind filter (Architect ruling item 3:
+    /// "any card kind accepts a comment") — the same shape <see cref="ParseCommentResolve"/>
+    /// already has for its own <c>--id</c>. <c>--to</c> and <c>--reply-to</c> are optional
+    /// (ruling 1: an unaddressed comment is a note on the record, legitimate on its own); <c>
+    /// --body</c> is read from stdin, never as a quoted argument (ADR-0001), the same
+    /// read-only-extraction discipline <see cref="ParseCommentResolve"/> already applies, and
+    /// required non-empty for the same reason ruling 1 gives: a comment with no body records
+    /// nothing.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseCommentAdd(CommandDispatcher.CommandContext context)
+    {
+        string? id = null;
+        string? roleText = null;
+        string? toText = null;
+        string? replyTo = null;
+        string? changeName = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--id"] = value => id = value,
+            ["--role"] = value => roleText = value,
+            ["--to"] = value => toText = value,
+            ["--reply-to"] = value => replyTo = value,
+            ["--change"] = value => changeName = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment add' requires '--id <card-id>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment add' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        CardOwner? to = null;
+        if (toText is not null)
+        {
+            if (!CardOwnerWireFormat.TryParse(toText, out var toRole))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unrecognised-role", $"unrecognised role: '{toText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+            }
+
+            to = toRole;
+        }
+
+        if (replyTo is not null && !BlockCardFields.IsValidListItem(replyTo))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "invalid-reply-to", "'--reply-to' cannot be empty or whitespace-only — a comment id is never empty."));
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        // Architect ruling item 1 (same reasoning as ParseCommentResolve's own §10 ruling 3): a
+        // comment that says nothing disposes of nothing and records nothing.
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'comment add' requires a non-empty body on stdin."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.CommentAdd(
+            id, role, body, to, replyTo, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

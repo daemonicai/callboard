@@ -185,6 +185,102 @@ internal static class CardStore
     }
 
     /// <summary>
+    /// <c>comment add</c> (§13, card-model: "The verbs that dispose of a thread SHALL NOT be the
+    /// only ones that can start one") — its own read-decide-write, the same shape <see
+    /// cref="ResolveCommentUnderExistingLock"/>/<see cref="PromoteCommentUnderLocks"/> already use
+    /// for their own comment sub-verb rather than a bare call to <see cref="AppendComment"/>: <see
+    /// cref="CardCommentAppendOutcome"/>'s own doc comment explains why <see
+    /// cref="CardCommentAppendOutcome.ReplyToNotFound"/> cannot live on the generic <see
+    /// cref="CardWriteResult"/> instead, and once a verb needs its own outcome type, reading and
+    /// deciding once — rather than deciding once and then re-reading and re-deciding inside a
+    /// delegated <see cref="AppendCommentUnderExistingLock"/> call — is the same single-read
+    /// discipline every sibling verb's own method already follows. <see cref="ReservedDerivedStateFieldKeyIn"/>/<see
+    /// cref="IsBlockCard"/>/<see cref="RoundAgreesWithHistory"/> are <see
+    /// cref="AppendCommentUnderExistingLock"/>'s own two guards, reused directly rather than
+    /// duplicated in spirit only.
+    /// </summary>
+    internal static CardCommentAppendOutcome AddComment(
+        string cardsRoot, string filePath, CardComment comment, TimeSpan lockTimeout, string? changeName = null) =>
+        WithLock(
+            filePath,
+            lockTimeout,
+            heldLock => AddCommentUnderExistingLock(heldLock, cardsRoot, comment, changeName),
+            onTimedOut: timedOut => new CardCommentAppendOutcome.ToolFailure(timedOut.Message));
+
+    /// <summary>The read-decide-write step of <see cref="AddComment"/>. Same structural lock
+    /// precondition as every other <c>*UnderExistingLock</c> method on this type.</summary>
+    internal static CardCommentAppendOutcome AddCommentUnderExistingLock(CardLock heldLock, string cardsRoot, CardComment comment, string? changeName = null)
+    {
+        ArgumentNullException.ThrowIfNull(heldLock);
+        var filePath = heldLock.CardPath;
+
+        if (!File.Exists(filePath))
+        {
+            return new CardCommentAppendOutcome.CardNotFound(filePath);
+        }
+
+        var current = ReadCard(filePath);
+        return current.Match<CardCommentAppendOutcome>(
+            onSuccess: success =>
+            {
+                var card = success.Card;
+
+                // Same ordering AppendCommentUnderExistingLock applies (§10 block C): a
+                // hand-tampered card is refused on that basis regardless of any other check below.
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardCommentAppendOutcome, CardCommentAppendOutcome.HandEnteredDerivedState>(
+                        cardsRoot, card, filePath, changeName, comment.Author, comment.Timestamp,
+                        new CardCommentAppendOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardCommentAppendOutcome.ToolFailure(reason));
+                }
+
+                // A comment appends to any card kind, but a block card's own round has to agree
+                // with its own history first (Architect ruling, §8a block D brief: "act on that
+                // card" covers every writer that mutates a block card) — the same guard
+                // AppendCommentUnderExistingLock applies to its own caller.
+                if (IsBlockCard(card) && !RoundAgreesWithHistory(card, out var storedRound, out var expectedRound))
+                {
+                    return RefuseAndRecord<CardCommentAppendOutcome, CardCommentAppendOutcome.RoundDisagreesWithHistory>(
+                        cardsRoot, card, filePath, changeName, comment.Author, comment.Timestamp,
+                        new CardCommentAppendOutcome.RoundDisagreesWithHistory(storedRound, expectedRound),
+                        static reason => new CardCommentAppendOutcome.ToolFailure(reason));
+                }
+
+                // card-model: "SHALL refuse" (Architect ruling, §13 block brief item 4) — a
+                // '--reply-to' naming a comment not already in this card's own thread.
+                if (comment.ReplyTo is { } replyTo
+                    && !card.Comments.Any(existing => string.Equals(existing.Id, replyTo, StringComparison.Ordinal)))
+                {
+                    return RefuseAndRecord<CardCommentAppendOutcome, CardCommentAppendOutcome.ReplyToNotFound>(
+                        cardsRoot, card, filePath, changeName, comment.Author, comment.Timestamp,
+                        new CardCommentAppendOutcome.ReplyToNotFound(replyTo),
+                        static reason => new CardCommentAppendOutcome.ToolFailure(reason));
+                }
+
+                var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
+                if (anchored is null)
+                {
+                    return new CardCommentAppendOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                var updated = card with { Comments = [.. card.Comments, comment] };
+                var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updated));
+                return writeResult.Match<CardCommentAppendOutcome>(
+                    onSuccess: _ => new CardCommentAppendOutcome.Added(card, comment),
+                    onNotFound: notFound => new CardCommentAppendOutcome.CardNotFound(notFound.FilePath),
+                    onAlreadyExists: alreadyExists => throw new InvalidOperationException(
+                        $"unexpected 'already exists' appending a comment to '{alreadyExists.FilePath}'."),
+                    onLayoutMismatch: static _ => throw new InvalidOperationException("unreachable: the anchored path already resolved above."),
+                    onCorrupt: corrupt => new CardCommentAppendOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
+                    onToolFailure: toolFailure => new CardCommentAppendOutcome.ToolFailure(toolFailure.Reason),
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: a reserved derived-state field is refused before this point."));
+            },
+            onFailure: failure => new CardCommentAppendOutcome.CardCorrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
     /// The first reserved derived-state key (<see cref="DerivedStateFieldKeys.All"/>) found on
     /// <paramref name="card"/>'s <see cref="CardFile.UnknownFrontmatterFields"/>, or
     /// <see langword="null"/> when none is present — <see cref="AppendCommentUnderExistingLock"/>

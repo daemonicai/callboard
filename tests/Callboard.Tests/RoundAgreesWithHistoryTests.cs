@@ -235,6 +235,30 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
         Assert.Equal(disagreement.Remedy, refusal.Remedy);
     }
 
+    // §13: comment add is another non-round-incrementing writer this ruling covers — "act on that
+    // card" is not scoped to gate results either.
+    [Fact]
+    public void AddComment_BlockCardWithDisagreeingRound_Refuses_NamesBothFigures_AltersNeither()
+    {
+        var path = WriteBlockCard("b-0008", "B-0008", BlockFlowState.Building, round: 2, transitions: []);
+        var comment = new CardComment("comment-0001", CardOwner.Worker, Created.AddHours(1), "Note.", null, null, null, []);
+
+        var outcome = CardStore.AddComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
+
+        var disagreement = Assert.IsType<CardCommentAppendOutcome.RoundDisagreesWithHistory>(outcome);
+        Assert.Equal(2, disagreement.StoredRound);
+        Assert.Equal(1, disagreement.ExpectedRound);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(2, read.BlockFields.Round);
+        Assert.Empty(read.Comments);
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, refusal.By);
+        Assert.Equal(Created.AddHours(1), refusal.Timestamp);
+        Assert.Equal(disagreement.RefusingRule, refusal.Rule);
+        Assert.Equal(disagreement.Remedy, refusal.Remedy);
+    }
+
     // A read is unaffected by the refusal: a card the tool refuses to write to is not a card it
     // refuses to describe.
     [Fact]

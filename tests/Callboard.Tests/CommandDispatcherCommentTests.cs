@@ -234,6 +234,195 @@ public sealed class CommandDispatcherCommentTests
         Assert.Single(read.Refusals);
     }
 
+    [Fact]
+    public void CommentAdd_Unaddressed_Succeeds_AndReturnsTheMintedCommentId()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteBlockCard(repo, "b-0020", "B-0020");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "add", "--id", id, "--role", "worker", "--change", "establish-callboard"],
+            output, repo.Path, "A note on the record.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.Equal(id, result.GetProperty("cardId").GetString());
+        Assert.Equal("worker", result.GetProperty("actingRole").GetString());
+        Assert.False(result.TryGetProperty("to", out _));
+        var commentId = result.GetProperty("commentId").GetString();
+        Assert.NotNull(commentId);
+        Assert.StartsWith("comment-", commentId, StringComparison.Ordinal);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var added = Assert.Single(read.Comments);
+        Assert.Equal(commentId, added.Id);
+        Assert.Equal("A note on the record.", added.Body);
+        Assert.Null(added.To);
+        Assert.Null(added.ReplyTo);
+
+        // Architect ruling item 2: comment add SHALL NOT be able to mint a nit.
+        Assert.False(added.IsNit);
+        Assert.False(added.Required);
+        Assert.Empty(added.Sites);
+        Assert.Null(added.Disposition);
+    }
+
+    [Fact]
+    public void CommentAdd_Addressed_Succeeds_AndSetsTo()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteBlockCard(repo, "b-0021", "B-0021");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "add", "--id", id, "--role", "worker", "--to", "architect", "--change", "establish-callboard"],
+            output, repo.Path, "Please look at this.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("architect", doc.RootElement.GetProperty("result").GetProperty("to").GetString());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(CardOwner.Architect, Assert.Single(read.Comments).To);
+    }
+
+    // Architect ruling item 6: addressing yourself is allowed — no refusal.
+    [Fact]
+    public void CommentAdd_AddressedToSelf_Succeeds()
+    {
+        using var repo = new TempGitRepo();
+        var (_, id) = WriteBlockCard(repo, "b-0022", "B-0022");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "add", "--id", id, "--role", "worker", "--to", "worker", "--change", "establish-callboard"],
+            output, repo.Path, "Noting this for myself.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+    }
+
+    [Fact]
+    public void CommentAdd_ReplyToAnExistingComment_Succeeds()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteCardWithComment(repo, "b-0023", "B-0023", "thread-1", CardOwner.Architect);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "add", "--id", id, "--role", "architect", "--reply-to", "thread-1", "--change", "establish-callboard"],
+            output, repo.Path, "Following up on this.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("thread-1", doc.RootElement.GetProperty("result").GetProperty("replyTo").GetString());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal(2, read.Comments.Count);
+        Assert.Equal("thread-1", read.Comments[1].ReplyTo);
+    }
+
+    // Architect ruling item 4: '--reply-to' naming a comment not in that card's thread is a
+    // refusal, not a silently-dropped field — and it records.
+    [Fact]
+    public void CommentAdd_ReplyToACommentNotOnThisCard_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteBlockCard(repo, "b-0024", "B-0024");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "add", "--id", id, "--role", "worker", "--reply-to", "no-such-comment", "--change", "establish-callboard"],
+            output, repo.Path, "Following up.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("reply-to-not-found", refusal.GetProperty("code").GetString());
+        Assert.Contains("no-such-comment", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.NotNull(refusal.GetProperty("rule").GetString());
+        Assert.NotNull(refusal.GetProperty("remedy").GetString());
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Empty(read.Comments);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, recorded.By);
+        Assert.Equal(refusal.GetProperty("rule").GetString(), recorded.Rule);
+        Assert.Equal(refusal.GetProperty("remedy").GetString(), recorded.Remedy);
+    }
+
+    [Fact]
+    public void CommentAdd_NoBody_Refuses_AtTheDoor_WithoutTouchingTheCard()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteBlockCard(repo, "b-0025", "B-0025");
+        var before = File.ReadAllBytes(path);
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "add", "--id", id, "--role", "worker", "--change", "establish-callboard"],
+            output, repo.Path, string.Empty);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("missing-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void CommentAdd_MissingId_Refuses_WithMissingArgument()
+    {
+        using var repo = new TempGitRepo();
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "add", "--role", "worker", "--change", "establish-callboard"],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("missing-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // Architect ruling item 3: any card kind accepts a comment — proven against a question card,
+    // not a block, to show the resolution is not kind-filtered.
+    [Fact]
+    public void CommentAdd_OnAQuestionCard_Succeeds()
+    {
+        using var repo = new TempGitRepo();
+        var (path, id) = WriteQuestionCard(repo, "q-0001", "Q-0001");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["comment", "add", "--id", id, "--role", "architect", "--change", "establish-callboard"],
+            output, repo.Path, "A note on a question card.");
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Single(read.Comments);
+    }
+
+    private static (string Path, string Id) WriteBlockCard(TempGitRepo repo, string fileStem, string id)
+    {
+        var path = Path.Combine(repo.ChangesDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Block, "A block card", "in-review", CardOwner.Worker, CardScope.Change, "S-0001", FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return (path, id);
+    }
+
+    private static (string Path, string Id) WriteQuestionCard(TempGitRepo repo, string fileStem, string id)
+    {
+        var path = Path.Combine(repo.RegisterDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "A question", "open", CardOwner.Architect, CardScope.Repository, string.Empty, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return (path, id);
+    }
+
     private static (string Path, string Id) WriteCardWithComment(TempGitRepo repo, string fileStem, string id, string commentId, CardOwner addressedTo)
     {
         var path = Path.Combine(repo.ChangesDirectory, fileStem + ".md");

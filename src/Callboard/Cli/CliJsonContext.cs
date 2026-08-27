@@ -42,6 +42,7 @@ namespace Callboard.Cli;
 [JsonSerializable(typeof(NitDispositionResult))]
 [JsonSerializable(typeof(QuestionAnswerResult))]
 [JsonSerializable(typeof(QuestionDeferResult))]
+[JsonSerializable(typeof(CommentAddResult))]
 [JsonSerializable(typeof(CommentResolveResult))]
 [JsonSerializable(typeof(CommentPromoteResult))]
 [JsonSerializable(typeof(ContextResult))]

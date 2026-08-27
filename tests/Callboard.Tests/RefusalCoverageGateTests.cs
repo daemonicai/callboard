@@ -186,6 +186,9 @@ public sealed class RefusalCoverageGateTests
         { typeof(CardCommentPromoteOutcome.RoleNotPermitted), (typeof(CardCommentPromoteTests), "PromoteComment_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
         { typeof(CardCommentPromoteOutcome.AlreadyResolved), (typeof(CardCommentPromoteTests), "PromoteComment_AlreadyResolved_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
         { typeof(CardCreateOutcome.IdentityAlreadyBorne), (typeof(CommandDispatcherBlockCreateTests), "BlockCreate_ARecordedIdentityIsRefused_AndRecordsAgainstTheCardAlreadyBearingIt") },
+        { typeof(CardCommentAppendOutcome.ReplyToNotFound), (typeof(CommandDispatcherCommentTests), "CommentAdd_ReplyToACommentNotOnThisCard_Refuses_AndRecordsTheRefusal") },
+        { typeof(CardCommentAppendOutcome.RoundDisagreesWithHistory), (typeof(RoundAgreesWithHistoryTests), "AddComment_BlockCardWithDisagreeingRound_Refuses_NamesBothFigures_AltersNeither") },
+        { typeof(CardCommentAppendOutcome.HandEnteredDerivedState), (typeof(HandEnteredDerivedStateCoverageTests), "AddComment_CardCarryingAReservedKey_Refuses_AndRecords") },
     };
 
     /// <summary>
@@ -371,6 +374,14 @@ public sealed class RefusalCoverageGateTests
         // CardFindingRecordOutcome's own BlindSpotCardAlreadyExists/BlindSpotLayoutMismatch have.
         { typeof(CardCommentPromoteOutcome.RaisedCardAlreadyExists), "§9 block A3: card creation never resolves an existing card to record against." },
         { typeof(CardCommentPromoteOutcome.RaisedCardLayoutMismatch), "§9 block A3: card creation never resolves an existing card to record against." },
+
+        // §13: comment add (CardCommentAppendOutcome) — its own success case and the same three
+        // categorical dispositions every other comment sub-verb's union carries.
+        { typeof(CardCommentAppendOutcome.Added), "the operation's own success case." },
+        { typeof(CardCommentAppendOutcome.CardNotFound), "never card-addressed — no card resolved at the path." },
+        { typeof(CardCommentAppendOutcome.LayoutMismatch), "never card-addressed — the path never anchored." },
+        { typeof(CardCommentAppendOutcome.CardCorrupt), "a reported content problem, not a refusal." },
+        { typeof(CardCommentAppendOutcome.ToolFailure), "ADR-0001: enforcement unavailable, never a refusal." },
     };
 
     /// <summary>Every concrete type in the product assembly that implements

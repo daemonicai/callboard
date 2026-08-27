@@ -535,6 +535,22 @@ internal static class CommandDispatcher
         }
 
         /// <summary>
+        /// <c>comment add</c> (§13, card-model: "The verbs that dispose of a thread SHALL NOT be
+        /// the only ones that can start one"). <see cref="CardId"/> is resolved without a kind
+        /// filter, the same way <see cref="CommentResolve"/>'s own <see cref="CommentResolve.
+        /// CardId"/> already is (Architect ruling item 3: "any card kind accepts a comment").
+        /// <see cref="To"/> and <see cref="ReplyTo"/> are both optional (ruling 1: an unaddressed
+        /// comment is a note on the record, legitimate on its own); <see cref="Body"/> is read from
+        /// stdin and required non-empty, the same discipline <see cref="CommentResolve"/>'s own
+        /// door applies as of §10 block D.
+        /// </summary>
+        internal sealed record CommentAdd(
+            string CardId, CardOwner ActingRole, string Body, CardOwner? To, string? ReplyTo, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
+
+        /// <summary>
         /// <c>comment resolve</c> (§9 remediation, round two — S4: give <c>9.6</c>'s "resolve" and
         /// <c>9.3</c>'s "resolve the following thread(s)" a real verb). Addressed the same way every
         /// other card-to-card reference field on this surface is (Architect ruling): <see cref="CardId"/>
@@ -948,6 +964,8 @@ internal static class CommandDispatcher
 
         TResult Visit(ParsedCommand.ObligationDecline command);
 
+        TResult Visit(ParsedCommand.CommentAdd command);
+
         TResult Visit(ParsedCommand.CommentResolve command);
 
         TResult Visit(ParsedCommand.CommentPromote command);
@@ -1066,6 +1084,8 @@ internal static class CommandDispatcher
         public CommandOutcome Visit(ParsedCommand.ObligationPromote command) => RunObligationPromote(command, LockTimeout);
 
         public CommandOutcome Visit(ParsedCommand.ObligationDecline command) => RunObligationDecline(command, LockTimeout);
+
+        public CommandOutcome Visit(ParsedCommand.CommentAdd command) => RunCommentAdd(command, LockTimeout);
 
         public CommandOutcome Visit(ParsedCommand.CommentResolve command) => RunCommentResolve(command, LockTimeout);
 
@@ -3102,6 +3122,76 @@ internal static class CommandDispatcher
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
             onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
+    }
+
+    /// <summary>
+    /// <c>comment add</c> (§13, card-model: "The verbs that dispose of a thread SHALL NOT be the
+    /// only ones that can start one"). <see cref="ResolveAnyCardReference"/> resolves <c>--id</c>
+    /// without a kind restriction, the same reason <see cref="RunCommentResolve"/> below does
+    /// (Architect ruling item 3). <see cref="Cards.CardComment.IsNit"/>/<see cref="Cards.
+    /// CardComment.Required"/>/<see cref="Cards.CardComment.Sites"/> are left at their defaults
+    /// (ruling 2: "SHALL NOT be able to mint a nit" — those three fields are <c>nit raise</c>'s,
+    /// with its own disposition lifecycle this verb never touches).
+    /// </summary>
+    private static CommandOutcome RunCommentAdd(ParsedCommand.CommentAdd parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var card = ResolveAnyCardReference(repoRoot, parsed.CardId, "'--id'");
+        if (card.Refusal is not null)
+        {
+            return card.Refusal;
+        }
+
+        var comment = new CardComment(
+            Id: $"comment-{Guid.NewGuid():N}",
+            Author: parsed.ActingRole,
+            Timestamp: parsed.Timestamp,
+            Body: parsed.Body,
+            ReplyTo: parsed.ReplyTo,
+            To: parsed.To,
+            Resolves: null,
+            UnknownHeaderFields: []);
+
+        var outcome = CardStore.AddComment(repoRoot, card.FilePath!, comment, lockTimeout, parsed.ChangeName);
+
+        return outcome.Match<CommandOutcome>(
+            onAdded: added => new CommandOutcome.Success(new CommentAddResult
+            {
+                FilePath = card.FilePath!,
+                CardId = added.Card.Frontmatter.Id,
+                CommentId = added.Comment.Id,
+                ActingRole = parsed.ActingRole.ToWireString(),
+                To = added.Comment.To?.ToWireString(),
+                ReplyTo = added.Comment.ReplyTo,
+                AddedAt = added.Comment.Timestamp,
+            }),
+            onReplyToNotFound: replyToNotFound => new CommandOutcome.Refusal(
+                "reply-to-not-found",
+                $"'--reply-to' names comment '{replyToNotFound.ReplyToId}', but '{card.FilePath}' carries no such comment.",
+                replyToNotFound.RefusingRule, replyToNotFound.Remedy),
+            onCardNotFound: notFound => new CommandOutcome.Refusal(
+                "card-not-found", $"no card file exists at '{notFound.FilePath}' to comment on."),
+            onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
+                "card-layout-mismatch", layoutMismatch.Reason),
+            onCardCorrupt: corrupt => new CommandOutcome.Refusal("card-corrupt", corrupt.Reason),
+            onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(card.FilePath!, disagreement.StoredRound, disagreement.ExpectedRound) with
+            {
+                Rule = disagreement.RefusingRule,
+                Remedy = disagreement.Remedy,
+            },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(card.FilePath!, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 

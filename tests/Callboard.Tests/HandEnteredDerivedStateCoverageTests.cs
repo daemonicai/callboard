@@ -498,6 +498,29 @@ public sealed class HandEnteredDerivedStateCoverageTests : IDisposable
         Assert.Empty(familyRead.RegisterFields.Absorbs);
     }
 
+    /// <summary>§13, card-model: "The verbs that dispose of a thread SHALL NOT be the only ones
+    /// that can start one" — <c>CardStore.AddComment</c>'s own reuse of the guard, reported as
+    /// its own outcome case (see <see cref="Cards.CardCommentAppendOutcome"/>'s own doc comment
+    /// for why it is not the generic <c>CardWriteResult</c>'s).</summary>
+    [Fact]
+    public void AddComment_CardCarryingAReservedKey_Refuses_AndRecords()
+    {
+        var path = WriteTaintedCard(_changesDirectory, "b-0020", "B-0020", CardKind.Block, CardOwner.Worker);
+        var comment = new CardComment("comment-0001", CardOwner.Reviewer, Now, "Note.", null, null, null, []);
+
+        var outcome = CardStore.AddComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
+
+        var handEntered = Assert.IsType<CardCommentAppendOutcome.HandEnteredDerivedState>(outcome);
+        Assert.Equal(ReservedKey, handEntered.Key);
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, refusal.By);
+        Assert.Equal(handEntered.RefusingRule, refusal.Rule);
+        Assert.Equal(handEntered.Remedy, refusal.Remedy);
+        Assert.Equal((ReservedKey, ReservedValue), Assert.Single(read.UnknownFrontmatterFields));
+        Assert.Empty(read.Comments);
+    }
+
     // --- fixtures --------------------------------------------------------------------------
 
     private static string WriteTaintedCard(string directory, string fileStem, string id, CardKind kind, CardOwner owner, CardScope? scopeOverride = null)

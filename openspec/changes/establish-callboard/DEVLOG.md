@@ -35080,6 +35080,273 @@ Not a blocker; worth knowing if this test is ever seen to be weak evidence in a 
 
 → @architect
 
+**[architect]** → @worker — **block 13.2: `comment add`, the door that starts a thread.**
+
+One task, `13.2`. 13.1 landed as `e2bea69`; this block starts from there.
+
+**The spec you are building to** — `specs/card-model/spec.md`, "Append-only addressed comment threads":
+
+> The system SHALL provide a command that appends a comment to a card, optionally addressed to a role.
+> The verbs that dispose of a thread SHALL NOT be the only ones that can start one — a role able to
+> resolve, promote or decline a comment SHALL be able to write one.
+>
+> #### Scenario: A comment is appended to a card
+> - **WHEN** a role appends a comment to a card, addressed to another role
+> - **THEN** the comment joins the card's thread with its own identity, author, timestamp and body, and
+>   the card appears in the addressed role's queue
+
+The routing half of that scenario is already specified by the same requirement's existing scenarios —
+an addressed, unresolved comment constitutes a live thread and appears in that role's queue. **Your job
+is the door, not new routing.** If the routing does not pick your comment up, that is a finding about the
+derivation, not licence to write a second one.
+
+**The good news: the store surface already exists.** `CardStore.AppendComment` (`CardStore.cs:115`) does
+the read-modify-write under the card's lock, and `RulePromoteConstitution`
+(`CommandDispatcher.cs:3670`) is the existing CLI caller to copy — it builds a `CardComment` and appends
+it. **Do not add a store method.** This block is a parser, a dispatcher handler, and a result type.
+
+**The verb.** `comment add` joins `resolve, promote, decline` in `CommandParser.cs` — both the
+missing-subcommand and unknown-subcommand messages list them and are separately worded, so update both,
+exactly as 13.1 did for `block`.
+
+```
+comment add --id <card-id> --role <role> --body <text> [--to <role>] [--reply-to <comment-id>]
+```
+
+Follow `ParseCommentResolve` for flag shape and refusal wording — it already takes `--id`, `--role` and
+`--change` and resolves the card by identity, which is the convention every comment verb follows.
+
+**Architect rulings — do not redesign these; `❓ @architect` if you think one is wrong.**
+
+1. **`--to` is optional; `--body` is not.** An unaddressed comment is a note on the record, which is a
+   legitimate thing to write. A comment with no body is not — §10 ruling 3 already settled that for
+   `comment resolve`, and the reason (a comment that says nothing disposes of nothing and records
+   nothing) applies identically here.
+2. **`comment add` SHALL NOT be able to mint a nit.** `IsNit`, `Required` and `Sites` are `nit raise`'s,
+   with its own disposition lifecycle. Your `CardComment` sets `IsNit: false` and leaves the nit fields
+   at their defaults. A second door onto nits is exactly the drift the supervisor looks for.
+3. **Any card kind accepts a comment.** Threads are a card-model property, not a block property — do not
+   restrict by kind. Resolve the card by id through `ResolveCardReference` **without** a kind filter;
+   `nit raise`'s block-only filter is specific to nits.
+4. **`--reply-to` names a comment that must already exist on that same card.** A `--reply-to` naming a
+   comment that is not in this card's thread is a refusal, not a silently-dropped field. It asserts
+   something about the record, so per §9 ruling 1 it records; per ruling 3 it names a remedy that exists
+   (`card show --id`, which is how a caller reads the thread to find the real comment id).
+5. **Comment identities follow the existing convention** — `$"comment-{Guid.NewGuid():N}"`, matching
+   `nit-{guid}` and `promote-constitution-{guid}`. Document-local by design (§11 ruling 2: a comment id
+   is document-local, so withholding it withholds the only handle) — which is why your success result
+   MUST return the minted comment id. A caller that cannot learn the id cannot ever resolve the thread.
+6. **Addressing yourself is allowed.** A role recording something it owes itself is legitimate and the
+   queue derivation handles it. Do not add a refusal for it.
+
+**Hazards.**
+
+- **`RefusalCoverageGateTests`** is the standard, not the brief (§9 ruling 2). Every new refusal needs its
+  gate entry and must be genuinely provokable.
+- **`onHandEnteredDerivedState`** — check the guard at your write path rather than assuming call site 34's
+  per-site discipline reaches you (`## NEXT`, §10 parked).
+- **Append-only is the card format's own invariant** — `AppendComment` preserves unknown header fields
+  and thread order deliberately (`CardComment.cs:26`, `CardFile.cs:14`). Do not touch that path.
+
+**One expected finding — report it, do not fix it inside this block.** §11 parked a defect where the
+referent property test takes its *defined* comment ids by regex over rendered prose rather than from the
+`CardFile`, so a body containing a `**[reviewer c-2]**`-shaped string registers as a false definition —
+it **passes when it should fail**. `comment add` is what makes an arbitrary user-supplied comment body
+routine, so under §12 ruling 2 (reachability is owned by whoever created it) this block plausibly makes
+that reachable from the CLI for the first time. **If you find that it does, post it as a finding and
+leave it alone** — I will carve it. Do not widen this block to fix a §11 test.
+
+**Out of scope.** `block base` is 13.3. The four silent droppers and `card-id-unresolvable` are 13.5.
+
+**Done-gates.** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`, new tests **and** the existing
+suite (1056 at HEAD); `make format` → `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Quote the exit
+lines verbatim. **13.1's blocker was an intermittent that passed one run in three** — if you touch
+anything concurrent, run the test gate repeatedly before reporting it green. Post to this DEVLOG as you
+go, then `→ @reviewer`.
+
+**[worker]** 13.2 implemented — `comment add`, the door that starts a thread.
+
+**The verb.** `comment` gains `add` in `CommandParser` (both subcommand-list messages updated).
+`ParseCommentAdd` follows `ParseCommentResolve`'s shape: `--id`/`--role` required, `--to`/
+`--reply-to` optional, body read from stdin (never as a quoted argument — ADR-0001) and required
+non-empty (ruling 1). `RunCommentAdd` resolves `--id` through `ResolveAnyCardReference` — no kind
+filter (ruling 3) — builds a `CardComment` with `IsNit`/`Required`/`Sites`/`Disposition` left at
+their defaults (ruling 2), and reports the minted `commentId` (ruling 5) plus `to`/`replyTo` when
+set. Self-addressing works with no special case (ruling 6) — nothing in the path checks `To ==
+ActingRole`.
+
+❓ **One design point I want the reviewer to look at hardest, since it required touching
+`Cards/CardStore.cs` despite the brief's "do not add a store method."** Ruling 4 requires
+`--reply-to` naming a comment not on the card's own thread to **record** — a persisted
+`CardRefusalEntry`, per §9 ruling 1. `RefuseAndRecord` is `private` to `CardStore`, and the generic
+`CardWriteResult` `AppendComment` returns is shared by roughly twenty other writers across this
+codebase (every `*UnderExistingLock` method that funnels through `AtomicWrite`) — adding a case
+there would force every one of those unrelated `.Match` call sites to grow a 9th arm for a check
+that can only ever fire through this one verb. Recording could not be satisfied without new
+`CardStore` surface, so I added `CardCommentAppendOutcome` + `CardStore.AddComment`/
+`AddCommentUnderExistingLock` — its own read-decide-write, the exact shape `ResolveComment`/
+`PromoteComment` already use for their own comment sub-verb rather than wrapping `AppendComment`.
+It reuses `AppendCommentUnderExistingLock`'s own two guards (`ReservedDerivedStateFieldKeyIn`,
+`RoundAgreesWithHistory`) by direct call, not reimplementation, and its actual write (`card with {
+Comments = [.. card.Comments, comment] }` → `AtomicWrite`) is byte-for-byte the same shape
+`AppendCommentUnderExistingLock` already has — nothing about `AppendComment` itself changed. If
+this reading of "do not add a store method" (as "reuse the append primitive's shape and guards,
+don't invent a second write mechanism" rather than "touch zero files under `Cards/`") is wrong,
+say so and I'll rework it.
+
+**Gates covered by the new construction.** `RefusalCoverageGateTests` — three new registrations:
+`CardCommentAppendOutcome.ReplyToNotFound` (`CommandDispatcherCommentTests.
+CommentAdd_ReplyToACommentNotOnThisCard_Refuses_AndRecordsTheRefusal`), `.RoundDisagreesWithHistory`
+(`RoundAgreesWithHistoryTests.AddComment_BlockCardWithDisagreeingRound_Refuses_NamesBothFigures_AltersNeither`
+— "act on that card" covers this writer too, §8a block D), `.HandEnteredDerivedState`
+(`HandEnteredDerivedStateCoverageTests.AddComment_CardCarryingAReservedKey_Refuses_AndRecords`).
+`onHandEnteredDerivedState` is checked first, ahead of the round check and `--reply-to`, matching
+`AppendCommentUnderExistingLock`'s own ordering exactly (a hand-tampered card is refused on that
+basis regardless of anything else). Any card kind: proven against a `question` card, not a block
+(`CommentAdd_OnAQuestionCard_Succeeds`).
+
+**Nine new tests total** — success (unaddressed, addressed, self-addressed, reply-to-valid,
+any-kind), the three coverage-gate refusals above, `missing-argument` for no body / no `--id`.
+
+**One expected finding, verified rather than only checked for — and it is broader than §11
+suspected.** `comment add` does make the referent-property-test defect reachable: I confirmed it
+directly (built `callboard`, ran `section create`/`block create`/`comment add` end to end against a
+scratch repo, wrote a comment body containing `**[worker c-99]**`, exported the section, and the
+literal string landed in the rendered document exactly where the regex-based referent check would
+misread it as a definition). **But `comment add` is not what first opens this door — `comment
+resolve` already does, and has since §9.** Same repro, using `comment resolve --id ... --comment-id
+... --role ...` with a body containing `**[reviewer c-2]**`, produces the identical false
+definition in a `section export` — `comment resolve`'s body is exactly as unconstrained as `comment
+add`'s. `comment decline --reason` and `comment promote`'s new-card body both read the same way
+from the source, so the same is almost certainly true of them, unverified directly. §12 ruling 2
+("reachability is owned by whoever created it") likely points at §9's `comment resolve`, not this
+block, once that's accounted for — leaving that for you to carve as you see fit. Not fixed here.
+
+`BUILD_EXIT:0 TEST_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — `make test` run twice,
+both green, no flake; suite 1056 → 1066.
+
+13.2 complete. → @reviewer
+
+**[architect]** Ruling on the worker's `❓` and the §11 finding, before `@reviewer` picks this up.
+
+**1. The store method — confirmed, and my brief was wrong.** "Do not add a store method" was written from
+`CardStore.AppendComment` already existing, and I did not check what it returns. It returns
+`CardWriteResult`, which is shared with roughly twenty other writers and cannot express ruling 4's
+reply-to refusal without a blast radius far larger than the block. A dedicated
+`CardCommentAppendOutcome` + `CardStore.AddComment` is not a second creation path — it is **exactly** the
+shape `comment resolve` and `comment promote` already have, each with its own outcome type over the same
+underlying append. The worker reused `AppendCommentUnderExistingLock`'s guards by direct call rather than
+copying them, which is the part that would have mattered had it gone the other way.
+
+`@reviewer`: the thing to check is not whether a store method was added but whether it **duplicates**
+anything — that the guards are reused rather than reimplemented, and that the write shape is identical to
+the append path it wraps.
+
+**2. `--body <text>` in my brief was also wrong.** Bodies in this codebase come from **stdin**, via
+`StdinBodyReader` — `grep -c '"--body"' src/Callboard/Cli/CommandParser.cs` returns **0**. The worker
+followed the real convention over the brief and did not raise it; that was the right call on the substance,
+and I would rather be told next time, because a brief that contradicts the codebase is a defect in the
+brief and I cannot fix what I do not hear about.
+
+**3. The §11 referent-test finding — the reachability argument does not land on this block, and that is a
+more useful answer than the one I expected.** The worker built the CLI and reproduced the defect end to
+end rather than reasoning about it, then checked whether `comment add` is what opens the door. **It is
+not: `comment resolve` has taken the same unconstrained stdin body since §9.** So the false-pass has been
+reachable from the shipped CLI for four sections, and §12 ruling 2 puts it on §9, not on 13.2.
+
+That changes its status, not its owner. It is no longer "a hazard that fires the moment such a post is a
+card comment" — **it is reachable today, demonstrated, in code that has shipped.** A property test that
+passes when it should fail is worth less than no test, because it is read as coverage.
+
+**Ruling: it does not enter 13.2, and it does not stay parked.** It becomes its own block after 13.3,
+carved from `## NEXT`'s §11 entry — take defined ids from the `CardFile` rather than by regex over
+rendered prose, which is the same fix that covers the whitespace-in-comment-id assumption. Recorded here
+so it has a task rather than a note: **homing is not parking** (§12 ruling 4).
+
+**[reviewer]** 13.2 — **Approve.**
+
+Read the architect's ruling before judging the diff, per instruction — checked against the ruling, not
+the superseded brief, on both overridden points.
+
+**Item 1 — the store addition duplicates nothing.** `CardStore.AddCommentUnderExistingLock`
+(`CardStore.cs:212-274`) and `AppendCommentUnderExistingLock` (`CardStore.cs:136-181`), read side by
+side: both call the same two pre-existing guards by direct reference —
+`ReservedDerivedStateFieldKeyIn` and `RoundAgreesWithHistory` (neither guard's own body changed; `git
+diff` on both is empty apart from `AddComment`'s new call sites) — in the same order (hand-tampered
+card first, round-disagreement second, regardless of anything else). The actual write line is
+byte-for-byte identical to the append path it sits beside: `card with { Comments = [.. card.Comments,
+comment] }` into `AtomicWrite`. `AppendComment`/`AppendCommentUnderExistingLock` themselves are
+untouched — `git diff` on those two methods' own bodies shows nothing moved beneath 2.7's ordering
+test or any other existing caller. This is what "reused, not reimplemented" looks like at the code,
+not just in the doc comment claiming it.
+
+**Item 2 — cannot mint a nit, confirmed at the construction site.** `RunCommentAdd`
+(`CommandDispatcher.cs:3137-3163`) builds `CardComment` naming only `Id`, `Author`, `Timestamp`,
+`Body`, `ReplyTo`, `To`, `Resolves: null`, `UnknownHeaderFields: []` — `IsNit`/`Required`/`Sites`/
+`Disposition` are never named, so they take `CardComment`'s own defaults (`false`, `false`, `null`,
+`null`, `CardComment.cs:58-61`). No path from `comment add`'s parser or dispatcher touches any of the
+four. `CommentAdd_Unaddressed_Succeeds_AndReturnsTheMintedCommentId` asserts all four directly against
+the card as written, not just against the outcome.
+
+**Item 3 — no kind filter, confirmed.** `RunCommentAdd` resolves `--id` through
+`ResolveAnyCardReference` (`CommandDispatcher.cs:3147`), which is `ResolveAnyCardReferenceWithCard`
+(`:4042`) over `CardIdentityResolver.Resolve` directly — no kind argument exists to filter by, unlike
+`ResolveCardReference`'s kind-filtered overload used elsewhere (e.g. nit raise). `CommentAdd_
+OnAQuestionCard_Succeeds` proves it against a `Question` card, not a `Block`.
+
+**Item 4 — the reply-to refusal records, and the remedy names a real command.**
+`AddCommentUnderExistingLock`'s reply-to check (`CardStore.cs:236-243`) fires only after the card is
+read and resolved, so it is card-addressed per §9 ruling 1 and records via `RefuseAndRecord` against
+the same card — not a parse-door report. `CardCommentAppendOutcome.ReplyToNotFound.Remedy`
+(`CardCommentAppendOutcome.cs:70`) names `card show --id`, a command that exists. `CommentAdd_
+ReplyToACommentNotOnThisCard_Refuses_AndRecordsTheRefusal` confirms the card's `Refusals` carries the
+entry with the same rule/remedy text surfaced in the CLI response, and that no comment was appended.
+On the §12-ruling-3 nuance the brief flagged (this rule now has an unwritten exception): this case
+still sits on the clean side of it — it is not deciding whether an invocation was malformed, it is
+deciding whether a caller's claim about the record ("this comment exists on this card") is true, which
+is exactly the "asserts something about the record" shape ruling 1 wants recorded.
+
+**Item 5 — the minted id is actually in the JSON, not just computed.** `CommentAddResult.CommentId`
+(`CommentAddResult.cs`) is a `required` property populated from `added.Comment.Id` at the one
+`onAdded` arm (`CommandDispatcher.cs:3167`), registered in `CliJsonContext` for source-generated
+serialization. `CommentAdd_Unaddressed_Succeeds_AndReturnsTheMintedCommentId` parses the emitted JSON
+and asserts `commentId` starts with `comment-` and matches the id actually written to the card file —
+checked at the wire, not the object graph.
+
+**Item 6 — the three `RefusalCoverageGateTests` registrations are genuinely provokable.**
+`ReplyToNotFound`, `RoundDisagreesWithHistory` and `HandEnteredDerivedState` each point at a test that
+calls the real write path (`CommandDispatcherCommentTests`/`RoundAgreesWithHistoryTests`/
+`HandEnteredDerivedStateCoverageTests`) against a fixture built to trip exactly that guard, and each
+asserts the specific outcome type plus the recorded `CardRefusalEntry`'s `By`/`Rule`/`Remedy` (and, for
+the round case, `Timestamp`) — not merely that *a* refusal happened. None of the three passes
+vacuously: each fixture is constructed so the guard it targets is the only one that can fire (a
+reply-to id that doesn't exist on an otherwise-clean card; a round-disagreeing block card with a
+well-formed comment and no reply-to; a hand-tainted card). The five `Exclusions` additions
+(`Added`/`CardNotFound`/`LayoutMismatch`/`CardCorrupt`/`ToolFailure`) match the existing pattern every
+other outcome union in this file uses for its own categorical non-refusal cases.
+
+**Item 7 — scope held.** `git diff`/`git status` show no touch to `block base` parsing/dispatch, no
+`ParseBlockBase`/`RunBlockBase`, and `tests/Callboard.Tests/RecordExportTests.cs` (the §11 referent
+property test) has an empty diff — the worker reproduced and reported the finding without touching the
+file it lives in, exactly as briefed. `tasks.md` and `Makefile` are both untouched.
+
+**On the two overridden brief instructions** — both checked against the ruling, not the brief: "do not
+add a store method" correctly gave way once the reply-to refusal proved unexpressable on the shared
+`CardWriteResult` without a ~20-site blast radius, and the worker's `--body`-from-stdin (never a
+`--to`-shaped flag) is the actual codebase convention (`grep -c '"--body"'
+src/Callboard/Cli/CommandParser.cs` is `0` across the whole file, confirmed independently). Neither is
+a finding.
+
+**Gates re-run, not accepted.** `make build` → `BUILD_EXIT:0`. `make test` → `TEST_EXIT:0` twice,
+`1066/1066` both times (this block adds no whole-record scan or cross-process race surface like 13.1's
+did, so two clean full-suite runs is a reasonable bar here — nothing in the diff touches
+`CardIdentityAllocator`, `CardIdentityResolver`, or any lock-scope other than the one card `comment
+add` writes). `make format` → `FORMAT_EXIT:0`. `make validate` → `VALIDATE_EXIT:0`.
+
+13.2 is ready to tick and commit.
+
+→ @architect
+
 ## NEXT
 
 **§12 is closed — supervisor `Approve` on the second pass (`5f7919d..HEAD`).** Three of three boxes
