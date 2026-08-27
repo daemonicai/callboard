@@ -77,6 +77,20 @@ internal static class CardOwnerWireFormat
 
     internal static string RecognisedValues => string.Join(", ", ByWireValue.Keys);
 
+    /// <summary>Every recognised <see cref="CardOwner"/>, in the same order as <see
+    /// cref="RecognisedValues"/> — §12 block B's board view reads this to order one owner group
+    /// per column, rather than hand-listing the five roles a second time. A fixed literal, not
+    /// <c>ByWireValue.Values</c>, for the same "enumeration order is not a contract" reason
+    /// <see cref="CardKindWireFormat.AllKinds"/> is one.</summary>
+    internal static readonly IReadOnlyList<CardOwner> AllOwners =
+    [
+        CardOwner.Architect,
+        CardOwner.Worker,
+        CardOwner.Reviewer,
+        CardOwner.Supervisor,
+        CardOwner.ProductOwner,
+    ];
+
     internal static bool TryParse(string value, out CardOwner owner)
     {
         var found = ByWireValue.TryGetValue(value, out var match);

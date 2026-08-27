@@ -46,9 +46,10 @@ internal static class CommandParser
         "context" => ParseContext(context),
         "state" => ParseState(context),
         "card" => ParseCard(context),
+        "view" => ParseView(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit, comment, context, state, card.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit, comment, context, state, card, view.")),
     };
 
     /// <summary>
@@ -3223,6 +3224,38 @@ internal static class CommandParser
         }
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.State(context.WorkingDirectory));
+    }
+
+    /// <summary>
+    /// Builds <c>view --out &lt;path&gt; [--force]</c>'s <see cref="CommandDispatcher.
+    /// ParsedCommand.View"/> (§12 block B, Architect ruling: the spec names no verb). No
+    /// positional token — the view covers the whole live record, the same self-discovering shape
+    /// <see cref="ParseState"/> already has. <c>--out</c> is required, for the same "callboard
+    /// never writes into the repository the caller did not ask for" reason <see
+    /// cref="ParseSectionExport"/>'s is; <c>--force</c> is presence-only, the same shape as <see
+    /// cref="ParseSectionExport"/>'s own.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseView(CommandDispatcher.CommandContext context)
+    {
+        string? outputPath = null;
+        var force = false;
+        var flagRefusal = ConsumeKnownFlags(
+            context,
+            new Dictionary<string, Action<string>>(StringComparer.Ordinal) { ["--out"] = value => outputPath = value },
+            new Dictionary<string, Action>(StringComparer.Ordinal) { ["--force"] = () => force = true });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (outputPath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'view' requires '--out <path>'."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.View(
+            outputPath, force, context.WorkingDirectory));
     }
 
     /// <summary>

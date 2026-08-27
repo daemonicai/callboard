@@ -115,6 +115,43 @@ internal static class CardKindWireFormat
     /// <summary>The recognised wire values, in the order card-model's spec text lists them.</summary>
     internal static string RecognisedValues => string.Join(", ", ByWireValue.Keys);
 
+    /// <summary>Every recognised <see cref="CardKind"/>, in the same order as <see
+    /// cref="RecognisedValues"/> — §12 block B's board view reads this to name one column per
+    /// kind, rather than hand-listing the eight cases a second time. A fixed literal, not
+    /// <c>ByWireValue.Values</c>: <see cref="Dictionary{TKey,TValue}"/> enumeration order is an
+    /// implementation detail, not a contract, and this order is one a caller renders by.</summary>
+    internal static readonly IReadOnlyList<CardKind> AllKinds =
+    [
+        CardKind.Block,
+        CardKind.Question,
+        CardKind.Finding,
+        CardKind.Obligation,
+        CardKind.Rule,
+        CardKind.Hazard,
+        CardKind.Decision,
+        CardKind.Section,
+    ];
+
+    /// <summary>The four kinds register: "SHALL NOT occupy flow states" (§7 block A) — obligation,
+    /// rule, hazard, decision, in <see cref="AllKinds"/>'s own order. §12 block B's register area
+    /// reads this to name one lane per register kind, rather than hand-listing the four a second
+    /// time.</summary>
+    internal static readonly IReadOnlyList<CardKind> RegisterKinds =
+        [.. AllKinds.Where(static kind => ReferenceEquals(kind, CardKind.Obligation)
+            || ReferenceEquals(kind, CardKind.Rule)
+            || ReferenceEquals(kind, CardKind.Hazard)
+            || ReferenceEquals(kind, CardKind.Decision))];
+
+    /// <summary>The column/lane heading for <paramref name="kind"/> — its own wire value
+    /// capitalised, since the wire value itself (<c>"block"</c>, <c>"hazard"</c>) is what
+    /// card-model's spec text already names each kind by; no separate label vocabulary is
+    /// introduced.</summary>
+    internal static string DisplayName(this CardKind kind)
+    {
+        var wire = kind.ToWireString();
+        return string.Concat(char.ToUpperInvariant(wire[0]).ToString(), wire.AsSpan(1));
+    }
+
     internal static bool TryParse(string value, out CardKind kind)
     {
         var found = ByWireValue.TryGetValue(value, out var match);

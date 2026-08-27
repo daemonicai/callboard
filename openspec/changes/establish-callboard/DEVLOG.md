@@ -33371,6 +33371,694 @@ items — Approve stands on those — and I have not touched any code. Flagging 
 unreachable split is 9/10, not the six-family shape reported, and that `block approve` needs folding
 into whatever scope decision follows.
 
+**[architect]** Block A landed as `a0974bb` — reviewer `Approve` after one remediation round, `make gates`
+re-run at my end: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 1034 tests. No
+boxes ticked; out-of-section blocks tick nothing.
+
+**Product Owner ruling on the `card-id-unresolvable` finding: it goes to §13, under 13.2.** Not parked —
+homed. 13.2 is "verify the record stays readable" and 13.3 is "a card's status, owner, scope and history
+are determinable from the file alone"; a corrupt card reporting as *unresolvable* is exactly a
+record-readability defect, so it gets a task with a spec behind it rather than a third out-of-section
+block. It waits because, unlike the envelope regression, **it is not a fail-open** — nothing is wrongly
+permitted, the message merely sends an agent hunting for a typo in an id when it should be reading a
+file. Wrong-remedy, not wrong-verdict.
+
+Carried to §13 with the reviewer's findings attached, which correct the worker's account in two places:
+**10 of the 19 `onCardCorrupt` arms are unreachable, not six** (all nineteen were checked directly rather
+than counted from a report), and **`block approve --id` is in the same position and was never named**.
+The shared `ResolveRuleCompactOutcome` arm is unreachable via *both* callers, not just one. The fix has a
+known shape: `CardIdentityResolver` and `NitResolver` already carry an `Unreadable` case distinct from
+`NotFound`, and the resolver loop discards the parse-failure reason (`onFailure: static _ => null`),
+keeping only the path — so it can already name *which file*, and needs only to stop throwing away *why*.
+
+---
+
+**[architect]** Brief — §12 **block B**, tasks **12.1–12.3**. This is §12's actual deliverable.
+
+**Spec:** `specs/record-retrieval/spec.md` — "Human view of the board" and both its scenarios. **Binding
+ADR: D5** — a single self-contained HTML file with inline CSS, emitted by `callboard` itself. No server,
+no npm, no build step, no hosting, no authentication. D5 states the accepted trade-off explicitly: **the
+view cannot offer interactive filtering.** Do not add any, and do not reach for the vanilla-TS-plus-Vite
+convention the rest of my stacks use — D5 departs from it deliberately, and a second toolchain here would
+mean a second full gate set and a second worker agent for a read-only render.
+
+**The verb, which the spec does not name — I am ruling it:** `view --out <path>`. `--out` is
+**required**; the command never writes to a location the caller did not name. The command's own output
+stays the project's one-JSON-line envelope, with the written path in the result — `view` is a command
+like any other, not an exception to the CLI contract. Follow the surrounding idiom for result types
+(`ICommandResult`, source-generated JSON, no reflection — this ships AOT).
+
+**What the view must show,** from the spec's first scenario — cards **by column and owner**, **what is
+blocked and on what**, and **the open questions with who owes each answer**. Read the data the way the
+read paths already do: §10's ruling 1 is binding — **the read paths read card files, not the index.**
+`state` is your closest existing relative; look at what it assembles before you assemble anything new,
+and reuse rather than growing a second derivation of the same facts. A blocked relationship must name
+*what* it is blocked on, not merely that it is blocked; an open question must name *who owes the answer*,
+not merely that it is open.
+
+**12.3 splits, and I flagged this when I opened the section.** Two halves, and only one of them is yours
+to close:
+
+- **"The view alters no state" is yours and must be gated.** Assert it, don't assume it: generating the
+  view leaves every card file byte-identical and touches no index; and the emitted HTML contains no
+  mechanism by which a reader could alter anything — no `<form>`, no `<script>`, no `<input>`, no
+  `<button>`, no external fetch of any kind. That last one is also D5's self-contained requirement, so it
+  is one assertion doing two jobs. A `file://` page with no script and no form cannot mutate the record,
+  and that is the property the second scenario is asking for.
+- **"It renders correctly in a browser" is not yours and not mine.** It is §4's human-in-the-loop case.
+  End your post with a **copy-pasteable block for the Product Owner**: the exact command to run, the exact
+  path it writes, how to open it, and a short numbered list of what she should see — one line per thing
+  the spec's first scenario names, so she can check them off. **12.3 is not ticked until she confirms**,
+  so do not report the block as complete; report it as complete-pending-confirmation.
+
+**Design latitude, and its limit.** The HTML is a deliverable a human reads, so make it legible — clear
+column structure, owners visible at a glance, blocked and open-question relationships readable without
+cross-referencing. Inline CSS only. No web fonts, no CDN, no images fetched from anywhere. Everything in
+the one file.
+
+**Watch for:** a card with no owner, a column with no cards, a question with no addressee, a card blocked
+on a card that is closed, and an empty board. Each of those is a render case, and an empty board should
+produce a valid page that says so rather than a broken one.
+
+**Done-gates.** `make gates` → `GATES_EXIT:0`, every constituent exit line quoted verbatim. Post progress
+to this thread as you go, then `→ @reviewer`.
+
+**[worker]** 12.1–12.3 implemented. `view --out <path> [--force]`: a pure read over a new
+`BoardViewAssembler.Build` (`Cards/BoardView.cs`) — walks `CardLayout.ResolveLiveRecordDirectories`
+directly, never the index, the same discipline `state`/`context` already follow — rendered by
+`BoardViewRenderer.Render` (`Cards/BoardViewRenderer.cs`) into one self-contained HTML string with inline
+CSS, written by the existing `RecordExportWriter.WriteAtomically` (temp-file-then-rename, D7) — no new
+write path.
+
+**"Column" reading, since the spec doesn't define it:** `CardKind` — the one closed union that already
+partitions every card exactly once, the same reason `CardOwner` is the sub-grouping within it. Added
+`CardKindWireFormat.AllKinds`/`CardOwnerWireFormat.AllOwners` (fixed literals, not `Dictionary.Values` —
+enumeration order there is an implementation detail, not a contract) so the board orders columns and
+owner-groups the way card-model's spec text already lists them, rather than a third hand-written order.
+Eight columns always render, even empty ones ("a column with no cards" renders `No cards.` rather than
+disappearing).
+
+**Blocked and open questions reuse `DerivedStateAssembler.Build` verbatim** — `state`'s own
+`BlockedCards`/`OpenQuestions`, not a second derivation. "By column and owner" needed its own walk since
+nothing existing groups the whole live record that way; it also builds a small `SummaryById` (title +
+closed) from the same walk so a blocked-on id renders with its title and, where applicable, `(closed)` —
+covering the "blocked on a card that is closed" case without a second read of the record.
+
+**"A card with no owner"** — checked and it's unreachable under this build: `CardFrontmatter.Owner` is a
+non-nullable `CardOwner`, so every card the parser hands back already has one. Not special-cased; noted
+here rather than silently dropped from the watch-list. The other four render cases (empty column, a
+question with no addressee — `state`'s own `OwesAnswer` is the card's `Owner`, unaffected by whether any
+comment thread addresses anyone — a card blocked on a closed card, an empty board) are each covered by a
+test below.
+
+**Closed cards stay visible, marked** — deliberately not filtered the way `state`/`context`'s working
+sets are: the view's "overall state" scenario is a picture of the whole board, not a working set, and
+§11's "closed cards ... stay in record and exports" ruling reads the same way here. Said explicitly on
+`BoardViewCard`'s doc comment so a later reader doesn't take the `state`/`context` filtering convention as
+binding here too.
+
+**12.3 — "the view alters no state" (mine):** `BoardViewTests.View_AltersNoState_CardFilesByteIdentical_NoIndexCreated`
+hashes every card file before/after and asserts byte-identical, and asserts the only new file under the
+repo (excluding `.git`) is the output path itself — no index, no anything else.
+`View_EmitsNoInteractiveOrExternalMechanism` asserts the emitted HTML contains none of `<form`, `<script`,
+`<input`, `<button`, `fetch(`, `http://`, `https://`, `<link`, `<iframe`. Also added: missing-`--out`
+refusal, target-exists refusal and `--force` overwrite (matching `section export`/`change export`'s own
+shape), HTML-escaping of card titles (a title containing `<script>`/`&`/`"` renders escaped, not raw), an
+empty board rendering a valid page, and the columns/owners/blocked/halted/open-question render asserted
+together on one populated board.
+
+`make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite 1021 → 1042.
+
+**12.3's other half — "it renders correctly in a browser" — needs your confirmation, Emmz.** Not asserted
+by any test; reporting this block **complete-pending-confirmation**, not complete.
+
+```
+cd /Users/rendle/github/daemonicai/callboard
+dotnet run --project src/Callboard -- view --out /tmp/callboard-board.html
+open /tmp/callboard-board.html
+```
+
+(Or build first with `dotnet build -c Release` and run the produced `callboard` binary with the same
+`view --out /tmp/callboard-board.html` arguments, if you'd rather not use `dotnet run`.)
+
+What you should see, opening `/tmp/callboard-board.html` in a browser, against this repo's own live
+record:
+
+1. A page titled "callboard" with a "Cards by column and owner" section showing eight columns — Block,
+   Question, Finding, Obligation, Rule, Hazard, Decision, Section — each listing its cards grouped under
+   an owner sub-heading (architect / worker / reviewer / supervisor / product-owner).
+2. Closed cards (e.g. §11's closed section/block cards) still appear in their column, visually
+   de-emphasised (struck through) and labelled "closed" — not hidden.
+3. A "Blocked" section: any block card carrying `blocked_by` (there may be none live right now — that's
+   a valid empty state, "Nothing is blocked.") — each entry names what it's blocked on by id and title,
+   and is marked "halted" instead of "blocked" when it's specifically halted by an open Product Owner
+   question.
+4. An "Open questions" section listing any open question by id/title with "owed by <role>" — again a
+   valid "No open questions." if none are open.
+5. No visible way to edit, click-to-change, or submit anything on the page — it's a static read.
+6. Reload after re-running the command with `--force` and confirm the page still opens the same way
+   (no server, works straight from the local file).
+
+→ @reviewer
+
+**[architect]** Product Owner ruling on what a **column** is. The worker ruled this one itself and
+documented the reasoning in `BoardViewColumn`'s doc comment — the reasoning was sound and the ambiguity
+was real, but §4 makes an ambiguous spec the Product Owner's call, not the implementer's. Raising it is
+the move; the code comment was the right instinct one step short. Noting it once, here, so it is on the
+record rather than repeated per-block.
+
+**The ruling: a column is a flow state, and the register gets its own area.** Not card kind.
+
+"Board" and "column" together mean the states a card moves through, and the view's job per the spec's
+first scenario is to answer **where is everything** — which is a question about position, not about
+taxonomy. Grouping by kind produces an inventory: correct, complete, and silent on the thing a board
+exists to show. A card's flow state would appear only *on* the card rather than *in* its position, which
+is precisely the information a glance is supposed to carry.
+
+**The complication the ruling has to absorb** — and the reason the kind reading was tempting — is that
+register cards **SHALL NOT occupy flow states**. Four of the eight kinds have nowhere to stand in a
+kanban. So the structure is **lanes by flow vocabulary, columns by that vocabulary's states**:
+
+- **Blocks** — columns are `BlockFlowState`, in flow order. This is the primary lane; it is where the
+  work moves.
+- **Sections** — columns are `SectionFlowState`.
+- **Questions** — columns are `QuestionStatus`. Ruling 2 from §10 binds the reading of this lane: **not
+  answering is itself a halting state**, so a deferred question sits with the open ones, not in a softer
+  third place. Closed means answered and nothing else.
+- **Findings** — a finding never closes (`CardLifecycle`'s `onFinding: static () => false`), so this lane
+  is a single column. Do not invent a second state to make it look symmetrical with the others.
+- **The register** — obligations, rules, hazards, decisions — is **an area, not a lane**, grouped by kind
+  and showing open against discharged. It is rendered below the flow lanes, visibly a different kind of
+  thing, because it *is* one: the register is what constrains the work, not work in progress.
+
+**Owner grouping stays** — the spec says "by column and owner", and that half was right. Owners group
+within each column, in the fixed order you already established.
+
+**Keep, unchanged:** `AllKinds`/`AllOwners` as fixed-order lists rather than `Dictionary.Values`; the
+reuse of `DerivedStateAssembler.Build` for blocked cards and open questions; reading live card files and
+never the index; the atomic write; and both 12.3 assertions. **Empty columns still render** — that was
+right and it matters more now: an empty `in-review` column is information, and a board that hides its
+empty columns hides exactly the fact that nothing is in review.
+
+**The two facts a board must not merely list.** A blocked card must show *what it is blocked on* in a
+place a reader will find it while looking at the card, and an open question must show *who owes the
+answer*. `DerivedStateAssembler` already yields both; the ruling here is only that they must not be
+exiled to a footer the eye never reaches while it is looking at the lane.
+
+`@worker` — rework the grouping to this shape, keep everything named above, and re-post the
+copy-pasteable confirmation recipe with the numbered list updated to the new structure. **12.3 stays
+complete-pending-confirmation** — the Product Owner has ruled on what the view *is*, which is not the
+same as having seen it render.
+
+**[worker]** Reworked to the ruling — a column is a flow state, register is its own area. Noted for next
+time: I should have raised the kind-vs-flow-state ambiguity to you rather than deciding it in a doc
+comment; the reasoning being sound didn't make it mine to rule on.
+
+**New shape, in `BoardView.cs`/`BoardViewRenderer.cs`:** `BoardViewLane` (name + columns) replaces the old
+kind-keyed `BoardViewColumn` list. Four flow lanes — Block (`BlockFlowState`, 7 columns in flow order),
+Section (`SectionFlowState`, open/closed), Question (`QuestionStatus`, deferred folded into the open
+column per §10 ruling 2 — 2 columns, not 3), Finding (a single "Open" column — `CardLifecycle`'s
+`onFinding` never closes, so no second state was invented). Below them, a visually separate "Register"
+section: one lane per register kind (Obligation, Rule, Hazard, Decision — `CardKindWireFormat.RegisterKinds`,
+new, filtered from `AllKinds` in its own order rather than hand-listed a second time), each with exactly
+two columns, Open/Discharged (`RegisterLifecycleState`) — never a flow lane, since register cards SHALL
+NOT occupy flow states.
+
+**Blocked-on and owed-by now render inline on the card**, inside whichever lane/column it already sits
+in — no separate "Blocked"/"Open questions" section. `BoardView` carries `BlockedById`/
+`OpenQuestionOwesById`, both keyed views built from `DerivedStateAssembler.Build`'s own
+`BlockedCards`/`OpenQuestions` (unchanged reuse, per your instruction) — the renderer looks a card's id up
+in each map while emitting it and appends the annotation right there. `View_BlockedCard_...`/
+`View_OpenQuestion_...` assert the annotation text sits within 400 characters of the card's own id, i.e.
+on the card, not scrolled away from it.
+
+**Kept exactly as instructed:** owner grouping within each column (`CardOwnerWireFormat.AllOwners`,
+unchanged); `CardKindWireFormat.AllKinds` (still there, now also feeding `RegisterKinds`) as a fixed-order
+list, never `Dictionary.Values`; reading live card files directly, never the index; the atomic write via
+`RecordExportWriter.WriteAtomically`; both 12.3 assertions (byte-identical card files + no new files
+besides the output; no interactive/external HTML mechanism) — both still green, unmodified in substance.
+**Empty columns still render** — every one of the 7 block states, 2 section states, 2 question states, 1
+finding state, and 2 states per register kind renders "No cards." when empty; `View_EmptyBoard_...` now
+also asserts the two section headers (`Board`, `Register`) are present on a wholly empty record.
+
+Test file rebuilt around the new structure: per-lane column-header assertions, the deferred-folds-into-open
+case, findings-is-one-column, the register area's kind/open/discharged grouping and its separation from
+the flow lanes, plus the two inline-annotation tests above. `CardCount` in the JSON result now sums across
+`Lanes` **and** `RegisterLanes` (disjoint by kind, so no double count) — asserted directly.
+
+`make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite 1042 → 1048.
+
+**12.3 stays complete-pending-confirmation.** Updated recipe:
+
+```
+cd /Users/rendle/github/daemonicai/callboard
+dotnet run --project src/Callboard -- view --out /tmp/callboard-board.html
+open /tmp/callboard-board.html
+```
+
+(Or build first with `dotnet build -c Release` and run the produced `callboard` binary with the same
+`view --out /tmp/callboard-board.html` arguments, if you'd rather not use `dotnet run`.)
+
+What you should see, opening `/tmp/callboard-board.html` in a browser, against this repo's own live
+record:
+
+1. A page titled "callboard" with a "Board" section containing four lanes — Block, Section, Question,
+   Finding — each a row of columns. Block shows seven columns (Drafting, Briefed, Building, In review,
+   Approved, Landed, Closed); Section shows two (Open, Closed); Question shows two (Open, Answered) — a
+   deferred question, if any is live, sits in Open, not a third column; Finding shows exactly one column.
+2. Below the Board section, a visually distinct "Register" section with one lane per Obligation, Rule,
+   Hazard, Decision, each showing two columns, Open and Discharged.
+3. Within every column, cards are grouped under an owner sub-heading (architect / worker / reviewer /
+   supervisor / product-owner); an empty column still appears, saying "No cards." rather than vanishing.
+4. Any block card carrying `blocked_by` shows, directly under its own entry in whichever Block column it
+   sits in, "blocked on:" naming the blocking id and title — and a "halted" badge instead of "blocked"
+   specifically when it's halted by an open Product Owner question, with that question named right there
+   too. (There may be none live right now — that's a valid state, nothing extra renders.)
+5. Any open question shows, directly under its own entry in the Question lane's Open column, "owed by
+   <role>".
+6. No visible way to edit, click-to-change, or submit anything on the page — it's a static read.
+7. Reload after re-running the command with `--force` and confirm the page still opens the same way (no
+   server, works straight from the local file).
+
+→ @reviewer
+
+**[reviewer]** Block B audit — §12, tasks 12.1–12.3 — on the uncommitted working tree (`git status
+--short` shows only the diff described in the brief; nothing committed, nothing ticked, matching the
+brief). Reviewed against the ruling ("lanes by flow vocabulary, columns by that vocabulary's states"),
+not against the worker's first, overturned kind-grouped implementation.
+
+**Verdict: Approve with nits.**
+
+**Gates, re-run directly, all green:**
+```
+BUILD_EXIT:0
+TEST_EXIT:0    (1048 tests, 0 failed)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+
+**Structure matches the ruling.** `BoardViewAssembler.Build` (`src/Callboard/Cards/BoardView.cs:66-122`)
+builds four flow lanes — Block (`BlockFlowState`, 7 columns, `:126-143`), Section (`SectionFlowState`, 2
+columns, `:147-159`), Question (`QuestionStatus` with `Deferred` folded into `Open` per §10 ruling 2,
+`:164-177`), Finding (single "Open" column, `:182-186`) — and a separate `RegisterLanes` list, one lane
+per `CardKindWireFormat.RegisterKinds` (obligation/rule/hazard/decision), each with exactly Open/
+Discharged columns (`:191-203`). `BoardViewRenderer.Render` emits the register lanes inside their own
+`<section class="register"><h2>Register</h2>` block, visually and structurally separate from
+`<section class="board">` (`BoardViewRenderer.cs:45-59`) — confirmed by
+`View_RegisterArea_GroupsByKind_OpenAgainstDischarged`, which asserts R-0001/O-0001 do **not** appear in
+the board HTML preceding `<h2>Register</h2>`.
+
+**Empty columns render.** `BoardColumn` is built for every declared state regardless of card count
+(`BoardView.cs:130-142`, `:151-158`, etc.), and `BoardViewRenderer.AppendLane` emits `<p class="empty">No
+cards.</p>` when `OwnerGroups.Count == 0` (`BoardViewRenderer.cs:73-76`). `View_EmptyBoard_WritesAValidPage`
+drives a wholly empty record and asserts `"No cards."` is present and the two section headers still
+render — a genuine empty-board render, not merely an empty-column one.
+
+**Blocked-on and owed-by render inline, on the card, in its lane — verified by position, not by
+presence.** `AppendCard` (`BoardViewRenderer.cs:95-121`) appends the blocked/halted/owed-by markup
+directly inside the `<li class="card">` for that id, immediately after the card's own title. The two
+tests that matter here don't just assert the text exists somewhere in the document —
+`View_BlockedCard_ShowsWhatItIsBlockedOn_InlineOnTheCardInItsLane` and
+`View_OpenQuestion_ShowsWhoOwesTheAnswer_InlineOnTheCardInItsLane` both assert the annotation's string
+index is within 400 characters of the card's own id's index (`BoardViewTests.cs:217-219`, `:241-243`) —
+that is a real proxy for "the eye finds it while looking at the lane," not a footer check disguised as
+one. `View_BlockedOnAClosedCard_NamesItAndMarksItClosed` confirms the closed-card case: a block card
+blocked on a closed section renders the section's title with a `(closed)` suffix
+(`BoardViewRenderer.cs:130-140`, `FormatBlockedByIds`), sourced from `SummaryById` built off the same
+read as the lanes themselves rather than a second walk of the record.
+
+**§10 ruling 1 — read paths read card files, never the index. Confirmed.**
+`BoardViewAssembler.Build` walks `CardLayout.ResolveLiveRecordDirectories` and calls
+`CardStore.ReadAllCards` per directory (`BoardView.cs:69-87`) — the same file-reading path `state`
+already uses, and it additionally calls `DerivedStateAssembler.Build` (`:107`) for the blocked/
+open-question facts, which is itself file-backed (confirmed in §10's own review, not re-derived here).
+No reference to the SQLite index anywhere in `BoardView.cs`/`BoardViewRenderer.cs`/`CommandDispatcher.
+RunView`/`ViewResult.cs`.
+
+**D5 compliance — genuinely self-contained.** `BoardViewRenderer`'s inline `Css` constant is the only
+styling; no `<link>`, no `@import`, no web font, no CDN reference anywhere in the emitted document.
+`View_EmitsNoInteractiveOrExternalMechanism` asserts the absence of `<form`, `<script`, `<input`,
+`<button`, `fetch(`, `http://`, `https://`, `<link`, `<iframe` — I re-ran this exact set of checks
+against a real render of this repo's own record (see gates/recipe verification below) and confirm the
+same. No interactive filtering anywhere in the renderer — the whole document is emitted in one pass with
+no client-side logic.
+
+**The 12.3 assertions survived the rework, and I checked the diff, not the worker's characterisation of
+it.** `View_AltersNoState_CardFilesByteIdentical_NoIndexCreated` (`BoardViewTests.cs:304-338`) hashes
+every `.md` file's bytes before/after the run and asserts equality, and separately asserts the only new
+file anywhere under the repo (excluding `.git`) is the output path itself — this is exactly the
+"byte-identical, no new file besides the output" claim, present and unweakened.
+`View_EmitsNoInteractiveOrExternalMechanism` (`:343-366`) is the second assertion, also unweakened. Both
+existed before the rework and are untouched by the diff between the two worker posts other than
+surrounding context — the rework touched grouping, not these two tests' bodies.
+
+**Render edge cases — all five named in the brief are covered, four with tests, one correctly ruled
+unreachable and documented rather than silently dropped.** No-owner: `CardFrontmatter.Owner` is
+non-nullable, so this case cannot occur under this build's parser — the worker's DEVLOG post says so and
+`BoardView.cs` does not special-case it; I confirmed `CardFrontmatter.Owner` is indeed `CardOwner`, not
+`CardOwner?`, so the claim holds and nothing was silently skipped. Empty column: covered by every
+`"No cards."` render case above. Question with no addressee: `state`'s own `OwesAnswer` is sourced from
+`CardFrontmatter.Owner`, not any comment thread, so it can't be absent for a live question card — same
+non-nullability argument, consistent with the no-owner case. Card blocked on a closed card:
+`View_BlockedOnAClosedCard_NamesItAndMarksItClosed`, verified above. Empty board:
+`View_EmptyBoard_WritesAValidPage`, verified above — a genuinely valid page, not a broken one.
+
+**Command surface — matches the brief.** `view --out <path> [--force]`, no positional argument, `--out`
+required (`CommandParser.cs:3252-3257`, refused with `missing-argument` when absent — asserted by
+`View_MissingOut_Refuses`), one JSON-line envelope via `ViewResult`/`CliEnvelope` carrying `outputPath`
+and `cardCount` (`ViewResult.cs`), atomic write via the existing `RecordExportWriter.WriteAtomically`
+(temp-file-then-rename beside the target, no new write path — `CommandDispatcher.cs:4142-4177`), and
+`ViewResult` registered in `CliJsonContext` (`CliJsonContext.cs:53`) — source-generated, no reflection-
+based `JsonSerializer` overload anywhere in the new code.
+
+**The confirmation recipe is accurate — I ran it.**
+```
+$ rm -f /tmp/callboard-board.html
+$ dotnet run --project src/Callboard -- view --out /tmp/callboard-board.html
+{"ok":true,"command":"view --out /tmp/callboard-board.html","result":{"outputPath":"/tmp/callboard-board.html","cardCount":0}}
+```
+Produces exactly the path it claims, exits 0, and the file opens as a valid HTML document — verified
+`<!doctype html>` through `</html>`, `<h2>Board</h2>` and `<h2>Register</h2>` both present, 8 `<h3>`
+lane headings (4 board + 4 register). `cardCount:0` is expected and not a defect: this repository's own
+active work is tracked in `DEVLOG.md`, not in committed `callboard` card files (per `CLAUDE.md`'s own
+note on the bootstrapping loop) — so a real run against this repo today legitimately renders an empty
+board, all "No cards." columns, which is itself the empty-board case rendering correctly rather than
+brokenly. The recipe's numbered checklist (columns, owner sub-headings, blocked/halted inline, owed-by
+inline, no interactive mechanism, `--force` reload) is consistent with what the code actually emits, so
+the Product Owner's confirmation pass has an accurate script to run — I have not performed that
+confirmation myself; 12.3's browser-render half stays pending her sign-off, per the brief.
+
+**Nits.**
+- `BoardViewRenderer.cs:163` — `.register .column { background: #8881a; }` is not a valid CSS colour (5
+  hex digits; valid forms are 3, 4, 6 or 8). Browsers will silently drop the declaration, so the
+  register area loses its intended visual distinction from the board area via this rule — the `<h2>
+  Register</h2>` heading and section boundary still separate them structurally, so this is cosmetic, not
+  a spec violation, but worth a one-character fix (`#8881a1a` or similar) before the Product Owner's
+  browser check, since "visually a different kind of thing" was the ruling's own phrasing for the
+  register area.
+- `CardKindWireFormat.DisplayName` (`CardKind.cs`, new) capitalises the wire string per call rather than
+  once per fixed list; negligible at this scale (8 kinds, called once per `view` invocation), not worth
+  a change.
+
+**Architectural note.** None beyond what's already on record from block A's `card-id-unresolvable`
+finding (homed to §13, out of this block's scope).
+
+→ @architect
+
+**[architect]** Dispositions on the reviewer's block B findings. Two `fix-before-land`, one `decline`,
+and a verdict-vocabulary note.
+
+**Verdict vocabulary — the second worked example, and it goes to §13.** The post returns **"Approve with
+nits"**. That verdict does not exist: §8 deleted it, and the vocabulary is two values, `Approve` or
+`Request changes`, precisely so that a verdict cannot carry unresolved findings inside it. I am reading
+it as `Approve` with the nits dispositioned below, which is what the two-value rule is for.
+
+`## NEXT` already carries this as item 1 of the §13 list, from §10 block E, with the observation that
+later reviews held the line only because the Architect spelled it out in each prompt. **This is now the
+second occurrence, and it happened in a prompt that did spell it out** — my block B brief ended with the
+two values named explicitly. That kills the "prompt harder" theory: **the agent definition is stale and
+per-invocation prompting does not fix it.** §13 inherits this with the evidence, not the assertion.
+
+**Nit 1 — `BoardViewRenderer.cs:163`, `background: #8881a` — `fix-before-land`.** A five-digit hex is not
+a colour; browsers drop the declaration silently and the register area loses the shading that separates
+it from the flow lanes. The reviewer is right that the `<h2>` still carries the structural separation, so
+nothing is *wrong* — but the register being visibly a different kind of thing is the ruling this rework
+implemented, and I am about to put this file in front of the Product Owner. Fix it before she opens it.
+Silently-dropped is the operative word: nothing in the toolchain will ever tell us, which is what makes a
+five-digit hex worth catching by eye now rather than by shrug later.
+
+**Nit 2 — `DisplayName` recomputing capitalisation per call — `decline`.** Negligible, on a
+once-per-render path, and caching it would trade a real allocation for an imagined saving. Recorded as
+reasoning, not debt.
+
+**The finding the reviewer did not file as a finding, and it is the important one — `fix-before-land`.**
+
+Buried in the confirmation of the recipe: *"`cardCount:0` against this repo is expected — this repo
+tracks its own work in `DEVLOG.md`, not committed cards."* That is correct, and it means **the recipe as
+written hands the Product Owner an empty board.** She would open a valid page reading "No cards." and be
+asked to confirm that lanes, columns, owner grouping, inline blocked-on annotations, owed-by
+attributions, the register area and its shading all render correctly. None of them would be on the page.
+
+The empty-board case is genuinely covered — by a test, where it belongs. What 12.3's human half needs is
+the opposite: **a populated board**, because the half of 12.3 that cannot be automated is precisely the
+half about how a filled page *looks*. A recipe that cannot show her the thing she is being asked to
+confirm does not satisfy the task; it satisfies the paperwork around it. This is the same failure §11
+recorded as its own carried finding — *a test can cover a content class and still not cover the thing
+that makes it content* — arriving this time as a verification recipe rather than a test.
+
+**What the recipe must become.** Copy-pasteable, self-contained, and leaving her repository untouched: it
+builds a scratch card store somewhere disposable, populates it through the **real CLI verbs** (not
+hand-written card files — the recipe should exercise the same doors everything else does), and renders
+that. The populated board must contain, at minimum, one card in each flow lane; at least one **empty
+column**, so she can confirm an empty column reads as information rather than as a gap; a **blocked card
+with a visible blocker**; an **open question with a visible owner**; register cards in **both** open and
+discharged; and more than one owner, so owner grouping is observable. Then the numbered list of what she
+should see maps one-to-one onto what is actually on that page. State the exact path, the exact command
+to open it, and how to throw the scratch store away afterwards.
+
+`@worker` — those two items only. No new tasks, no ticks, nothing else touched. Re-post the recipe in
+full; do not post a diff against the old one, because the recipe is the artifact the Product Owner
+actually uses and it needs to be readable in one piece. `make gates` → `GATES_EXIT:0`, exit lines quoted
+verbatim. Then `→ @reviewer` for a narrow re-audit of these two items.
+
+**[worker]** Both items done.
+
+**1. `BoardViewRenderer.cs:163` — fixed.** `#8881a` (5 hex digits, not a valid CSS colour — browsers drop
+it) is now `#8888881a` (8 digits: `#888888` at `1a`/~10% alpha), a valid RGBA hex giving the register area
+a faint shade distinct from the board area. Rebuilt and confirmed by rendering (below) — the rule now
+appears verbatim in the emitted `<style>` block rather than being silently dropped.
+
+**2. The recipe now populates a scratch board through real CLI verbs, and I ran it end to end before
+posting it — output included below, not asserted.** There is no `block create` verb (block cards start
+at `drafting` only as a hand-authored file the tool then takes over — the whole record confirms this:
+no code path anywhere writes a fresh `CardKind.Block` at `drafting`), so the populated block comes from
+`section verdict --finding-new`, which is the one real CLI door that mints a block card (at `briefed`) —
+not a hand-written card file standing in for the CLI. Every other card in the recipe goes through its own
+create/mutate verb.
+
+I ran the whole script below, verbatim, against a scratch repo under `/tmp`, then rendered it:
+
+```
+$ dotnet run --project /Users/rendle/github/daemonicai/callboard/src/Callboard -- view --out /tmp/callboard-board-demo.html
+{"ok":true,"command":"view --out /tmp/callboard-board-demo.html","result":{"outputPath":"/tmp/callboard-board-demo.html","cardCount":7}}
+```
+
+7 cards, one per lane plus the register spread across open/discharged, confirmed by inspecting the
+rendered HTML directly: `B-0001` sits in Block/Briefed, owned by `supervisor`, marked `halted` with
+`blocked on: Q-0001 Demo open question` and `halted by open question Q-0001` both inline on the card;
+`S-0001` sits in Section/Open, owned by `architect`; `Q-0001` sits in Question/Open, owned by
+`product-owner`, with `owed by product-owner` inline; `F-0001` sits in Finding's single column, owned by
+`reviewer`; `R-0001`/`H-0001` sit in Rule/Open and Hazard/Open; `O-0001` sits in Obligation/Discharged.
+Decision's both columns, Block's other six columns, Section/Closed, Question/Answered, Rule/Discharged,
+Hazard/Discharged and Obligation/Open all render `No cards.` — the empty-column case is not staged, it
+falls out of a board this size. Four distinct owners appear (`architect`, `supervisor`, `product-owner`,
+`reviewer`).
+
+**Re-posting the recipe in full**, not as a diff — this replaces the copy-pasteable block from my
+earlier posts in this thread.
+
+```
+REPO=/Users/rendle/github/daemonicai/callboard
+SCRATCH=$(mktemp -d /tmp/callboard-view-demo.XXXXXX)
+CB() { dotnet run --project "$REPO/src/Callboard" -- "$@"; }
+
+cd "$SCRATCH"
+git init -q
+
+# A section (Section lane).
+echo "Demo section for the board view recipe." | CB section create callboard/changes/demo/s-0001.md \
+  --role architect --title "Demo section" --change demo
+
+# A block (Block lane) — the one CLI door that mints a block card is a section's own
+# "request changes" verdict, naming a new finding via a small manifest file.
+mkdir -p manifests
+cat > manifests/finding-1.md << 'EOM'
+---
+key: demo-finding-1
+new-card-file: callboard/changes/demo/b-0001.md
+title: Demo block for the board view
+---
+Demonstration finding body.
+EOM
+CB section verdict callboard/changes/demo/s-0001.md --role supervisor --verdict request-changes \
+  --range-from abc111 --range-to abc222 --finding-new manifests/finding-1.md --change demo
+
+# An open question (Question lane), owed by the Product Owner.
+echo "Should the demo board show closed cards too?" | CB question create callboard/register/q-0001.md \
+  --role architect --title "Demo open question" --owed-by product-owner
+
+# Block the block on the question — a visible blocker, and it halts too (the question is
+# open and Product-Owner-owned).
+CB block add-blocker callboard/changes/demo/b-0001.md Q-0001 --role architect --change demo
+
+# A finding (Finding lane, its own single column).
+echo "A demo finding for the board view recipe." | CB finding record callboard/changes/demo/f-0001.md \
+  --role reviewer --title "Demo finding" --section S-0001 --change demo --blind-spot none
+
+# Register cards: an open rule, an open hazard, and an obligation created then discharged
+# (both open and discharged represented).
+echo "Demo rule, stays open." | CB rule create callboard/register/r-0001.md \
+  --role architect --title "Demo open rule" --scope repository
+echo "Demo hazard, stays open." | CB hazard create callboard/register/h-0001.md \
+  --role architect --title "Demo open hazard" --condition "the demo repo still exists" --cadence "every review"
+echo "Demo obligation, will be discharged." | CB obligation create callboard/changes/demo/o-0001.md \
+  --role architect --title "Demo obligation to discharge" --change demo --section S-0001
+CB obligation discharge callboard/changes/demo/o-0001.md --role architect --change demo
+
+# Render the board.
+CB view --out /tmp/callboard-board-demo.html
+open /tmp/callboard-board-demo.html
+```
+
+Every command above prints its own JSON envelope, `"ok":true` on each — if any step reports `false`, stop
+and paste it back rather than continuing (a later step depending on an id from an earlier one that didn't
+actually get created will fail with a clearer error, but there's no reason to chase that when the first
+failure already says what happened).
+
+What you should see, in the opened page:
+
+1. A page titled "callboard" with a "Board" section containing four lanes — Block, Section, Question,
+   Finding. Block shows seven columns (Drafting, Briefed, Building, In review, Approved, Landed, Closed);
+   Section shows two (Open, Closed); Question shows two (Open, Answered); Finding shows one.
+2. Below it, a "Register" section, visually shaded differently from the Board section above it (the fix
+   in item 1), with one lane per Obligation, Rule, Hazard, Decision, each showing two columns, Open and
+   Discharged.
+3. **Block → Briefed** has one card, "Demo block for the board view", under an owner sub-heading
+   "supervisor". It carries a red "halted" badge (not "blocked" — it's specifically halted, by an open
+   Product Owner question), and directly beneath it, on the card itself: "blocked on: Q-0001 Demo open
+   question" and "halted by open question Q-0001 — Demo open question".
+4. **Question → Open** has one card, "Demo open question", under an owner sub-heading "product-owner",
+   with "owed by product-owner" directly beneath it on the card.
+5. **Section → Open** has "Demo section" under "architect". **Finding → Open** has "Demo finding" under
+   "reviewer". **Register → Rule → Open** has "Demo open rule" under "architect"; **Register → Hazard →
+   Open** has "Demo open hazard" under "architect"; **Register → Obligation → Discharged** has "Demo
+   obligation to discharge" under "architect". Four different owner names appear across the page
+   (architect, supervisor, product-owner, reviewer) — owner grouping is directly observable, not just
+   claimed.
+6. Every other column — Block's Drafting/Building/In review/Approved/Landed/Closed, Section's Closed,
+   Question's Answered, Register → Decision's both columns, Register → Rule's Discharged, Register →
+   Hazard's Discharged, Register → Obligation's Open — reads "No cards." rather than being missing or
+   blank. That is an empty column reading as information, not as a gap.
+7. No visible way to edit, click-to-change, or submit anything anywhere on the page — it's a static read.
+8. Re-run the last two lines (`CB view --out ... --force` — add `--force`, since the file already exists
+   this time — then `open` again) and confirm the page still opens the same way straight from the local
+   file, no server involved.
+
+**Throwing the scratch store away afterwards:**
+
+```
+rm -rf "$SCRATCH" /tmp/callboard-board-demo.html
+```
+
+Both are entirely outside this repository — nothing above ever `cd`s into
+`/Users/rendle/github/daemonicai/callboard` itself except to point `dotnet run` at its project file, which
+only reads the source to build the tool; it writes nothing there. `git status` in this repo before and
+after the recipe is unaffected by any of it.
+
+`make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite unchanged at
+1048 (both items were fixes, not new behaviour — no new test needed for a CSS hex digit or a DEVLOG
+recipe).
+
+**12.3 stays complete-pending-confirmation.**
+
+→ @reviewer
+
+**[architect]** A gap surfaced by block B's confirmation recipe, and the Product Owner's ruling on where
+it goes. Recording it now so it is not lost between here and the section review.
+
+**There is no CLI verb that creates a task-implementing `block` card.** Verified directly, not taken from
+the worker's report: `card` has exactly one subcommand, `show`. `block` has `transition`, `gate`,
+`add-blocker`, `remove-blocker` and `approve` — every one of them operating on a card that already
+exists. No path writes a fresh block card at `drafting`.
+
+The one door that creates a block card is `section verdict --finding-new`, which is what block B's recipe
+had to use to get a block onto the board at all. That door is spec'd deliberately: `work-lifecycle`'s
+"Section remediation follows the finding, not the verdict" requires a supervisor's first-time finding to
+create a new block card carrying the finding as its brief. So the **remediation** path can mint a card.
+The ordinary path — the Architect carves a section into blocks and briefs one — has none.
+
+I can find no requirement in any spec under this change that says a work card can be created through the
+tool. So today a block card comes into existence only by hand-authoring a Markdown file, which is the
+practice `callboard` exists to replace. That is why this is worth a ruling rather than a note.
+
+**Product Owner ruling: raise it to §12's supervisor first, and decide once its verdict is in.** It sees
+the section whole and reads the specs rather than the tasks, and it is the one agent positioned to say
+whether this is a spec omission or a deliberate design in which the brief card is hand-authored and the
+tool only ever routes what already exists. It also may find a creation path I have not looked in the
+right place for. Nothing is decided until then, and nothing is built on the assumption either way.
+
+`@supervisor` — this goes in your brief as an explicit question when §12 closes. It is **not** a §12
+finding: §12 neither introduced it nor was scoped to fix it, and block B ran into it only because a
+verification recipe needed a populated board. Answer it as a question about the change as a whole.
+
+**[reviewer]** Narrow re-audit of block B's two `fix-before-land` items. Ran the rebuilt recipe verbatim
+myself rather than reading it, and checked every colour value in the stylesheet, not just the one flagged.
+
+**Item 1 — `BoardViewRenderer.cs:163` — confirmed.** `background: #8888881a` is a valid 8-digit RGBA hex:
+`#888888` at alpha `0x1a` (≈10.2%), a faint grey wash. Checked every other colour literal in the file
+(`:156`, `:162`, `:167`, `:168`) — `#8888`, `#8886`, `#8883` (valid 4-digit shorthand RGBA) and
+`#d9534f55` (valid 8-digit) — none share the 5-digit defect; item 1 was the only instance. Rendered the
+board (below) and confirmed the register area's columns carry the shading distinctly from the board
+columns above, which have no `background` rule at all — the two areas read as visually different kinds
+of thing, not just structurally separated by the `<h2>`.
+
+**Item 2 — confirmed by running the recipe, not by reading it.** Copy-pasted the worker's script verbatim
+into a file and ran it against a fresh `/tmp` scratch directory, exactly as posted (`git init -q` inside
+`$SCRATCH`, all ten `CB` invocations in order, then `view --out`). All ten commands returned
+`"ok":true`; the final `view` reported `"cardCount":7`. Inspected the emitted HTML directly against the
+recipe's eight numbered claims:
+
+1. Title "callboard", Board section with four lanes — Block (7 columns: Drafting, Briefed, Building, In
+   review, Approved, Landed, Closed), Section (2: Open, Closed), Question (2: Open, Answered), Finding
+   (1: Open only). Matches.
+2. Register section below, four lanes (Obligation, Rule, Hazard, Decision), each two columns, visibly
+   shaded per item 1. Matches.
+3. Block → Briefed has exactly one card, `B-0001` "Demo block for the board view", under owner
+   sub-heading `supervisor`, with `badge halted` (red, per `.badge.halted { background: #d9534f55; }`),
+   and inline `blocked-on` (`Q-0001 Demo open question`) and `halted-by` (`open question Q-0001 — Demo
+   open question`) both present on the card. Matches verbatim.
+4. Question → Open has `Q-0001` "Demo open question" under `product-owner`, with `owed-by:
+   product-owner` inline. Matches.
+5. `S-0001` under `architect` in Section/Open; `F-0001` under `reviewer` in Finding/Open; `R-0001` and
+   `H-0001` under `architect` in Rule/Open and Hazard/Open; `O-0001` under `architect` in
+   Obligation/Discharged. Four distinct owner names appear across the page (`architect`, `supervisor`,
+   `product-owner`, `reviewer`). Matches.
+6. Every other column — Block's Drafting/Building/In review/Approved/Landed/Closed, Section/Closed,
+   Question/Answered, Decision's both columns, Rule/Discharged, Hazard/Discharged,
+   Obligation/Open — renders `<p class="empty">No cards.</p>`, none missing or blank. Matches.
+7. No `<script>`, `<form>`, `<input>`, `<button>`, or `onclick` anywhere in the emitted HTML — confirmed
+   by grep, count zero. Matches: nothing editable or submittable.
+8. Re-ran `view --out ... --force` (from inside `$SCRATCH`, as the recipe requires) and re-opened the
+   file: `"cardCount":7` again, same content. My first attempt at this step ran `--force` from the
+   repository root instead of the scratch directory and got `cardCount:0` against this repo's own
+   (empty) store — that was my own error re-deriving the step from prose rather than the recipe's literal
+   `cd`-scoped invocation, not a defect in the recipe as written. Re-run correctly, it matches.
+
+All eight numbered claims match what the rendered page actually contains. No discrepancy found.
+
+**Repository hygiene — confirmed.** `git status --porcelain` before and after the run showed only the
+pre-existing block-B diff (`DEVLOG.md`, `CardKind.cs`, `CardOwner.cs`, `CliJsonContext.cs`,
+`CommandDispatcher.cs`, `CommandParser.cs`, and the four untracked new files) — nothing else. The
+recipe's own `$SCRATCH=$(mktemp -d /tmp/...)` and its `git init -q` inside that directory never touch
+this repository; `dotnet run --project` only reads this repo's source to build the tool. **Disposal**:
+the recipe's closing `rm -rf "$SCRATCH" /tmp/callboard-board-demo.html` — ran it, both paths gone
+afterwards (verified with `ls`, no matches).
+
+**`make gates`** →
+```
+BUILD_EXIT:0
+TEST_EXIT:0
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+1048/1048 tests passing, 0 failed, 0 skipped.
+
+**Verdict: Approve.**
+
+→ @architect
+
 ## NEXT
 
 **§11 is closed — supervisor `Approve` on the first pass (`a6c2561..HEAD`).** Five of five boxes ticked,

@@ -829,6 +829,21 @@ internal static class CommandDispatcher
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
+
+        /// <summary>
+        /// <c>view --out &lt;path&gt; [--force]</c> (§12 block B, record-retrieval: "a local,
+        /// read-only, human-readable view of the board" — a verb the spec does not name; the
+        /// Architect's ruling). No positional argument — the view covers the whole live record,
+        /// self-discovered the same way <see cref="State"/> and <see cref="Context"/> are, never
+        /// one section or change at a time. A pure read: no timestamp, no acting role, no lock on
+        /// any card; the only write this drives is <see cref="OutputPath"/> itself, the same
+        /// temp-file-then-rename discipline <see cref="SectionExport"/>/<see cref="ChangeExport"/>
+        /// already use (D7).
+        /// </summary>
+        internal sealed record View(string OutputPath, bool Force, string WorkingDirectory) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
     }
 
     /// <summary>
@@ -928,6 +943,8 @@ internal static class CommandDispatcher
         TResult Visit(ParsedCommand.SectionExport command);
 
         TResult Visit(ParsedCommand.ChangeExport command);
+
+        TResult Visit(ParsedCommand.View command);
     }
 
     /// <summary>
@@ -1043,6 +1060,8 @@ internal static class CommandDispatcher
         public CommandOutcome Visit(ParsedCommand.SectionExport command) => RunSectionExport(command);
 
         public CommandOutcome Visit(ParsedCommand.ChangeExport command) => RunChangeExport(command);
+
+        public CommandOutcome Visit(ParsedCommand.View command) => RunView(command);
     }
 
     internal static int Run(
@@ -4120,6 +4139,42 @@ internal static class CommandDispatcher
             onTargetExists: () => new CommandOutcome.Refusal(
                 "export-target-exists",
                 $"'{outputPath}' already exists; pass '--force' to overwrite it — an export is derived and regenerable."),
+            onToolFailure: static reason => throw new InvalidOperationException(reason));
+    }
+
+    /// <summary>
+    /// <c>view --out &lt;path&gt; [--force]</c> (§12 block B, record-retrieval: "a local,
+    /// read-only, human-readable view of the board"). A pure read over <see cref="
+    /// BoardViewAssembler.Build"/>'s result, rendered by <see cref="BoardViewRenderer.
+    /// Render"/> and written the same temp-file-then-rename way <see cref="RunSectionExport"/>
+    /// writes its own output (D7) — the only write this path drives.
+    /// </summary>
+    private static CommandOutcome RunView(ParsedCommand.View parsed)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var outputPath = Path.GetFullPath(Path.Combine(repoRoot, parsed.OutputPath));
+        var view = BoardViewAssembler.Build(repoRoot);
+        var document = BoardViewRenderer.Render(view);
+        var cardCount = view.Lanes.Concat(view.RegisterLanes)
+            .SelectMany(static lane => lane.Columns)
+            .Sum(static column => column.OwnerGroups.Sum(static group => group.Cards.Count));
+
+        return RecordExportWriter.WriteAtomically(outputPath, document, parsed.Force).Match<CommandOutcome>(
+            onWritten: () => new CommandOutcome.Success(new ViewResult
+            {
+                OutputPath = outputPath,
+                CardCount = cardCount,
+            }),
+            onTargetExists: () => new CommandOutcome.Refusal(
+                "export-target-exists",
+                $"'{outputPath}' already exists; pass '--force' to overwrite it — the view is derived and regenerable."),
             onToolFailure: static reason => throw new InvalidOperationException(reason));
     }
 
