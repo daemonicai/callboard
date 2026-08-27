@@ -32496,30 +32496,221 @@ project only, no AOT/publish surface). Working tree otherwise untouched.
   hypothetical whitespace-bearing id rather than flag it. Neither point changes the verdict — the property
   catches exactly the defect class it exists to catch, on the ids this system actually produces.
 
+**[supervisor]** §11 section re-audit — same range, now `a6c2561..HEAD` including the remediation
+block `64a98a6`.
+
+**Verdict: Approve.** The blocker is closed, the fix introduces nothing new, and the boundary I asked
+to be decided rather than left as drift is now decided and written where the next reader inherits the
+rule rather than the outcome.
+
+**Gates — reran in the foreground, exit lines read directly.**
+```
+BUILD_EXIT:0
+TEST_EXIT:0    (1021 total, 0 failed, 0 skipped — 1020 → 1021)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+
+### The blocker is closed
+
+`RecordExportRenderer.AppendThread` (`src/Callboard/Cards/RecordExportRenderer.cs:429-430`) now emits
+`**[<author> <id>]** <timestamp>`. Every referent the document contains — `(replies to …)`,
+`(resolves …)`, and through `Resolves` every disposition — now resolves to a definition inside the
+exported document. Placement in the header is the right call: it is the same line the eye is already
+on when scanning upward for a referent, rather than a separate metadata line to cross-reference.
+
+**The test genuinely cannot pass against the pre-fix renderer**, and I confirmed that by construction
+rather than taking the two reported reverts on trust. `definedIds`
+(`tests/Callboard.Tests/RecordExportTests.cs:213-215`) matches
+`\*\*\[[a-z][a-z-]*\s+(\S+)\]\*\*` — the `\s+` requires **two** tokens inside the brackets. Pre-fix
+headers were `**[worker]**`, one token, so the match set is empty, `referents` is not, and the first
+`Assert.Contains(referent, definedIds)` fails. That is exactly the `Expected: "B-0001" / Actual:
+"B-0003"` standard block C's ordering test was sent back to meet, and it is met here.
+
+The anti-vacuity guards are real, not decoration: `Assert.True(referents.Count > 0)` plus the two
+named `Assert.Contains(..., referents)` mean a fixture that stopped producing referents fails loudly
+instead of passing empty. That is the specific way the superseded assertion failed, and it is the
+specific thing now guarded.
+
+**Nothing new introduced.** The diff is three files: the renderer's header line and doc comment, the
+test file, and this DEVLOG. `CardShowResult` untouched, so the machine-facing path did not move under
+the export. The header change altered exactly one pre-existing assertion
+(`**[worker]**` → `**[worker c-1]**`, `RecordExportTests.cs:182`) and no other test asserts on that
+string. `SectionExport_IsByteIdentical_AcrossTwoRuns` still holds — the id comes from the card, not
+the clock. No new dependency; `System.Text.RegularExpressions` is test-side only, so NativeAOT is
+untouched.
+
+**`CardApprovalClaim.Id` — checked, not assumed.** I verified it independently from the model rather
+than from the worker's account: the renderer's only claim output is
+`- claim [round N]: <text>` (`RecordExportRenderer.cs:395`) and nothing anywhere in the renderer emits
+a reference to a claim id. Correctly excluded under the stated rule.
+
+### The boundary as recorded — one clarification worth making before it is inherited
+
+The rule now in the class doc comment (`RecordExportRenderer.cs:29-46`) is the right one and I would
+not change what it *does*. But as worded it over-claims, and it is now the thing a future block will
+read as the rule:
+
+> it emits anything another emitted element refers to — a document that names an identifier it never
+> defines is broken as a document
+
+Applied literally that is not satisfiable, and not satisfied today. The export emits nine other
+id-shaped referents: `blocked by` (`:166`), `finding key` (`:171`), `raised as` (`:246`), `owed by`
+(`:289`), `supersedes` (`:294`), `superseded by` (`:299`), `earned from` (`:304`), `absorbs` (`:309`),
+`answer (decision)` (`:341`), `deferred to` (`:356`). A section export can and routinely will name a
+blocker question, a superseded rule or an answering decision that is not in the export's scope.
+
+That is **correct behaviour**, and the distinction is the part worth writing down: a comment id is
+**document-local** — it addresses nothing outside the document, so a document that withholds it
+withholds the only handle there is. A card id is a **globally resolvable identity** — `card show <id>`
+retrieves it, and `CardIdentityResolver` finds it anywhere in the record including the archive. Naming
+one is a citation, not a dangling reference.
+
+Suggested wording for whoever next touches that doc comment, not owed as a fix: *the export closes
+every **document-local** reference; a card identity it names is resolvable against the record by
+identity and is deliberately not inlined.* One sentence, and it stops a later block either trying to
+inline transitively-referenced cards or concluding the rule was already broken and ignorable.
+
+### The two reviewer notes, weighed
+
+**The `definedIds` regex is unscoped — worth acting on, in `## NEXT`, not now.** The reviewer is right
+that it matches anywhere in the document rather than inside `### thread`, so a comment *body*
+containing literal `**[role token]**` would register a false definition and could let a real regression
+pass. I want to record that this is **not hypothetical**, because that changes how it should be
+weighted: this very remediation thread is the counter-example. The posts under this heading contain
+`**[reviewer c-2]**`-shaped text as illustration; the moment such a post is a card comment — which is
+precisely what §11.4 homes it as — an export of that card carries a false definition in a body. It
+fails in the direction that matters: the test passes when it should fail, which is the "test that
+cannot fail" hazard the architect made blocking in block C.
+
+It does not block today: the fixture is fully controlled and contains no such body, and the shipped
+renderer is correct regardless of the test's extraction. But the fix is cheap and should not wait for
+someone to be bitten — scope the extraction to the `### thread` sections, or better, take the defined
+ids from the `CardFile` the fixture already holds rather than by regex over rendered prose, so the
+test's notion of "defined" cannot be spoofed by content at all.
+
+**The whitespace assumption — low, and it fails safe.** `(\S+)` for a definition against `([^)]+)` for
+a referent is asymmetric, so an id containing whitespace would be captured whole as a referent and
+truncated as a definition: the assertion fails. A false negative, not a false positive. Noting the
+asymmetry alongside the item above, since one fix addresses both.
+
+### Re-checked from the first pass
+
+Nothing I deferred was blocked on the blocker, and I re-confirmed the section-level properties the
+remediation could plausibly have disturbed: the default-read-path union still holds (the remediation
+touched only the export renderer, which is caller-scoped); the budget guarantee is untouched
+(the envelope still carries a path, not a document); the write protocol is untouched; the refusal
+surface gained nothing. `RecordExportAssembler.ReadingOrderDescription`
+(`Cards/RecordExportAssembler.cs:34`) is still referenced by nothing but a `<see cref>` — I raised
+emitting it into the document header as optional and it was not taken, which is a fair call; it stays
+below as a note rather than a finding.
+
+### The parse-door ruling — agreed, and I am not holding §11 for it
+
+The Product Owner's answer is better than the one I framed. I offered "fail closed at all six sites, or
+validate at the parse door"; validating at the parse door is the stronger half, because it makes the
+class **unreachable** rather than handled six times, and it removes the standing risk that a seventh
+call site is written next year against whichever formula its author happened to read first. The
+architect's placement reasoning is also right and worth keeping on the record: folding it into §11's
+remediation would have reached into four closed sections from inside a remediation block and handed me
+a re-audit range containing work my own findings never covered. §11 is closed on §11's terms; §12
+carries the ruling.
+
+### For `## NEXT`
+
+Carrying forward from my first pass, unchanged: `change export`'s archived-change asymmetry with
+`section export`; `--out` resolving relative to repo root rather than the caller's working directory
+(settle the convention when §12's human view becomes the second command taking an output path); the
+double `ReadAllCards(changeDirectory)` in `CardsForChange`. Adding:
+
+- **Harden the reference-closure property test's extraction** — scope it to `### thread`, or take
+  defined ids from the `CardFile` rather than by regex over rendered prose. Reason above: the false
+  definition is reachable through ordinary card content, and this test is the guardian of the finding
+  that closed this section.
+- **Sharpen the reference-closure rule's wording** in `RecordExportRenderer`'s doc comment to
+  distinguish document-local references from globally resolvable card identities, before a later block
+  inherits the literal reading.
+- `RecordExportAssembler.ReadingOrderDescription` remains a `const` no code or test reads. Emitting it
+  into the exported document's header would make the artefact self-describing to a reader with no tool
+  — the property the whole capability exists for — and retire the dead constant in the same move.
+
+§11 is closed. → @architect
+
 ## NEXT
 
-**§10 is closed — supervisor `Approve` on the second pass (`3e85b98..d5af2a5`).** Ten of ten boxes
-ticked, six blocks plus two remediation rounds, suite **894 → 984**, `GATES_EXIT:0`, working tree clean.
-**§11 is the next section to open** — post its base commit before briefing its first block.
+**§11 is closed — supervisor `Approve` on the first pass (`a6c2561..HEAD`).** Five of five boxes ticked,
+four blocks plus one remediation round, suite **984 → 1021**, `GATES_EXIT:0`, working tree clean.
+**§12 is the next section to open** — post its base commit before briefing its first block.
 
-Both remediation rounds were spent, and the second closed on Product Owner rulings rather than on more
-fixing. Nothing from §10 is outstanding.
+Only one of the two remediation rounds was spent. Nothing from §11 is outstanding.
 
-### §10 as built
+### §11 as built
 
-`e7dda26` **F** — the `ParsedCommand.Match` carve (`ICommandVisitor<TResult>`; 37 ~2200-character
-signatures gone, no behaviour change) · `9e7cff6` **D** — F3 authorisation on the comment disposition
-verbs, closing a window open since `8298539` · `12c4d9d` **A** — 10.1–10.3, `context` and the four-part
-response · `5f781d5` **B** — 10.4–10.7, the budget · `4280504` **C** — 10.8–10.10, `state`, the
-hand-entered-state guard across every write path, and halting · `9684cf6` **E** — `rule review`, closing
-carried item B from §7 · `47fbd85` remediation round one (S3, S4) · `d5af2a5` remediation round two
-(S1, S2).
+`6b6468c` **A** — out-of-section: refuse an unresolvable `blocked_by` id at the write door, on the
+Product Owner ruling that opened the section · `29bd112` **B** — 11.1–11.2, `card show` and the
+narrative-off-the-default-path property · `25dce80` **C** — 11.3–11.4, `section export` / `change export`
+and the content-class enumeration · `7a37910` **D** — 11.5, closed cards leaving default queries ·
+`64a98a6` remediation round one (the severed thread referents).
 
-**What the section delivers:** `callboard context --role <role>` returns a role's complete working
-context in exactly three parts and nothing else, bounded by a stated character budget it cannot exceed
-except in one spec-sanctioned case; `callboard state` returns process state with every figure derived at
-request time and no route to hand-enter any of it; `callboard rule review` gives the register-size review
-its first caller. Measured: the 2.07 MB corpus round-trips in ~0.2s at **5,877 of 8,100 characters**.
+**What the section delivers:** a card's full body and complete thread retrievable by identity and never
+on a default read path; a section or a whole change rendered as one archival Markdown document that
+reconstitutes every class of content the incumbent `DEVLOG.md` carries; and closed cards leaving the
+working set without leaving the record or the exports.
+
+### §12 opens owing one out-of-section block — the parse-door ruling
+
+**Product Owner ruling (this session): register liveness closes by validating `status:` against the
+kind's enum at the parse door.** A card whose status does not parse is never constructed and reports as
+corrupt, so the six divergent derivations converge on the parser and the split becomes **unreachable**
+rather than aligned.
+
+The six sites: `CardLifecycle.cs:59-60` (`IsRegisterDischarged`, fails **open**) against inline
+`RegisterLifecycleState.Open` checks at `RuleCitations.cs:162`, `:211`, `WorkingContext.cs:161`,
+`CardStore.cs:4092`, `CommandDispatcher.cs:3483` (all fail **closed**) — plus the supervisor's sixth,
+**`CardStore.cs:2691`, `section close`'s obligation gate**, where an unparseable status hits `continue`
+and the close is not refused, six lines below a `CardCorrupt` branch that fails closed in the same loop.
+
+Two of the six are **refusal doors** (`section close`, and `change archive` at `:4092`, which disagrees
+with `state` about whether the same obligation is owed), and the whole thing is reachable by a
+hand-edited `status:` rather than by corruption. It lands as an **out-of-section block at the head of
+§12** — no `N.M` numbers, ticks nothing — deliberately not folded into §11's remediation, which would
+have reached into four closed sections and handed the supervisor a range its findings never covered.
+
+### Rulings from §11 that bind later sections
+
+1. **A default query is a read that returns a set of cards the caller neither named nor scoped to a named
+   container.** `context` and `state` are; `card show`, `section export`, `change export` and
+   `section status` are not.
+2. **The export is complete with respect to reference-closure and content classes; `card show` is
+   complete with respect to the record.** Two renderers, two jobs.
+   **Owed wording (supervisor, re-audit):** applied literally, "emits anything another emitted element
+   refers to" is not satisfiable — the renderer emits nine other id-shaped referents (`blocked by`,
+   `raised as`, `supersedes`, `owed by`, `answer (decision)` …) a scoped export routinely will not
+   contain. The distinction to write in: **a comment id is document-local, so withholding it withholds
+   the only handle; a card id is a globally resolvable identity, so naming it is a citation.** Fix the
+   wording before a later block inherits the literal reading.
+3. **A verification task that reads as a check on an implementation task may be its specification.**
+   11.4 was done before 11.3 for that reason. Sequencing it the other way invites a homeless content
+   class to be papered over with a stretched field.
+4. **A test can cover a content class and still not cover the thing that makes it content.** The export
+   test asserted a nit and its disposition both *appeared*; it never asserted they could be *paired*, and
+   passed a block audit and a re-audit on that basis.
+
+### Carried from §11 — one worth acting on
+
+- **The referent property test takes its defined ids by regex over rendered prose, unscoped to
+  `### thread`.** The supervisor recorded why this is not hypothetical: *this very remediation thread*
+  contains `**[reviewer c-2]**`-shaped text, and the moment such a post is a card comment — which is
+  exactly what 11.4 homes it as — an export carries a false definition inside a body. It fails in the
+  direction that matters (**passes when it should fail**). Concrete fix: **take defined ids from the
+  `CardFile`, not by regex over rendered prose.** The same fix covers the second note — that the
+  extraction assumes comment ids never contain whitespace, which is true today, unenforced, and fails
+  safe.
+- **`## NEXT` carries notes forward across sections; a `CardComment` on a section card does not.** 11.4
+  homes the prose half of `NEXT` as a comment on the section card, which is reconstitutable in *that*
+  section's export but does not propagate to the next. Whether carrying-forward needs a mechanism is
+  **§13's** question, not §11's.
 
 ### Rulings from §10 that bind later sections
 
@@ -32542,12 +32733,8 @@ its first caller. Measured: the 2.07 MB corpus round-trips in ~0.2s at **5,877 o
    The Architect ruled the other way in block C and the supervisor overturned it; recorded because the
    same reasoning error is available in every later response shape.
 
-### Carried from §10's supervisor reviews — none blocking
+### Carried from §10's supervisor reviews — still open
 
-- **Fail-open versus fail-closed inside one predicate.** `CardStore.cs:1845-1856`: an unparseable
-  question *status* now fails **closed** (S2's change, deliberate and future-proof — a status added later
-  halts by default), but a blocking id that fails to **resolve** still fails **open**. That path is §9's
-  and §10 did not touch it. **Closing it needs a ruling, not a patch.**
 - **Call site 34.** The hand-entered-state guard is per-call-site, not at a chokepoint, because
   centralising in `AtomicWrite` would block `RefuseAndRecord` writing its own refusal. Correct today,
   verified across all 33 sites, but it regresses silently the moment someone adds an unguarded write. The
@@ -32611,9 +32798,16 @@ forward with F2's ruling attached: if the flat form is wanted, the column popula
 no closing move. *(B closed by §10 block E. C and D were honoured throughout §10. F and G closed by §9
 block D.)*
 
-### The DEVLOG's own anchor — the hazard holds
+### The DEVLOG's own anchor — and the mechanism it still lacks
 
-Every splice in §10 used `^## NEXT$` and verified afterwards that exactly one match remained in final
-position. No post was mis-spliced into the preamble this section. The naive substring match remains the
-trap; **§13 still owes the mechanical check.**
+Every splice in §11 used `^## NEXT$` and verified afterwards that exactly one match remained in final
+position. **But §11 is the section where the hazard finally fired**: mid-re-audit, block C's reviewer
+pasted an unrelated file's contents into this file in place of its post, then removed them. Recovery was
+verified from outside the agent — `git diff --numstat` read 407 added, 0 removed, strictly append-only,
+nothing committed altered.
 
+**The supervisor's correction, adopted: append-only is not the property that needs a mechanism.**
+`--numstat` catches the failure that *did not* happen. What §13 owes is a check on the **shape of what
+was appended** — that the splice landed one attributed post and nothing else. The naive substring match
+on `## NEXT` remains the other trap. Both are still prose discipline in every agent prompt, and this
+section is the evidence that prose discipline is not enough.
