@@ -45,9 +45,10 @@ internal static class CommandParser
         "comment" => ParseComment(context),
         "context" => ParseContext(context),
         "state" => ParseState(context),
+        "card" => ParseCard(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit, comment, context, state.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit, comment, context, state, card.")),
     };
 
     /// <summary>
@@ -3138,5 +3139,53 @@ internal static class CommandParser
         }
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.State(context.WorkingDirectory));
+    }
+
+    /// <summary>
+    /// <c>card</c>'s only job is routing to a subcommand — currently just <c>show</c>. The same
+    /// "no subcommand or an unrecognised one refuses and names what does exist" shape every other
+    /// routing verb here follows (see <see cref="ParseIndex"/>).
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseCard(CommandDispatcher.CommandContext context)
+    {
+        switch (context.Arguments.Peek())
+        {
+            case null:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "missing-subcommand",
+                    "'card' requires a subcommand. Known subcommands: show."));
+            case "show":
+                context.Arguments.TryTake();
+                return ParseCardShow(context);
+            case var subcommand:
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "unknown-subcommand",
+                    $"no such 'card' subcommand: '{subcommand}'. Known subcommands: show."));
+        }
+    }
+
+    /// <summary>
+    /// Builds <c>card show &lt;id&gt;</c>'s <see cref="CommandDispatcher.ParsedCommand.CardShow"/>:
+    /// one positional card id (§11 block B: "the id is positional, matching <c>block add-blocker</c>'s
+    /// correction"), and no flags at all — resolution is by identity alone, the same reason
+    /// <c>state</c> takes none.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseCardShow(CommandDispatcher.CommandContext context)
+    {
+        var id = context.Arguments.TryTake();
+        if (id is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'card show' requires a card id."));
+        }
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal));
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.CardShow(id, context.WorkingDirectory));
     }
 }

@@ -788,6 +788,21 @@ internal static class CommandDispatcher
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
+
+        /// <summary>
+        /// <c>card show &lt;id&gt;</c> (§11 block B, record-retrieval: "the system SHALL return a
+        /// card's full content, including every comment on it, given the card's identity"). Kind-
+        /// agnostic by design — <see cref="Id"/> is resolved through <see cref="Cards.
+        /// CardIdentityResolver.Resolve"/> without a kind filter, the same reason <see
+        /// cref="ResolveAnyCardReference"/> exists for the <c>comment</c> verbs: an id can name any
+        /// card kind, so retrieval by identity cannot be a kind-specific verb. Read-only, so no
+        /// timestamp and no lock, for the same reason <see cref="Context"/>/<see cref="State"/> have
+        /// neither (ADR-0004: a pure read takes no lock).
+        /// </summary>
+        internal sealed record CardShow(string Id, string WorkingDirectory) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
     }
 
     /// <summary>
@@ -881,6 +896,8 @@ internal static class CommandDispatcher
         TResult Visit(ParsedCommand.Context command);
 
         TResult Visit(ParsedCommand.State command);
+
+        TResult Visit(ParsedCommand.CardShow command);
     }
 
     /// <summary>
@@ -990,6 +1007,8 @@ internal static class CommandDispatcher
         public CommandOutcome Visit(ParsedCommand.Context command) => RunContext(command, RecognisedCommandName);
 
         public CommandOutcome Visit(ParsedCommand.State command) => RunState(command);
+
+        public CommandOutcome Visit(ParsedCommand.CardShow command) => RunCardShow(command);
     }
 
     internal static int Run(
@@ -3837,26 +3856,40 @@ internal static class CommandDispatcher
     /// resolution here never filters on <see cref="CardKind"/> the way every kind-specific verb's
     /// own resolution does. Same three refusal codes, same reasoning, minus the kind check.
     /// </summary>
-    private static (CommandOutcome? Refusal, string? FilePath) ResolveAnyCardReference(string repoRoot, string id, string flagLabel) =>
-        CardIdentityResolver.Resolve(repoRoot, id).Match<(CommandOutcome?, string?)>(
-            onFound: (filePath, _) => (null, filePath),
+    private static (CommandOutcome? Refusal, string? FilePath) ResolveAnyCardReference(string repoRoot, string id, string flagLabel)
+    {
+        var (refusal, filePath, _) = ResolveAnyCardReferenceWithCard(repoRoot, id, flagLabel);
+        return (refusal, filePath);
+    }
+
+    /// <summary>
+    /// <see cref="ResolveAnyCardReference"/>'s own implementation, plus the resolved
+    /// <see cref="CardFile"/> itself — added for <c>card show</c> (§11 block B), which needs the
+    /// card it resolved to build its response and must not read the record a second time (or take
+    /// a lock, ADR-0004) to get it. <see cref="ResolveAnyCardReference"/> is kept as a thin wrapper
+    /// over this rather than duplicated, so the three refusal codes and their wording stay in
+    /// exactly one place.
+    /// </summary>
+    private static (CommandOutcome? Refusal, string? FilePath, CardFile? Card) ResolveAnyCardReferenceWithCard(string repoRoot, string id, string flagLabel) =>
+        CardIdentityResolver.Resolve(repoRoot, id).Match<(CommandOutcome?, string?, CardFile?)>(
+            onFound: (filePath, card) => (null, filePath, card),
             onNotFound: notFoundId => (
                 new CommandOutcome.Refusal(
                     "card-id-not-found",
                     $"{flagLabel} names id '{notFoundId}', but no card in the record carries it."),
-                null),
+                null, null),
             onDuplicate: (duplicateId, filePaths) => (
                 new CommandOutcome.Refusal(
                     "duplicate-card-id",
                     $"{flagLabel} names id '{duplicateId}', but {filePaths.Count} card files claim it ({string.Join(", ", filePaths)}); " +
                     "refusing to guess which one is the target."),
-                null),
+                null, null),
             onUnreadable: (unreadableId, filePaths) => (
                 new CommandOutcome.Refusal(
                     "card-id-unresolvable",
                     $"{flagLabel} names id '{unreadableId}', but {filePaths.Count} card file(s) elsewhere in the record could not " +
                     $"be read, so its presence cannot be confirmed or ruled out: {string.Join(", ", filePaths)}."),
-                null));
+                null, null));
 
     /// <summary>
     /// <c>context --role &lt;role&gt;</c> (§10 block A, working-context: "given a role, the system
@@ -3955,6 +3988,221 @@ internal static class CommandDispatcher
             })],
         });
     }
+
+    /// <summary>
+    /// <c>card show &lt;id&gt;</c> (§11 block B, record-retrieval: "the system SHALL return a card's
+    /// full content, including every comment on it, given the card's identity"). A pure read — no
+    /// lock, no timestamp — resolved through <see cref="ResolveAnyCardReferenceWithCard"/> (never a
+    /// hand-rolled directory walk, §7 carried item C), which is kind-agnostic because an id can name
+    /// any card kind. This reports; it never records (§9 ruling 1: a pure read asserts nothing about
+    /// the record) — every failure path below is <see cref="ResolveAnyCardReferenceWithCard"/>'s own
+    /// bare <see cref="CommandOutcome.Refusal"/>, with no <c>Rule</c>/<c>Remedy</c> and so no
+    /// <c>RefuseAndRecord</c> anywhere on this path.
+    ///
+    /// <para>
+    /// <b>No liveness filter (§11 block B brief).</b> A closed card is retrievable by identity
+    /// exactly as a live one is — retrieval by identity is not a default query, so §11 block D's
+    /// "closed cards leave default queries" has nothing to say here. <see cref="Cards.
+    /// CardIdentityResolver.Resolve"/> itself has no notion of open/closed at all, so this simply
+    /// never asks it one.
+    /// </para>
+    /// </summary>
+    private static CommandOutcome RunCardShow(ParsedCommand.CardShow parsed)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var (refusal, filePath, card) = ResolveAnyCardReferenceWithCard(repoRoot, parsed.Id, "'card show'");
+        if (refusal is not null)
+        {
+            return refusal;
+        }
+
+        return new CommandOutcome.Success(BuildCardShowResult(filePath!, card!));
+    }
+
+    /// <summary>
+    /// Maps a resolved <see cref="CardFile"/> onto <see cref="CardShowResult"/> group for group,
+    /// in the same order <see cref="CardFile"/> itself declares them — see that type's own doc
+    /// comment for why each kind-specific field group is always present, empty where inapplicable,
+    /// rather than this method branching on <see cref="Cards.CardFrontmatter.Kind"/> to decide what
+    /// to populate.
+    /// </summary>
+    private static CardShowResult BuildCardShowResult(string filePath, CardFile card) => new()
+    {
+        Id = card.Frontmatter.Id,
+        Kind = card.Frontmatter.Kind.ToWireString(),
+        FilePath = filePath,
+        Title = card.Frontmatter.Title,
+        Status = card.Frontmatter.Status,
+        Owner = card.Frontmatter.Owner.ToWireString(),
+        Scope = card.Frontmatter.Scope.ToWireString(),
+        Section = card.Frontmatter.Section,
+        Created = card.Frontmatter.Created,
+        Updated = card.Frontmatter.Updated,
+        UnknownFrontmatterFields = MapUnknownFields(card.UnknownFrontmatterFields),
+        Body = card.Body,
+        Handovers = [.. card.Handovers.Select(static handover => new CardShowHandoverResult
+        {
+            By = handover.By.ToWireString(),
+            To = handover.To.ToWireString(),
+            Timestamp = handover.Timestamp,
+            UnknownFields = MapUnknownFields(handover.UnknownFields),
+        })],
+        BlockFields = new CardShowBlockFieldsResult
+        {
+            Base = card.BlockFields.Base,
+            ReviewedState = card.BlockFields.ReviewedState,
+            Tasks = [.. card.BlockFields.Tasks],
+            Round = card.BlockFields.Round,
+            BlockedBy = [.. card.BlockFields.BlockedBy],
+            GateResults = [.. card.BlockFields.GateResults.Select(static gate => new CardShowGateResultResult
+            {
+                Label = gate.Label,
+                ExitCode = gate.ExitCode,
+                Round = gate.Round,
+            })],
+            FindingKey = card.BlockFields.FindingKey,
+        },
+        Transitions = [.. card.Transitions.Select(static transition => new CardShowTransitionResult
+        {
+            By = transition.By.ToWireString(),
+            Name = transition.Name,
+            From = transition.From.ToWireString(),
+            To = transition.To.ToWireString(),
+            Timestamp = transition.Timestamp,
+            UnknownFields = MapUnknownFields(transition.UnknownFields),
+        })],
+        Claims = [.. card.Claims.Select(static claim => new CardShowApprovalClaimResult
+        {
+            Id = claim.Id,
+            Round = claim.Round,
+            Text = claim.Text,
+            UnknownFields = MapUnknownFields(claim.UnknownFields),
+        })],
+        Limits = [.. card.Limits.Select(static limit => new CardShowApprovalLimitResult
+        {
+            Round = limit.Round,
+            Text = limit.Text,
+            UnknownFields = MapUnknownFields(limit.UnknownFields),
+        })],
+        SectionFields = new CardShowSectionFieldsResult
+        {
+            Base = card.SectionFields.Base,
+            ClosedBy = card.SectionFields.ClosedBy?.ToWireString(),
+            ClosedAt = card.SectionFields.ClosedAt,
+            Verdicts = [.. card.SectionFields.Verdicts.Select(static verdict => new CardShowSectionVerdictResult
+            {
+                By = verdict.By.ToWireString(),
+                Verdict = verdict.Verdict.ToWireString(),
+                RangeFrom = verdict.RangeFrom,
+                RangeTo = verdict.RangeTo,
+                Timestamp = verdict.Timestamp,
+                UnknownFields = MapUnknownFields(verdict.UnknownFields),
+            })],
+            Authorisations = [.. card.SectionFields.Authorisations.Select(static authorisation => new CardShowSectionAuthorisationResult
+            {
+                By = authorisation.By.ToWireString(),
+                Reason = authorisation.Reason,
+                Timestamp = authorisation.Timestamp,
+                UnknownFields = MapUnknownFields(authorisation.UnknownFields),
+            })],
+        },
+        FindingFields = BuildCardShowFindingFields(card.FindingFields),
+        RegisterFields = new CardShowRegisterFieldsResult
+        {
+            Condition = card.RegisterFields.Condition,
+            Cadence = card.RegisterFields.Cadence,
+            DischargedBy = card.RegisterFields.DischargedBy?.ToWireString(),
+            DischargedAt = card.RegisterFields.DischargedAt,
+            OwedBy = card.RegisterFields.OwedBy,
+            DeclinedReason = card.RegisterFields.DeclinedReason,
+            Supersedes = card.RegisterFields.Supersedes,
+            SupersededBy = card.RegisterFields.SupersededBy,
+            EarnedFrom = [.. card.RegisterFields.EarnedFrom],
+            Absorbs = [.. card.RegisterFields.Absorbs],
+        },
+        QuestionFields = new CardShowQuestionFieldsResult
+        {
+            AnsweredBy = card.QuestionFields.AnsweredBy?.ToWireString(),
+            AnsweredAt = card.QuestionFields.AnsweredAt,
+            AnswerDecisionId = card.QuestionFields.AnswerDecisionId,
+            AnswerInline = card.QuestionFields.AnswerInline,
+            DeferredBy = card.QuestionFields.DeferredBy?.ToWireString(),
+            DeferredAt = card.QuestionFields.DeferredAt,
+            DeferredTarget = card.QuestionFields.DeferredTarget,
+        },
+        Refusals = [.. card.Refusals.Select(static entry => new CardShowRefusalResult
+        {
+            By = entry.By.ToWireString(),
+            Rule = entry.Rule,
+            Remedy = entry.Remedy,
+            Timestamp = entry.Timestamp,
+            UnknownFields = MapUnknownFields(entry.UnknownFields),
+        })],
+        Comments = [.. card.Comments.Select(static comment => new CardShowCommentResult
+        {
+            Id = comment.Id,
+            Author = comment.Author.ToWireString(),
+            Timestamp = comment.Timestamp,
+            Body = comment.Body,
+            ReplyTo = comment.ReplyTo,
+            To = comment.To?.ToWireString(),
+            Resolves = comment.Resolves,
+            IsNit = comment.IsNit,
+            Required = comment.Required,
+            Sites = comment.Sites,
+            Disposition = comment.Disposition?.ToWireString(),
+            UnknownHeaderFields = MapUnknownFields(comment.UnknownHeaderFields),
+        })],
+    };
+
+    /// <summary>
+    /// <see cref="Cards.FindingExtent"/> and <see cref="Cards.FindingBlindSpotDeclaration"/> are
+    /// closed unions with no <c>ToWireString</c> extension of their own (nothing before this verb
+    /// ever needed to put either on the wire) — flattened here via <c>Match</c> to a discriminator
+    /// plus the one payload field the matched case carries, every other payload field left at its
+    /// empty default, the same "one shape, all cases present" idiom the rest of this mapping
+    /// follows.
+    /// </summary>
+    private static CardShowFindingFieldsResult BuildCardShowFindingFields(FindingCardFields fields)
+    {
+        var (extentKind, extentInstrument, extentItems) = fields.Extent.Match(
+            onInstrument: static command => ("instrument", (string?)command, (IReadOnlyList<string>)[]),
+            onExplicit: static items => ("explicit", (string?)null, (IReadOnlyList<string>)[.. items]),
+            onBlockScope: static () => ("blockScope", (string?)null, (IReadOnlyList<string>)[]));
+
+        var (blindSpotKind, blindSpotRaisedAsId) = fields.BlindSpot.Match(
+            onNone: static () => ("none", (string?)null),
+            onRaisedAs: static cardId => ("raisedAs", (string?)cardId));
+
+        return new CardShowFindingFieldsResult
+        {
+            Instrument = fields.Instrument,
+            ExtentKind = extentKind,
+            ExtentInstrument = extentInstrument,
+            ExtentItems = extentItems,
+            VerifiedAt = fields.VerifiedAt,
+            BlindSpotKind = blindSpotKind,
+            BlindSpotRaisedAsId = blindSpotRaisedAsId,
+            ExtentFingerprintFiles = fields.ExtentFingerprint?.Files
+                .Select(static file => new CardShowFingerprintFileResult
+                {
+                    RelativePath = file.RelativePath,
+                    ContentHash = file.ContentHash,
+                })
+                .ToList(),
+            Disposition = fields.Disposition.Match(onMeasured: static () => "measured", onArguedClean: static () => "arguedClean"),
+        };
+    }
+
+    private static IReadOnlyList<CardShowUnknownFieldResult> MapUnknownFields(IReadOnlyList<(string Key, string RawValue)> fields) =>
+        [.. fields.Select(static field => new CardShowUnknownFieldResult { Key = field.Key, RawValue = field.RawValue })];
 
     /// <summary>
     /// The default <c>rule review</c> ceiling, used whenever <c>--ceiling</c> is absent (§10 block

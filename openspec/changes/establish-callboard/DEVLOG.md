@@ -31161,6 +31161,220 @@ ruling's explicit instruction. Not raised as a finding.
 
 No blockers. No nits.
 
+**[architect]** Brief — §11 **block B** (`11.1`, `11.2`). → @worker
+
+**11.1 — retrieval by identity.** `record-retrieval`: *"the system SHALL return a card's full content,
+including every comment on it, given the card's identity. This material SHALL be retrievable and
+quotable, and SHALL NOT appear on any default read path."*
+
+**11.2 — the other half of the same requirement**, verified against §10's shipped `context`: no narrative
+outside the caller's queue reaches the working-context response.
+
+### Decisions already made — implement these, do not re-open them
+
+1. **New top-level verb `card`, subcommand `show <id>`.** Kind-agnostic, because resolution is by
+   identity and any kind must be retrievable. Every other top-level verb in `CommandParser.cs:34-47` is
+   a kind noun; `card` is the kind-agnostic one and leaves room for later card-level verbs. The id is
+   **positional**, matching `block add-blocker` (block A's correction).
+2. **Read the file. Never the index.** `design.md:95-100` — *"Comment bodies stay in files; narrative
+   retrieval is a file read by identity"* — and `record-retrieval`'s *"Derived state SHALL NOT be
+   authoritative for anything"*. Resolve through `CardIdentityResolver.Resolve` (§7 carried item C: never
+   a hand-rolled walk), handle all four cases.
+3. **This reports; it never records.** §9 ruling 1: a pure read asserts nothing about the record. Not
+   found / duplicate / unreadable **report** at the door — no `RefuseAndRecord`, no refusal entry
+   appended to anything. And **no lock** (ADR-0004: pure reads take none).
+4. **"In full" means every group on `CardFile`** — frontmatter, body, handovers, the kind field groups
+   (block/section/finding/register/question), transitions, claims, limits, refusals, and the **complete**
+   thread with each comment's `ReplyTo`/`To`/`Resolves`, its nit metadata (`IsNit`, `Required`, `Sites`,
+   `Disposition`) and its `UnknownHeaderFields` preserved verbatim. Mirror `CardFile`'s own idiom — one
+   result shape, all groups present and empty where not applicable — rather than per-kind result types.
+   One `CliJsonContext` entry, not nine.
+5. **No budget applies.** §10's budget is a requirement of the *working-context* response and of nothing
+   else — the same reasoning that left `state` unbounded in §10's `## NEXT`. `card show` is the quotable
+   path; it is never truncated and says nothing about truncation.
+6. **No liveness filter at all.** A closed card is retrievable by identity. Retrieval by identity is not
+   a default query, so `11.5`'s "closed cards leave default queries" must never reach this path. Pin it
+   with a test now so block D does not have to retrofit it.
+
+### 11.2 — verify it as a property, not with spot assertions
+
+The coverage gate is the standard here (§10 ruling 2). Seed narrative with **distinctive marker bodies**
+on cards that must not leak, then assert no marker appears anywhere in the serialised `context` response.
+Read `specs/working-context/spec.md:9-24` first — parts 1–4 and the sentence after them are the whole
+statement of what may appear.
+
+Cover at least: a card owned solely by another role; a **closed** card; register cards (after §10's S3,
+part 1 emits **ids**, not bodies — pin that); **queue entries other than the top item, which are bare**;
+and narrative from a prior section.
+
+Note the shape of part 2 before you write a test against it: an unresolved comment addressed to the
+caller **pulls that card into the queue**. It is not an out-of-queue exception, so do not write a test
+asserting that such a card's narrative is excluded — it is in the queue by definition, and only the top
+item is rendered in full.
+
+**If the property does not hold**, that is a §10 defect surfacing. If you can close it without changing
+the shape of the `context` response, do so and flag it at the top of your post in its own heading. If it
+needs the response shape to change, **stop and report** — that is mine, not yours.
+
+### Standing constraints
+
+Wire the new result into `Cli/CliJsonContext.cs`. NativeAOT: no reflection, no runtime codegen, no new
+dependency. Do not touch `Makefile`, `tasks.md`, `CLAUDE.md`, `.claude/`. Do not commit. Do not tick —
+I tick `11.1` and `11.2` after the gates.
+
+**Done-gates.** `make gates` → quote **all four** exit lines plus `GATES_EXIT:0`, and the suite total
+before and after (988 at `6b6468c`). Post here and hand off `→ @reviewer`.
+
+**[worker]** §11 block B done — `11.1`, `11.2`.
+
+**11.1 — `card show <id>`.** New top-level verb `card`, subcommand `show <id>` (id positional,
+matching `block add-blocker`'s correction). Kind-agnostic: resolved through
+`CardIdentityResolver.Resolve` via a new `ResolveAnyCardReferenceWithCard` — `ResolveAnyCardReference`
+(the `comment` verbs' own resolver) is now a thin wrapper over it, so the three refusal codes
+(`card-id-not-found`, `duplicate-card-id`, `card-id-unresolvable`) and their wording stay in exactly
+one place rather than being duplicated for this verb. No lock, no `RefuseAndRecord` anywhere on this
+path — every failure is `ResolveAnyCardReferenceWithCard`'s own bare `CommandOutcome.Refusal` (no
+`Rule`/`Remedy`), matching §9 ruling 1: a pure read asserts nothing about the record.
+
+`CardShowResult` (`Cli/CardShowResult.cs`) mirrors `CardFile` group for group — frontmatter, body,
+handovers, all five kind-specific field groups (block/section/finding/register/question),
+transitions, claims, limits, refusals, and the complete comment thread with `ReplyTo`/`To`/`Resolves`,
+nit metadata (`IsNit`/`Required`/`Sites`/`Disposition`) and `UnknownHeaderFields` verbatim. One shape,
+one `CliJsonContext` entry, every group present and empty where inapplicable — the same idiom
+`CardFile` itself follows, rather than nine per-kind result types. No budget field, never truncated.
+No liveness filter: a closed card resolves exactly as a live one does (pinned by
+`ClosedCard_IsStillRetrievable`, per the brief, so §11 block D's default-query liveness filter can
+never regress onto this path).
+
+**A decision the brief left to me: `FindingExtent`/`FindingBlindSpotDeclaration` have no
+`ToWireString`.** Neither closed union had ever needed to reach the wire before this verb. Flattened
+each to a `*Kind` discriminator plus the one payload field that case carries (`extentKind` +
+`extentInstrument`/`extentItems`; `blindSpotKind` + `blindSpotRaisedAsId`), every other payload field
+left at its empty default — the same "one shape, all cases present" idiom the rest of the mapping
+uses, via `Match` in `CommandDispatcher.BuildCardShowFindingFields` rather than a new extension method
+on either type (nothing else needs one yet, and adding one unasked pre-empts whatever wire spelling a
+future verb that does need it would actually want).
+
+**11.2 — the property.** New `CommandDispatcherContextNarrativeLeakTests.cs`. One property test
+(`Success_NoNarrativeOutsideTheCallersQueue_LeaksIntoTheResponse`) seeds four distinct marker bodies —
+a card owned solely by another role, a closed card, a closed card in a different ("prior") section,
+and the second of two owned queue entries (queue order: oldest `updated` first, so it sorts after the
+top item) — then asserts none of the four markers appear anywhere in the response's raw serialised
+JSON, plus that every queue entry (including the top one) carries no `body`/`comments` property at
+all. A second test, `TopItem_Constraints_NameRegisterCardsByIdOnly_NeverByBody`, re-pins §10
+remediation S3 at the response boundary: a rule card's marker body is asserted to appear **exactly
+once** in the whole response (part 1's own delivered body) and never a second time through
+`topItem.constraints`, which is checked to hold only the id.
+
+**The property holds — no §10 defect surfaced.** Traced why before writing the test, not after:
+`WorkingContextAssembler.Build` excludes a closed card (`CardLifecycle.IsClosed`) before ownership or
+addressing is even considered, and a rule/hazard card is diverted to part 1 and `continue`d past the
+queue entirely before that closed check runs at all — so neither exclusion is reachable by a role or a
+section value, only by the card's own kind/status. Non-top queue entries were already bare by
+construction (`ContextQueueEntryResult` carries no body field to begin with). Per the brief: deliberately
+**not** tested — a card carrying an unresolved comment addressed to the caller. Part 2 pulls such a
+card into the queue by definition; it is not an out-of-queue exception, so no fixture here asserts its
+narrative is excluded, only (via the same non-top-entry assertion) that it stays bare unless it happens
+to be the top item.
+
+**Gates.** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite **988 → 1005**
+(17 new: 15 in `CardShowTests.cs`, 2 in `CommandDispatcherContextNarrativeLeakTests.cs`). Working
+tree has uncommitted changes only in
+`src/Callboard/Cli/CommandDispatcher.cs`, `src/Callboard/Cli/CommandParser.cs`,
+`src/Callboard/Cli/CliJsonContext.cs`, new file `src/Callboard/Cli/CardShowResult.cs`, new file
+`tests/Callboard.Tests/CardShowTests.cs`, new file
+`tests/Callboard.Tests/CommandDispatcherContextNarrativeLeakTests.cs`, and this DEVLOG. No `N.M` boxes
+touched; `tasks.md` untouched.
+
+→ @reviewer
+
+**[reviewer]** §11 block B audit (`11.1`, `11.2`) — **Approve**.
+
+**Scope.** Diff touches exactly `src/Callboard/Cli/CommandDispatcher.cs`, `CommandParser.cs`,
+`CliJsonContext.cs`, new files `Cli/CardShowResult.cs`, `tests/Callboard.Tests/CardShowTests.cs`,
+`tests/Callboard.Tests/CommandDispatcherContextNarrativeLeakTests.cs`, plus this DEVLOG. No
+`Makefile`/`tasks.md`/`CLAUDE.md`/`.claude/` edit, no box ticked, no reach outside §11.
+
+**`ResolveAnyCardReferenceWithCard` refactor — verified byte-for-byte against every existing call
+site.** `ResolveAnyCardReference` is now a thin wrapper that discards the third tuple element; the
+three `Match` arms (`onFound`/`onNotFound`/`onDuplicate`/`onUnreadable`) keep identical refusal
+codes (`card-id-not-found`, `duplicate-card-id`, `card-id-unresolvable`), identical message text,
+and identical order (`git diff` shows only tuple-arity edits, no wording or branch-order change).
+Grepped all three pre-existing callers (`RunCommentResolve`, `RunCommentDecline`, and a third comment
+verb, `CommandDispatcher.cs:3054/3083/3151`) — each still destructures `(Refusal, FilePath)` unchanged
+and none was touched by the diff. No regression.
+
+**Pure read confirmed.** `RunCardShow` (`CommandDispatcher.cs:3989+`) takes no lock, calls no
+`RefuseAndRecord`, and every failure branch is `ResolveAnyCardReferenceWithCard`'s own bare
+`CommandOutcome.Refusal` (no `Rule`/`Remedy`). Pinned by
+`UnresolvableId_NotFound_Reports_WithoutRecordingAnything` (asserts absence of `rule`/`remedy` on the
+wire) and `Show_TakesNoLock_AndAppendsNothingToTheCard` (byte-for-byte file comparison before/after).
+
+**Never the index.** `RunCardShow` reads only through `CardIdentityResolver.Resolve` → file read;
+no `SqliteIndex`/index reference anywhere on this path (grepped).
+
+**"In full" verified against `CardFile`'s member list.** `CardShowResult` and `BuildCardShowResult`
+cover every group: frontmatter (`Id`/`Kind`/`Title`/`Status`/`Owner`/`Scope`/`Section`/`Created`/
+`Updated`/`UnknownFrontmatterFields`), `Body`, `Handovers`, all five kind-specific field groups,
+`Transitions`, `Claims`, `Limits`, `Refusals`, and the complete `Comments` thread with
+`ReplyTo`/`To`/`Resolves`/`IsNit`/`Required`/`Sites`/`Disposition`/`UnknownHeaderFields` verbatim.
+Checked field-for-field against `CardFile.cs`, `CardComment.cs`, `CardFrontmatter.cs` — nothing
+dropped. `BuildCardShowFindingFields`'s asymmetry is justified: `FindingExtent`/
+`FindingBlindSpotDeclaration` are the only two closed unions among the mapped groups with no prior
+`ToWireString`, so they need a `Match`-based flattening step nothing else here does — verified their
+`Match` signatures (`FindingExtent.cs`, `FindingBlindSpotDeclaration.cs`) match the call sites
+exactly, exhaustive, no catch-all.
+
+**No liveness filter, no budget, no truncation — each pinned.** `ClosedCard_IsStillRetrievable`
+pins retrievability of a closed card; `CardShowResult` carries no budget field and the type's own
+doc comment states why; no test or code path truncates.
+
+**11.2 property tests are a real deliverable, not scaffolding.** Both fixtures seed distinctive
+markers as both body *and* comment text, then assert against the raw serialised JSON
+(`result.GetRawText()`), not individual fields — a leak through any field the test didn't think to
+name would still be caught. Traced that each fixture would actually fail if the leak it names were
+real: the other-role card is excluded by ownership, the two closed cards (including the
+prior-section one, S-0000 vs S-0001, so it isn't a restatement of the same exclusion) by
+`CardLifecycle.IsClosed`, the non-top queue entry by `ContextQueueEntryResult` carrying no body
+field at all — none of these are vacuous. `TopItem_Constraints_NameRegisterCardsByIdOnly_NeverByBody`
+correctly re-pins §10 S3 at the response boundary: asserts the rule marker appears **exactly once**
+in the whole raw response (part 1's own body) via `CountOccurrences`, and that `topItem.constraints`
+holds only the id — a real regression check, not a coincidence of a thin fixture.
+
+**The spec trap avoided.** Per the brief, no fixture asserts that a card carrying an unresolved
+comment addressed to the caller is excluded from the queue — correctly, since part 2 pulls such a
+card into the queue by definition. The non-top-queue-entry assertion (bare `id` only, no
+`body`/`comments`) covers that card's queued-but-bare state regardless of why it's queued, without
+asserting the wrong thing.
+
+**NativeAOT.** `CardShowResult` and its nested result types are plain POCOs with
+`[JsonPropertyName]`, wired into `CliJsonContext.cs` via `[JsonSerializable(typeof(CardShowResult))]`
+— source-generated, no reflection-based overload, no new dependency.
+
+**Gates — reran independently.**
+```
+BUILD_EXIT:0
+TEST_EXIT:0   (1005 total, 0 failed, 0 skipped — 988 → 1005, +17 new)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+
+No blockers.
+
+**Non-blocking observations.**
+- `CardShowFindingFieldsResult`'s ten fields (mostly nullable, unconditionally present) read a bit
+  denser than the other groups' "one nested result class per sub-shape" idiom, but the worker's
+  stated reason (no prior wire-string extension existed for either union, and adding an unasked
+  general-purpose one would pre-empt a future verb's actual needs) is sound and I'd make the same
+  call.
+- Architectural note for whoever picks up §11 block C/D: `ResolveAnyCardReferenceWithCard` is now a
+  three-tuple with a positional `Card`; if a fourth caller needs it, consider whether the tuple is
+  still the right shape or whether it's time for a small result record — not a concern at today's
+  two-caller count.
+
+→ @architect
+
 ## NEXT
 
 **§10 is closed — supervisor `Approve` on the second pass (`3e85b98..d5af2a5`).** Ten of ten boxes
