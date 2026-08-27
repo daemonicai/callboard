@@ -30,6 +30,16 @@ internal sealed record BoardViewColumn(string Name, IReadOnlyList<BoardViewOwner
 /// their own.</summary>
 internal sealed record BoardViewLane(string Name, IReadOnlyList<BoardViewColumn> Columns);
 
+/// <summary>One card file the tool read but could not parse — §12 remediation (supervisor finding,
+/// block 1): a card whose <c>status:</c> fails the parse door (<see cref="CardFileParser"/>) is
+/// never constructed, but it is still on disk and the tool still knows exactly what is wrong with
+/// it (<see cref="CardFileParseResult.Failure.Reason"/>). Dropping it from every lane without a
+/// trace would render the board as though the record were smaller than it is — a board that is
+/// confidently wrong rather than one that says what it could not show. <see cref="FilePath"/> and
+/// <see cref="Reason"/> are the same two values already in hand at the read site; nothing here is
+/// recovered, only carried forward and rendered.</summary>
+internal sealed record BoardViewUnreadableEntry(string FilePath, string Reason);
+
 /// <summary>One referenced card's display facts — <see cref="CardFrontmatter.Title"/> and
 /// whether it is closed — keyed by <see cref="CardFrontmatter.Id"/>. What lets the renderer show
 /// a blocked-on id's title, and whether it is blocked on a card that has since closed, without a
@@ -44,13 +54,15 @@ internal sealed record BoardViewCardSummary(string Title, bool Closed);
 /// never re-derived — so the renderer can annotate a blocked block card, or an open question card,
 /// inline where the lane already shows it (Product Owner ruling: "must not be exiled to a footer
 /// the eye never reaches while it is looking at the lane"), rather than in a separate summary
-/// section.</summary>
+/// section. <see cref="Unreadable"/> carries every card file the read found and could not parse
+/// (§12 remediation) — never silently dropped from the board.</summary>
 internal sealed record BoardView(
     IReadOnlyList<BoardViewLane> Lanes,
     IReadOnlyList<BoardViewLane> RegisterLanes,
     IReadOnlyDictionary<string, BoardViewCardSummary> SummaryById,
     IReadOnlyDictionary<string, DerivedStateBlockedCard> BlockedById,
-    IReadOnlyDictionary<string, CardOwner> OpenQuestionOwesById);
+    IReadOnlyDictionary<string, CardOwner> OpenQuestionOwesById,
+    IReadOnlyList<BoardViewUnreadableEntry> Unreadable);
 
 /// <summary>
 /// Assembles <see cref="BoardView"/> for <c>view --out &lt;path&gt;</c> (§12 block B). Reads the
@@ -66,6 +78,7 @@ internal static class BoardViewAssembler
     internal static BoardView Build(string cardsRoot)
     {
         var allCards = new List<(string FilePath, CardFile Card)>();
+        var unreadable = new List<BoardViewUnreadableEntry>();
         foreach (var directory in CardLayout.ResolveLiveRecordDirectories(cardsRoot))
         {
             if (!Directory.Exists(directory))
@@ -75,14 +88,17 @@ internal static class BoardViewAssembler
 
             foreach (var (filePath, result) in CardStore.ReadAllCards(directory))
             {
-                var card = result.Match<CardFile?>(
-                    onSuccess: static success => success.Card,
-                    onFailure: static _ => null);
-
-                if (card is not null)
-                {
-                    allCards.Add((filePath, card));
-                }
+                result.Match<object?>(
+                    onSuccess: success =>
+                    {
+                        allCards.Add((filePath, success.Card));
+                        return null;
+                    },
+                    onFailure: failure =>
+                    {
+                        unreadable.Add(new BoardViewUnreadableEntry(filePath, failure.Reason));
+                        return null;
+                    });
             }
         }
 
@@ -118,7 +134,9 @@ internal static class BoardViewAssembler
             openQuestionOwesById[question.Card.Frontmatter.Id] = question.OwesAnswer;
         }
 
-        return new BoardView(lanes, registerLanes, summaryById, blockedById, openQuestionOwesById);
+        unreadable.Sort(static (a, b) => string.CompareOrdinal(a.FilePath, b.FilePath));
+
+        return new BoardView(lanes, registerLanes, summaryById, blockedById, openQuestionOwesById, unreadable);
     }
 
     /// <summary>Blocks lane: one column per <see cref="BlockFlowState"/>, in <see cref="

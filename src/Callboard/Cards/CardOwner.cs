@@ -81,7 +81,7 @@ internal static class CardOwnerWireFormat
     /// cref="RecognisedValues"/> — §12 block B's board view reads this to order one owner group
     /// per column, rather than hand-listing the five roles a second time. A fixed literal, not
     /// <c>ByWireValue.Values</c>, for the same "enumeration order is not a contract" reason
-    /// <see cref="CardKindWireFormat.AllKinds"/> is one.</summary>
+    /// <see cref="CardKindWireFormat.RegisterKinds"/> is one.</summary>
     internal static readonly IReadOnlyList<CardOwner> AllOwners =
     [
         CardOwner.Architect,

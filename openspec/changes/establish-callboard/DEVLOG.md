@@ -34081,6 +34081,423 @@ lifting any of them means revisiting D5 rather than working around it.
 structure, spec satisfaction and the rulings above, not on visual polish the Product Owner has
 deliberately deferred.
 
+**[supervisor]** §12 section review, on `5f7919d..HEAD` — three commits: `a0974bb` (block A, the parse
+door), `6f58544` (block B, 12.1–12.3), `0aa940b` (the Product Owner's 12.3 confirmation). Read the whole
+thread and `## NEXT`'s carried rulings before the diff, and read the commits in order rather than only
+the cumulative diff.
+
+**Verdict: Request changes.**
+
+---
+
+### What holds, so the blockers are not read as wider than they are
+
+**Block B satisfies its spec requirement.** `record-retrieval`'s "Human view of the board" asks for cards
+by column and owner, what is blocked and on what, and the open questions with who owes each answer, with
+no server, no authentication and no hosting. `BoardViewAssembler.Build` (`BoardView.cs:66-122`) delivers
+all three from live card files, and `BoardViewRenderer` (`BoardViewRenderer.cs:38-63`) emits one
+self-contained document. Both rulings are structurally realised, not merely asserted: a column **is** a
+flow state (four flow lanes, register as its own area, `BoardView.cs:126-203`), and an empty column
+renders (`BoardViewRenderer.cs:73-76`, driven by `BuildColumn` producing a column for every declared
+state regardless of card count). §10 ruling 1 holds — no index reference on the new path. D5 holds. The
+second scenario is gated, not assumed. Per the Product Owner's note I have judged structure and rulings,
+not polish, and "the view is plain" is not a finding here.
+
+**Block A's core is sound and I am not reopening it.** The parse door converges the six divergent
+derivations, `CardStore.cs`'s section-close `continue` is unreachable by construction, the six deleted
+`InvalidStatus` cases leave `RefusalCoverageGateTests`' bijection balanced with no exclusion key added
+(the Registry diff removes exactly six entries and adds none), and the nineteen-site envelope fix was the
+right scope call — "the code is old; the reachability is this block's" is the correct test, and it was
+applied honestly. The `unreachable:` throws and the seven naming comments are genuinely at kind-confirmed
+sites. That work is not what I am blocking on.
+
+**Gate coverage is intact.** The section added no project, package or stack; `Makefile` is unchanged in
+range and every constituent exit line is quoted in-thread for both blocks and both remediation rounds.
+The human-in-the-loop half of 12.3 carries the Product Owner's recorded confirmation (`0aa940b`), so the
+tick is honest.
+
+---
+
+### Blocker 1 — block A turned five read paths into silent droppers, and block B built the sixth
+
+This is the finding no block review could make, because it needs both blocks and the pre-`5f7919d`
+behaviour in view at once.
+
+**Before `a0974bb`, `status:` was unvalidated.** The worker's own round-one report establishes it: *"dozens
+of pre-existing tests across the suite hand-built cards with a placeholder `status: "open"` regardless of
+kind (a block card with `"open"`, never a legal block status even before this block — the field was simply
+unvalidated)"*, and `CardShowTests` carried a block card at `"in_review"` that parsed fine. So before this
+section, **an out-of-vocabulary status still produced a constructed `CardFile`**. The card was present in
+every read path. The six inline `TryParse` sites disagreed about how to *classify* it; nothing made it
+disappear.
+
+**After `a0974bb`, the same card fails to parse — and five read paths respond by silently discarding it:**
+
+- `Cards/BoardView.cs:80` — `view`, added by block B **after** block A, in the same section
+- `Cards/DerivedState.cs:86` — `state`
+- `Cards/WorkingContext.cs:144` — `context`
+- `Cards/RecordExportAssembler.cs:59`, `:90`, `:109`, `:126` — `section export` and `change export`
+
+Each is `onFailure: static _ => null` followed by `if (card is null) continue`. No count, no path, no
+reason, no marker on the output. A card that is on disk, that the tool read, and that the tool knows
+precisely what is wrong with, is rendered as **absent**.
+
+Three things make this a blocker rather than a §13 note:
+
+1. **The reachability is wholly this section's, not merely widened by it.** The Architect's own ruling on
+   the envelope regression — *"The code is old; the reachability is this block's ... no other change made
+   that input land there"* — applies here with more force, because before block A this class of parse
+   failure **did not exist**. Nineteen CLI sites were swept on exactly this argument. Consistency of
+   ruling requires the same disposition for these.
+2. **It reaches a closed section's shipped contract.** `change export` is §11's archival document, and
+   §11's `Approve` was given on a build where a hand-edited `status:` could not remove a card from it.
+   `a0974bb` changed that, in my range, and nobody looked: block A's thread enumerates only the six
+   *predicate* sites and the *refusal doors*. The silent-drop read paths appear nowhere in the brief, in
+   either worker post, or in either reviewer audit. That is the union hole — every rule individually
+   correct, the set incomplete.
+3. **Block B then built a sixth one, on the Product Owner's only surface.** `view` is the artifact whose
+   whole job per the spec is to answer *where is everything*. It will answer incompletely and say
+   nothing. Block A's stated premise is that such a card *"reports as corrupt on every path that already
+   knows how to say so"* — §12 then added a path that does not know how to say so, and did not teach it.
+
+Note that block A made the message quality excellent for exactly this purpose (`Failure.Reason` names
+field, value, kind and recognised values) and every one of these six sites has that string in hand at the
+discard site and throws it away.
+
+**This is not a fail-open on enforcement** — nothing is wrongly permitted, and the refusal doors
+(`section close`, `change archive`) were verified closed. It is a fail-open on **record fidelity**: the
+tool's rendering of the record is silently incomplete, which is the incumbent's failure mode with better
+formatting.
+
+### Blocker 2 — `CardKindWireFormat.AllKinds` ships the overturned design as current documentation
+
+`src/Callboard/Cards/CardKind.cs:118-131`. Its doc comment reads *"§12 block B's board view reads this to
+name one column per kind"*. That is block B's **first** implementation — the one the Product Owner
+overturned with *"a column is a flow state, not a card kind"*. The board names no column per kind. The
+member's only consumer is `RegisterKinds` two lines below (`:139-143`), which filters four of the eight
+and discards the rest; nothing else in `src/` or `tests/` references it.
+
+Ordinarily a stale comment is the reviewer's business and I would leave it. It is a blocker here for one
+specific reason the Architect put on the record in `0aa940b`: the view's visual design is deferred to a
+follow-on change, and *"two things must survive any such restyle, because they are rulings rather than
+taste: a column is a flow state, and an empty column renders."* The one place in the codebase a later
+implementer will look for the column vocabulary now asserts, in `src/`, that columns are kinds. The
+ruling survives in `BoardView.cs`'s doc comments and in this thread; it is contradicted in `CardKind.cs`.
+Shipping the superseded design as live documentation is the dead scaffolding this review exists to catch.
+
+---
+
+### Suggested remediation shape — one block, no new task numbers, ticks nothing
+
+1. **`view` reports what it could not read.** `BoardView` carries the unreadable entries (file path +
+   `Failure.Reason`, both already in hand at `BoardView.cs:78-80`), and `BoardViewRenderer` emits them in
+   a visible area of the page — not a footer, on the same reasoning the Product Owner applied to
+   blocked-on and owed-by. A board that cannot show a card must say which one and why. Test it: a card
+   with a hand-edited `status:` renders as a named unreadable entry carrying the parse-door reason, and
+   the page still renders validly around it.
+2. **`CardKind.cs:118-131`** — rewrite the doc comment to the shipped design, or fold `AllKinds` into
+   `RegisterKinds` if the eight-kind list has no remaining reader. Do not leave the overturned reading in
+   `src/`.
+
+**The four inherited paths (`state`, `context`, `section export`, `change export`) are a scope call, and
+it is yours, not the worker's.** They are the same defect from the same cause, and the same argument that
+put nineteen CLI sites in block A's scope puts them in reach. But they span closed sections and the fix
+shape (a reported unreadable set threaded through four assemblers and their result types) is materially
+larger than the mechanical replacement block A absorbed. Either ruling is defensible. What is not
+defensible is parking them as pre-existing: ❓ `@architect` — **the input that reaches them is the one
+block A created, and before block A it could not exist.** If they go to §13, they should go the way the
+`card-id-unresolvable` finding went — homed to 13.2 with the reachability argument attached — not into
+`## NEXT` as a nit.
+
+---
+
+### The change-level question — is the missing block-creation verb a spec omission or a design?
+
+Reported separately, as instructed; it is **not** a §12 finding and does not bear on the verdict above.
+
+**It is a spec omission, and the evidence is stronger than the CLI surface alone.**
+
+*The surface.* Confirmed independently. Every card kind with a creation door has one — `section create`,
+`question create`, `rule create`, `hazard create`, `obligation create`, `decision create`, `finding
+record`, `nit raise`. `block` has `transition`, `gate`, `add-blocker`, `remove-blocker`, `approve`, all
+operating on an existing card. `card` has only `show`. The sole minting path is `CardStore.cs:2413-2420`
+(`section verdict --finding-new`), which allocates a `CardKind.Block` identity at
+`BlockFlowState.Briefed`.
+
+*The decisive evidence — the flow's entry state has no producer.* `grep -rn "BlockFlowState.Drafting"
+src/ --include=*.cs` returns **zero matches**. `work-lifecycle`'s "Block cards move through a defined
+flow" makes `drafting` the leftmost node of its own diagram, and nothing in the tool can put a card
+there. A spec that defines a state its implementation cannot create is not describing a deliberate
+design; it is describing a door nobody built. I read all seven capability specs under this change and
+found no requirement anywhere stating that a work card is created through the tool — which is precisely
+the omission, not evidence of intent.
+
+*Why it is not benign.* Hand-authoring a block card does not merely bypass a convenience — it bypasses
+`CardIdentityAllocator`, whose own doc comment says the counter file exists because *"an identity SHALL
+NOT be reused"* and explicitly rejects deriving the next number by scanning filenames. A hand-authored
+`b-0007.md` does not advance the counter, so the next `section verdict --finding-new` can allocate
+`B-0007` again. `VerifyCounters` reconciles only at `index rebuild`, and `CardIdentityCounterViolation`
+is explicitly *"never produced as, or turned into, a refusal"`. So the gap is not "the Architect types
+some YAML"; it is **card-model's identity guarantee being unenforceable for the one kind that carries the
+work**, because the guarantee is only enforced on the path the tool mints.
+
+*The shape of the omission.* The remediation path can mint a card because `work-lifecycle`'s "Section
+remediation follows the finding, not the verdict" required it; the ordinary path has no requirement
+because none was written. The asymmetry tracks which requirement happened to force a creation door, not a
+decision that briefs are hand-authored. And a design in which the Architect hand-writes the brief card
+would have to say so somewhere — it says so nowhere, in any spec or ADR.
+
+Two adjacent gaps found while checking, offered because they are the same shape and the ruling should
+probably cover them together:
+
+- **There is no verb that appends an ordinary addressed comment.** `comment` has only `resolve`,
+  `promote`, `decline`. The only writers of `CardStore.AppendComment` are `nit raise` and `rule
+  promote-constitution` (`CommandDispatcher.cs:3545` calls itself *"the first CLI verb to reach that
+  surface"*). So the ordinary in-thread post — `❓ @architect`, `→ @reviewer`, the whole substance of this
+  file — has no door either, while `card-model`'s "Append-only addressed comment threads" is the
+  mechanism the routing depends on.
+- **`--base` has no recording door of its own**, though "Blocks carry their brief context" requires it
+  *"recorded before the block is briefed"* — consistent with the block card having no pre-`briefed`
+  existence the tool can create.
+
+`callboard` today can route, refuse and close work it did not create. That is a coherent half of a tool,
+and the missing half is the half that replaces the practice the tool exists to replace.
+
+---
+
+### For `## NEXT` — not blocking, and not for the fix block
+
+1. **Six recorded refusals became one unrecorded report, and §9.1's criterion now has an unwritten
+   exception.** §9.1 says a refusal records when it asserts something about the record. Four of the six
+   deleted cases recorded (their test names carry `_AndRecords` / `_AndRecordsTheRefusal`). The parse-door
+   replacement records nothing. The Architect's *"this is a parse-door refusal: it reports, it does not
+   record"* is correct as engineering — you cannot append a `CardRefusalEntry` to a card you cannot parse
+   — but it is not what §9.1's criterion says, since a corrupt-card refusal plainly asserts something
+   about the record. The exception is real and forced; it should be written down before someone applies
+   §9.1 literally to the next door. Net effect worth naming: attempting to discharge a bad-status register
+   card used to leave a durable trace on the card and now leaves none anywhere.
+2. **`view` refuses with `export-target-exists`** (`CommandDispatcher.cs:4176`) though it is not an
+   export; the message says "the view is derived and regenerable" while the code a machine keys on names
+   another command family. Small, but this section spent a whole remediation round establishing that the
+   refusal *code* is the contract and a code naming the wrong thing is the defect.
+3. **Lane names are sourced two ways.** Flow lanes hard-code `"Block"`/`"Section"`/`"Question"`/
+   `"Finding"` (`BoardView.cs:131`, `:157`, `:174`, `:185`); register lanes use `kind.DisplayName()`
+   (`:199`) — the helper introduced to avoid "hand-listing a second time" is used for half the lanes and
+   hand-listed against for the other half.
+4. **`ValidateStatus`'s `finding` arm hard-codes the single literal `open`.** Correct today
+   (`CardLifecycle`'s `onFinding` never closes), but it is the one kind whose vocabulary is a literal
+   rather than a wire format. If a finding ever gains a second state, the parse door refuses every
+   existing finding card before anything else runs — a forward hazard worth a line in `## NEXT` rather
+   than a discovery.
+
+→ @architect
+
+**[architect]** Dispositions on the supervisor's §12 findings, and the remediation block. Round one of
+two. **No new task numbers, ticks nothing** — every box in §12 is already ticked.
+
+**Blocker 1 — the silent droppers. Accepted, and the finding is better than the brief it audited.**
+
+The supervisor turned my own scope argument back on me, correctly. I ruled the envelope regression into
+block A's scope because *"the code is old; the reachability is this block's."* The same sentence applies
+here with more force: **before block A, this class of parse failure did not exist at all.** An
+out-of-vocabulary `status:` produced a constructed card that appeared in every read path. After block A
+it produces a parse failure, and six sites discard it with no count, no path, no reason and no marker —
+`onFailure: static _ => null`. Block A's thread audited the six *predicate* sites and the two refusal
+doors and never looked at the readers. Neither did I, and that is the omission in my brief rather than
+in the worker's execution of it.
+
+Worth naming precisely, because it is a different animal from what §12 has been chasing: this is not a
+fail-open on **enforcement** — nothing is wrongly permitted. It is a fail-open on **record fidelity**. The
+tool reads a store, silently cannot read part of it, and renders the remainder as though it were the
+whole. A board that quietly omits a card is worse than one that refuses to render, because it is
+confidently wrong, and the Product Owner has no way to tell the difference by looking.
+
+**Split by ownership, and I am ruling the split rather than deferring it:**
+
+- **`BoardView.cs:80` — `view` — fixed here.** Block B built this one, after block A, in this section. It
+  is ours and it does not leave §12 unfixed.
+- **The four inherited paths — `DerivedState.cs:86` (`state`), `WorkingContext.cs:144` (`context`), and
+  `RecordExportAssembler.cs:59,90,109,126` (the exports) — go to §13, under 13.2.** Not parked. **Homed**,
+  by the same reasoning the Product Owner applied to `card-id-unresolvable`, and to the same task: 13.2
+  reads *"verify the record stays readable"*, and a reader that silently drops what it cannot read is
+  precisely that requirement failing. The supervisor is right that they must not be filed as pre-existing,
+  and they are not — they are filed as **this change's**, with a task that names them.
+
+  The reason they are not fixed here is not cost. It is that `context` is budgeted by §10's requirement
+  and the exports are §11's shipped contract, so "report what you could not read" changes two response
+  shapes that other sections specified. Doing that inside a §12 remediation block would hand §13 a
+  contract it never reviewed, which is the mistake §11 explicitly refused to make when it declined to
+  fold block A into its own remediation.
+
+**Blocker 2 — `CardKind.cs:118-131`'s doc comment — accepted, `fix-before-land`.** `AllKinds` documents
+the *overturned* kind-as-column design as current. Small, and exactly the kind of thing that would be
+waved through — except that the Product Owner deferred the restyle and I named "a column is a flow state"
+as a ruling that must survive it. The one place a future implementer looks up the column vocabulary
+currently tells them the opposite. Fix the comment or fold `AllKinds` into `RegisterKinds`, its only
+consumer.
+
+**Parked to `## NEXT`, not this block:** the six recorded refusals that became one unrecorded report
+(§9.1's criterion now has a real but unwritten exception — that is a rule needing rewording, not code
+needing changing); `view` refusing with `export-target-exists`; lane names sourced two ways; and
+`ValidateStatus`'s `finding` arm hard-coding the literal `open`, which is a forward hazard rather than a
+present defect.
+
+**The change-level question is answered, and it is going to the Product Owner.** The supervisor's
+evidence is decisive and goes well past the CLI surface: `grep -rn "BlockFlowState.Drafting" src/` returns
+**zero matches** — `work-lifecycle` makes `drafting` the leftmost node of its own flow diagram and nothing
+in the tool can put a card there. The consequence it found is the part that raises this from untidy to
+serious: a hand-authored block card bypasses `CardIdentityAllocator`, so it never advances the counter, so
+a later allocation can reissue its id — and `VerifyCounters` runs only at `index rebuild` while
+`CardIdentityCounterViolation` is explicitly never a refusal. **`card-model`'s "an identity SHALL NOT be
+reused" is therefore unenforceable for the one kind that carries the work.** Two adjacent gaps of the same
+shape came with it: no verb appends an ordinary addressed comment, and `--base` has no recording door
+despite "Blocks carry their brief context" requiring it recorded before briefing. That is §4 territory —
+the spec itself, not the code — so it is hers. §12's remediation does not wait on it.
+
+**[worker]** §12 remediation, on the two items ruled in-scope here. No new task numbers, ticks nothing.
+
+**Item 1 — `view` reports what it could not read.** `BoardView.cs` gains `BoardViewUnreadableEntry
+(FilePath, Reason)` and a new `BoardView.Unreadable` list; `BoardViewAssembler.Build` now matches every
+`CardFileParseResult` it reads instead of discarding the `Failure` arm — `onFailure` appends a
+`BoardViewUnreadableEntry(filePath, failure.Reason)` in place of the old `onFailure: static _ => null` /
+`if (card is null) continue`. Only `view --out`'s own read loop changed; `DerivedState.cs:86`,
+`WorkingContext.cs:144` and `RecordExportAssembler.cs` are untouched, per the architect's ruling homing
+them to §13.2. `BoardViewRenderer` renders `Unreadable` (when non-empty) as its own `<section
+class="unreadable">`, placed right after `<h1>` and before the Board section — not a footer — naming
+each entry's file path and parse-door reason. Test added:
+`BoardViewTests.View_UnreadableCard_RendersItAsAnUnreadableEntry_NotAsAnAbsence` — a hand-edited
+`status: "not-a-real-status"` obligation card, written directly (bypassing the parse door, the same
+pattern `CardChangeArchiveTests` uses), asserts the rendered page names the file and the reason, that
+`cardCount` stays 0, and that the Board/Register sections still render around the omission.
+
+**Item 2 — `CardKind.cs:118-131`.** `AllKinds` had exactly one consumer (`RegisterKinds`, confirmed by
+`grep -rn "\bAllKinds\b" src tests` before the edit — nothing else referenced it). Folded it into
+`RegisterKinds` as a direct four-entry literal instead of a filtered eight-entry one; the doc comment on
+`RegisterKinds` now describes what it actually does (register lists are register-kinds-only; nothing in
+`src/` claims a column names a kind any more). `CardOwner.cs:84`'s doc comment cross-referenced
+`CardKindWireFormat.AllKinds` by name as a "same reasoning" example — updated to point at
+`RegisterKinds` so it doesn't dangle.
+
+`make gates`: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` (1049 tests, 0 failed).
+
+→ @reviewer
+
+**[architect]** **Product Owner ruling on the three missing verbs: amend the spec, build them in §13.**
+
+The spec is wrong, not merely silent, so it moves — §10's ruling 4 in force again: *where the spec and
+shipped behaviour contradict, one of them moves, deliberately, and the Product Owner decides which.* She
+has decided. `work-lifecycle` gains the requirement that a work card is created through the tool, and
+`card-model` is amended where identity bites; then §13 carries blocks for the three verbs: **`block
+create`**, **an ordinary addressed comment**, and **a recording door for `--base`**.
+
+Building them in §13 rather than a follow-on change is what makes this an amendment rather than a
+deferral: §13 is still open, so nothing reopens, and the change ships able to create the cards it exists
+to route. §13 grows past its four listed tasks as a result; that is the cost, and it was taken knowingly.
+
+**Why the block verb was not merely untidy.** The supervisor's finding: a hand-authored block card
+bypasses `CardIdentityAllocator` and so never advances the counter, so a later allocation can reissue its
+id. `VerifyCounters` runs only at `index rebuild`, and `CardIdentityCounterViolation` is explicitly never
+a refusal. `card-model`'s **"an identity SHALL NOT be reused"** is therefore unenforceable for the one
+kind that carries the work — a guarantee the spec states and nothing enforces, which is this project's
+own stated failure mode wearing the tool's clothes. That is what tipped it from a follow-on change to an
+amendment.
+
+**Sequencing, so §13 is not carved wrong later:** the spec amendment lands **before** §13's first block is
+briefed, and `make validate` must pass on the amended change before any of it is built. The three verbs
+are three separate concerns and should not be one block. §13's own four tasks and its inherited queue —
+the `card-id-unresolvable` finding and the four silent-dropper read paths, both under 13.2 — are
+unaffected by this and stay where they are.
+
+**One thing that must not be quietly widened:** this authorises **three verbs**, named. It does not
+authorise a general card-creation surface for every kind. If building `block create` reveals that another
+kind needs the same door, that is a question for the Product Owner, not a natural extension.
+
+**[reviewer]** Remediation-block audit — §12, on the uncommitted working tree (`git status --short`
+shows exactly `DEVLOG.md`, `BoardView.cs`, `BoardViewRenderer.cs`, `CardKind.cs`, `CardOwner.cs`,
+`BoardViewTests.cs`; nothing committed, nothing ticked, matching the brief — every §12 box was already
+ticked before this remediation).
+
+**Verdict: Approve.**
+
+**Gates, re-run directly, all green:**
+```
+BUILD_EXIT:0
+TEST_EXIT:0    (1049 tests, 0 failed)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+
+**Item 1 — `view` no longer discards what it cannot read, and I verified this in the emitted HTML,
+not the source.** `BoardViewAssembler.Build` (`BoardView.cs:78-102`) now matches both
+`CardFileParseResult` arms — `onSuccess` appends to `allCards` as before, `onFailure` appends a new
+`BoardViewUnreadableEntry(filePath, failure.Reason)` to `unreadable`, replacing the old `onFailure:
+static _ => null` / `if (card is null) continue` the supervisor flagged. `BoardView.Unreadable` is a
+new list on the record, sorted by file path (`:139`) for stable output. This is the only read path
+touched — `git diff HEAD` for `DerivedState.cs`, `WorkingContext.cs` and `RecordExportAssembler.cs`
+is empty (confirmed directly, not on the worker's say-so), matching the Architect's ruling that homes
+those four inherited readers to §13.2.
+
+**Visibility, confirmed in the rendered artifact.** I built the tool and rendered a scratch record
+containing one obligation card written directly to disk with `status: not-a-real-status` (bypassing
+the parse door, same technique the new test uses). Line numbers in the emitted file:
+```
+31:<h1>callboard</h1>
+32:<section class="unreadable">
+39:<section class="board">
+```
+`<h1>` at 31, the unreadable section opens at 32, the board section doesn't open until 39 — genuinely
+between the heading and the Board section, not a footer, matching the worker's claim exactly. Ran a
+second render against an empty record and confirmed the section is absent entirely when
+`Unreadable.Count == 0` (`BoardViewRenderer.cs:45-48`), so an ordinary board is unaffected.
+
+**The entry names both file path and reason, verbatim in the artifact:**
+```
+<li><span class="unreadable-path">.../callboard/register/o-bad.md</span>: unrecognised status:
+&#39;not-a-real-status&#39; for kind &#39;obligation&#39;. Recognised statuses: open, discharged.</li>
+```
+This is the parse door's own `Failure.Reason` from block A — field, offending value, kind, and
+recognised values all present — carried through rather than replaced with a generic message.
+
+**The new test genuinely provokes the condition, and asserts the right things.**
+`BoardViewTests.View_UnreadableCard_RendersItAsAnUnreadableEntry_NotAsAnAbsence`
+(`BoardViewTests.cs:67-99`) writes a card via `CardFileWriter.Serialize` directly to disk with
+`status: "not-a-real-status"` — this bypasses `CardFileParser.ValidateStatus` entirely (it's a raw
+write, not a parse), so the file genuinely fails to parse when `view` reads it back; this is not a
+mock or a stub of the failure, it is the real parse-door failure the block exists to handle. The test
+asserts `cardCount == 0` (the unreadable card is correctly excluded from the count), and — the part
+that matters — `Contains("o-bad-status.md", ...)` and `Contains("not-a-real-status", ...)` against the
+rendered HTML: the file path and the reason, not a count or a bare non-emptiness check. It also
+asserts `<h2>Board</h2>` and `<h2>Register</h2>` still render, i.e. the page stays valid around the
+omission. This matches the brief precisely.
+
+**Item 2 — `AllKinds` folded into `RegisterKinds`, no other consumer, no behavioural change.**
+`grep -rn "AllKinds" src tests` (run independently, not on the worker's grep) returns zero matches
+anywhere in the tree — `AllKinds` is gone and nothing references the old name. `RegisterKinds` is now
+a direct four-entry literal (`Obligation, Rule, Hazard, Decision`) in the identical order the old
+`AllKinds.Where(...)` filter produced — confirmed by reading both the old and new literal order
+side-by-side in the diff; no reordering. `CardOwner.cs:84`'s doc comment, which cross-referenced
+`CardKindWireFormat.AllKinds` by name, was updated to point at `RegisterKinds` so it doesn't dangle.
+
+**No stale doc comment describing columns as one-per-kind survives anywhere.**
+`grep -rn "column per kind\|one column per" src` returns only the two flow-lane doc comments in
+`BoardView.cs` (`:142`, `:163`), both describing the current, correct design (one column per flow
+state). The overturned reading the supervisor flagged at the old `CardKind.cs:118-131` is gone, not
+merely reworded to still gesture at kinds-as-columns.
+
+**D5 — confirmed in the artifact, with the new unreadable section present.** Rendered the record with
+the bad-status card above and grepped the output for `<form`, `<script`, `<input`, `<button`,
+`fetch(`, `http://`, `https://`, `<link`, `<iframe`, `onclick` — zero matches. The unreadable card's
+file path is rendered as inert text (`Escape`d, monospace styling only), not a link or a file-open
+mechanism. D5 holds with the new section in place.
+
+**Scope.** Nothing else in the diff — `Makefile` untouched, no new task numbers, nothing ticked (every
+§12 box was already ticked). The remediation stayed inside what the Architect ruled in-scope for this
+block; the four inherited readers and the change-level block-creation question are correctly left for
+§13, not touched here.
+
+→ @architect
+
 ## NEXT
 
 **§11 is closed — supervisor `Approve` on the first pass (`a6c2561..HEAD`).** Five of five boxes ticked,

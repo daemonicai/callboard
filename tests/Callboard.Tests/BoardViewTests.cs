@@ -64,6 +64,40 @@ public sealed class BoardViewTests
         Assert.DoesNotContain("<span class=\"badge\">blocked</span>", html, StringComparison.Ordinal);
     }
 
+    // §12 remediation (supervisor finding, block 1): before the parse door, an out-of-vocabulary
+    // `status:` still produced a constructed card, so it appeared on the board. After the parse
+    // door, `CardFileParser` refuses to construct it — `view` must not silently drop it, it must
+    // say which file it could not read and why.
+    [Fact]
+    public void View_UnreadableCard_RendersItAsAnUnreadableEntry_NotAsAnAbsence()
+    {
+        using var repo = new TempGitRepo();
+        var badStatusPath = Path.Combine(repo.RegisterDirectory, "o-bad-status.md");
+        var frontmatter = new CardFrontmatter(
+            "O-BAD", CardKind.Obligation, "Bad status obligation", "not-a-real-status", CardOwner.Architect, CardScope.Repository, string.Empty, Earlier, FixedNow);
+        var fields = new RegisterCardFields(null, null, null, null, OwedBy: "S-0001");
+        WriteCard(badStatusPath, new CardFile(frontmatter, "Body.", [], [], RegisterFields: fields));
+
+        var outPath = Path.Combine(repo.Path, "board.html");
+        var output = new StringWriter();
+
+        var exitCode = CommandDispatcher.Run(
+            ["view", "--out", outPath], output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal(0, doc.RootElement.GetProperty("result").GetProperty("cardCount").GetInt32());
+
+        var html = File.ReadAllText(outPath);
+        Assert.StartsWith("<!doctype html>", html, StringComparison.Ordinal);
+        Assert.Contains("<h2>Unreadable cards</h2>", html, StringComparison.Ordinal);
+        Assert.Contains("o-bad-status.md", html, StringComparison.Ordinal);
+        Assert.Contains("not-a-real-status", html, StringComparison.Ordinal);
+        // The rest of the page still renders validly around the omission.
+        Assert.Contains("<h2>Board</h2>", html, StringComparison.Ordinal);
+        Assert.Contains("<h2>Register</h2>", html, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void View_TargetExists_RefusesWithoutForce_AndWritesWithForce()
     {

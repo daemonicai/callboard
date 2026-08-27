@@ -42,6 +42,11 @@ internal static class BoardViewRenderer
         html.Append("<title>callboard</title>\n<style>\n").Append(Css).Append("\n</style>\n</head>\n<body>\n");
         html.Append("<h1>callboard</h1>\n");
 
+        if (view.Unreadable.Count > 0)
+        {
+            AppendUnreadable(html, view.Unreadable);
+        }
+
         html.Append("<section class=\"board\">\n<h2>Board</h2>\n");
         foreach (var lane in view.Lanes)
         {
@@ -60,6 +65,26 @@ internal static class BoardViewRenderer
 
         html.Append("</body>\n</html>\n");
         return html.ToString();
+    }
+
+    /// <summary>Renders <see cref="BoardView.Unreadable"/> as its own visible section, immediately
+    /// after the page heading and before the board itself — not a footer (§12 remediation, on the
+    /// Product Owner's own reasoning for blocked-on and owed-by: a fact the eye must not have to go
+    /// looking for). A card the tool could not read is named by its file path and the parse-door's
+    /// own <see cref="CardFileParseResult.Failure.Reason"/>, so a reader knows exactly which file
+    /// is missing from every lane below and why, rather than the board silently reading as
+    /// complete.</summary>
+    private static void AppendUnreadable(StringBuilder html, IReadOnlyList<BoardViewUnreadableEntry> unreadable)
+    {
+        html.Append("<section class=\"unreadable\">\n<h2>Unreadable cards</h2>\n");
+        html.Append("<p>").Append(unreadable.Count).Append(unreadable.Count == 1 ? " card file could not be read and is omitted from every lane below:" : " card files could not be read and are omitted from every lane below:").Append("</p>\n<ul>\n");
+
+        foreach (var entry in unreadable)
+        {
+            html.Append("<li><span class=\"unreadable-path\">").Append(Escape(entry.FilePath)).Append("</span>: ").Append(Escape(entry.Reason)).Append("</li>\n");
+        }
+
+        html.Append("</ul>\n</section>\n");
     }
 
     private static void AppendLane(StringBuilder html, BoardViewLane lane, BoardView view)
@@ -168,5 +193,8 @@ internal static class BoardViewRenderer
         .badge.halted { background: #d9534f55; }
         .blocked-on, .halted-by, .owed-by { font-size: 0.85rem; opacity: 0.85; margin-left: 1rem; }
         .empty { opacity: 0.7; font-style: italic; }
+        .unreadable { border: 1px solid #d9534f88; border-radius: 8px; padding: 0.75rem 1rem; background: #d9534f14; margin-top: 1.5rem; }
+        .unreadable h2 { margin-top: 0; border-bottom: none; }
+        .unreadable-path { font-family: ui-monospace, Menlo, Consolas, monospace; }
         """;
 }
