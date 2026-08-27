@@ -48,6 +48,29 @@ Every transition SHALL record the acting role and the time it occurred.
 - **WHEN** a role attempts to move a `drafting` block directly to `approved`
 - **THEN** the system refuses and states the transitions available from `drafting`
 
+### Requirement: Every block card is minted by the tool
+
+A `block` card SHALL come into existence only through a command of the tool, which issues its identity
+from the recorded counter. Exactly two doors SHALL exist: a section verdict reporting a first-time
+finding creates a remediation card at `briefed` (see "Section remediation follows the finding, not the
+verdict"), and a creation command creates a task-implementing card at `drafting`. `drafting` SHALL be
+reachable by creation and by nothing else.
+
+A `block` card SHALL NOT be brought into the record by hand. The tool cannot stop a file being written,
+so this requirement binds it to the two things it can do: provide the door, and decline to treat an
+identity it never issued as one it did.
+
+#### Scenario: A task-implementing block is created
+
+- **WHEN** a role creates a `block` card naming the tasks it implements
+- **THEN** the system issues an identity no card in the record bears, advances the recorded counter,
+  places the card at `drafting`, and records the task references against it
+
+#### Scenario: A block card that no door minted
+
+- **WHEN** the record contains a `block` card bearing an identity the system never issued
+- **THEN** the system reports it, naming the card's path, and does not treat that identity as issued
+
 ### Requirement: Reviewer remediation is the same card at a higher round
 
 A block returned for changes **by its reviewer** SHALL return to `briefed` with its `round` incremented,
@@ -79,10 +102,19 @@ current `round`, and the cards it is blocked by.
 
 `base` SHALL be recorded before the block is briefed, and SHALL NOT change across remediation rounds.
 
+The system SHALL provide a command that records `base` against a block. A requirement that a value be
+recorded before a transition is unmeetable without a door that records it, and `base` SHALL NOT be one
+a role writes by hand. Once recorded, that command SHALL refuse to change it.
+
 #### Scenario: Brief without a base is refused
 
 - **WHEN** a block is moved to `briefed` with no `base` recorded
 - **THEN** the system refuses and states that a brief must name the commit it was carved against
+
+#### Scenario: Base is recorded once
+
+- **WHEN** a role records a `base` commit against a block that already has one
+- **THEN** the system refuses, names the recorded value, and leaves it unchanged
 
 ### Requirement: Gate results are recorded as exit codes
 

@@ -147,7 +147,10 @@
 
 ## 13. Integration with the Apply Workflow
 
-- [ ] 13.1 Extend the hook boundary to deny agent writes to the card store
-- [ ] 13.2 Verify the record stays readable and the loop proceeds unenforced when the tool cannot run
-- [ ] 13.3 Verify a card's status, owner, scope and history are determinable from the file alone
-- [ ] 13.4 Document the commands the worker, reviewer and supervisor agents use in place of `DEVLOG.md`
+- [ ] 13.1 Implement `block create` — the door that mints a task-implementing block at `drafting`
+- [ ] 13.2 Implement `comment add` — append an ordinary comment to a card, optionally addressed
+- [ ] 13.3 Implement `block base` — record, once, the commit a block's brief was carved against
+- [ ] 13.4 Extend the hook boundary to deny agent writes to the card store
+- [ ] 13.5 Verify the record stays readable and the loop proceeds unenforced when the tool cannot run
+- [ ] 13.6 Verify a card's status, owner, scope and history are determinable from the file alone
+- [ ] 13.7 Document the commands the worker, reviewer and supervisor agents use in place of `DEVLOG.md`

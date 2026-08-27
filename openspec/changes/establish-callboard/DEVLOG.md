@@ -34591,6 +34591,61 @@ Owner, and scheduled as a spec amendment before §13's first block. I am not re-
 
 → @architect
 
+## 13. Integration with the Apply Workflow
+
+**[architect]** Base: `f100b77` — the change's last section: the three creation verbs the spec amendment
+adds, the hook boundary extended over the card store, the record's readability without the tool, and the
+agent-facing command documentation that replaces `DEVLOG.md`. Specs: `specs/work-lifecycle/spec.md` —
+"Every block card is minted by the tool" and "Blocks carry their brief context"; `specs/card-model/spec.md`
+— "Stable, human-quotable, kind-prefixed identity" and "Append-only addressed comment threads".
+
+The base is `f100b77` and not the amendment commit deliberately: **the amendment is inside §13's review
+range**, so the supervisor audits the spec change alongside what was built to it.
+
+**[architect]** The Product Owner's spec amendment has landed. §13's tasks are re-carved — the four tasks
+`tasks.md` carried are now seven, with three verbs ahead of them:
+
+```
+13.1 block create   13.2 comment add   13.3 block base
+13.4 hook boundary  13.5 readable/unenforced   13.6 file-alone   13.7 agent docs
+```
+
+**What moved, and why the spec moved rather than the code.** No CLI verb creates a task-implementing
+`block` card. `grep -rn "BlockFlowState.Drafting" src/` returns zero matches while `work-lifecycle` makes
+`drafting` the leftmost node of its own flow diagram, and `CommandParser.cs` offers `block` only
+`transition, gate, add-blocker, remove-blocker, approve` and `comment` only `resolve, promote, decline`.
+The single minting door is `CardStore.cs:2413-2420` (`section verdict --finding-new`, at `briefed`), which
+exists only because "Section remediation follows the finding, not the verdict" forced it. A hand-authored
+block card therefore bypasses `CardIdentityAllocator`, never advances the counter, and a later allocation
+can reissue its id — so `card-model`'s "an identity SHALL NOT be reused" was **unenforceable for the one
+card kind that carries the work**. That is this project's own failure mode wearing the tool's clothes: a
+guarantee the spec states and nothing enforces.
+
+Four amendments, all validated (`VALIDATE_EXIT:0`):
+
+1. `work-lifecycle` gains **"Every block card is minted by the tool"** — two doors and no others, the
+   `--finding-new` door named explicitly so it stays legitimate rather than contradicted, and the honest
+   limit written in: the tool cannot stop a file being written, so it binds itself to *provide the door*
+   and *decline to treat an identity it never issued as one it did*.
+2. `work-lifecycle`'s **"Blocks carry their brief context"** gains the recording door for `base`. A
+   requirement that a value be recorded before a transition is unmeetable without a door that records it.
+   Recorded once; re-recording refuses and names the recorded value.
+3. `card-model`'s **identity requirement** gains the sentence that closes the hole: the no-reuse guarantee
+   rests on the counter rather than on convention, the allocator refuses an identity a card already bears,
+   and **a card kind with no creation command has no counter that advances, and therefore no guarantee.**
+4. `card-model`'s **comment requirement** gains the door: the verbs that dispose of a thread are not the
+   only ones that can start one.
+
+**Bounded deliberately: three named verbs, not a general creation surface** *(Product Owner)*. If building
+`block create` shows another kind needs the same door, that is a Product Owner question, not a natural
+extension.
+
+**Two Architect calls, on the record.** The four silent droppers and `card-id-unresolvable` stay **homed
+under 13.5** as `## NEXT` filed them, rather than becoming tasks of their own — they are implementation
+findings against a verification task, not new scope. And **`block base` stays a separate verb** rather than
+a `--base` flag on `block create`: a block is created when it is carved and based when its brief is cut,
+and folding them makes creation reach for git.
+
 ## NEXT
 
 **§12 is closed — supervisor `Approve` on the second pass (`5f7919d..HEAD`).** Three of three boxes

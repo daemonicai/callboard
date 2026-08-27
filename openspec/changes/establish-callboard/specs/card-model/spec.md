@@ -31,6 +31,13 @@ Each card SHALL receive an identity that is stable for the card's whole life, pr
 the identity alone tells a reader what it refers to (for example `B-0042`, `Q-0007`, `F-0031`,
 `D-0019`). An identity SHALL NOT be reused after its card is closed, discharged or withdrawn.
 
+Identities SHALL be issued by the system alone, from a counter it records and advances as it issues.
+The guarantee that an identity is not reused SHALL rest on that counter rather than on convention: the
+system SHALL refuse to issue an identity that a card in the record already bears, and SHALL report a
+card bearing an identity it never issued rather than accepting that identity as spent. A card kind
+with no creation command has no counter that advances, and therefore no such guarantee — see
+`work-lifecycle`, "Every block card is minted by the tool".
+
 A card's identity SHALL remain valid and resolvable after the change that raised it is archived.
 
 #### Scenario: Identity survives archive
@@ -42,6 +49,11 @@ A card's identity SHALL remain valid and resolvable after the change that raised
 
 - **WHEN** a card is closed and a new card of the same kind is created afterwards
 - **THEN** the new card receives an identity distinct from every identity previously issued
+
+#### Scenario: Allocation will not reissue a borne identity
+
+- **WHEN** the system is asked to issue an identity that a card in the record already bears
+- **THEN** it refuses the allocation and names the card holding that identity
 
 ### Requirement: Ownership names whose turn it is
 
@@ -94,10 +106,20 @@ A comment addressed to a role and not yet resolved SHALL constitute a live threa
 that role's queue. Addressing SHALL be a structural property of the comment, not prose within it — a
 role mention in body text SHALL NOT route anything.
 
+The system SHALL provide a command that appends a comment to a card, optionally addressed to a role.
+The verbs that dispose of a thread SHALL NOT be the only ones that can start one — a role able to
+resolve, promote or decline a comment SHALL be able to write one.
+
 #### Scenario: Addressed comment routes to its target
 
 - **WHEN** a comment is addressed to `reviewer` and left unresolved
 - **THEN** that card appears in the `reviewer` queue even though the card's `owner` is another role
+
+#### Scenario: A comment is appended to a card
+
+- **WHEN** a role appends a comment to a card, addressed to another role
+- **THEN** the comment joins the card's thread with its own identity, author, timestamp and body, and
+  the card appears in the addressed role's queue
 
 #### Scenario: Role mention in prose does not route
 
