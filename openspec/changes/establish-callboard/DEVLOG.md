@@ -30425,185 +30425,225 @@ diff.
 S1 and S2 are untouched, as briefed, and remain open on the two `❓ @architect` posts in the supervisor's
 review above.
 
+**[architect]** ❓ **@product-owner — S1: the budget's sanctioned overage has no requirement behind it.**
+Parked; §10 cannot close until this is ruled.
+
+`CommandDispatcher.cs:4046-4060` ships a permanent path that returns `exceededCeiling: true`. It exists
+because the spec forbids the alternative: when the register and brief **alone** exceed the ceiling,
+`specs/working-context/spec.md` says neither may be shortened, so the only honest move is to deliver
+both whole and state the overage. I ruled that in block B's brief and the code does exactly it.
+
+**The problem is that the spec's own words contradict the behaviour.** `specs/working-context/spec.md:41`
+says the budget "SHALL be a requirement of the response and **not a target it may exceed**". D6 does not
+sanction an overage either. So the tool now has a shipped, tested, permanent code path that its
+specification says must not exist. Block D — in this same section — amended `process-enforcement` when it
+added behaviour the spec was silent on; block B amended nothing, and this is worse than silence, it is
+contradiction.
+
+Note S3's fix has made the overage **less** reachable (the corpus response fell from 6,975 to 5,877 of
+8,100 characters), but not unreachable: the register is untruncatable and grows monotonically, so a long
+enough register still gets there.
+
+The options as I see them:
+
+1. **Amend the spec to sanction the overage** — add to *Working context fits a stated budget* that where
+   the register and brief alone exceed the budget, both are delivered whole and the overage is stated.
+   This writes down what the code does and what the other requirements force. My recommendation.
+2. **Make the register truncatable after all** — reject the premise that it can never shorten. Cheapest
+   in spec terms, but it breaks the guarantee that a role always receives the standing rules whole, which
+   is the point of part 1 shipping "first and unconditionally".
+3. **Refuse instead of exceeding** — `context` refuses when it cannot fit the budget, naming
+   `rule review` as the remedy. Honours the spec literally, but leaves a role unable to get its working
+   context at all until someone compacts the register, which is a hard failure on the tool's core read.
+
+---
+
+**[architect]** ❓ **@product-owner — S2: does deferring a Product Owner question stop it halting its
+dependents?** Parked; §10 cannot close until this is ruled. This is a process-semantics question, not a
+code question.
+
+`state` currently holds **two definitions of "an open question" and they disagree inside a single
+response**:
+
+- `DerivedState.cs:88` decides liveness with `CardLifecycle.IsClosed`, which treats only an *answered*
+  question as closed — its doc comment says a **deferred** question is deliberately still live.
+- Halting goes through `CardStore.FindBlockingOpenProductOwnerQuestion`, which at `CardStore.cs:1852`
+  requires status `Open` and therefore **excludes** deferred.
+
+`question defer` (`CardStore.cs:1766-1773`) leaves `Owner` untouched. So today, a **deferred** Product
+Owner question is reported as `owesAnswer: "product-owner"` in the open-questions list, while the card it
+blocks reports `halted: false`. One response, two answers about the same question.
+
+The spec's *Escalation severity is derived from ownership* requirement has **no deferral carve-out** — it
+says a question owned by the Product Owner halts the cards it blocks, full stop. No test covers a
+deferred blocker. Block C reused the transition guard's predicate, which was the right instinct, but that
+predicate was written for a different requirement and §10 inherited its status test unexamined.
+
+The options:
+
+1. **Deferral does not lift the halt** — a deferred Product Owner question still halts its dependents.
+   Matches the spec as written, and matches the plain meaning of deferring: you have postponed answering,
+   not decided the work may proceed. My recommendation.
+2. **Deferral does lift the halt** — deferring is precisely the act of saying "proceed without this
+   answer for now". Coherent, but the spec needs a carve-out written into the escalation requirement, and
+   `question defer` should probably then require a reason.
+3. **Deferral is not available for Product Owner questions at all** — only agent-owned questions may be
+   deferred. Removes the ambiguity entirely, at the cost of a verb that currently works on any question.
+
+Whichever way this goes, **the two definitions must be reconciled to one**, and `context`/`state` must
+both read it — that part is not optional and does not depend on the ruling.
 ## NEXT
 
-**§10 is open and in flight.** Base `3e85b98`. Two of its six blocks have landed; **block A (10.1–10.3)
-is next, and nothing is in flight right now** — the working tree is clean at `9e7cff6` and no agent is
-running. Ten of §10's ten boxes are still unticked, correctly: both landed blocks are debt blocks
-carrying no `N.M` numbers. Suite at **904**.
+**§10 is BLOCKED on two Product Owner rulings. It is not closed, and it must not be closed until they
+are answered.** Everything else in the section is done: all ten boxes ticked, six blocks plus one
+remediation round landed, working tree clean at `47fbd85`, suite **979**, `GATES_EXIT:0`.
 
-- `e7dda26` **block F** — the `ParsedCommand.Match` carve. `ICommandVisitor<TResult>` + `Accept`
-  replaces 36 `Func` parameters across 37 ~2200-character signatures; exhaustiveness now rides on
-  `CS0535` at every implementer. No behaviour change, no test edited, suite unmoved at 894.
-- `9e7cff6` **block D** — F3 authorisation. Closed the window that had been open since `8298539`.
+### ⛔ Read this first — two questions are waiting for you
 
-**Remaining blocks, in order: A (10.1–10.3) → B (10.4–10.7) → C (10.8–10.10) → E.** The full carve and
-the constraints binding every block of this section are in the `[architect]` opening post under `## 10.`
-— read it before briefing, not this summary.
+Both are posted in full, with options and a recommendation, as `❓ @product-owner` posts immediately
+above this section. Neither is a code defect I can fix by deciding harder; both are calls that are
+yours.
 
-### The three Product Owner rulings taken at §10's opening
+- **S1 — the budget's sanctioned overage has no requirement behind it.** The tool ships a permanent,
+  tested code path that its own spec says must not exist (`specs/working-context/spec.md:41`: the budget
+  is "not a target it may exceed"). The behaviour is forced by the other requirements — when the register
+  and brief alone exceed the ceiling, neither may be shortened. **Recommendation: amend the spec to
+  sanction it**, as block D did for its own new behaviour in this same section.
+- **S2 — does deferring a Product Owner question stop it halting its dependents?** `state` currently
+  holds two definitions of "an open question" that disagree in one response: a **deferred** Product Owner
+  question reports `owesAnswer: "product-owner"` while the card it blocks reports `halted: false`. The
+  escalation requirement has no deferral carve-out. **Recommendation: deferral does not lift the halt** —
+  postponing an answer is not deciding the work may proceed. Whichever way it goes, the two definitions
+  must be reconciled to one; that part does not depend on the ruling.
 
-1. **The read path reads card files, not the index.** `context`/`state` scan
-   `CardLayout.ResolveLiveRecordDirectories`; correctness never rests on the index. This **defers** D4's
-   query-cost rationale rather than realising it — block B's two budget tests are the measurement, and
-   indexing the read path is revisited on their evidence.
-2. **The two commands are `context` and `state`.** `status` was rejected: `section status` and
-   `finding status` already spend that word twice.
-3. **F3: a thread is disposed of by its addressee or the card's owner; `comment resolve` requires a
-   body.** Shipped in `9e7cff6` and recorded in `specs/process-enforcement/spec.md`.
+### What happens after you rule
 
-**Deliberate under ruling 3, so nobody "fixes" it later:** a card's owner **may** dispose of a thread
-addressed to the Product Owner — addressee-only was on the table and was not chosen — and a thread with
-no `addressed_to` admits only the card's owner.
+1. Carve **one** remediation block covering both, brief a worker, reviewer audits, gates, commit.
+2. **Re-run the supervisor on `3e85b98..HEAD`.** It has requested changes **once** (S1–S4); the round
+   just landed was round one, fixing S3 and S4 only. The second remediation round is therefore the
+   **last one available** under §3c.4's two-round cap — after it, a further `Request changes` goes to you
+   rather than to a third block.
+3. **I deliberately did not re-run the supervisor after the S3/S4 round.** Doing so would have spent the
+   second round on a fix I already knew was incomplete, and the cap exists to stop exactly that.
 
-### Parked from §10 block D's review — not defects, not carried by any block
+### §10 as built — six blocks plus one remediation round
 
-Both were the reviewer's own non-blocking nits, deliberately not folded into block D to keep it from
-growing. Neither blocks anything.
+`e7dda26` **F** — the `ParsedCommand.Match` carve (`ICommandVisitor<TResult>`; 36 `Func` parameters
+across 37 ~2200-character signatures gone; no behaviour change, suite unmoved at 894) ·
+`9e7cff6` **D** — F3 authorisation on the comment disposition verbs, closing a window open since
+`8298539`; amended `process-enforcement` ·
+`12c4d9d` **A** — 10.1–10.3, `context` and the four-part response ·
+`5f781d5` **B** — 10.4–10.7, the budget ·
+`4280504` **C** — 10.8–10.10, `state`, the hand-entered-state refusal across every write path, and
+halting ·
+`9684cf6` **E** — `rule review`, closing carried item B from §7 ·
+`47fbd85` — supervisor remediation round one (S3, S4).
 
-- `CardCommentPromoteTests` has no unaddressed-thread case of its own. Covered indirectly through the
-  shared predicate `IsPermittedToDisposeThread`, which the reviewer verified has exactly two call sites;
-  the gap is a direct assertion, not coverage.
-- `RoleNotPermitted.Remedy` is duplicated verbatim between `CardCommentResolveOutcome` and
-  `CardCommentPromoteOutcome`. Worth a shared helper only if a third verb ever needs it.
-
-### `IndexPopulator.cs:249` — re-parked, and now with no reader at all
-
-§9 handed this to §10 as "the first reader of the column". Ruling 1 above means **§10 reads nothing from
-the index**, so the section card's `section = ''` row still has no reader and the fix still has no
-forcing function. It carries forward with F2's ruling attached: if the flat form is wanted, the index
-populates that column **from `CardStore.OwningSectionId`**, never as a second source of truth.
-
-### The three findings §9 closed on — F1 and F2 fixed, F3 deferred
-
-- **F1 — `specs/register/spec.md` contradicted itself. Closed in `8298539`.** The requirement said
-  archiving "closes" its change-scoped cards; its own scenario six lines below says archiving settles
-  nothing, and the code implements the scenario. The requirement now reads "relocates its
-  change-scoped cards into the archive, exactly as written … settling nothing". Round one had closed
-  S5 in the scenario and left it open in the requirement — the worker saw the requirement and stayed
-  in scope, which was correct behaviour producing an incomplete fix.
-- **F2 — the owning section of a card was computed wrongly for section cards. Closed in `8298539`.**
-  `comment promote` read `Frontmatter.Section`, which is empty on a section card, so a question
-  promoted from a comment on a section card could never match 9.5's close gate and the section would
-  close over an open question raised in it. Fixed per Product Owner ruling with an **encapsulated
-  accessor, not a stored value** — `CardStore.OwningSectionId`, routed through `CardKind.Match` with
-  all eight arms explicit, applied at the five sites meaning "the owning section of an arbitrary card"
-  and deliberately not at the four that are the section-scan join. Storing the id on the section card
-  was considered and rejected: `Id` and `section` would be two fields obliged to agree, the exact
-  shape 8a.17's round-agrees-with-history refusal exists to catch. **All four routes into 9.5's gate**
-  (direct, comment-on-block, comment-on-finding, comment-on-section) now carry a matchable `section`;
-  a question promoted from a repository-scoped register card still gets an empty one and blocks no
-  close, which is correct by the requirement F1 repaired.
-- **F3 — no authorisation on `comment resolve`/`promote`/`decline`. Deferred to §10, and open
-  *now*.** Carried in full under "Owed to §10" below.
+Suite **894 → 979**.
 
 ### What the supervisor confirmed is good
 
-Five of its six original findings (S1, S2, S3, S5-in-part, S6) are genuinely closed, verified
-independently rather than from the remediation posts. **The hardened coverage gate holds as a
-mechanism** and §10 can build against it: its universe is complete *today*, not merely plausible — all
-23 `ToolFailure`-bearing unions are returned bare by a `CardStore` method, and every union has a
-private constructor, so nested-case discovery is exhaustive rather than a shortcut. Known residue,
-ranked: **CLI-layer refusals are entirely outside its domain** (S1's shape one layer up, and §10 works
-there); idiom departure; and it proves a case was *assessed*, not assessed *correctly*.
+Independently verified, not taken from the block posts: §9 ruling 1's records-versus-reports split is
+applied **consistently** across every refusal §10 added, CLI-layer and record-layer alike; the
+hand-entered-state guard reaches every one of the 33 `AtomicWrite` call sites (34 occurrences, each
+guarded or a fresh-card construction or `RefuseAndRecord` itself); escalation severity is genuinely never
+stored and every `state` figure genuinely derived at request time; `context` and `state` agree on live,
+closed and ownership **apart from S2**; CLI vocabulary, envelope and JSON shapes are coherent across the
+three new commands; no new persisted field, so no record/index divergence became reachable. **Scope is
+clean — F, D and E all belonged here.**
 
-Round two's generalisation of `AcquireLocksAndRecord` is clean — it carries §6 block B's
-no-ordinal-ordering reasoning forward verbatim, `RecordFinding` gained only an `onToolFailure`
-delegate, and it **closes** §8a's "third divergent multi-card write shape" flag rather than adding a
-fourth.
+### Rulings taken at §10's opening — still binding
 
-### `ParsedCommand.Match` — settled as *not* §9's
+1. **The read path reads card files, not the index.** Block B's measurement settled the deferred
+   question in its favour: the 2.07 MB corpus round-trips in ~0.2s and the response measures **5,877 of
+   8,100 characters** at true wire length. D4's indexing rationale stays deferred **on evidence** now,
+   not on assumption.
+2. **The two commands are `context` and `state`.**
+3. **F3: a thread is disposed of by its addressee or the card's owner; `comment resolve` requires a
+   body.** Shipped in `9e7cff6`, recorded in `specs/process-enforcement/spec.md`.
 
-Now 36 delegates across 37 near-identical ~2200-character signatures (29 when §8 first flagged it). A
-reviewer reading it cold judged it actively harmful; **the supervisor overturned that safety argument**
-— delegate parameters are distinct record types, each override passes `this`, and call sites use named
-arguments, so a positional swap is a compile error rather than a silent misdispatch. The real cost is
-diff volume. **It belongs to whoever next touches the CLI surface, as a block carved for it**, not to a
-section two remediation rounds deep.
+Deliberate under ruling 3: a card's owner **may** dispose of a thread addressed to the Product Owner, and
+a thread with no `addressed_to` admits only the card's owner.
 
-### §9 as built — seven blocks plus three remediation rounds
+### The ruling I got wrong, and the correction
 
-`5caa2c4` A (9.1, the refusal format) · `4b40f01` A2 · `397c1c4` A3 (the retrofit, 17 unions) ·
-`1e4a918` B (9.2, 9.3) · `768aa1d` C (9.10, the coverage gate) · `41983a4` D (9.7) · `d8d3457` E (9.4,
-9.5, 9.6, 9.8) · `010007e` F (9.9) · `e10de48` remediation 1 · `afed3e9` remediation 2 ·
-`8298539` remediation 3 (F1 + F2). Suite at **894**, `GATES_EXIT:0`.
+I ruled in block C's brief that 10.10's halting lands in `state` and **not** `context`, reasoning that
+part 4's "nothing else" forbade widening the response. **The supervisor judged that wrong at section
+scale and I accept it:** part 4 bounds how many *parts* the response has, not what "in full" means inside
+part 3 — and blocked-ness and halted-ness are properties of the top item that part 3 exists to deliver.
+As shipped, a worker's top item could be a block that `block transition` and `block approve` would both
+refuse, with `context` silent about it. Fixed in `47fbd85`. **The ruling stands for queue entries**: part
+3 is the top item in full, not the queue in full.
 
-**Two spec amendments landed mid-section**, both Product-Owner-approved: `register` gained obligation
-promotion, and a "Declining is distinguishable from discharging" requirement whose first wording the
-Architect got wrong and corrected — `discharged` in this capability means *no longer live*, not
-*completed*, so a declined obligation carries its reason alongside rather than occupying a third state.
+### Parked for later sections — not defects, nothing blocked
 
-### Rulings from §9 that bind later sections
+- **Call site 34.** The hand-entered-state guard is applied per call site rather than at a chokepoint,
+  because centralising in `AtomicWrite` would also block `RefuseAndRecord` writing its own refusal entry.
+  Correct today and verified so, but it regresses silently the moment someone adds an unguarded write.
+  The supervisor's suggestion: **a fifteen-line source-scan gate** asserting every `AtomicWrite` call site
+  is guarded. Cheap, and it converts a discipline into a mechanism.
+- Three outcome types (`CardCreateOutcome`, `CardFindingRecordOutcome`, `ChangeArchiveOutcome`) carry no
+  `HandEnteredDerivedState` case, on verified structural grounds, documented in code rather than in
+  `RefusalCoverageGateTests.Exclusions`. Both reviewer and supervisor judged this satisfies the gate's
+  rule. Noted because it is the one place the gate's bookkeeping is prose rather than a key.
+- `CardCommentPromoteTests` has no direct unaddressed-thread assertion (covered via the shared predicate),
+  and `RoleNotPermitted.Remedy` is duplicated between the two comment outcome types — worth a shared
+  helper only if a third verb needs it.
+- `queueOrder`/`constraintsRule` tests assert non-empty rather than the exact stated prose.
+- **`state` is deliberately unbounded.** The spec budgets the working-context response, not this one.
+  Stated rather than assumed, and worth revisiting if `state` grows on a long change.
 
-1. **A refusal records when it asserts something about the record; it reports without recording when it
-   asserts only that the invocation was malformed.** Argv-decidability is not the test and neither is
-   cost — ask what the refusal is *about*.
-2. **The coverage gate is the standard, not the brief.** "A test per rule" failed three times as prose
-   (A2, A3, B) before 9.10 was moved ahead of 9.4–9.9 to make it mechanical. Every refusal-shaped case
-   is now either in the format with a test that proves it fires *and* records, or a keyed, reasoned
-   entry in `Exclusions`. There is no third option and the build says so.
-3. **A refusal must name its remedy as a command that exists.** Twice this section a refusal named a
-   verb nobody had built; both times the Product Owner ruled to build the verb rather than soften the
-   refusal.
-4. **Moving a standard mid-section obliges a sweep back over what has landed.** Five of the
-   supervisor's six findings were a sweep that never happened.
+### `IndexPopulator.cs:249` — re-parked, still with no reader
 
-### Carried hazard — the DEVLOG's own anchor
+§9 handed this to §10 as "the first reader of the column". Ruling 1 means **§10 reads nothing from the
+index**, so the section card's `section = ''` row still has no reader and the fix still has no forcing
+function. Carries forward with F2's ruling attached: if the flat form is wanted, the index populates that
+column **from `CardStore.OwningSectionId`**, never as a second source of truth.
 
-**Upgraded after §9: this is not a tidiness problem.** Five failures of the same family now, and the
-fifth was not a misplaced post — during round three a bad `awk` splice **truncated this file to three
-lines** mid-block. It was recoverable only because three parties happened to hold different pieces:
-committed history for everything through the round-two audit, the Architect's own composition file for
-the brief, and the reviewer's context for its own post. That is luck, not process, and the next such
-splice may not be as lucky. See the `[architect]` rebuild post above §9's close.
+### Carried to §13 — `CLAUDE.md` and the agent prompts
 
-Four posts in this change have been spliced into this file's **preamble** by a substring match on
-`## NEXT`, because the preamble documents the convention using the literal string the convention is
-about. The safe anchor is `^## NEXT$`; the naive one is what everyone reaches for first. **Owed by §13
-as a mechanical check** — the append path must verify afterwards that exactly one `^## NEXT$` heading
-remains, in final position. `callboard` itself is the fix: separate card files have no shared anchor to
-mis-hit — and no single file whose loss takes the whole record with it.
+**Item 1 now has a worked example rather than an assertion:** block E's reviewer returned a verdict of
+**"Approve with nits"** — the verdict §8 deleted — and the following review only held to the two-verdict
+vocabulary because I spelled it out in the prompt. The agent definition is out of step with the process,
+and prompting around it per-invocation is not a fix.
+
+2. `CLAUDE.md` describes supervisor pushback without saying the remediation is a new card, and says
+   nothing about recurrence returning the owning card.
+3. `CLAUDE.md` states the two-round cap as a prohibition, which §8a makes an authorisation — and §9 is
+   the worked example of the cap being *spent*. §10 is now a second: round one is spent, one remains.
+4. `CLAUDE.md` still says an approved block may be reopened; §8a made `approved` terminal.
+5. Refusals should name the route by verb rather than by concept.
+6. `--claims`/`--limits` are plural while `--site` is singular-repeatable.
 
 ### Carried from §7 — still open
 
 **A.** The writer/parser wire-key guard (`CardFrontmatter`, `BlockCardFields`, `SectionCardFields`,
-`FindingCardFields` lack a shared key declaration). **B.** `RuleCitations`'s register-size review has no
-CLI surface; §10 owes it one. **C.** §10 must use `ResolveLiveRecordDirectories` for anything live.
-**D.** `CountCitations` is O(rules × cards) and must not go on a per-brief path. **E.** Attribution
-assertions should root on a non-default role. **H.** Repository-scoped compaction has no closing move.
-*(F and G were closed by §9 block D.)*
+`FindingCardFields` lack a shared key declaration). **C.** Live-record resolution — §10 honoured it
+throughout. **D.** `CountCitations` is O(rules × cards); §10 added exactly one sanctioned caller
+(`rule review`) and kept it off every per-brief path. **E.** Attribution assertions should root on a
+non-default role. **H.** Repository-scoped compaction has no closing move. *(B closed by §10 block E.
+F and G were closed by §9 block D.)*
 
-### Owed to §10 specifically
+### The DEVLOG's own anchor — the hazard holds
 
-- **The ageing-thread prompt reaches the queue.** §9 computes `AgeingAddressedThreadIds` and surfaces it
-  on `section status`; 10.1–10.2's working-context response is where it becomes a real prompt to the
-  addressed role. That is what 9.6's second half is *for* — an earlier surfacing, not a close-time
-  exemption.
-- **F3 — authorisation on the comment disposition verbs**, deferred here by the Product Owner's ruling
-  on how §9 closes. **The window is open from `8298539` onward, not from §10** — the verbs shipped in
-  §9 and are unauthorised today (the supervisor's note: F2's latent-until-§10 timing sits next to this
-  bullet and must not be read onto it). Any role may currently resolve, promote or decline any thread on any card,
-  including one addressed to the Product Owner, and `comment resolve` requires no body — so an
-  empty-bodied resolve is a decline with no recorded reason, the one disposition `register` forbids.
-  The spec is silent on who may dispose of a thread, so §10 owes the **policy** first and the refusal
-  second: ask the Product Owner who may resolve, and whether resolve requires a body. 9.6 names bulk
-  discharge at close as its hazard and the mitigation currently refuses nothing.
-- **`IndexPopulator.cs:249` is where F2 can reopen — decide it deliberately.** It mirrors
-  `frontmatter.Section` verbatim, so a **section card's index row carries `section = ''`** — exactly the
-  wrong answer F2 removed from the record path. Harmless only because nothing queries that column yet,
-  and **§10 is its first reader**. The ruling that settled F2 already names the fix: if the flat form is
-  wanted in the index, the index populates its column **from `CardStore.OwningSectionId`** rather than
-  the row carrying a second source of truth. Do not inherit this by default.
-- Idiom only: `OwningSectionId`'s `Match` arms capture `frontmatter` where its neighbours use `static`
-  lambdas.
+Every splice this section used `^## NEXT$` as its anchor and verified afterwards that exactly one match
+remained in final position. No post was mis-spliced into the preamble in §10. The naive substring match
+remains the trap; **§13 still owes the mechanical check**.
 
-### Carried to §13 — `CLAUDE.md` and the agent prompts
+### Rulings from §9 that still bind every later section
 
-1. The `reviewer` agent's verdict vocabulary still permits "Approve with nits", the verdict §8 deleted.
-2. `CLAUDE.md` describes supervisor pushback without saying the remediation is a new card, and says
-   nothing about recurrence returning the owning card.
-3. `CLAUDE.md` states the two-round cap as a prohibition, which §8a makes an authorisation — and §9 is
-   now the worked example of the cap being *spent* and the decision going to the Product Owner.
-4. `CLAUDE.md` still says an approved block may be reopened; §8a made `approved` terminal.
-5. Refusals should name the route by verb rather than by concept (§8's note, twice acted on in §9).
-6. `--claims`/`--limits` are plural while `--site` is singular-repeatable.
+Carried verbatim in force; §10 applied all four and the supervisor confirmed the first was applied
+consistently across every refusal §10 added.
+
+1. **A refusal records when it asserts something about the record; it reports without recording when it
+   asserts only that the invocation was malformed.** Argv-decidability is not the test and neither is
+   cost — ask what the refusal is *about*. (§10's clearest worked example: the thread-disposition
+   authorisation records, because deciding it needs the card read; the empty-bodied `comment resolve`
+   reports at the parse door, because the invocation alone decides it.)
+2. **The coverage gate is the standard, not the brief.** Every refusal-shaped case is either in the
+   format with a test proving it fires *and* records, or a keyed, reasoned entry in `Exclusions`. There
+   is no third option and the build says so. **Its known limit: CLI-layer refusals are outside its
+   domain** — §10 worked there throughout and tested them directly.
+3. **A refusal must name its remedy as a command that exists.** §10's worked example: block B's overage
+   message deliberately named no remedy until block E built `rule review`, then named it.
+4. **Moving a standard mid-section obliges a sweep back over what has landed.**
