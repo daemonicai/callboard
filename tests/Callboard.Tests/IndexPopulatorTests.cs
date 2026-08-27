@@ -292,7 +292,8 @@ public sealed class IndexPopulatorTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"setup write failed: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"setup write failed: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"setup write failed: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"setup write failed: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"setup write failed: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"setup write failed: hand-entered derived-state field '{handEntered.Key}'"));
 
         foreach (var comment in comments ?? [])
         {
@@ -304,7 +305,8 @@ public sealed class IndexPopulatorTests : IDisposable
                 onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"setup append failed: {layoutMismatch.Reason}"),
                 onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"setup append failed: {corrupt.Reason}"),
                 onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"setup append failed: {toolFailure.Reason}"),
-                onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"setup append failed: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+                onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"setup append failed: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+                onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"setup append failed: hand-entered derived-state field '{handEntered.Key}'"));
         }
     }
 

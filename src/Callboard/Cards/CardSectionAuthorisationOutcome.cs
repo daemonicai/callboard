@@ -23,14 +23,14 @@ internal abstract record CardSectionAuthorisationOutcome
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<NotAtBound, TResult> onNotAtBound,
         Func<CardCorrupt, TResult> onCardCorrupt,
-        Func<ToolFailure, TResult> onToolFailure);
+        Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
 
     /// <param name="Card">The section card as written, carrying the newly appended authorisation
     /// entry.</param>
     /// <param name="Entry">The authorisation entry actually recorded.</param>
     internal sealed record Recorded(CardFile Card, SectionAuthorisationEntry Entry) : CardSectionAuthorisationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRecorded(this);
     }
 
@@ -46,7 +46,7 @@ internal abstract record CardSectionAuthorisationOutcome
     /// requires to leave a mark (§9 remediation S3).</summary>
     internal sealed record RoleNotPermitted(CardOwner AttemptedRole) : CardSectionAuthorisationOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRoleNotPermitted(this);
 
         public string RefusingRule => "work-lifecycle: an authorisation is part of the record, not a permission granted out of band";
@@ -58,7 +58,7 @@ internal abstract record CardSectionAuthorisationOutcome
     /// authorisations are only recorded on a section card. Refusal-shaped.</summary>
     internal sealed record NotASectionCard(CardKind Kind) : CardSectionAuthorisationOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotASectionCard(this);
 
         public string RefusingRule => "work-lifecycle: authorisations are recorded only on a section card";
@@ -69,7 +69,7 @@ internal abstract record CardSectionAuthorisationOutcome
     /// <summary>No card exists at the target path. Refusal-shaped.</summary>
     internal sealed record CardNotFound(string FilePath) : CardSectionAuthorisationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardNotFound(this);
     }
 
@@ -77,7 +77,7 @@ internal abstract record CardSectionAuthorisationOutcome
     /// (<see cref="AnchoredCardPath.TryCreate"/>). Refusal-shaped.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardSectionAuthorisationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
@@ -90,7 +90,7 @@ internal abstract record CardSectionAuthorisationOutcome
     /// rule. Refusal-shaped.</summary>
     internal sealed record NotAtBound(int PriorRequestChanges, int UnspentAuthorisations) : CardSectionAuthorisationOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotAtBound(this);
 
         public string RefusingRule => "work-lifecycle: an authorisation is recorded against a refused request-changes verdict, not in advance of one";
@@ -105,15 +105,36 @@ internal abstract record CardSectionAuthorisationOutcome
     /// reported problem with the record's own content.</summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardSectionAuthorisationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardCorrupt(this);
+    }
+
+    /// <summary>working-context: "No figure SHALL be hand-entered anywhere in the system" (§10
+    /// block C) — <paramref name="Key"/> names a reserved derived-state field (<see
+    /// cref="DerivedStateFieldKeys.All"/>) present on the target card's <see cref="CardFile.
+    /// UnknownFrontmatterFields"/>, the door a hand-edited card's frontmatter uses to reach this far
+    /// at all (nothing this build's own CLI ever writes one). Refusal-shaped, card-addressed (§9
+    /// block A3): checked immediately once the card is read, before recording the authorisation is allowed to
+    /// proceed, so this write never re-emits (and never launders forward) a hand-entered count or
+    /// next-step pin it did not itself write. See <see cref="CardWriteResult.HandEnteredDerivedState"/>
+    /// for the sibling case on the generic comment/handover surface.</summary>
+    internal sealed record HandEnteredDerivedState(string Key) : CardSectionAuthorisationOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+            onHandEnteredDerivedState(this);
+
+        public string RefusingRule => "working-context: no figure shall be hand-entered";
+
+        public string Remedy =>
+            $"'{Key}' is a reserved derived-state field name; remove it from this card's frontmatter — " +
+            "this state is derived at request time, never stored, and is available from 'callboard state'.";
     }
 
     /// <summary>Enforcement itself is unavailable: a card's lock could not be acquired within its
     /// timeout, or an I/O error occurred while writing. Tool-failure-shaped.</summary>
     internal sealed record ToolFailure(string Reason) : CardSectionAuthorisationOutcome
     {
-        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<NotAtBound, TResult> onNotAtBound, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

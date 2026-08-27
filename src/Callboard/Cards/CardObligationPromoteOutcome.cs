@@ -25,7 +25,7 @@ internal abstract record CardObligationPromoteOutcome
         Func<CardNotFound, TResult> onCardNotFound,
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
-        Func<ToolFailure, TResult> onToolFailure);
+        Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
 
     /// <param name="Card">The card exactly as written after promotion — same id, same body, same
     /// comments, only <c>scope</c> and <c>updated</c> differ from what was read at the start of the
@@ -35,7 +35,7 @@ internal abstract record CardObligationPromoteOutcome
     /// RegisterDirectory"/>.</param>
     internal sealed record Promoted(CardFile Card, string OldFilePath, string NewFilePath) : CardObligationPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onPromoted(this);
     }
 
@@ -43,7 +43,7 @@ internal abstract record CardObligationPromoteOutcome
     /// </summary>
     internal sealed record AlreadyRepositoryScoped(string FilePath) : CardObligationPromoteOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onAlreadyRepositoryScoped(this);
 
         public string RefusingRule => "register: promoting an already-repository-scoped obligation is a refusal too";
@@ -57,7 +57,7 @@ internal abstract record CardObligationPromoteOutcome
     /// Refusal-shaped.</summary>
     internal sealed record NotChangeScoped(CardScope Scope, string FilePath) : CardObligationPromoteOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotChangeScoped(this);
 
         public string RefusingRule => "register: promotion moves a change-scoped obligation to repository scope, nothing else";
@@ -69,7 +69,7 @@ internal abstract record CardObligationPromoteOutcome
     /// — register: "SHALL NOT occupy flow states". Refusal-shaped.</summary>
     internal sealed record InvalidStatus(string FilePath, string Status) : CardObligationPromoteOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onInvalidStatus(this);
 
         public string RefusingRule => "register: register cards SHALL NOT occupy flow states";
@@ -82,7 +82,7 @@ internal abstract record CardObligationPromoteOutcome
     /// <summary>The resolved card is not an <c>obligation</c>. Refusal-shaped.</summary>
     internal sealed record NotAnObligationCard(CardKind Kind) : CardObligationPromoteOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotAnObligationCard(this);
 
         public string RefusingRule => "register: promotion applies to obligation cards";
@@ -94,7 +94,7 @@ internal abstract record CardObligationPromoteOutcome
     /// <see cref="CardLayout.RegisterDirectory"/>. Refusal-shaped.</summary>
     internal sealed record TargetAlreadyExists(string FilePath) : CardObligationPromoteOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onTargetAlreadyExists(this);
 
         public string RefusingRule => "card-model: identities are never recycled, and a promotion must not overwrite an unrelated card";
@@ -106,7 +106,7 @@ internal abstract record CardObligationPromoteOutcome
     /// Refusal-shaped.</summary>
     internal sealed record CardNotFound(string FilePath) : CardObligationPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardNotFound(this);
     }
 
@@ -115,15 +115,36 @@ internal abstract record CardObligationPromoteOutcome
     /// every other <c>CardStore</c> write surface carries this case. Refusal-shaped.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardObligationPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
     /// <summary>The card exists but could not be parsed. Neither refusal nor tool-failure.</summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardObligationPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardCorrupt(this);
+    }
+
+    /// <summary>working-context: "No figure SHALL be hand-entered anywhere in the system" (§10
+    /// block C) — <paramref name="Key"/> names a reserved derived-state field (<see
+    /// cref="DerivedStateFieldKeys.All"/>) present on the target card's <see cref="CardFile.
+    /// UnknownFrontmatterFields"/>, the door a hand-edited card's frontmatter uses to reach this far
+    /// at all (nothing this build's own CLI ever writes one). Refusal-shaped, card-addressed (§9
+    /// block A3): checked immediately once the card is read, before promoting the obligation is allowed to
+    /// proceed, so this write never re-emits (and never launders forward) a hand-entered count or
+    /// next-step pin it did not itself write. See <see cref="CardWriteResult.HandEnteredDerivedState"/>
+    /// for the sibling case on the generic comment/handover surface.</summary>
+    internal sealed record HandEnteredDerivedState(string Key) : CardObligationPromoteOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+            onHandEnteredDerivedState(this);
+
+        public string RefusingRule => "working-context: no figure shall be hand-entered";
+
+        public string Remedy =>
+            $"'{Key}' is a reserved derived-state field name; remove it from this card's frontmatter — " +
+            "this state is derived at request time, never stored, and is available from 'callboard state'.";
     }
 
     /// <summary>
@@ -133,7 +154,7 @@ internal abstract record CardObligationPromoteOutcome
     /// </summary>
     internal sealed record ToolFailure(string Reason) : CardObligationPromoteOutcome
     {
-        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<AlreadyRepositoryScoped, TResult> onAlreadyRepositoryScoped, Func<NotChangeScoped, TResult> onNotChangeScoped, Func<InvalidStatus, TResult> onInvalidStatus, Func<NotAnObligationCard, TResult> onNotAnObligationCard, Func<TargetAlreadyExists, TResult> onTargetAlreadyExists, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

@@ -233,7 +233,8 @@ public sealed class CardOwnershipTransferTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected write success, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static string AssertFailure(CardWriteResult result) =>
         result.Match(
@@ -243,7 +244,8 @@ public sealed class CardOwnershipTransferTests : IDisposable
             onLayoutMismatch: layoutMismatch => layoutMismatch.Reason,
             onCorrupt: corrupt => $"the card file is corrupt: {corrupt.Reason}",
             onToolFailure: toolFailure => toolFailure.Reason,
-            onRoundDisagreesWithHistory: disagreement => $"stored round {disagreement.StoredRound}, but history implies round {disagreement.ExpectedRound}.");
+            onRoundDisagreesWithHistory: disagreement => $"stored round {disagreement.StoredRound}, but history implies round {disagreement.ExpectedRound}.",
+            onHandEnteredDerivedState: handEntered => $"hand-entered derived-state field '{handEntered.Key}'.");
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

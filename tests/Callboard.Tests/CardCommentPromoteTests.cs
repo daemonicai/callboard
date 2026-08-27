@@ -243,6 +243,7 @@ public sealed class CardCommentPromoteTests : IDisposable
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Promoted, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Promoted, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Promoted, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected Promoted, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Promoted, got ToolFailure: {toolFailure.Reason}"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>

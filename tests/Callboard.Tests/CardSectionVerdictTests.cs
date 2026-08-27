@@ -435,7 +435,8 @@ public sealed class CardSectionVerdictTests : IDisposable
             onRemediationBoundExceeded: static boundExceeded => throw new Xunit.Sdk.XunitException($"expected Recorded, got RemediationBoundExceeded: verdict #{boundExceeded.VerdictNumber}, {boundExceeded.AuthorisationsRecorded} authorisation(s) recorded"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Recorded, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Recorded, got ToolFailure: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Recorded, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Recorded, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Recorded, got HandEnteredDerivedState: '{handEntered.FilePath}' key '{handEntered.Key}'"));
 
     private static CardLock AssertAcquired(CardLockResult result) =>
         result.Match(
@@ -450,7 +451,8 @@ public sealed class CardSectionVerdictTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected write success, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

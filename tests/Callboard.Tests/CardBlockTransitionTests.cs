@@ -86,7 +86,8 @@ public sealed class CardBlockTransitionTests : IDisposable
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
             onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"),
-            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"));
+            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"),
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected UndefinedTransition, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
         Assert.Equal(BlockFlowState.Drafting, undefined.CurrentState);
         var available = Assert.Single(undefined.Available);
@@ -335,7 +336,8 @@ public sealed class CardBlockTransitionTests : IDisposable
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Applied, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Applied, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
             onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected Applied, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"),
-            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected Applied, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"));
+            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected Applied, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"),
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Applied, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static CardLock AssertAcquired(CardLockResult result) =>
         result.Match(
@@ -350,7 +352,8 @@ public sealed class CardBlockTransitionTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected write success, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

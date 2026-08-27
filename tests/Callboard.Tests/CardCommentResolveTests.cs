@@ -217,6 +217,7 @@ public sealed class CardCommentResolveTests : IDisposable
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Resolved, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Resolved, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Resolved, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected Resolved, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Resolved, got ToolFailure: {toolFailure.Reason}"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>

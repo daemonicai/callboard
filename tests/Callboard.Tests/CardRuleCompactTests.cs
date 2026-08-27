@@ -140,6 +140,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected RoleNotPermitted, got ToolFailure: {toolFailure.Reason}"));
     }
 
@@ -166,6 +167,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected EmptyAbsorbSet, got ToolFailure: {toolFailure.Reason}"));
     }
 
@@ -192,6 +194,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected SelfAbsorption, got ToolFailure: {toolFailure.Reason}"));
     }
 
@@ -219,6 +222,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected DuplicateAbsorbedRule, got ToolFailure: {toolFailure.Reason}"));
     }
 
@@ -258,6 +262,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfAbsorption, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2 remediation): recorded against the absorbed card that
@@ -301,6 +306,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected ResolvedDuplicateAbsorbedRule, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2 remediation): recorded against the second-seen absorbed
@@ -340,6 +346,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected AbsorbedAlreadyDischarged, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2): recorded against the member card the refusal names.
@@ -386,6 +393,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected FamilyAlreadyDischarged, got ToolFailure: {toolFailure.Reason}"));
 
         // C was never touched — still open, still carries no absorbs/superseded_by.
@@ -435,6 +443,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2): recorded against the wrongly-named family side.
@@ -479,6 +488,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2 remediation): recorded against the family card.
@@ -575,6 +585,7 @@ public sealed class CardRuleCompactTests : IDisposable
                 onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got CardNotFound: '{notFound.FilePath}'"),
                 onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got LayoutMismatch: {layoutMismatch.Reason}"),
                 onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got CardCorrupt: {corrupt.Reason}"),
+                onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got HandEnteredDerivedState: '{handEntered.Key}'"),
                 onToolFailure: static toolFailure => toolFailure);
             Assert.NotNull(toolFailure);
         }
@@ -667,6 +678,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Compacted, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Compacted, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Compacted, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected Compacted, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Compacted, got ToolFailure: {toolFailure.Reason}"));
 
     private static void AssertLayoutMismatch(CardRuleCompactOutcome outcome) =>
@@ -685,6 +697,7 @@ public sealed class CardRuleCompactTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static _ => null,
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected LayoutMismatch, got ToolFailure: {toolFailure.Reason}"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>

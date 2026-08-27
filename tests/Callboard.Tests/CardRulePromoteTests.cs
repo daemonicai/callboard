@@ -143,6 +143,7 @@ public sealed class CardRulePromoteTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected AlreadyRepositoryScoped, got ToolFailure: {toolFailure.Reason}"));
 
         Assert.True(File.Exists(path), "an already-repository-scoped rule must stay exactly where it was.");
@@ -180,6 +181,7 @@ public sealed class CardRulePromoteTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotChangeScoped, got ToolFailure: {toolFailure.Reason}"));
 
         Assert.True(File.Exists(path), "a wrongly-scoped rule must stay exactly where it was.");
@@ -215,6 +217,7 @@ public sealed class CardRulePromoteTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotARuleCard, got ToolFailure: {toolFailure.Reason}"));
 
         Assert.True(File.Exists(path));
@@ -251,6 +254,7 @@ public sealed class CardRulePromoteTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2 remediation): recorded now that changeName anchors.
@@ -284,6 +288,7 @@ public sealed class CardRulePromoteTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected TargetAlreadyExists, got ToolFailure: {toolFailure.Reason}"));
 
         Assert.True(File.Exists(path), "phase one must not run at all once the target collision is detected.");
@@ -338,6 +343,7 @@ public sealed class CardRulePromoteTests : IDisposable
                 onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got CardNotFound: '{notFound.FilePath}'"),
                 onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got LayoutMismatch: {layoutMismatch.Reason}"),
                 onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got CardCorrupt: {corrupt.Reason}"),
+                onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected ToolFailure, got HandEnteredDerivedState: '{handEntered.Key}'"),
                 onToolFailure: static toolFailure => toolFailure);
             Assert.NotNull(toolFailure);
 
@@ -392,6 +398,7 @@ public sealed class CardRulePromoteTests : IDisposable
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Promoted, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Promoted, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Promoted, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected Promoted, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Promoted, got ToolFailure: {toolFailure.Reason}"));
 
     private static void AssertFoundAt(CardIdentityResolution resolution, string expectedFilePath) =>

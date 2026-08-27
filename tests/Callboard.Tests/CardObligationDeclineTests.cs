@@ -149,6 +149,7 @@ public sealed class CardObligationDeclineTests : IDisposable
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Declined, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Declined, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Declined, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected Declined, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Declined, got ToolFailure: {toolFailure.Reason}"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>

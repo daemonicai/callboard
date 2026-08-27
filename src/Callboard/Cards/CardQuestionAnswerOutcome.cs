@@ -30,7 +30,7 @@ internal abstract record CardQuestionAnswerOutcome
         Func<CardNotFound, TResult> onCardNotFound,
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
-        Func<ToolFailure, TResult> onToolFailure);
+        Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
 
     /// <param name="Card">The card as written: <c>status: answered</c> and whichever of
     /// <see cref="QuestionCardFields.AnswerDecisionId"/>/<see cref="QuestionCardFields.AnswerInline"/>
@@ -38,7 +38,7 @@ internal abstract record CardQuestionAnswerOutcome
     /// QuestionCardFields.AnsweredAt"/>.</param>
     internal sealed record Answered(CardFile Card) : CardQuestionAnswerOutcome
     {
-        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onAnswered(this);
     }
 
@@ -47,7 +47,7 @@ internal abstract record CardQuestionAnswerOutcome
     /// kind is the same read this refusal records against) — recorded.</summary>
     internal sealed record NotAQuestionCard(CardKind Kind) : CardQuestionAnswerOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotAQuestionCard(this);
 
         public string RefusingRule => "process-enforcement: an answer targets a question card";
@@ -59,7 +59,7 @@ internal abstract record CardQuestionAnswerOutcome
     /// already answered, or deferred. Refusal-shaped and card-addressed — recorded.</summary>
     internal sealed record NotOpen(QuestionStatus CurrentStatus) : CardQuestionAnswerOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotOpen(this);
 
         public string RefusingRule => "process-enforcement: a question is answered only from 'open'";
@@ -71,7 +71,7 @@ internal abstract record CardQuestionAnswerOutcome
     /// card-addressed (there is nothing to read) — never recorded, per the base ruling.</summary>
     internal sealed record CardNotFound(string FilePath) : CardQuestionAnswerOutcome
     {
-        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardNotFound(this);
     }
 
@@ -79,7 +79,7 @@ internal abstract record CardQuestionAnswerOutcome
     /// Categorical, never recorded — see the base ruling.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardQuestionAnswerOutcome
     {
-        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
@@ -87,15 +87,36 @@ internal abstract record CardQuestionAnswerOutcome
     /// readable to record against.</summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardQuestionAnswerOutcome
     {
-        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardCorrupt(this);
+    }
+
+    /// <summary>working-context: "No figure SHALL be hand-entered anywhere in the system" (§10
+    /// block C) — <paramref name="Key"/> names a reserved derived-state field (<see
+    /// cref="DerivedStateFieldKeys.All"/>) present on the target card's <see cref="CardFile.
+    /// UnknownFrontmatterFields"/>, the door a hand-edited card's frontmatter uses to reach this far
+    /// at all (nothing this build's own CLI ever writes one). Refusal-shaped, card-addressed (§9
+    /// block A3): checked immediately once the card is read, before answering the question is allowed to
+    /// proceed, so this write never re-emits (and never launders forward) a hand-entered count or
+    /// next-step pin it did not itself write. See <see cref="CardWriteResult.HandEnteredDerivedState"/>
+    /// for the sibling case on the generic comment/handover surface.</summary>
+    internal sealed record HandEnteredDerivedState(string Key) : CardQuestionAnswerOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+            onHandEnteredDerivedState(this);
+
+        public string RefusingRule => "working-context: no figure shall be hand-entered";
+
+        public string Remedy =>
+            $"'{Key}' is a reserved derived-state field name; remove it from this card's frontmatter — " +
+            "this state is derived at request time, never stored, and is available from 'callboard state'.";
     }
 
     /// <summary>Enforcement was unavailable (ADR-0001) — a lock timeout, or a refusal's own record
     /// write failing. Never a refusal: the board never got to say no.</summary>
     internal sealed record ToolFailure(string Reason) : CardQuestionAnswerOutcome
     {
-        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Answered, TResult> onAnswered, Func<NotAQuestionCard, TResult> onNotAQuestionCard, Func<NotOpen, TResult> onNotOpen, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

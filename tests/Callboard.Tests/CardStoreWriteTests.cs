@@ -321,6 +321,35 @@ public sealed class CardStoreWriteTests : IDisposable
         Assert.Equal(disagreement.Remedy, refusal.Remedy);
     }
 
+    // working-context (§10 block C): "No figure SHALL be hand-entered anywhere in the system" —
+    // a card whose frontmatter already carries a reserved derived-state key (only reachable by a
+    // hand edit made outside the tool; this build's own parser never assigns 'next_step' a typed
+    // home) is refused before AppendComment's write proceeds, and the refusal is card-addressed,
+    // so it records against the card.
+    [Fact]
+    public void AppendComment_CardCarryingAReservedDerivedStateKey_Refuses_AndRecordsAgainstTheCard()
+    {
+        var path = Path.Combine(_directory, "b-0011.md");
+        var frontmatter = new CardFrontmatter("B-0011", CardKind.Block, "Title", "open", CardOwner.Worker, CardScope.Change, "2", Created, Created);
+        var card = new CardFile(frontmatter, "Body.", [], [("next_step", "do the thing")]);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var comment = new CardComment("C-0001", CardOwner.Worker, Created.AddHours(1), "Done.", null, null, null, []);
+
+        var outcome = CardStore.AppendComment(_root, path, comment, TimeSpan.FromSeconds(5), ChangeName);
+
+        var handEntered = Assert.IsType<CardWriteResult.HandEnteredDerivedState>(outcome);
+        Assert.Equal("next_step", handEntered.Key);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Empty(read.Comments);
+        Assert.Equal(("next_step", "do the thing"), Assert.Single(read.UnknownFrontmatterFields));
+        var refusal = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, refusal.By);
+        Assert.Equal(Created.AddHours(1), refusal.Timestamp);
+        Assert.Equal(handEntered.RefusingRule, refusal.Rule);
+        Assert.Equal(handEntered.Remedy, refusal.Remedy);
+    }
+
     [Fact]
     public void AppendCommentUnderExistingLock_RequiresAHeldLock_NullBypassIsRejectedAtRuntime()
     {
@@ -399,7 +428,8 @@ public sealed class CardStoreWriteTests : IDisposable
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected write success, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static string AssertFailure(CardWriteResult result) =>
         result.Match(
@@ -409,7 +439,8 @@ public sealed class CardStoreWriteTests : IDisposable
             onLayoutMismatch: layoutMismatch => layoutMismatch.Reason,
             onCorrupt: corrupt => $"the card file is corrupt: {corrupt.Reason}",
             onToolFailure: toolFailure => toolFailure.Reason,
-            onRoundDisagreesWithHistory: disagreement => $"stored round {disagreement.StoredRound}, but history implies round {disagreement.ExpectedRound}.");
+            onRoundDisagreesWithHistory: disagreement => $"stored round {disagreement.StoredRound}, but history implies round {disagreement.ExpectedRound}.",
+            onHandEnteredDerivedState: handEntered => $"hand-entered derived-state field '{handEntered.Key}'.");
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

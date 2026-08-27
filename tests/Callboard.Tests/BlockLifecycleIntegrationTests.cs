@@ -192,7 +192,8 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Applied, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Applied, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
             onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected Applied, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"),
-            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected Applied, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"));
+            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected Applied, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"),
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Applied, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static CardGateResultOutcome.Recorded AssertRecorded(CardGateResultOutcome outcome) =>
         outcome.Match(
@@ -202,7 +203,8 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Recorded, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Recorded, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Recorded, got ToolFailure: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Recorded, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Recorded, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Recorded, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static CardBlockedByOutcome.Updated AssertUpdated(CardBlockedByOutcome outcome) =>
         outcome.Match(
@@ -214,7 +216,8 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Updated, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Updated, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Updated, got ToolFailure: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Updated, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Updated, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Updated, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(
@@ -234,7 +237,8 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Approved, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Approved, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
             onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected Approved, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"),
-            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected Approved, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"));
+            onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected Approved, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"),
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Approved, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static CardSectionCloseOutcome.Closed AssertClosed(CardSectionCloseOutcome outcome) =>
         outcome.Match(
@@ -252,5 +256,6 @@ onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Closed, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Closed, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Closed, got ToolFailure: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Closed, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Closed, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Closed, got HandEnteredDerivedState: '{handEntered.Key}'"));
 }

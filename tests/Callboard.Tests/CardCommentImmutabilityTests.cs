@@ -163,6 +163,7 @@ public sealed class CardCommentImmutabilityTests
             "RefuseAndRecord",                       // §9 block A2: the outcome-union-generic overload the register/rules families share — same contract, same lock precondition, never touches Comments
             "RemoveBlockedBy",                      // §5 block D: read-modify-write on BlockFields.BlockedBy only, the "clearing what blocked it" half of "Blocked is derived, not stored"
             "RemoveBlockedByUnderExistingLock",     // same, lock already held
+            "ReservedDerivedStateFieldKeyIn",       // §10 block C: pure predicate over UnknownFrontmatterFields only — never touches Comments or writes anything; AppendCommentUnderExistingLock/TransferOwnershipUnderExistingLock's shared reserved-key guard
             "ResolveComment",                       // §9 remediation, round two (S4): acquires the card's own lock and delegates to ResolveCommentUnderExistingLock; never touches a CardFile itself
             "ResolveCommentUnderExistingLock",       // §9 remediation, round two (S4): appends exactly one resolving comment via `card with { Comments = [.. card.Comments, comment] }`; never edits or drops the comment it resolves
             "RestoreAllAbsorbed",                   // §7 block F: loops RestoreCardContent over every absorbed rule already written in a CompactRulesUnderLocks call when the family's own write then fails; touches only what RestoreCardContent itself touches
@@ -245,7 +246,8 @@ public sealed class CardCommentImmutabilityTests
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected write success, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected write success, got Corrupt: {corrupt.Reason}"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected write success, got ToolFailure: {toolFailure.Reason}"),
-            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"));
+            onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"expected write success, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected write success, got HandEnteredDerivedState: '{handEntered.Key}'"));
 
     private static void AssertFailure(CardWriteResult result) =>
         result.Match<object?>(
@@ -255,7 +257,8 @@ public sealed class CardCommentImmutabilityTests
             onLayoutMismatch: static _ => null,
             onCorrupt: static _ => null,
             onToolFailure: static _ => null,
-            onRoundDisagreesWithHistory: static disagreement => null);
+            onRoundDisagreesWithHistory: static disagreement => null,
+            onHandEnteredDerivedState: static _ => null);
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

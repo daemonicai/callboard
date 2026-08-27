@@ -127,9 +127,9 @@
 - [x] 10.5 Truncate narrative only, never the register or brief, and state every omission
 - [x] 10.6 Test that the response fits the budget at a corpus comparable to the measured change
 - [x] 10.7 Test that response size late in a change stays within 20% of its size at the start
-- [ ] 10.8 Implement the derived state summary with every figure computed at request time
-- [ ] 10.9 Refuse any attempt to store a hand-entered count or next-step pin
-- [ ] 10.10 Derive escalation severity from question ownership, halting dependents only for Product Owner questions
+- [x] 10.8 Implement the derived state summary with every figure computed at request time
+- [x] 10.9 Refuse any attempt to store a hand-entered count or next-step pin
+- [x] 10.10 Derive escalation severity from question ownership, halting dependents only for Product Owner questions
 
 ## 11. Narrative retrieval and export
 

@@ -30,14 +30,14 @@ internal abstract record CardNitRaiseOutcome
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
         Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory);
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
 
     /// <param name="Card">The card as written: the nit comment appended, nothing else changed —
     /// raising a nit never itself moves the block's <c>status</c>.</param>
     internal sealed record Raised(CardFile Card) : CardNitRaiseOutcome
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRaised(this);
     }
 
@@ -51,7 +51,7 @@ internal abstract record CardNitRaiseOutcome
     internal sealed record NotABlockCard(CardKind Kind) : CardNitRaiseOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotABlockCard(this);
 
         public string RefusingRule => "review-certification: nits only apply to a block card";
@@ -63,7 +63,7 @@ internal abstract record CardNitRaiseOutcome
     internal sealed record CardNotFound(string FilePath) : CardNitRaiseOutcome
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardNotFound(this);
     }
 
@@ -82,7 +82,7 @@ internal abstract record CardNitRaiseOutcome
     internal sealed record NotUnderReview(BlockFlowState CurrentState) : CardNitRaiseOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotUnderReview(this);
 
         public string RefusingRule => "review-certification: a nit SHALL be raised only against a block that is under review";
@@ -98,7 +98,7 @@ internal abstract record CardNitRaiseOutcome
     internal sealed record LayoutMismatch(string Reason) : CardNitRaiseOutcome
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
@@ -109,7 +109,7 @@ internal abstract record CardNitRaiseOutcome
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardNitRaiseOutcome
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardCorrupt(this);
     }
 
@@ -122,7 +122,7 @@ internal abstract record CardNitRaiseOutcome
     /// whichever was correct.</summary>
     internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardNitRaiseOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRoundDisagreesWithHistory(this);
 
         public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
@@ -132,6 +132,28 @@ internal abstract record CardNitRaiseOutcome
             "correct whichever was altered outside the tool before this nit can be raised.";
     }
 
+    /// <summary>working-context: "No figure SHALL be hand-entered anywhere in the system" (§10
+    /// block C) — <paramref name="Key"/> names a reserved derived-state field (<see
+    /// cref="DerivedStateFieldKeys.All"/>) present on the target card's <see cref="CardFile.
+    /// UnknownFrontmatterFields"/>, the door a hand-edited card's frontmatter uses to reach this far
+    /// at all (nothing this build's own CLI ever writes one). Refusal-shaped, card-addressed (§9
+    /// block A3): checked immediately once the card is read, before raising the nit is allowed to
+    /// proceed, so this write never re-emits (and never launders forward) a hand-entered count or
+    /// next-step pin it did not itself write. See <see cref="CardWriteResult.HandEnteredDerivedState"/>
+    /// for the sibling case on the generic comment/handover surface.</summary>
+    internal sealed record HandEnteredDerivedState(string Key) : CardNitRaiseOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+            onHandEnteredDerivedState(this);
+
+        public string RefusingRule => "working-context: no figure shall be hand-entered";
+
+        public string Remedy =>
+            $"'{Key}' is a reserved derived-state field name; remove it from this card's frontmatter — " +
+            "this state is derived at request time, never stored, and is available from 'callboard state'.";
+    }
+
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within its
     /// timeout, or an I/O error occurred while writing. Tool-failure-shaped — the board is not
     /// refusing anything. A caller wired over this type must let it reach a tool-failure exit
@@ -139,7 +161,7 @@ internal abstract record CardNitRaiseOutcome
     internal sealed record ToolFailure(string Reason) : CardNitRaiseOutcome
     {
         internal override TResult Match<TResult>(Func<Raised, TResult> onRaised, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NotUnderReview, TResult> onNotUnderReview, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

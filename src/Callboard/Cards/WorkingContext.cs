@@ -237,8 +237,11 @@ internal static class WorkingContextAssembler
     /// "<see cref="Path.Combine(string, string)"/> keeps a trailing separator, <see cref="
     /// Directory.EnumerateDirectories(string)"/> never does" mismatch <see cref="CardLayout.
     /// ArchiveRootPath"/> already guards against.
+    ///
+    /// <para>Internal, not private (§10 block C): <see cref="DerivedStateAssembler"/> reuses this
+    /// to name each live change once, rather than re-deriving the same mapping a second way.</para>
     /// </summary>
-    private static string? ChangeNameForDirectory(string cardsRoot, string directory)
+    internal static string? ChangeNameForDirectory(string cardsRoot, string directory)
     {
         var trimmedDirectory = Path.TrimEndingDirectorySeparator(directory);
         var registerDirectory = Path.TrimEndingDirectorySeparator(

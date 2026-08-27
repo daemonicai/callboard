@@ -87,6 +87,7 @@ public sealed class CardRegisterDischargeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected AlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected AlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected AlreadyDischarged, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected AlreadyDischarged, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected AlreadyDischarged, got ToolFailure: {toolFailure.Reason}"));
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
@@ -121,6 +122,7 @@ public sealed class CardRegisterDischargeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotARegisterCard, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2): recorded against the (block) card the refusal named.
@@ -154,6 +156,7 @@ public sealed class CardRegisterDischargeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
 
         // Status is never touched by a refusal — only a CardRefusalEntry is appended (§9 block A2).
@@ -189,6 +192,7 @@ public sealed class CardRegisterDischargeTests : IDisposable
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Discharged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Discharged, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Discharged, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected Discharged, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Discharged, got ToolFailure: {toolFailure.Reason}"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>

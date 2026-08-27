@@ -28,12 +28,13 @@ internal abstract record CardWriteResult
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<Corrupt, TResult> onCorrupt,
         Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory);
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
 
     internal sealed record Success : CardWriteResult
     {
         internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onSuccess(this);
     }
 
@@ -43,7 +44,7 @@ internal abstract record CardWriteResult
     internal sealed record NotFound(string FilePath) : CardWriteResult
     {
         internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotFound(this);
     }
 
@@ -53,7 +54,7 @@ internal abstract record CardWriteResult
     internal sealed record AlreadyExists(string FilePath) : CardWriteResult
     {
         internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onAlreadyExists(this);
     }
 
@@ -63,7 +64,7 @@ internal abstract record CardWriteResult
     internal sealed record LayoutMismatch(string Reason) : CardWriteResult
     {
         internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
@@ -74,7 +75,7 @@ internal abstract record CardWriteResult
     internal sealed record Corrupt(string FilePath, string Reason) : CardWriteResult
     {
         internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCorrupt(this);
     }
 
@@ -92,7 +93,7 @@ internal abstract record CardWriteResult
     /// caller of this generic surface rather than naming one verb.</summary>
     internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardWriteResult, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRoundDisagreesWithHistory(this);
 
         public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
@@ -100,6 +101,29 @@ internal abstract record CardWriteResult
         public string Remedy =>
             $"the recorded round ({StoredRound}) disagrees with the transition history ({ExpectedRound}); " +
             "correct whichever was altered outside the tool before this write can proceed.";
+    }
+
+    /// <summary>working-context: "No figure SHALL be hand-entered anywhere in the system" (§10
+    /// block C) — <paramref name="Key"/> names a reserved derived-state field
+    /// (<see cref="DerivedStateFieldKeys.All"/>) present on <see cref="CardFile.
+    /// UnknownFrontmatterFields"/>, the door a hand-edited card's frontmatter uses to reach this
+    /// far at all (nothing this build's own CLI ever writes one). Refusal-shaped, card-addressed
+    /// (§9 block A3): checked on this shared surface (<see cref="CardStore.AppendComment"/>,
+    /// <see cref="CardStore.TransferOwnership"/>) right after the card is read under lock, the
+    /// same point <see cref="RoundDisagreesWithHistory"/> is checked — a card carrying a reserved
+    /// key is refused before either write proceeds, so this build never re-emits (and never
+    /// launders forward) a hand-entered count or next-step pin it did not itself write.</summary>
+    internal sealed record HandEnteredDerivedState(string Key) : CardWriteResult, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+            onHandEnteredDerivedState(this);
+
+        public string RefusingRule => "working-context: no figure shall be hand-entered";
+
+        public string Remedy =>
+            $"'{Key}' is a reserved derived-state field name; remove it from this card's frontmatter — " +
+            "this state is derived at request time, never stored, and is available from 'callboard state'.";
     }
 
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within
@@ -110,7 +134,7 @@ internal abstract record CardWriteResult
     internal sealed record ToolFailure(string Reason) : CardWriteResult
     {
         internal override TResult Match<TResult>(Func<Success, TResult> onSuccess, Func<NotFound, TResult> onNotFound, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<Corrupt, TResult> onCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

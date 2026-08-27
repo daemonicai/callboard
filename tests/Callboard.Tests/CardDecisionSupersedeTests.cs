@@ -103,6 +103,7 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected SelfSupersession, got ToolFailure: {toolFailure.Reason}"));
     }
 
@@ -136,6 +137,7 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected ResolvedSelfSupersession, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2 remediation): both cards are resolved and locked, so
@@ -169,6 +171,7 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected SupersededAlreadyDischarged, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2): decisions are repository-scoped, no changeName needed
@@ -211,6 +214,7 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected SupersedingAlreadyDischarged, got ToolFailure: {toolFailure.Reason}"));
 
         // C was never touched — still open, still carries no supersedes/superseded_by.
@@ -255,6 +259,7 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2): this fixture's rule card declares scope 'repository'
@@ -296,6 +301,7 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected NotADecisionCard, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2 remediation): properly anchored this time, so recorded.
@@ -334,6 +340,7 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onCardNotFound: notFound => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected InvalidStatus, got ToolFailure: {toolFailure.Reason}"));
 
         // process-enforcement (§9 block A2 remediation): recorded against the superseding card.
@@ -367,6 +374,7 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected Superseded, got CardNotFound: '{notFound.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Superseded, got LayoutMismatch: {layoutMismatch.Reason}"),
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Superseded, got CardCorrupt: {corrupt.Reason}"),
+            onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"expected Superseded, got HandEnteredDerivedState: '{handEntered.Key}'"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Superseded, got ToolFailure: {toolFailure.Reason}"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>

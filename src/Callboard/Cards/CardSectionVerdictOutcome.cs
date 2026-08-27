@@ -52,7 +52,7 @@ internal abstract record CardSectionVerdictOutcome
         Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded,
         Func<CardCorrupt, TResult> onCardCorrupt,
         Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory);
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
 
     /// <param name="Card">The section card as written, carrying the newly appended verdict entry.</param>
     /// <param name="Entry">The verdict entry actually recorded.</param>
@@ -66,7 +66,7 @@ internal abstract record CardSectionVerdictOutcome
         CardFile Card, SectionVerdictEntry Entry, IReadOnlyList<CardFile> RecurredCards, IReadOnlyList<CardFile> NewCards) : CardSectionVerdictOutcome
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRecorded(this);
     }
 
@@ -75,7 +75,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record NotASectionCard(CardKind Kind) : CardSectionVerdictOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotASectionCard(this);
 
         public string RefusingRule => "work-lifecycle: verdicts only apply to a section card";
@@ -93,7 +93,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record CardNotFound(string FilePath) : CardSectionVerdictOutcome
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardNotFound(this);
     }
 
@@ -107,7 +107,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record RecurringTargetNotFound(string FilePath) : CardSectionVerdictOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRecurringTargetNotFound(this);
 
         public string RefusingRule => "card-model: a --finding-recurred target must exist";
@@ -121,7 +121,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record LayoutMismatch(string Reason) : CardSectionVerdictOutcome
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
@@ -131,7 +131,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record RecurringFindingNotApproved(string CardId, string FilePath, BlockFlowState CurrentState) : CardSectionVerdictOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRecurringFindingNotApproved(this);
 
         public string RefusingRule => "work-lifecycle: finding-recurred leaves approved";
@@ -149,7 +149,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record RecurringFindingTargetsTaskImplementingBlock(string CardId, string FilePath) : CardSectionVerdictOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRecurringFindingTargetsTaskImplementingBlock(this);
 
         public string RefusingRule => "work-lifecycle: finding-recurred never targets a task-implementing block";
@@ -173,7 +173,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record FindingAlreadyOwned(string Key, string OwningCardId, string OwningCardFilePath) : CardSectionVerdictOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onFindingAlreadyOwned(this);
 
         public string RefusingRule => "work-lifecycle: a recurrence SHALL NOT create a second card for the same finding";
@@ -187,7 +187,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record NewFindingCardAlreadyExists(string FilePath) : CardSectionVerdictOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNewFindingCardAlreadyExists(this);
 
         public string RefusingRule => "card-model: identities are never recycled, and a new finding must not overwrite an existing file";
@@ -209,7 +209,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record RemediationBoundExceeded(int VerdictNumber, int AuthorisationsRecorded, int UnspentAuthorisations) : CardSectionVerdictOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRemediationBoundExceeded(this);
 
         public string RefusingRule => "work-lifecycle: remediation beyond the second round requires recorded authorisation";
@@ -226,7 +226,7 @@ internal abstract record CardSectionVerdictOutcome
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardSectionVerdictOutcome
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardCorrupt(this);
     }
 
@@ -242,7 +242,7 @@ internal abstract record CardSectionVerdictOutcome
     /// right would silently destroy the evidence of whichever was correct.</summary>
     internal sealed record RoundDisagreesWithHistory(string FilePath, int StoredRound, int ExpectedRound) : CardSectionVerdictOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRoundDisagreesWithHistory(this);
 
         public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
@@ -252,12 +252,34 @@ internal abstract record CardSectionVerdictOutcome
             $"{ExpectedRound}; correct whichever was altered outside the tool before this verdict can proceed.";
     }
 
+    /// <summary>working-context: "No figure SHALL be hand-entered anywhere in the system" (§10
+    /// block C) — <paramref name="Key"/> names a reserved derived-state field (<see
+    /// cref="DerivedStateFieldKeys.All"/>) present on the target card's <see cref="CardFile.
+    /// UnknownFrontmatterFields"/>, the door a hand-edited card's frontmatter uses to reach this far
+    /// at all (nothing this build's own CLI ever writes one). Refusal-shaped, card-addressed (§9
+    /// block A3): checked immediately once the card is read, before recording the verdict is allowed to
+    /// proceed, so this write never re-emits (and never launders forward) a hand-entered count or
+    /// next-step pin it did not itself write. See <see cref="CardWriteResult.HandEnteredDerivedState"/>
+    /// for the sibling case on the generic comment/handover surface.</summary>
+    internal sealed record HandEnteredDerivedState(string FilePath, string Key) : CardSectionVerdictOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+            onHandEnteredDerivedState(this);
+
+        public string RefusingRule => "working-context: no figure shall be hand-entered";
+
+        public string Remedy =>
+            $"'{FilePath}' carries a hand-entered reserved derived-state field '{Key}' in its frontmatter; " +
+            "remove it — this state is derived at request time, never stored, and is available from 'callboard state'.";
+    }
+
     /// <summary>Enforcement itself is unavailable: a card's lock could not be acquired within its
     /// timeout, or an I/O error occurred while writing. Tool-failure-shaped.</summary>
     internal sealed record ToolFailure(string Reason) : CardSectionVerdictOutcome
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<NotASectionCard, TResult> onNotASectionCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RecurringTargetNotFound, TResult> onRecurringTargetNotFound, Func<RecurringFindingNotApproved, TResult> onRecurringFindingNotApproved, Func<RecurringFindingTargetsTaskImplementingBlock, TResult> onRecurringFindingTargetsTaskImplementingBlock, Func<FindingAlreadyOwned, TResult> onFindingAlreadyOwned, Func<NewFindingCardAlreadyExists, TResult> onNewFindingCardAlreadyExists, Func<RemediationBoundExceeded, TResult> onRemediationBoundExceeded, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

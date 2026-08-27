@@ -39,14 +39,14 @@ internal abstract record CardCommentResolveOutcome
         Func<CardNotFound, TResult> onCardNotFound,
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
-        Func<ToolFailure, TResult> onToolFailure);
+        Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
 
     /// <param name="Card">The card exactly as written after the resolving comment landed.</param>
     /// <param name="ResolvingComment">The appended comment itself — its own <see cref="CardComment.
     /// Resolves"/> names the comment it closes out.</param>
     internal sealed record Resolved(CardFile Card, CardComment ResolvingComment) : CardCommentResolveOutcome
     {
-        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onResolved(this);
     }
 
@@ -54,7 +54,7 @@ internal abstract record CardCommentResolveOutcome
     /// resolved, only the comment within it did not. Refusal-shaped.</summary>
     internal sealed record CommentNotFound(string CommentId) : CardCommentResolveOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCommentNotFound(this);
 
         public string RefusingRule => "card-model: a comment can only be resolved by its own id";
@@ -71,7 +71,7 @@ internal abstract record CardCommentResolveOutcome
     /// Refusal-shaped.</summary>
     internal sealed record RoleNotPermitted(CardOwner AttemptedRole, CardOwner CardOwnerRole, CardOwner? AddressedTo) : CardCommentResolveOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRoleNotPermitted(this);
 
         public string RefusingRule => "process-enforcement: a thread is disposed of only by its addressee or the card's owner";
@@ -86,7 +86,7 @@ internal abstract record CardCommentResolveOutcome
     /// either silently no-op or leave two contradictory resolutions in the thread. Refusal-shaped.</summary>
     internal sealed record AlreadyResolved(string CommentId) : CardCommentResolveOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onAlreadyResolved(this);
 
         public string RefusingRule => "card-model: a comment resolved once cannot be resolved again";
@@ -105,7 +105,7 @@ internal abstract record CardCommentResolveOutcome
     /// Refusal-shaped.</summary>
     internal sealed record ReasonRequired(string FilePath) : CardCommentResolveOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onReasonRequired(this);
 
         public string RefusingRule => "process-enforcement: declining a thread requires a recorded reason";
@@ -117,7 +117,7 @@ internal abstract record CardCommentResolveOutcome
     /// Refusal-shaped.</summary>
     internal sealed record CardNotFound(string FilePath) : CardCommentResolveOutcome
     {
-        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardNotFound(this);
     }
 
@@ -126,22 +126,43 @@ internal abstract record CardCommentResolveOutcome
     /// case. Refusal-shaped.</summary>
     internal sealed record LayoutMismatch(string Reason) : CardCommentResolveOutcome
     {
-        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
     /// <summary>The card exists but could not be parsed. Neither refusal nor tool-failure.</summary>
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardCommentResolveOutcome
     {
-        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardCorrupt(this);
+    }
+
+    /// <summary>working-context: "No figure SHALL be hand-entered anywhere in the system" (§10
+    /// block C) — <paramref name="Key"/> names a reserved derived-state field (<see
+    /// cref="DerivedStateFieldKeys.All"/>) present on the target card's <see cref="CardFile.
+    /// UnknownFrontmatterFields"/>, the door a hand-edited card's frontmatter uses to reach this far
+    /// at all (nothing this build's own CLI ever writes one). Refusal-shaped, card-addressed (§9
+    /// block A3): checked immediately once the card is read, before resolving the thread is allowed to
+    /// proceed, so this write never re-emits (and never launders forward) a hand-entered count or
+    /// next-step pin it did not itself write. See <see cref="CardWriteResult.HandEnteredDerivedState"/>
+    /// for the sibling case on the generic comment/handover surface.</summary>
+    internal sealed record HandEnteredDerivedState(string Key) : CardCommentResolveOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+            onHandEnteredDerivedState(this);
+
+        public string RefusingRule => "working-context: no figure shall be hand-entered";
+
+        public string Remedy =>
+            $"'{Key}' is a reserved derived-state field name; remove it from this card's frontmatter — " +
+            "this state is derived at request time, never stored, and is available from 'callboard state'.";
     }
 
     /// <summary>Enforcement itself is unavailable — the lock could not be acquired, or the write
     /// failed after every check passed. Tool-failure-shaped.</summary>
     internal sealed record ToolFailure(string Reason) : CardCommentResolveOutcome
     {
-        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure) =>
+        internal override TResult Match<TResult>(Func<Resolved, TResult> onResolved, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<ReasonRequired, TResult> onReasonRequired, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

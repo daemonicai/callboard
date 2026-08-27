@@ -147,6 +147,19 @@ internal static class CardStore
         return current.Match<CardWriteResult>(
             onSuccess: success =>
             {
+                // working-context (§10 block C): a card whose frontmatter already carries a
+                // reserved derived-state key — only reachable by a hand edit made outside the
+                // tool, never by this build's own writers — is refused before any further write,
+                // so this generic surface never re-emits it. Checked first, ahead of the round
+                // check below: a hand-tampered card is refused for that reason regardless of
+                // whether its round also happens to agree with its history.
+                if (ReservedDerivedStateFieldKeyIn(success.Card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardWriteResult, CardWriteResult.HandEnteredDerivedState>(cardsRoot, success.Card, filePath, changeName, comment.Author, comment.Timestamp,
+                        new CardWriteResult.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardWriteResult.ToolFailure(reason));
+                }
+
                 // A comment appends to any card kind, but a block card's own round has to agree
                 // with its own history before this call is allowed to mutate it further (Architect
                 // ruling, §8a block D brief: "act on that card" covers every writer that mutates a
@@ -169,6 +182,33 @@ internal static class CardStore
             },
             onFailure: failure =>
                 new CardWriteResult.Corrupt(filePath, failure.Reason));
+    }
+
+    /// <summary>
+    /// The first reserved derived-state key (<see cref="DerivedStateFieldKeys.All"/>) found on
+    /// <paramref name="card"/>'s <see cref="CardFile.UnknownFrontmatterFields"/>, or
+    /// <see langword="null"/> when none is present — <see cref="AppendCommentUnderExistingLock"/>
+    /// and <see cref="TransferOwnershipUnderExistingLock"/>'s shared guard (§10 block C). Reads
+    /// only <see cref="CardFile.UnknownFrontmatterFields"/>: a key this build's own parser assigns
+    /// a typed home to (every field <see cref="BlockCardFields"/>, <see cref="RegisterCardFields"/>,
+    /// <see cref="QuestionCardFields"/> and <see cref="SectionCardFields"/> know about) is never a
+    /// reserved derived-state key in the first place, so this check can never collide with a
+    /// legitimate field this build itself writes.
+    /// </summary>
+    private static string? ReservedDerivedStateFieldKeyIn(CardFile card)
+    {
+        foreach (var (key, _) in card.UnknownFrontmatterFields)
+        {
+            foreach (var reserved in DerivedStateFieldKeys.All)
+            {
+                if (string.Equals(key, reserved, StringComparison.Ordinal))
+                {
+                    return reserved;
+                }
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -224,6 +264,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardNitRaiseOutcome, CardNitRaiseOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, comment.Author, comment.Timestamp,
+                        new CardNitRaiseOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardNitRaiseOutcome.ToolFailure(reason));
+                }
+
                 if (!IsBlockCard(card))
                 {
                     return RefuseAndRecord<CardNitRaiseOutcome, CardNitRaiseOutcome.NotABlockCard>(cardsRoot, card, filePath, changeName, comment.Author, comment.Timestamp,
@@ -267,7 +314,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardNitRaiseOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardNitRaiseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardNitRaiseOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                 new CardNitRaiseOutcome.CardCorrupt(filePath, failure.Reason));
@@ -321,6 +369,15 @@ internal static class CardStore
         return current.Match<CardWriteResult>(
             onSuccess: success =>
             {
+                // Same reserved-derived-state guard AppendCommentUnderExistingLock applies, for
+                // the same reason (§10 block C) — checked first, ahead of the round check below.
+                if (ReservedDerivedStateFieldKeyIn(success.Card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardWriteResult, CardWriteResult.HandEnteredDerivedState>(cardsRoot, success.Card, filePath, changeName, actingRole, timestamp,
+                        new CardWriteResult.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardWriteResult.ToolFailure(reason));
+                }
+
                 // Same bound AppendCommentUnderExistingLock applies, for the same reason: this
                 // surface is generic over any card kind, but a block card's own round has to agree
                 // with its history before this call is allowed to mutate it further.
@@ -400,6 +457,11 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.HandEnteredDerivedState(reservedKey));
+                }
+
                 if (!IsBlockCard(card))
                 {
                     return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp, new CardBlockTransitionOutcome.NotABlockCard(card.Frontmatter.Kind));
@@ -532,7 +594,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardBlockTransitionOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardBlockTransitionOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardBlockTransitionOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                         new CardBlockTransitionOutcome.CardCorrupt(filePath, failure.Reason));
@@ -578,7 +641,8 @@ internal static class CardStore
             onLayoutMismatch: static _ => throw new InvalidOperationException("unreachable: the anchored path already resolved above."),
             onCorrupt: corrupt => new CardBlockTransitionOutcome.ToolFailure($"could not record refusal: {corrupt.Reason}"),
             onToolFailure: toolFailure => new CardBlockTransitionOutcome.ToolFailure(toolFailure.Reason),
-            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: refusal recording never touches round/history."));
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: refusal recording never touches round/history."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
     }
 
     /// <summary>
@@ -613,7 +677,8 @@ internal static class CardStore
             onLayoutMismatch: static _ => throw new InvalidOperationException("unreachable: the anchored path already resolved above."),
             onCorrupt: corrupt => onToolFailure($"could not record refusal: {corrupt.Reason}"),
             onToolFailure: toolFailure => onToolFailure(toolFailure.Reason),
-            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: refusal recording never touches round/history."));
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: refusal recording never touches round/history."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
     }
 
     /// <summary>
@@ -741,6 +806,13 @@ internal static class CardStore
                 // method already pays. Recording matters more than the reorder: a pattern of
                 // wrong-role approval attempts is exactly the pattern process-enforcement's "so that
                 // a pattern of refusals is itself visible" exists to catch.
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason));
+                }
+
                 if (!IsApprovingRole(actingRole))
                 {
                     return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.RoleNotPermitted>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -850,7 +922,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardApprovalOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardApprovalOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardApprovalOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                 new CardApprovalOutcome.CardCorrupt(filePath, failure.Reason));
@@ -1015,6 +1088,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardNitDispositionOutcome, CardNitDispositionOutcome.HandEnteredDerivedState>(cardsRoot, card, nitFilePath, changeName, actingRole, timestamp,
+                        new CardNitDispositionOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardNitDispositionOutcome.ToolFailure(reason));
+                }
+
                 if (!IsBlockCard(card))
                 {
                     return RefuseAndRecord<CardNitDispositionOutcome, CardNitDispositionOutcome.NotABlockCard>(cardsRoot, card, nitFilePath, changeName, actingRole, timestamp,
@@ -1188,7 +1268,8 @@ internal static class CardStore
                         onCorrupt: static corrupt => new CardNitDispositionOutcome.ToolFailure(
                             $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
                         onToolFailure: static toolFailure => new CardNitDispositionOutcome.ToolFailure(toolFailure.Reason),
-                        onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                        onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
                     if (raisedFailure is not null)
                     {
                         return raisedFailure;
@@ -1234,7 +1315,8 @@ internal static class CardStore
                         RollbackRaisedNitCard(raiseRequest, raisedContent);
                         return new CardNitDispositionOutcome.ToolFailure(toolFailure.Reason);
                     },
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                 new CardNitDispositionOutcome.CardCorrupt(nitFilePath, failure.Reason));
@@ -1313,6 +1395,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardGateResultOutcome, CardGateResultOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardGateResultOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardGateResultOutcome.ToolFailure(reason));
+                }
+
                 if (!IsBlockCard(card))
                 {
                     return RefuseAndRecord<CardGateResultOutcome, CardGateResultOutcome.NotABlockCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -1357,7 +1446,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardGateResultOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardGateResultOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardGateResultOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                 new CardGateResultOutcome.CardCorrupt(filePath, failure.Reason));
@@ -1452,6 +1542,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardBlockedByOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardBlockedByOutcome.ToolFailure(reason));
+                }
+
                 if (!IsBlockCard(card))
                 {
                     return RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.NotABlockCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -1493,7 +1590,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardBlockedByOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardBlockedByOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardBlockedByOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                 new CardBlockedByOutcome.CardCorrupt(filePath, failure.Reason));
@@ -1536,6 +1634,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardQuestionAnswerOutcome, CardQuestionAnswerOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardQuestionAnswerOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardQuestionAnswerOutcome.ToolFailure(reason));
+                }
+
                 if (!IsQuestionCard(card))
                 {
                     return RefuseAndRecord<CardQuestionAnswerOutcome, CardQuestionAnswerOutcome.NotAQuestionCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -1583,7 +1688,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardQuestionAnswerOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardQuestionAnswerOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardQuestionAnswerOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: a question card never carries CardFile.Transitions."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: a question card never carries CardFile.Transitions."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                 new CardQuestionAnswerOutcome.CardCorrupt(filePath, failure.Reason));
@@ -1624,6 +1730,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardQuestionDeferOutcome, CardQuestionDeferOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardQuestionDeferOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardQuestionDeferOutcome.ToolFailure(reason));
+                }
+
                 if (!IsQuestionCard(card))
                 {
                     return RefuseAndRecord<CardQuestionDeferOutcome, CardQuestionDeferOutcome.NotAQuestionCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -1670,7 +1783,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardQuestionDeferOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardQuestionDeferOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardQuestionDeferOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: a question card never carries CardFile.Transitions."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: a question card never carries CardFile.Transitions."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                 new CardQuestionDeferOutcome.CardCorrupt(filePath, failure.Reason));
@@ -1711,8 +1825,16 @@ internal static class CardStore
     /// guard exists to act on, and manufacturing a refusal out of an unrelated resolution problem
     /// would conflate two different failures under one rule.
     /// </para>
+    ///
+    /// <para>
+    /// <b>Internal, not private (§10 block C).</b> <see cref="DerivedStateAssembler"/> reuses this
+    /// exact method for <c>state</c>'s own halting determination (working-context: "a question
+    /// owned by the Product Owner ... SHALL halt the cards it blocks") — the same "which blocking
+    /// question halts this card" fact the write-path refusal above already computes, read rather
+    /// than re-derived a second way that could silently drift from this one.
+    /// </para>
     /// </summary>
-    private static (string QuestionId, string Title)? FindBlockingOpenProductOwnerQuestion(string cardsRoot, CardFile card)
+    internal static (string QuestionId, string Title)? FindBlockingOpenProductOwnerQuestion(string cardsRoot, CardFile card)
     {
         foreach (var id in card.BlockFields.BlockedBy)
         {
@@ -1802,6 +1924,13 @@ internal static class CardStore
             {
                 var card = success.Card;
 
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardSectionAuthorisationOutcome, CardSectionAuthorisationOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardSectionAuthorisationOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardSectionAuthorisationOutcome.ToolFailure(reason));
+                }
+
                 if (!IsAuthorisingRole(actingRole))
                 {
                     return RefuseAndRecord<CardSectionAuthorisationOutcome, CardSectionAuthorisationOutcome.RoleNotPermitted>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -1852,7 +1981,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardSectionAuthorisationOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardSectionAuthorisationOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardSectionAuthorisationOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                 new CardSectionAuthorisationOutcome.CardCorrupt(filePath, failure.Reason));
@@ -1986,6 +2116,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardSectionVerdictOutcome.HandEnteredDerivedState(filePath, reservedKey),
+                        static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
+                }
+
                 if (!IsSectionCard(card))
                 {
                     return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.NotASectionCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -2089,6 +2226,13 @@ internal static class CardStore
                             // method was ever called — defensive-unreachable, not a live path (the
                             // same discipline ValidateBlockForLanding's own guard follows).
                             throw new InvalidOperationException($"'{recurringPath}' is not a block card; the caller must resolve --finding-recurred ids against block cards only.");
+                        }
+
+                        if (ReservedDerivedStateFieldKeyIn(rereadCard) is { } recurringReservedKey)
+                        {
+                            return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                                new CardSectionVerdictOutcome.HandEnteredDerivedState(recurringPath, recurringReservedKey),
+                                static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                         }
 
                         if (!RoundAgreesWithHistory(rereadCard, out var recurringStoredRound, out var recurringExpectedRound))
@@ -2212,7 +2356,8 @@ internal static class CardStore
                             onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
                             onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                             onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason),
-                            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
                         if (recurringWriteFailure is not null)
                         {
                             return recurringWriteFailure;
@@ -2244,7 +2389,8 @@ internal static class CardStore
                             onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
                             onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                             onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason),
-                            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
                         if (newWriteFailure is not null)
                         {
                             return newWriteFailure;
@@ -2269,7 +2415,8 @@ internal static class CardStore
                         onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
                         onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                         onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason),
-                        onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                        onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
                 }
                 finally
                 {
@@ -2370,6 +2517,14 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.HandEnteredDerivedState>(
+                        cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardSectionCloseOutcome.HandEnteredDerivedState(filePath, reservedKey),
+                        onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
+                }
+
                 if (!IsSectionCard(card))
                 {
                     return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.NotASectionCard>(
@@ -2611,7 +2766,8 @@ internal static class CardStore
                             onLayoutMismatch: layoutMismatch => new CardSectionCloseOutcome.LayoutMismatch(layoutMismatch.Reason),
                             onCorrupt: corrupt => new CardSectionCloseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                             onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason),
-                            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
                         if (blockWriteFailure is not null)
                         {
                             return blockWriteFailure;
@@ -2635,7 +2791,8 @@ internal static class CardStore
                         onLayoutMismatch: layoutMismatch => new CardSectionCloseOutcome.LayoutMismatch(layoutMismatch.Reason),
                         onCorrupt: corrupt => new CardSectionCloseOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                         onToolFailure: toolFailure => new CardSectionCloseOutcome.ToolFailure(toolFailure.Reason),
-                        onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                        onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
                 }
                 finally
                 {
@@ -2752,6 +2909,14 @@ internal static class CardStore
             return null;
         }
 
+        if (ReservedDerivedStateFieldKeyIn(blockCard) is { } reservedKey)
+        {
+            return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.HandEnteredDerivedState>(
+                cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp,
+                new CardSectionCloseOutcome.HandEnteredDerivedState(blockFilePath, reservedKey),
+                onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
+        }
+
         if (state != BlockFlowState.Approved)
         {
             return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.BlockNotApproved>(
@@ -2864,7 +3029,8 @@ internal static class CardStore
             onCorrupt: corrupt => new CardCreateOutcome.ToolFailure(
                 $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
             onToolFailure: toolFailure => new CardCreateOutcome.ToolFailure(toolFailure.Reason),
-            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
     }
 
     /// <summary>
@@ -2904,6 +3070,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardRegisterDischargeOutcome, CardRegisterDischargeOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardRegisterDischargeOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardRegisterDischargeOutcome.ToolFailure(reason));
+                }
+
                 if (!IsRegisterCard(card))
                 {
                     return RefuseAndRecord<CardRegisterDischargeOutcome, CardRegisterDischargeOutcome.NotARegisterCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -2948,7 +3121,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardRegisterDischargeOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardRegisterDischargeOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardRegisterDischargeOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure =>
                 new CardRegisterDischargeOutcome.CardCorrupt(filePath, failure.Reason));
@@ -3046,6 +3220,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardRulePromoteOutcome, CardRulePromoteOutcome.HandEnteredDerivedState>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        new CardRulePromoteOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardRulePromoteOutcome.ToolFailure(reason));
+                }
+
                 if (!IsRuleCard(card))
                 {
                     return RefuseAndRecord<CardRulePromoteOutcome, CardRulePromoteOutcome.NotARuleCard>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
@@ -3158,7 +3339,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardRulePromoteOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardRulePromoteOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardRulePromoteOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure => new CardRulePromoteOutcome.CardCorrupt(originalFilePath, failure.Reason));
     }
@@ -3204,6 +3386,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardObligationPromoteOutcome, CardObligationPromoteOutcome.HandEnteredDerivedState>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        new CardObligationPromoteOutcome.HandEnteredDerivedState(reservedKey),
+                        static reason => new CardObligationPromoteOutcome.ToolFailure(reason));
+                }
+
                 if (!IsObligationCard(card))
                 {
                     return RefuseAndRecord<CardObligationPromoteOutcome, CardObligationPromoteOutcome.NotAnObligationCard>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
@@ -3294,7 +3483,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardObligationPromoteOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardObligationPromoteOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardObligationPromoteOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure => new CardObligationPromoteOutcome.CardCorrupt(originalFilePath, failure.Reason));
     }
@@ -3335,6 +3525,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardObligationDeclineOutcome, CardObligationDeclineOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardObligationDeclineOutcome.HandEnteredDerivedState(reservedKey),
+                        static r => new CardObligationDeclineOutcome.ToolFailure(r));
+                }
+
                 if (!IsObligationCard(card))
                 {
                     return RefuseAndRecord<CardObligationDeclineOutcome, CardObligationDeclineOutcome.NotAnObligationCard>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -3389,7 +3586,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardObligationDeclineOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardObligationDeclineOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardObligationDeclineOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure => new CardObligationDeclineOutcome.CardCorrupt(filePath, failure.Reason));
     }
@@ -3437,6 +3635,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardCommentResolveOutcome, CardCommentResolveOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardCommentResolveOutcome.HandEnteredDerivedState(reservedKey),
+                        static r => new CardCommentResolveOutcome.ToolFailure(r));
+                }
 
                 var commentIndex = -1;
                 for (var i = 0; i < card.Comments.Count; i++)
@@ -3515,7 +3720,8 @@ internal static class CardStore
                     onLayoutMismatch: layoutMismatch => new CardCommentResolveOutcome.LayoutMismatch(layoutMismatch.Reason),
                     onCorrupt: corrupt => new CardCommentResolveOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                     onToolFailure: toolFailure => new CardCommentResolveOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure => new CardCommentResolveOutcome.CardCorrupt(filePath, failure.Reason));
     }
@@ -3571,6 +3777,13 @@ internal static class CardStore
             onSuccess: success =>
             {
                 var card = success.Card;
+
+                if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+                {
+                    return RefuseAndRecord<CardCommentPromoteOutcome, CardCommentPromoteOutcome.HandEnteredDerivedState>(cardsRoot, card, originalFilePath, changeName, actingRole, timestamp,
+                        new CardCommentPromoteOutcome.HandEnteredDerivedState(reservedKey),
+                        static r => new CardCommentPromoteOutcome.ToolFailure(r));
+                }
 
                 var commentIndex = -1;
                 for (var i = 0; i < card.Comments.Count; i++)
@@ -3651,7 +3864,8 @@ internal static class CardStore
                     onCorrupt: static corrupt => new CardCommentPromoteOutcome.ToolFailure(
                         $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
                     onToolFailure: static toolFailure => new CardCommentPromoteOutcome.ToolFailure(toolFailure.Reason),
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
                 if (raisedFailure is not null)
                 {
                     return raisedFailure;
@@ -3698,7 +3912,8 @@ internal static class CardStore
                         RollbackRaisedCommentCard(raisedFilePath, serializedRaisedCard);
                         return new CardCommentPromoteOutcome.ToolFailure(toolFailure.Reason);
                     },
-                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                    onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             },
             onFailure: failure => new CardCommentPromoteOutcome.CardCorrupt(originalFilePath, failure.Reason));
     }
@@ -4034,6 +4249,20 @@ internal static class CardStore
             return new CardDecisionSupersedeOutcome.CardCorrupt(supersededFilePath, reason);
         }
 
+        if (ReservedDerivedStateFieldKeyIn(supersedingCard) is { } supersedingReservedKey)
+        {
+            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.HandEnteredDerivedState>(cardsRoot, supersedingCard, supersedingFilePath, changeName: null, actingRole, timestamp,
+                new CardDecisionSupersedeOutcome.HandEnteredDerivedState(supersedingFilePath, supersedingReservedKey),
+                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
+        }
+
+        if (ReservedDerivedStateFieldKeyIn(supersededCard) is { } supersededReservedKey)
+        {
+            return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.HandEnteredDerivedState>(cardsRoot, supersededCard, supersededFilePath, changeName: null, actingRole, timestamp,
+                new CardDecisionSupersedeOutcome.HandEnteredDerivedState(supersededFilePath, supersededReservedKey),
+                static reason => new CardDecisionSupersedeOutcome.ToolFailure(reason));
+        }
+
         if (!IsDecisionCard(supersedingCard))
         {
             return RefuseAndRecord<CardDecisionSupersedeOutcome, CardDecisionSupersedeOutcome.NotADecisionCard>(cardsRoot, supersedingCard, supersedingFilePath, changeName: null, actingRole, timestamp,
@@ -4134,7 +4363,8 @@ internal static class CardStore
             onLayoutMismatch: static layoutMismatch => new CardDecisionSupersedeOutcome.LayoutMismatch(layoutMismatch.Reason),
             onCorrupt: static corrupt => new CardDecisionSupersedeOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
             onToolFailure: static toolFailure => new CardDecisionSupersedeOutcome.ToolFailure(toolFailure.Reason),
-            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
         if (supersededFailure is not null)
         {
             return supersededFailure;
@@ -4175,7 +4405,8 @@ internal static class CardStore
                 RestoreCardContent(supersededAnchored, originalSupersededContent);
                 return new CardDecisionSupersedeOutcome.ToolFailure(toolFailure.Reason);
             },
-            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
     }
 
     /// <summary>All-or-nothing's other half for a multi-card write that has already written one or
@@ -4469,7 +4700,8 @@ internal static class CardStore
                 onLayoutMismatch: layoutMismatch => new CardRuleCompactOutcome.LayoutMismatch(layoutMismatch.Reason),
                 onCorrupt: corrupt => new CardRuleCompactOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                 onToolFailure: toolFailure => new CardRuleCompactOutcome.ToolFailure(toolFailure.Reason),
-                onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
 
             if (writeFailure is not null)
             {
@@ -4522,7 +4754,8 @@ internal static class CardStore
                 RestoreAllAbsorbed(absorbedAnchors, originalContents);
                 return new CardRuleCompactOutcome.ToolFailure(toolFailure.Reason);
             },
-            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
     }
 
     /// <summary>All-or-nothing's other half for <see cref="CompactRulesUnderLocks"/>'s own final
@@ -4562,6 +4795,13 @@ internal static class CardStore
         {
             var reason = read.Match(onSuccess: static _ => string.Empty, onFailure: static f => f.Reason);
             return (new CardRuleCompactOutcome.CardCorrupt(filePath, reason), null);
+        }
+
+        if (ReservedDerivedStateFieldKeyIn(card) is { } reservedKey)
+        {
+            return (RefuseAndRecord<CardRuleCompactOutcome, CardRuleCompactOutcome.HandEnteredDerivedState>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardRuleCompactOutcome.HandEnteredDerivedState(filePath, reservedKey),
+                static reason => new CardRuleCompactOutcome.ToolFailure(reason)), null);
         }
 
         if (!IsRuleCard(card))
@@ -4971,7 +5211,8 @@ internal static class CardStore
                 onCorrupt: static corrupt => new CardFindingRecordOutcome.ToolFailure(
                     $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}"),
                 onToolFailure: static toolFailure => new CardFindingRecordOutcome.ToolFailure(toolFailure.Reason),
-                onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+                onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
             if (raisedFailure is not null)
             {
                 return raisedFailure;
@@ -5033,7 +5274,8 @@ internal static class CardStore
                 RollbackRaisedCard(raiseRequest, raisedContent);
                 return new CardFindingRecordOutcome.ToolFailure(toolFailure.Reason);
             },
-            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."));
+            onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
+                    onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
     }
 
     /// <summary>

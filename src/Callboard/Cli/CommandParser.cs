@@ -44,9 +44,10 @@ internal static class CommandParser
         "nit" => ParseNit(context),
         "comment" => ParseComment(context),
         "context" => ParseContext(context),
+        "state" => ParseState(context),
         _ => new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
             "unknown-command",
-            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit, comment, context.")),
+            $"no such command: '{command}'. Known commands: version, index, block, section, finding, rule, hazard, obligation, decision, question, change, nit, comment, context, state.")),
     };
 
     /// <summary>
@@ -3075,5 +3076,26 @@ internal static class CommandParser
         }
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.Context(role, context.WorkingDirectory));
+    }
+
+    /// <summary>
+    /// Builds <c>state</c>'s <see cref="CommandDispatcher.ParsedCommand.State"/>: no flags at all
+    /// (§10 block C brief: "unlike <c>context</c> it is not role-scoped" — the spec's own scenario
+    /// says "any role requests the state summary", so there is nothing for <c>--role</c> to name
+    /// here). <see cref="ConsumeKnownFlags"/> is still called, with an empty <paramref
+    /// name="setters"/> map, so a caller who passes <c>--role</c> anyway is left unconsumed for
+    /// <see cref="CommandDispatcher.EnforceNoUnconsumedArguments"/>'s own <c>unrecognised-
+    /// argument</c> refusal to catch — the same "peek, don't take" discipline every other parse arm
+    /// here follows, rather than a bespoke check reimplementing what that funnel already does.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseState(CommandDispatcher.CommandContext context)
+    {
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal));
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.State(context.WorkingDirectory));
     }
 }

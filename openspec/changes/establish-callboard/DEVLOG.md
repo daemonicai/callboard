@@ -29165,6 +29165,618 @@ No blockers remain. Both original blockers are fixed at the root cause the revie
 patched around it; the fixes were verified by direct inspection of the diff and by independently
 re-running the gates, not by re-reading the worker's report. Approve.
 
+**[architect]** Block C briefed → @worker. **10.8, 10.9, 10.10 — the derived state summary.** The last
+of §10's numbered tasks. This is what replaces the hand-maintained `## NEXT` pin the incumbent depends
+on — and the requirement is not merely that the figures are correct, but that **no one can write them
+down**.
+
+### Tasks in this block
+
+- 10.8 Implement the derived state summary with every figure computed at request time
+- 10.9 Refuse any attempt to store a hand-entered count or next-step pin
+- 10.10 Derive escalation severity from question ownership, halting dependents only for Product Owner
+  questions
+
+### What the spec requires
+
+`specs/working-context/spec.md`, *Derived state summary*: a summary of overall process state comprising
+**the open sections**, **task completion counted from the task list itself**, **the live obligations
+with the section that owes each**, **the open questions with who owes each answer**, and **every blocked
+card with what blocks it**. Every figure SHALL be derived at the time of the request; **no figure SHALL
+be hand-entered anywhere in the system**, and the system SHALL NOT maintain a hand-written pin.
+
+*Escalation severity is derived from ownership*: severity comes from a question's **owner**, never
+stored. A question owned by the **Product Owner** is a stop-and-ask and **halts the cards it blocks**. A
+question owned by any other role leaves the cards it blocks **free to proceed on other fronts**.
+
+### Architect rulings — take these as given
+
+**The command is `callboard state`** (Product Owner ruling 2 at §10's opening). Unlike `context` it is
+**not role-scoped** — any role may ask for it, and the spec's own scenario says "any role requests the
+state summary". Do not add `--role`.
+
+**"Counted from the task list itself" means `tasks.md`, not the cards.** The change's
+`openspec/changes/<change>/tasks.md` is the authoritative task list; block cards carry *referenced*
+task ids, which is a different thing. Count ticked against total by parsing that file at request time.
+Read it — never write it: `tasks.md` is the Architect's and the hook boundary enforces that. If a change
+has no `tasks.md`, say so in the response rather than reporting zero, which would read as "no tasks".
+
+**10.9's refusal is on the card write path, keyed on reserved field names.** The concrete shape: a card
+carrying a hand-entered progress count or next-step pin in its frontmatter is refused at the point it
+would be recorded. The parser already captures unrecognised keys verbatim (`UnknownFields`), which is
+exactly the door this state would come in through. Reserve the derived-state key names and refuse any
+card write carrying one, naming the `state` command as the remedy — it exists as of this block, so this
+refusal can name it honestly (§9 ruling 3).
+**If you find the model already offers a more natural attempt-surface for this, stop and post the
+argument to the DEVLOG rather than choosing between them silently.** The spec's scenario is only "a role
+attempts to record a count or a next-step pin as stored text", and reasonable readings differ.
+
+**10.10 lands in `state` and NOT in `context`.** A blocked card's halted-ness is reported by `state`.
+Do **not** add a halted marker to `context`'s queue entries: part 4 of the working-context requirement
+is "nothing else", it was audited as such in block A, and widening it here would undo that. **I am
+flagging this as a deliberate call for the supervisor to weigh at section close** — the tension is real
+(a worker reading `context` cannot see that its top item is halted) and I would rather it be examined
+against the whole section than settled quietly inside one block. Record it in your post; do not resolve
+it yourself.
+
+**Halting is derived, never stored.** A card is halted when an open question that blocks it is owned by
+the Product Owner. Compute it from the blocking question's owner at request time. A card blocked only by
+non-Product-Owner questions is reported as blocked but **not** halted, and the response should make that
+distinction legible rather than collapsing the two.
+
+### Binding constraints
+
+- Everything binding §10 as a whole still applies — see the `[architect]` opening post under `## 10.`:
+  `CardLayout.ResolveLiveRecordDirectories` only (never the index, never the archive),
+  `RuleCitations.CountCitations` off any per-request path, §9's three refusal rulings, and the coverage
+  gate's blind spot for CLI-layer refusals — test those directly.
+- **10.9's refusal asserts something about the record**, so under §9 ruling 1 it **records**, and it
+  needs a coverage-gate entry with a test proving it fires *and* records. **10.8's** own argument
+  failures (a malformed invocation) report without recording.
+- `state` is a second per-request read path. The budget mechanism block B built is for `context`; do not
+  silently put `state` under the same ceiling, and do not leave it unbounded without saying so. State
+  what you did in the DEVLOG — the spec sets a budget for the working-context response, not for this
+  one, and I would rather that gap be explicit than assumed either way.
+- ADR-0002 / D2 — NativeAOT: no reflection, no runtime codegen, source-generated JSON only.
+  `TreatWarningsAsErrors` is on.
+
+### Tests
+
+Each spec scenario earns one: the summary is derived on request (every count computed from the current
+record); hand-entered state is refused; a Product Owner question halts its dependents; an agent-owned
+question does not. Plus: task completion counted from a real `tasks.md` fixture with a known
+ticked/total split, obligations reported with their owing section, questions reported with who owes each
+answer, and a change with no `tasks.md` handled as ruled.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT`, `TEST_EXIT`, `FORMAT_EXIT`, `VALIDATE_EXIT`
+individually. Suite stands at **931**. Read the exit line, never the log.
+
+Post to the DEVLOG under `## 10.` as `[worker]`, then `→ @reviewer`.
+
+**[worker]** Block C done. 10.8, 10.9, 10.10 — the derived state summary. `callboard state` — no
+`--role`, matching the spec's own "any role requests the state summary."
+
+**10.8.** `DerivedStateAssembler.Build` (new `Cards/DerivedState.cs`) does one pass over
+`CardLayout.ResolveLiveRecordDirectories` — same construction as `WorkingContextAssembler`, never
+the index, never the archive — collecting open sections, live obligations (with `OwedBy`), live
+questions (with `Owner` as who owes the answer), and every live block card carrying `blocked_by`.
+`RuleCitations.CountCitations` is not on this path. Task completion is separate: `TasksMdParser`
+(new `Cards/TasksMdCompletion.cs`) reads `openspec/changes/<name>/tasks.md` at request time via a
+source-generated `[GeneratedRegex]` line matcher (not `RegexOptions.Compiled` — that's runtime IL
+generation, not NativeAOT-safe) — read-only, never written, one entry per live change discovered
+during the same pass. A change with no `tasks.md` reports `tasksFileFound: false` with
+`ticked`/`total` both `0`, rather than `0`/`0` alone reading as "no tasks."
+
+**10.10.** Halting reuses `CardStore.FindBlockingOpenProductOwnerQuestion` — the exact predicate
+`block transition`/`block approve` already refuse against — promoted from `private` to `internal`
+rather than re-derived a second way. A blocked card's `halted` is `true` only when a blocker
+resolves to a live, Product-Owner-owned, open question; `haltedByQuestionId`/`Title` name it. Blocked-
+but-not-halted stays `false` with both fields absent — the two facts stay legible separately, per
+the brief. Lands in `state` only; `context`'s queue entries are untouched (see note below).
+
+**10.9 — the attempt-surface question, resolved rather than left open.** The brief flagged this as
+worth stopping on if a more natural surface existed. It does, but only partially: `CardWriteResult`
+(shared by `AppendComment`/`TransferOwnership`) is the one write union that spans every card kind
+without needing a new case threaded through the ~18 kind-specific outcome unions (`CardBlockTransitionOutcome`,
+`CardApprovalOutcome`, `CardGateResultOutcome`, …) — that would be a change far past this block's
+scope, and I don't think the spec asks for it: the scenario is "a role attempts to record a count or
+a next-step pin," and the only way a reserved key reaches a card's frontmatter at all is a hand edit
+outside the tool, since no CLI verb writes arbitrary frontmatter. I added the case there
+(`CardWriteResult.HandEnteredDerivedState(Key)`), checked first in both `AppendCommentUnderExistingLock`
+and `TransferOwnershipUnderExistingLock` — ahead of the round check — via a new `ReservedDerivedStateFieldKeyIn`
+scanning `UnknownFrontmatterFields` against `DerivedStateFieldKeys.All` (`open_sections`,
+`task_completion`, `live_obligations`, `open_questions`, `blocked_cards`, `next_step`). Naming
+`state` as the remedy, per §9 ruling 3.
+
+**Coverage is real but not total, and I'm saying so rather than letting the block read as more than
+it is:** every card touched by `AppendComment` or `TransferOwnership` is protected; the ~18 kind-
+specific write verbs (`block transition`, `finding record`, `section verdict`, …) still faithfully
+preserve-and-re-emit a hand-entered reserved key without refusing, exactly as they already do for any
+other unrecognised field. Adding the case everywhere is mechanical but large — every one of those
+unions' `Match` signatures, every call site, every `RefusalCoverageGateTests.Registry` entry — and I
+did not think it belonged inside this block's three tasks. Flagging for the supervisor at section
+close, the same way block A flagged the `context`/`state` halting tension.
+
+Adding the case rippled through `CardWriteResult.Match`'s ~30 existing call sites (every write verb
+ultimately routes its `AtomicWrite` result through this one union) — all but one (`rule
+promote-constitution`, the sole production caller of `AppendComment`) are `unreachable:
+AtomicWrite never returns this case` arms, since `AtomicWrite` itself never constructs it; the
+promote-constitution site maps it to a real `hand-entered-derived-state` CLI refusal.
+
+**Budget: `state` is deliberately left unbounded, not silently reused under `context`'s ceiling.**
+`WorkingContextBudget`'s character ceiling (D6) is stated for the working-context response
+specifically; the spec sets none for this one. `state` reports identity-only facts — ids, titles,
+section/question/blocker references — never a card's `Body` or narrative comment thread, so its size
+tracks the number of open sections/obligations/questions/blocked cards, not narrative volume the way
+`context`'s brief and addressed threads do. Putting it under the same ceiling without its own
+justification would be exactly the "chose without saying so" this brief asked not to do — recorded
+here for the architect/supervisor to weigh, not resolved unilaterally.
+
+**Tests** (`CommandDispatcherStateTests.cs`, 11 new; plus one CardStore-level refusal test and its
+`RefusalCoverageGateTests.Registry` entry): summary derived on request; open section with its
+change; obligation with owing section; question with who owes the answer; Product Owner question
+halts its dependent; reviewer-owned question leaves it blocked-but-not-halted; task completion from
+a real `tasks.md` fixture (2/4 ticked); the no-`tasks.md` case; `--role` refused at the door;
+outside-a-repo refusal; and the CLI-layer `hand-entered-derived-state` refusal via `rule
+promote-constitution` (the coverage gate doesn't reach CLI-layer refusals — tested directly, per
+§9's own carried note). `CardStoreWriteTests.AppendComment_CardCarryingAReservedDerivedStateKey_Refuses_AndRecordsAgainstTheCard`
+proves the refusal fires *and* records, registered in `RefusalCoverageGateTests.Registry`.
+
+10.8, 10.9, 10.10 done. `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite
+now **943** (931 + this block's 12: 11 CLI-level + 1 CardStore-level).
+
+→ @reviewer
+
+**[reviewer]** Block C (10.8–10.10) audited. **Verdict: Request changes.** One blocker, on 10.9 —
+everything else in the block is sound and I'm saying so plainly rather than letting the one finding
+read as a blanket rejection.
+
+**Gates, run myself, not taken on the worker's word:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0`. Suite: **943**, up from 931 (+12), all green — matches the worker's
+accounting.
+
+### Blocker — 10.9's refusal fails open on nearly every door, and this is demonstrable, not theoretical
+
+The worker's own report already says coverage is partial. I traced the actual reach of the gap and it
+is worse than "representative but incomplete" — it is close to absent everywhere except two verbs.
+
+**The route, concretely.** `CardFileWriter.cs:338` re-emits `CardFile.UnknownFrontmatterFields`
+verbatim on **every** write, unconditionally — that is the mechanism by which any hand-entered field
+already survives across writes at all, and it is shared by all ~33 `AtomicWrite(anchored,
+CardFileWriter.Serialize(updated))` call sites in `CardStore.cs`. `ReservedDerivedStateFieldKeyIn` is
+called from exactly two of them — `AppendCommentUnderExistingLock` (`CardStore.cs:156`) and
+`TransferOwnershipUnderExistingLock` (`CardStore.cs:367`). So: a role hand-edits a card's frontmatter
+to add `next_step: ship it` (the spec's own scenario — no CLI verb writes arbitrary frontmatter, this
+is the only way one arrives). The next `callboard block transition ...` (or `finding record`,
+`section verdict`, `nit raise`, any of the other ~31 write paths) on that card reads it, builds
+`updated = card with { ... }`, serialises, and writes — `next_step` rides along untouched, unrefused,
+forever. Only touching the card via `comment` or `transfer-ownership` would catch it. Given
+`grep -c "onHandEnteredDerivedState: static _ => throw"` returns **31** in `CardStore.cs` against a
+single real mapping in `CommandDispatcher.cs:3490` (itself only reachable through the one protected
+`AppendComment` caller, `rule promote-constitution`), the honest count is **2 doors closed, 31 open**.
+This is not a rare corner: it is the default outcome for the large majority of the tool's own write
+surface, and it means the record can and does go on carrying a hand-entered figure indefinitely —
+which is exactly what "the system SHALL NOT maintain a hand-written pin" forbids.
+
+**Weighed against the §9 standard this task asked me to apply, and against the brief's own absolute
+wording** ("the requirement is not merely that the figures are correct, but that no one can write
+them down") — a refusal covering 2 of ~33 write paths is representative, not complete, and §9's ruling
+is explicit that representative is not the bar. I don't think this is a case for deferring to the
+supervisor the way blocks A and D correctly deferred genuine design tensions (`context`/`state`
+halting overlap, the register-size CLI). Those were open questions about shape with no live spec
+violation sitting underneath. This one has a concrete, reproducible route by which the absolute
+requirement is violated today, on the working tree as it stands.
+
+**On whether a more complete chokepoint exists — it does, and it's cheaper than the worker's estimate.**
+The worker's post frames "adding the case everywhere" as a large ripple across "every one of those
+unions' `Match` signatures, every call site." That ripple **already happened**: `CardWriteResult` is
+the closed union `AtomicWrite` returns, and adding `HandEnteredDerivedState` to it forced the compiler
+to add an `onHandEnteredDerivedState` arm to all ~33 existing `.Match()` calls over it — that's why 31
+of them exist today as `throw new InvalidOperationException("unreachable: ...")` stubs. The mechanical,
+compiler-forced part of the ripple is done. What's missing is two things, both smaller than re-doing
+that: (1) run `ReservedDerivedStateFieldKeyIn` before every `AtomicWrite` call, not just two of them —
+plausibly by checking it once inside `AtomicWrite` itself (it would need the `CardFile` before
+serialisation, not just the serialised `content` string, so a signature change or a thin wrapper); and
+(2) turn each `throw` arm into a real outcome. (2) is the genuinely large part — it needs a
+`HandEnteredDerivedState`-shaped case on each of the ~20 per-verb outcome types
+(`CardBlockTransitionOutcome`, `CardFindingRecordOutcome`, …), the same shape `RoleNotPermitted` got
+in block D, times ten. That's real work, but it's the same kind of work the coverage-gate discipline
+already demands elsewhere in this section, and I don't think its size is a reason to ship the gap
+silently rather than naming it as a blocker.
+
+**What I'm not asking for:** I'm not asking the worker to guess at the fix inside this response. Given
+the size, this may be better as an Architect call — either (a) a remediation block that threads the
+case through the remaining ~31 write paths properly, or (b) an explicit, reasoned narrowing of 10.9's
+scope in the DEVLOG (and the spec, if the Product Owner agrees the requirement should read as narrower
+than its current absolute wording) with the residual gap entered in `RefusalCoverageGateTests.Exclusions`
+naming exactly which write paths are excluded and why — the "keyed, reasoned entry" option §9 already
+established as the other half of "complete, not representative." What isn't available is landing as-is
+with the gap recorded only in the DEVLOG and left for the supervisor to weigh at section close; the
+supervisor audits sections, not whether a block satisfies its own spec citation.
+
+### Everything else — sound, and worth saying so explicitly
+
+**10.8 — every figure derived at request time.** `DerivedStateAssembler.Build` (`DerivedState.cs:61`)
+takes `cardsRoot` and does one pass per call over `CardLayout.ResolveLiveRecordDirectories` — confirmed
+by reading it end to end, nothing here is cached, stored, or computed anywhere but inside this method
+body. `RuleCitations.CountCitations` does not appear anywhere in `DerivedState.cs` or in `RunState`'s
+diff — confirmed by grep. `CardStore.ReadAllCards` reads current files on every call; there is no
+memoisation across calls (no static field, no index read). Live-only: `CardLifecycle.IsClosed` filters
+closed cards out before classification, and the walk is over `ResolveLiveRecordDirectories`, never
+`ResolveRecordDirectories` or the archive path — matches the section's carried constraint.
+
+**`tasks.md` parsing.** `TasksMdParser.CountCompletion` (`TasksMdCompletion.cs:35`) only calls
+`File.Exists`/`File.ReadLines` — no `File.Write*` anywhere in the file or its call sites; read-only
+confirmed. The `[GeneratedRegex]` pattern `^\s*-\s\[([ xX])\]\s` is source-generated, not
+`RegexOptions.Compiled` (correctly avoided per the file's own comment — AOT-safe). Traced the pattern
+by hand against the audit's named edge cases: `- [X] ...` (capital) matches and is counted ticked,
+since the ticked check compares against literal `" "` rather than requiring lowercase `x` — correct.
+Indented/nested `  - [ ] ...` lines also match (`^\s*` admits leading whitespace) and are counted
+toward the denominator; this repo's own `tasks.md` has no nested checkboxes today, so it isn't
+exercised, but it means a future nested checklist item would silently inflate the denominator — worth
+a test and a documented decision, not a blocker given the file's own doc comment already states intent
+("regardless of which section it falls under") and the real fixture is not nested. A line with `- [ ]`
+appearing mid-sentence, not at line start, correctly fails to match (`^\s*-` anchors the dash after
+only whitespace). Missing-file handling: `TasksMdCompletion.TasksFileFound: false` with
+`Ticked`/`Total` both `0`, confirmed distinct from a genuine `0/0` split by the flag —
+`TaskCompletion_NoTasksMdFile_SaysSoRatherThanReportingZero` proves it. The one fixture test
+(`TaskCompletion_CountedFromTheRealTasksMdFile`, 2/4 ticked) is real but minimal — no capitalised `X`,
+no nesting, no near-miss lines in the test fixture itself; the hand-trace above stands in for that, but
+a follow-up test covering those cases directly (not just by inspection) would close the gap between
+"I traced it" and "the suite proves it." Nit, not a blocker.
+
+**10.10 — halting.** `CardStore.FindBlockingOpenProductOwnerQuestion` promoted `private` → `internal`
+(`CardStore.cs:1783`, doc comment updated in place explaining the reuse) — confirmed by grep it is the
+exact same method `block transition` (`CardStore.cs:529`) and `block approve`/`CardApprovalOutcome`
+paths (`CardStore.cs:862`, `:2870`) already call to refuse a transition/approval blocked by an open
+Product Owner question; `DerivedStateAssembler.Build` (`DerivedState.cs:117`) calls the identical
+method rather than re-deriving the predicate. No drift risk between what blocks a transition and what
+"halted" means in `state`. `ProductOwnerQuestion_HaltsTheCardItBlocks` and
+`ReviewerOwnedQuestion_LeavesTheBlockedCardAvailable_ButStillReportedAsBlocked` (`CommandDispatcherStateTests.cs:113,130`)
+prove the two are distinguishable: a reviewer-owned blocker leaves `Halted: false` with both
+`HaltedByQuestionId`/`Title` absent, while a Product Owner blocker sets all three. The response shape
+(`StateBlockedCardResult`) carries both `Halted` and the naming fields side by side rather than
+collapsing them — matches the brief's "keep the two facts legible separately."
+
+**`context` untouched.** `git diff` on `CommandDispatcher.cs` shows the only new `Halted`/
+`HaltedByQuestionId`/`HaltedByQuestionTitle` mapping is inside the new `RunState` (`:3805-3836`,
+mapping into `StateBlockedCardResult`); `RunContext`/`BuildBudgetedContextResult` and the queue-entry
+shapes are byte-identical to before this block — confirmed by diff, not by the worker's claim. The
+worker recorded the `context`/`state` halting-visibility tension in the DEVLOG per the brief's explicit
+instruction ("record it in your post; do not resolve it yourself") rather than acting on it — correct
+handling of a deliberately parked design question, distinct from the blocker above, which is not a
+design question but an unmet absolute requirement.
+
+**Coverage gate / refusal format.** `RefusalCoverageGateTests.Registry` carries
+`(CardWriteResult.HandEnteredDerivedState, CardStoreWriteTests.AppendComment_CardCarryingAReservedDerivedStateKey_Refuses_AndRecordsAgainstTheCard)`
+(`RefusalCoverageGateTests.cs:166`) — the case that *is* implemented has a test proving it fires and
+records, satisfying the gate as far as the gate's own scope reaches. This is precisely why the finding
+above needs a human decision rather than a red gate: the coverage gate proves the one wired case is
+correct, but has no way to see that ~31 structurally-identical cases were left as unreachable stubs —
+that is a completeness gap the gate's design doesn't catch, matching the section's own carried note
+that CLI-layer refusals sit outside the gate's domain (here it's store-layer completeness across verbs,
+a related but distinct blind spot worth flagging to whoever next touches the gate). 10.8's own argument
+failures (`RoleFlag_Refuses_AtTheDoor`, `OutsideAnyGitRepository_Refuses_WithRepoRootNotFoundCode`)
+correctly report without recording — no `CardStore` touch in either, consistent with §9 ruling 1: an
+invocation-shape refusal, not a records-something-about-the-record refusal.
+
+**`state` left deliberately unbounded.** The worker stated this rather than assuming it, exactly as
+the brief demanded, and the reasoning holds: `state` never carries a card's `Body` or comment thread,
+so its size tracks section/obligation/question/blocked-card *counts*, not narrative volume — a
+qualitatively different growth curve than what D6's ceiling was written to bound. That said, "tracks
+counts, not narrative" is not the same as "cannot grow without limit" — a long-running change can
+accumulate open sections, obligations and questions over its lifetime, and nothing here bounds that.
+I'm not blocking on it: the brief explicitly asked for this to be recorded and weighed by the
+architect/supervisor rather than decided inside the block, and the worker did exactly that. Flagging
+for that weighing, not as a finding against this block.
+
+**C# idiom / AOT / storage.** File-scoped namespaces, `sealed`/`sealed record` throughout the four new
+files. No reflection, no runtime codegen; `[GeneratedRegex]` confirmed source-generated. `StateResult`
+and its nested result types use `CliJsonContext.Default.StateResult` (source-generated
+`JsonSerializerContext`), never a reflection-based `JsonSerializer` overload. No new persisted card
+field introduced by this block (Carried Item A stays untouched — `DerivedStateFieldKeys` are reserved
+names checked against, never written). No lock taken by `RunState`/`DerivedStateAssembler.Build` — a
+correct match for a read-only path; nothing here holds or leaks a lock handle.
+
+### Nits (non-blocking)
+
+1. `TasksMdParser`'s handling of indented/nested checkbox lines (counted toward the denominator) has
+   no test either way — see above. Worth a fixture line and a decision statement once someone actually
+   needs nested checklists; not urgent given today's `tasks.md` has none.
+2. `CardCommentPromoteOutcome`/`CardCommentResolveOutcome`'s carried `RoleNotPermitted.Remedy`
+   duplication (block D's own parked nit) is adjacent territory to the same "one case, many outcome
+   types" shape the 10.9 blocker will need to solve at scale — worth solving both with the same shared
+   pattern when the remediation block for the blocker above is scoped, rather than twice.
+
+### Architectural notes (for the supervisor, not this block)
+
+- The `context`/`state` halting-visibility tension the worker recorded (a worker reading `context`
+  cannot see its top queue item is halted) is real and correctly left to section close, per the brief.
+- The coverage gate's blind spot for "one outcome case wired at N of M structurally-identical call
+  sites" (as opposed to its known CLI-layer blind spot) is worth naming to whoever next extends the
+  gate — it caught nothing here because the case it tracks is genuinely correct where it's wired.
+
+→ @worker
+
+**[worker]** Block C remediation — the 10.9 guard, completed across every write path the reviewer
+named, not left as a defended-but-partial scope decision. Also strengthened the `tasks.md` fixture
+per the reviewer's nit.
+
+**The guard now runs ahead of every `AtomicWrite` call site in `CardStore.cs` that read-modify-writes
+an existing card.** Twenty outcome types now carry a real `HandEnteredDerivedState(Key)` case (three
+carry `HandEnteredDerivedState(FilePath, Key)` instead, where the write touches more than one card —
+`CardSectionVerdictOutcome`, `CardSectionCloseOutcome`, `CardDecisionSupersedeOutcome`,
+`CardRuleCompactOutcome` — so the refusal names which of the several cards actually carries the taint):
+`CardWriteResult` (already landed), `CardNitRaiseOutcome`, `CardBlockTransitionOutcome`,
+`CardApprovalOutcome`, `CardNitDispositionOutcome`, `CardGateResultOutcome`, `CardBlockedByOutcome`,
+`CardQuestionAnswerOutcome`, `CardQuestionDeferOutcome`, `CardSectionAuthorisationOutcome`,
+`CardSectionVerdictOutcome`, `CardSectionCloseOutcome`, `CardRegisterDischargeOutcome`,
+`CardRulePromoteOutcome`, `CardObligationPromoteOutcome`, `CardObligationDeclineOutcome`,
+`CardCommentResolveOutcome`, `CardCommentPromoteOutcome`, `CardDecisionSupersedeOutcome`,
+`CardRuleCompactOutcome`. The reviewer's own estimate held: the compiler-forced half (every `.Match()`
+call over each union gaining the new arm) was mechanical, and the genuinely new work was (1) one
+`ReservedDerivedStateFieldKeyIn(card)` check inserted as the *first* check in each write method — ahead
+of every kind/role/state check, mirroring exactly where the existing `RoundDisagreesWithHistory` guard
+already sits — and (2) a real CLI-layer mapping (naming `state` as the remedy, per §9 ruling 3) for
+every one of the ~21 call sites in `CommandDispatcher.cs` that consumes one of these unions.
+
+**Multi-card writes get one check per card actually rewritten, not just the primary target.**
+`RecordSectionVerdict` checks the section card *and* every `--finding-recurred` block before any write
+proceeds (recording lands on the section — the same "`...RecordsAgainstTheSection`" convention
+`RoundDisagreesWithHistory` already established for a recurring target's own defects, not a new one);
+`CloseSection` checks the section card and, inside `ValidateBlockForLanding` (the one place every
+about-to-land block is already validated), each block being landed — recording against whichever card
+actually carries the reserved key; `SupersedeDecision` checks both the superseding and superseded card;
+`CompactRules` checks the family and every absorbed rule through the one shared
+`ReadOpenChangeScopedRule` helper both already route through, so the guard is wired once, not once per
+of the two callers.
+
+**Three write paths carry no case at all, deliberately — not an `Exclusions` entry, because there is no
+case for the gate to ask about.** `CardCreateOutcome` (`CardStore.WriteCard`), `CardFindingRecordOutcome`
+(`CardStore.RecordFinding`) and `ChangeArchiveOutcome` (a pure directory move, confirmed by reading it —
+no `AtomicWrite` call rewrites existing card content) only ever construct a brand-new `CardFile` from a
+`NewCardFile`, which has no `UnknownFrontmatterFields` parameter at all — structurally, not by
+discipline, none of the three can ever carry a hand-entered reserved key to refuse. `AtomicWrite` itself
+was not touched (the reviewer's "check it once inside `AtomicWrite`" alternative): doing so would also
+gate `RefuseAndRecord`'s own write of the refusal entry, which must succeed even though the card it is
+writing still carries the tainted `UnknownFrontmatterFields` — the fix that would have made blanket
+enforcement wrong, not merely large.
+
+**Tests: one per newly-wired case, in a dedicated `HandEnteredDerivedStateCoverageTests.cs`** — 21
+tests (the multi-card types earn two each, one per card that can carry the fault: `RecordSectionVerdict`
+and `CloseSection` both get a section-card case and a second-card case) — registered in
+`RefusalCoverageGateTests.Registry` alongside the `CardWriteResult` case already landed in
+`CardStoreWriteTests.cs`. Each writes a card of the relevant kind carrying `next_step` in
+`UnknownFrontmatterFields`, calls the `CardStore` method directly, asserts the outcome type and that
+exactly one `CardRefusalEntry` landed with the acting role, rule and remedy matching, and (for the
+multi-card types) that the *other* card in the write is untouched. Per the coverage gate's own textual-
+scan requirement, each test inlines its own `.Refusals` assertion rather than delegating to a shared
+helper the gate's per-method source scan cannot see into — found this the hard way when the gate failed
+naming exactly that.
+
+**Fixture strengthening (the reviewer's nit, not a blocker):** `TaskCompletion_CountedFromTheRealTasksMdFile`
+(`CommandDispatcherStateTests.cs`) now exercises a capitalised `[X]` (still ticked), a nested/indented
+checkbox (still counted toward the denominator), and a `- [ ]` appearing mid-sentence rather than at
+line start (correctly excluded) — in the fixture itself, not only by hand-trace. 2 ticked, 5 total.
+
+**Gates**, quoted individually: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`.
+Suite: **964**, up from **943** (+21 — exactly the 21 new coverage tests; no test count regression, no
+test weakened to get here).
+
+→ @reviewer
+
+**[reviewer]** Re-audit of block C (10.8–10.10) remediation — the 10.9 guard closed across every
+write path. **Verdict: Approve.** I re-ran my own exploit, not the worker's account of it, and it now
+refuses everywhere I previously showed it succeeding.
+
+**Gates, run myself:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite:
+**964**, up from **943** (+21), all green — matches the worker's accounting exactly.
+
+### The exploit, re-run live against the real binary
+
+Built `callboard`, ran it against a fresh scratch repo, exactly the route from my prior blocker:
+`decision create` → hand-edited `next_step: ship it` into the card's frontmatter (never through the
+tool) → `decision discharge`. Result: `"code":"hand-entered-derived-state"`, and the card on disk now
+carries a `<!-- callboard:refusal ... -->` entry rather than a silently re-emitted `next_step`. I then
+tried the exact multi-card case my finding 4 asked about hardest — `decision supersede` where the
+*superseded* card (not the primary target named on the command line) carries the taint and the
+superseding card is clean: it refuses against the tainted card, and the clean superseding card is left
+completely untouched on disk (re-read after the call — byte-identical). Both routes I had open before
+are closed now, demonstrated, not just re-read.
+
+### 1. Completeness — verified independently, not taken from the worker's list
+
+Counted `AtomicWrite(` call sites myself: **34 occurrences, 33 real call sites** (one is the method's
+own declaration, `CardStore.cs:5643`). Wrote a script pairing each call site with any
+`ReservedDerivedStateFieldKeyIn` call preceding it in the same enclosing method. Every one of the 33
+resolves to exactly one of three buckets, and I checked each bucket by reading the surrounding code,
+not by trusting the pairing:
+
+- **24 call sites** guarded immediately on entry, ahead of every kind/round/role/state check in that
+  method (`AppendCommentUnderExistingLock:181`, `TransferOwnershipUnderExistingLock:405`,
+  `ApplyBlockTransitionUnderExistingLock:588`, `RecordApprovalUnderExistingLock:916`,
+  `DispositionNitUnderLocks:1289`, `RecordGateResultUnderExistingLock:1440`,
+  `UpdateBlockedByUnderExistingLock:1584`, `AnswerQuestionUnderExistingLock:1682`,
+  `DeferQuestionUnderExistingLock:1777`, `RecordSectionAuthorisationUnderExistingLock:1975`,
+  `RecordSectionVerdictUnderExistingLock:2409`, `CloseSectionUnderExistingLock:2785`,
+  `DischargeRegisterCardUnderExistingLock:3115`, `PromoteRuleUnderExistingLock:3333`,
+  `PromoteObligationUnderExistingLock:3477`, `DeclineObligationUnderExistingLock:3580`,
+  `ResolveCommentUnderExistingLock:3714`, `PromoteCommentUnderLocks:3885`, plus the two multi-card
+  writes below counted per-card).
+- **5 call sites are the new-card writes** inside `DispositionNit` (raised nit/obligation/decision),
+  `PromoteComment` (raised card) and `RecordFinding` (raised blind-spot card + the finding card
+  itself) — every one constructs `new CardFile(..., [], [], ...)` from scratch, `[]` in the
+  `UnknownFrontmatterFields` position. Confirmed by reading each construction directly: none of these
+  can carry a hand-entered key, guard or no guard.
+- **4 call sites are `RefuseAndRecord`'s own two write helpers** (`CardStore.cs:636`, `:672`) plus
+  `RestoreCardContent`'s rollback write (`:4425`) — the refusal-recording and rollback paths
+  themselves, which must write regardless of what the card carries (see finding 3).
+
+No call site fell outside these three buckets. The reviewer-demonstrated hole — hand-edit, then any
+of ~31 other verbs — is closed at all ~31 (now: 2 from before, +19 newly wired one-case-per-outcome
+sites, some hit twice for two call sites within the same outcome type).
+
+### 2. The three no-case types — verified structurally, and the coverage-gate question resolved
+
+- **`CardCreateOutcome` (`CardStore.WriteCard`, line 103):** reads `new CardFile(card.Frontmatter,
+  card.Body, [], [], ...)` from a `NewCardFile` — confirmed `NewCardFile`
+  (`NewCardFile.cs:60`) has no `UnknownFrontmatterFields` parameter at all. Structurally impossible.
+- **`CardFindingRecordOutcome` (`CardStore.RecordFinding`):** both its writes
+  (`raisedWriteResult:5204`, `findingWriteResult:5247`) construct fresh `CardFile`s the same way.
+  Structurally impossible.
+- **`ChangeArchiveOutcome`:** confirmed by reading `ArchiveChange` (`4009`–`4178`) end to end — no
+  `AtomicWrite` call anywhere in the method; it is a directory move over already-existing files,
+  never a content rewrite.
+
+**On "documented in code, not in `Exclusions`" against the gate's own rule:** I accept this. §9's
+"every case is in exactly one of {implemented-and-tested, keyed exclusion}" rule exists to stop a
+case from being silently *dropped* — a real gap masquerading as "not applicable." Here there is no
+case to drop: the union types genuinely have no member for this refusal, so there is nothing an
+`Exclusions` entry could name. An `Exclusions` entry keyed on a type that carries no such case would
+be asking the gate to track the absence of something that isn't a case, which is a different kind of
+statement than "this case exists but isn't tested for a stated reason" — the thing `Exclusions` is
+for. The doc comment at the top of `HandEnteredDerivedStateCoverageTests.cs` makes the same structural
+argument in the same three sentences my finding did, which is the right place for it: read by anyone
+extending this coverage next, not buried in a gate list they'd have to reverse-engineer.
+
+### 3. `AtomicWrite` deliberately left unguarded — the reasoning holds, and I looked for a
+   counter-formulation before accepting it
+
+I asked for either a shared chokepoint or a reasoned account of why per-call-site is right. The
+worker gave the latter, and it's correct: `RefuseAndRecord`'s own writes (`CardStore.cs:636`, `:672`)
+must serialise and write `card with { Refusals = [...] }` — a card that, when the refusal being
+recorded *is* `HandEnteredDerivedState`, still carries the tainted `UnknownFrontmatterFields` in the
+serialised output, because the write is what appends the refusal marker onto the still-tainted card
+(confirmed live above: the refused `DEC-1.md` still shows `next_step: ship it` in frontmatter, plus
+the refusal comment, after the call). A blanket guard inside `AtomicWrite` would refuse that write too
+— either recursing forever or needing a bypass flag threaded through, which is a worse shape than what
+landed: the same per-call-site guard already gates every real writer, and the only writer that must
+see a tainted card through is the one whose entire job is recording that the card is tainted. I
+considered "guard everywhere except pass an `allowTainted` flag at the two `RefuseAndRecord` sites"
+as an alternative chokepoint — it would centralise the check, but it also moves the interesting logic
+(which two sites are exempt, and why) into a boolean at the call site, which is no more legible than
+today's "check first" comment and is one more parameter for a future call site to get wrong in either
+direction. I don't think there's a formulation that's strictly better than what shipped. The residual
+risk the reviewer named — "this regresses when someone adds call site 34" — is real and not fully
+closed by this shape; noted below as an architectural point for whoever extends `CardStore.cs` next,
+not a blocker on this block.
+
+### 4. Multi-card writes — verified against the primary target *and* the secondary card, live and by
+
+- **`RecordSectionVerdict`**: guards the section card (`2119`) and, in the recurring-finding loop,
+  each `--finding-recurred` block before its own write (`2231`, ahead of `2350`) — confirmed by the
+  dedicated test (`RecordSectionVerdict_RecurringBlockCardCarryingAReservedKey_Refuses_AndRecords`)
+  and by reading the loop.
+- **`CloseSection`**: guards the section card (`2520`) and, via `ValidateBlockForLanding`
+  (called on every block in `freshBlocks` before the landing loop runs), each block about to land
+  (`2912`, ahead of `2760`) — confirmed by the dedicated test and by tracing the call order.
+- **`SupersedeDecision`**: guards both the superseding card (`4252`) and the superseded card
+  (`4259`), both ahead of either write (`4357`, `4379`) — confirmed **live**, not just by reading:
+  my re-run above tainted the superseded card only and it refused, leaving the clean superseding card
+  untouched. **Gap, not a blocker:** the coverage-gate registry only requires (and only has) a test
+  for the superseding-card case (`SupersedeDecision_SupersedingCardCarryingAReservedKey_...`); there
+  is no dedicated xunit test for the superseded-card guard I just exercised by hand. The code is
+  correct — I verified it two ways — but the regression suite doesn't pin the second card's path the
+  way `RecordSectionVerdict`/`CloseSection` do for theirs. Nit below.
+- **`CompactRules`**: guards the family card and every absorbed card through the one shared
+  `ReadOpenChangeScopedRule` helper (`4784`), called once per card before any write in the method —
+  confirmed by reading. **Same gap as above:** only the family-card case is registered/tested
+  (`CompactRules_FamilyCardCarryingAReservedKey_...`); no dedicated test exercises a tainted
+  *absorbed* card. I did not hand-verify this one live (no CLI path to `rule compact` in this
+  session's scratch repo setup), so this one rests on code-reading alone — worth closing before I'd
+  call the multi-card guarantee fully pinned by the suite, even though I'm not blocking on it.
+
+The worker's own DEVLOG post is accurate here — it explicitly named only `RecordSectionVerdict` and
+`CloseSection` as getting two tests each, and did not claim the same for `SupersedeDecision`/
+`CompactRules`. No overclaim. But finding 4 asked to verify every multi-card type guards every card
+*and*, implicitly, that the suite proves it — two of four are proven only by me, this session, not by
+a test that runs on every future change to this file.
+
+### 5. The 21 new tests — real assertions, not union-existence checks
+
+Read `HandEnteredDerivedStateCoverageTests.cs` in full. Each test: writes a card of the relevant kind
+carrying `next_step` in `UnknownFrontmatterFields` (or, for the two-per-outcome types, a clean primary
++ tainted secondary or vice versa), calls the `CardStore` method directly, asserts the outcome's
+concrete type via `Assert.IsType`, re-reads the card from disk and asserts exactly one
+`CardRefusalEntry` landed with `By`/`Rule`/`Remedy` matching the outcome's own fields, and — for the
+two-card tests — asserts the *other* card is untouched (`Assert.Empty(recurringRead.Refusals)` plus
+the tainted field still present unchanged). That is behaviour, not existence. Each test inlines its
+own `.Refusals`/`.UnknownFrontmatterFields` assertions rather than delegating to a shared helper,
+matching the coverage gate's textual-scan requirement — confirmed by grep, no shared assertion helper
+is called from inside any of the 21 test bodies. `RefusalCoverageGateTests.Registry` (`:166`–`:185`)
+carries all 21 entries (the original `CardWriteResult` case plus 19 new outcome types — some with two
+call-site registrations is not the shape; it's one outcome-type-to-one-test, correctly, since the
+gate's registry is keyed on the C# type, not the call site).
+
+Every `RefusingRule` reads `"working-context: no figure shall be hand-entered"` and every `Remedy`
+names `'callboard state'` as the retrieval path (confirmed by reading `CommandDispatcher.
+HandEnteredDerivedState` (`:3679`), the single shared helper all 21 CLI mapping sites call — grep
+confirms no call site duplicates the message text). `DerivedStateFieldKeys.All` (`DerivedStateFieldKeys.cs`)
+still lists all six original keys (`open_sections`, `task_completion`, `live_obligations`,
+`open_questions`, `blocked_cards`, `next_step`) — not weakened, not narrowed to make the remediation
+smaller.
+
+### 6. Regression check — clean
+
+`git diff --numstat` on `CommandDispatcher.cs`: **202 insertions, 0 deletions** — every existing
+refusal mapping is byte-identical; only new `onHandEnteredDerivedState:` arms were added. Spot-checked
+`CardApprovalOutcome.cs`'s full diff: every pre-existing `Match` arm's body (`onApproved(this)`,
+`onRoleNotPermitted(this)`, …) is untouched in content and order; the only change per arm is the
+added `Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState` parameter the compiler
+requires. Same shape holds across the other 19 outcome-type diffs (checked their deletion counts
+against added-parameter-only diffs, consistent with the compiler-forced ripple, not a content change).
+
+### 7. `tasks.md` fixture — genuinely constrains the parser now
+
+`TaskCompletion_CountedFromTheRealTasksMdFile` (`CommandDispatcherStateTests.cs:145`) now has a
+fixture with `- [x]`, `- [X]` (capitalised, still ticked), a nested `  - [ ]` (still counted toward
+the denominator), and a `- [ ]` appearing mid-sentence inside a narrative line (correctly excluded) —
+asserting `2` ticked, `5` total. I traced the fixture by hand against `TasksMdParser`'s regex
+(`^\s*-\s\[([ xX])\]\s`) and the assertion matches what the pattern should produce; this is now a real
+constraint on the parser rather than a hand-trace standing in for one.
+
+### Nits (non-blocking)
+
+1. **The two multi-card gaps in the test suite** (finding 4 above): `SupersedeDecision`'s
+   superseded-card guard and `CompactRules`' absorbed-card guard are correct in code (one verified
+   live this round, one by reading) but have no dedicated regression test the way
+   `RecordSectionVerdict`/`CloseSection` do for their second card. Worth two more tests — mirroring
+   the pattern already established by the two that do have them — before this shape is trusted to
+   catch a future regression on either path.
+2. Prior nits (block D's `RoleNotPermitted.Remedy` duplication; `TasksMdParser`'s nested-checkbox
+   behaviour) — unchanged by this remediation, still open, still non-blocking.
+
+### Architectural notes (for the supervisor, not this block)
+
+- **The regression risk the per-call-site shape carries forward.** I raised this in the original
+  blocker and the worker's reasoning against a blanket `AtomicWrite` guard is sound (§3 above) — but
+  the residual fact stands: call site 34, whenever it's added, has to remember to check
+  `ReservedDerivedStateFieldKeyIn` first, by convention, not by compiler enforcement. Nothing stops a
+  future writer from being added without it the way the original two-of-33 gap happened. Worth a
+  standing note (maybe a doc comment on `AtomicWrite` itself, or a coverage-gate rule keyed on
+  "every `AtomicWrite` call site's enclosing method contains this guard call") for whoever next adds
+  a card-mutating verb to this file.
+- Everything I flagged as sound in the first pass — 10.8's request-time derivation, 10.10's halting
+  reuse of `FindBlockingOpenProductOwnerQuestion`, `context` staying untouched, AOT/idiom discipline —
+  is untouched by this remediation and stands as previously audited.
+
+→ @architect
+
+**[worker]** Nit closed: two regression tests pinning the non-primary card in the two multi-card
+guard paths that had none — `SupersedeDecision`'s *superseded* card and `CompactRules`' *absorbed*
+card. Model exactly matches the two that already existed (`RecordSectionVerdict`'s recurring card,
+`CloseSection`'s landed block): the primary card (superseding / family) is written clean, the
+non-primary card carries `next_step`, and each test asserts the outcome names the *tainted* card's
+own path, that the refusal recorded there matches, and that the clean primary card is left with no
+refusal and no trace of the operation (`Refusals` empty, `Supersedes`/`Absorbs` untouched). No
+change to the guard, the key set, or any outcome type — test-only, in
+`HandEnteredDerivedStateCoverageTests.cs`.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite: **966**, up from 964
+(+2, exactly the two new tests).
+
 ## NEXT
 
 **§10 is open and in flight.** Base `3e85b98`. Two of its six blocks have landed; **block A (10.1–10.3)

@@ -30,7 +30,7 @@ internal abstract record CardNitDispositionOutcome
         Func<CardCorrupt, TResult> onCardCorrupt,
         Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor);
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
 
     /// <param name="Card">The block card as written: the appended disposition comment, and — for
     /// <c>fix-before-land</c>, only when this call is the one that leaves it live in <c>in-review</c>
@@ -47,7 +47,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onDispositioned(this);
     }
 
@@ -58,7 +58,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRoleNotPermitted(this);
     }
 
@@ -69,7 +69,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNotABlockCard(this);
 
         public string RefusingRule => "review-certification: nit dispositions only apply to a block card";
@@ -82,7 +82,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardNotFound(this);
     }
 
@@ -94,7 +94,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onNitNotFound(this);
 
         public string RefusingRule => "review-certification: a disposition targets a live nit on the card";
@@ -110,7 +110,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onAlreadyDispositioned(this);
 
         public string RefusingRule => "review-certification: a nit ceases to be live only through one of its three dispositions";
@@ -124,7 +124,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onLayoutMismatch(this);
     }
 
@@ -134,7 +134,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRaisedCardLayoutMismatch(this);
     }
 
@@ -149,7 +149,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRaisedCardAlreadyExists(this);
 
         public string RefusingRule => "card-model: identities are never recycled, and a raised card must not overwrite an unrelated one";
@@ -163,7 +163,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onCardCorrupt(this);
     }
 
@@ -177,7 +177,7 @@ internal abstract record CardNitDispositionOutcome
     internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardNitDispositionOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onRoundDisagreesWithHistory(this);
 
         public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
@@ -203,7 +203,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onUnresolvedThreadsAddressedToActor(this);
 
         public string RefusingRule => "process-enforcement: a verdict cannot leave threads unanswered";
@@ -213,6 +213,29 @@ internal abstract record CardNitDispositionOutcome
             $"this disposition can proceed: {string.Join(", ", ThreadIds)}.";
     }
 
+    /// <summary>working-context: "No figure SHALL be hand-entered anywhere in the system" (§10
+    /// block C) — <paramref name="Key"/> names a reserved derived-state field (<see
+    /// cref="DerivedStateFieldKeys.All"/>) present on the target card's <see cref="CardFile.
+    /// UnknownFrontmatterFields"/>, the door a hand-edited card's frontmatter uses to reach this far
+    /// at all (nothing this build's own CLI ever writes one). Refusal-shaped, card-addressed (§9
+    /// block A3): checked immediately once the card is read, before dispositioning the nit is allowed to
+    /// proceed, so this write never re-emits (and never launders forward) a hand-entered count or
+    /// next-step pin it did not itself write. See <see cref="CardWriteResult.HandEnteredDerivedState"/>
+    /// for the sibling case on the generic comment/handover surface.</summary>
+    internal sealed record HandEnteredDerivedState(string Key) : CardNitDispositionOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+            onHandEnteredDerivedState(this);
+
+        public string RefusingRule => "working-context: no figure shall be hand-entered";
+
+        public string Remedy =>
+            $"'{Key}' is a reserved derived-state field name; remove it from this card's frontmatter — " +
+            "this state is derived at request time, never stored, and is available from 'callboard state'.";
+    }
+
     /// <summary>Enforcement itself is unavailable: a lock could not be acquired within its timeout,
     /// or an I/O error occurred while writing. Tool-failure-shaped — the board is not refusing
     /// anything.</summary>
@@ -220,7 +243,7 @@ internal abstract record CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
-        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor) =>
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onToolFailure(this);
     }
 }

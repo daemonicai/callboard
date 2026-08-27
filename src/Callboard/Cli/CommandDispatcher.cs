@@ -759,6 +759,19 @@ internal static class CommandDispatcher
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
+
+        /// <summary>
+        /// <c>state</c> (§10 block C, working-context: "a summary of overall process state").
+        /// Not role-scoped — unlike <see cref="Context"/>, this carries no <see cref="CardOwner"/>
+        /// at all, matching the spec's own scenario ("any role requests the state summary").
+        /// Read-only, so no timestamp and no lock, for the same reason <see cref="Context"/> has
+        /// neither. No <c>--change</c>, for the same reason <see cref="Context"/> has none: <see
+        /// cref="Cards.CardLayout.ResolveLiveRecordDirectories"/> self-discovers every live change.
+        /// </summary>
+        internal sealed record State(string WorkingDirectory) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
     }
 
     /// <summary>
@@ -848,6 +861,8 @@ internal static class CommandDispatcher
         TResult Visit(ParsedCommand.CommentDecline command);
 
         TResult Visit(ParsedCommand.Context command);
+
+        TResult Visit(ParsedCommand.State command);
     }
 
     /// <summary>
@@ -953,6 +968,8 @@ internal static class CommandDispatcher
         public CommandOutcome Visit(ParsedCommand.CommentDecline command) => RunCommentDecline(command, LockTimeout);
 
         public CommandOutcome Visit(ParsedCommand.Context command) => RunContext(command, RecognisedCommandName);
+
+        public CommandOutcome Visit(ParsedCommand.State command) => RunState(command);
     }
 
     internal static int Run(
@@ -1168,6 +1185,11 @@ internal static class CommandDispatcher
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
             },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onUnresolvedThreadsAddressedToActor: unresolved => UnresolvedThreadsAddressedToActor(filePath, unresolved.ActorRole, unresolved.ThreadIds) with
             {
                 Rule = unresolved.RefusingRule,
@@ -1238,6 +1260,11 @@ internal static class CommandDispatcher
             {
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
+            },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
             },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
@@ -1322,6 +1349,7 @@ internal static class CommandDispatcher
                 $"'{filePath}' is not recorded as blocked by '{notBlockedBy.BlockingCardId}'."),
             onNotABlockCard: notABlock => WrongCardKind(filePath, CardKind.Block, notABlock.Kind, "blocked_by only applies to a block card"),
             onRoundDisagreesWithHistory: disagreement => RoundDisagreesWithHistory(filePath, disagreement.StoredRound, disagreement.ExpectedRound),
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to update blocked_by on."),
@@ -1404,6 +1432,11 @@ internal static class CommandDispatcher
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
             },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(resolved.FilePath!, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onUnresolvedThreadsAddressedToActor: unresolved => UnresolvedThreadsAddressedToActor(resolved.FilePath!, unresolved.ActorRole, unresolved.ThreadIds) with
             {
                 Rule = unresolved.RefusingRule,
@@ -1479,6 +1512,11 @@ internal static class CommandDispatcher
             {
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
+            },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(resolved.FilePath!, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
             },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to raise a nit against."),
@@ -1565,6 +1603,11 @@ internal static class CommandDispatcher
             {
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
+            },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
             },
             onUnresolvedThreadsAddressedToActor: unresolved => UnresolvedThreadsAddressedToActor(filePath, unresolved.ActorRole, unresolved.ThreadIds) with
             {
@@ -1655,6 +1698,11 @@ internal static class CommandDispatcher
             {
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
+            },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(handEntered.FilePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
             },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
@@ -1747,6 +1795,11 @@ internal static class CommandDispatcher
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
             },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(handEntered.FilePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onBlockNotApproved: notApproved => new CommandOutcome.Refusal(
                 "block-not-approved",
                 $"block '{notApproved.BlockId}' ('{notApproved.BlockFilePath}') is '{notApproved.ActualState.ToWireString()}', not 'approved' — every block in a " +
@@ -1834,6 +1887,11 @@ internal static class CommandDispatcher
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to record an authorisation on."),
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
             onNotAtBound: notAtBound => new CommandOutcome.Refusal(
@@ -2340,6 +2398,11 @@ internal static class CommandDispatcher
                 "question-not-open",
                 $"'{filePath}' is already '{notOpen.CurrentStatus.ToWireString()}' and cannot be answered again.",
                 notOpen.RefusingRule, notOpen.Remedy),
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to answer."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
@@ -2386,6 +2449,11 @@ internal static class CommandDispatcher
                 "question-not-open",
                 $"'{filePath}' is already '{notOpen.CurrentStatus.ToWireString()}' and cannot be deferred.",
                 notOpen.RefusingRule, notOpen.Remedy),
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to defer."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
@@ -2482,6 +2550,11 @@ internal static class CommandDispatcher
                 $"'{filePath}' is a '{notARegister.Kind.ToWireString()}' card, not one of the register kinds " +
                 "(rule, hazard, obligation, decision); discharge only applies to a register card.",
                 notARegister.RefusingRule, notARegister.Remedy),
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to discharge."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
@@ -2687,6 +2760,11 @@ internal static class CommandDispatcher
                 Rule = notADecision.RefusingRule,
                 Remedy = notADecision.Remedy,
             },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(handEntered.FilePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to supersede."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
@@ -2751,6 +2829,11 @@ internal static class CommandDispatcher
             {
                 Rule = notARule.RefusingRule,
                 Remedy = notARule.Remedy,
+            },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(rule.FilePath!, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
             },
             onTargetAlreadyExists: targetAlreadyExists => new CommandOutcome.Refusal(
                 "card-already-exists", $"a card already exists at '{targetAlreadyExists.FilePath}'.",
@@ -2821,6 +2904,11 @@ internal static class CommandDispatcher
                 Rule = notAnObligation.RefusingRule,
                 Remedy = notAnObligation.Remedy,
             },
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(obligation.FilePath!, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onTargetAlreadyExists: targetAlreadyExists => new CommandOutcome.Refusal(
                 "card-already-exists", $"a card already exists at '{targetAlreadyExists.FilePath}'.",
                 targetAlreadyExists.RefusingRule, targetAlreadyExists.Remedy),
@@ -2874,6 +2962,11 @@ internal static class CommandDispatcher
             onReasonRequired: reasonRequired => new CommandOutcome.Refusal(
                 "reason-required", $"'{reasonRequired.FilePath}' was not declined: a reason is required.",
                 reasonRequired.RefusingRule, reasonRequired.Remedy),
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(obligation.FilePath!, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onAlreadyDischarged: already => new CommandOutcome.Refusal(
                 "already-discharged", $"'{already.FilePath}' is already discharged; there is nothing further to decline.",
                 already.RefusingRule, already.Remedy),
@@ -2982,6 +3075,11 @@ internal static class CommandDispatcher
             onReasonRequired: reasonRequired => new CommandOutcome.Refusal(
                 "reason-required", $"'{reasonRequired.FilePath}' has no reason recorded.",
                 reasonRequired.RefusingRule, reasonRequired.Remedy),
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(filePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}'."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
@@ -3039,6 +3137,11 @@ internal static class CommandDispatcher
             onAlreadyResolved: already => new CommandOutcome.Refusal(
                 "comment-already-resolved", $"comment '{already.CommentId}' on '{card.FilePath}' is already resolved.",
                 already.RefusingRule, already.Remedy),
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(card.FilePath!, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            },
             onRaisedCardAlreadyExists: raisedAlreadyExists => new CommandOutcome.Refusal(
                 "card-already-exists", $"a card already exists at '{raisedAlreadyExists.FilePath}'."),
             onRaisedCardLayoutMismatch: raisedLayoutMismatch => new CommandOutcome.Refusal(
@@ -3466,6 +3569,14 @@ internal static class CommandDispatcher
             {
                 Rule = disagreement.RefusingRule,
                 Remedy = disagreement.Remedy,
+            },
+            // Reachable: the target rule card's frontmatter can carry a hand-entered reserved
+            // derived-state key regardless of card kind (§10 block C) — this shared surface
+            // refuses before appending the promotion-attempt comment.
+            onHandEnteredDerivedState: handEntered => HandEnteredDerivedState(resolved.FilePath!, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
             });
     }
 
@@ -3516,6 +3627,11 @@ internal static class CommandDispatcher
                 Rule = notARule.RefusingRule,
                 Remedy = notARule.Remedy,
             }, null),
+            onHandEnteredDerivedState: handEntered => (HandEnteredDerivedState(handEntered.FilePath, handEntered.Key) with
+            {
+                Rule = handEntered.RefusingRule,
+                Remedy = handEntered.Remedy,
+            }, null),
             onCardNotFound: notFound => (new CommandOutcome.Refusal(
                 "card-not-found", $"no card file exists at '{notFound.FilePath}' to compact."), null),
             onLayoutMismatch: layoutMismatch => (new CommandOutcome.Refusal(
@@ -3554,6 +3670,18 @@ internal static class CommandDispatcher
             $"'{filePath}' has stored round {storedRound}, but its own transition history implies round " +
             $"{expectedRound} (one plus its round-incrementing transitions); refusing to act on this card. " +
             "Neither figure is altered — correct the discrepancy directly on the card.");
+
+    /// <summary>working-context: "No figure SHALL be hand-entered anywhere in the system" (§10
+    /// block C) — the one refusal <see cref="Cards.CardWriteResult.HandEnteredDerivedState"/>
+    /// maps to for the CLI: <paramref name="filePath"/> carries a reserved derived-state key
+    /// (<see cref="Cards.DerivedStateFieldKeys.All"/>) in its frontmatter, hand-entered outside
+    /// the tool, and this write refuses rather than re-emitting it.</summary>
+    private static CommandOutcome.Refusal HandEnteredDerivedState(string filePath, string key) =>
+        new CommandOutcome.Refusal(
+            "hand-entered-derived-state",
+            $"'{filePath}' carries a hand-entered '{key}' field in its frontmatter; refusing to act on this " +
+            "card. This state is derived at request time, never stored — remove the field and request it " +
+            "with 'callboard state' instead.");
 
     /// <summary>process-enforcement: "A verdict cannot leave threads unanswered" (§9 block B) —
     /// the one refusal every door out of <c>in-review</c> mints when the acting role's own inbox
@@ -3727,6 +3855,80 @@ internal static class CommandDispatcher
         var context = WorkingContextAssembler.Build(repoRoot, parsed.Role);
 
         return new CommandOutcome.Success(BuildBudgetedContextResult(parsed.Role, context, recognisedCommandName));
+    }
+
+    /// <summary>
+    /// <c>state</c> (§10 block C, working-context: "a summary of overall process state" — every
+    /// figure "derived at the time of the request"). A pure read — no lock, no timestamp, no role —
+    /// over <see cref="DerivedStateAssembler.Build"/>'s result. <see langword="private"/>: <see
+    /// cref="CommandParser"/> cannot name this method.
+    ///
+    /// <para>
+    /// <b>Deliberately unbounded (§10 block C brief).</b> <see cref="WorkingContextBudget"/>'s
+    /// character ceiling is stated for the working-context response specifically (D6) — the spec
+    /// sets no budget for this response, and <c>state</c> reports identity-only facts (card ids,
+    /// titles, section/question/blocker references), never a card's <c>Body</c> or its narrative
+    /// comment thread the way <c>context</c>'s brief and addressed threads do, so the response
+    /// grows with the number of open sections/obligations/questions/blocked cards, not with
+    /// narrative volume. Left unbounded here rather than silently reused under <c>context</c>'s
+    /// ceiling — the two shapes measure different things, and a truncation rule copied from one to
+    /// the other without its own justification would be exactly the kind of "chose without saying
+    /// so" this brief asked not to do.
+    /// </para>
+    /// </summary>
+    private static CommandOutcome RunState(ParsedCommand.State parsed)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var state = DerivedStateAssembler.Build(repoRoot);
+
+        return new CommandOutcome.Success(new StateResult
+        {
+            OpenSections = [.. state.OpenSections.Select(static entry => new StateOpenSectionResult
+            {
+                Id = entry.Card.Frontmatter.Id,
+                FilePath = entry.FilePath,
+                Title = entry.Card.Frontmatter.Title,
+                ChangeName = entry.ChangeName,
+            })],
+            TaskCompletion = [.. state.TaskCompletion.Select(static entry => new StateTaskCompletionResult
+            {
+                ChangeName = entry.ChangeName,
+                TasksFileFound = entry.TasksFileFound,
+                Ticked = entry.Ticked,
+                Total = entry.Total,
+            })],
+            LiveObligations = [.. state.LiveObligations.Select(static entry => new StateObligationResult
+            {
+                Id = entry.Card.Frontmatter.Id,
+                FilePath = entry.FilePath,
+                Title = entry.Card.Frontmatter.Title,
+                OwedBySectionId = entry.OwedBySectionId,
+            })],
+            OpenQuestions = [.. state.OpenQuestions.Select(static entry => new StateQuestionResult
+            {
+                Id = entry.Card.Frontmatter.Id,
+                FilePath = entry.FilePath,
+                Title = entry.Card.Frontmatter.Title,
+                OwesAnswer = entry.OwesAnswer.ToWireString(),
+            })],
+            BlockedCards = [.. state.BlockedCards.Select(static entry => new StateBlockedCardResult
+            {
+                Id = entry.Card.Frontmatter.Id,
+                FilePath = entry.FilePath,
+                Title = entry.Card.Frontmatter.Title,
+                BlockedByIds = entry.BlockedByIds,
+                Halted = entry.Halted,
+                HaltedByQuestionId = entry.HaltedByQuestionId,
+                HaltedByQuestionTitle = entry.HaltedByQuestionTitle,
+            })],
+        });
     }
 
     /// <summary>
