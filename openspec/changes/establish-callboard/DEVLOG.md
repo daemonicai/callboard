@@ -30936,6 +30936,231 @@ through to `unrecognised-argument`). Added by these two rounds:
 
 Both remediation rounds are spent. §10 closes here.
 
+## 11. Narrative retrieval and export
+
+**[architect]** Base: `a6c2561` — retrieval of a card's full body and thread by identity, section and
+whole-change export in the incumbent's shape, and closed cards leaving the default queries without
+leaving the record. Spec: `specs/record-retrieval/spec.md` — "Narrative is retrieved by identity",
+"Export in the incumbent's shape", and that requirement's second scenario.
+
+**[architect]** Product Owner ruling — the `blocked_by` fail-open carried from §10's `## NEXT`.
+
+The parked item was the asymmetry inside `CardStore.FindBlockingOpenProductOwnerQuestion`
+(`src/Callboard/Cards/CardStore.cs:1840-1866`): a blocker whose `status:` fails to parse halts the card
+(S2's change, fails **closed**), while a `blocked_by` id that fails to **resolve** — `onNotFound`,
+`onDuplicate`, `onUnreadable` at `:1845-1849` — is silently skipped and halts nothing (fails **open**).
+
+What settled it, and was not in the parked note: **`AddBlockedBy` never checks that the id resolves.**
+`CardBlockedByOutcome` has no case for it. So the fail-open is not reachable only through corruption —
+it is reachable by a **typo**. `blocked-by add --blocker qeustion-014` succeeds, `state` lists the card
+under `blockedCards`, and no transition, approve or section-close is ever refused. A blocker that
+refuses nothing is the incumbent's failure mode wearing the tool's clothes.
+
+**Ruling: refuse at the write door.** `blocked-by add` gains a refusal for a blocker id that does not
+resolve, or resolves to more than one file. `FindBlockingOpenProductOwnerQuestion` is **not touched** —
+its read-path skip stays exactly as documented at `:1823-1830`, and the reasoning in that comment stands
+as the ruling for the read path: only positive evidence of an open Product Owner question halts, and a
+resolution failure is not that evidence. Once an id is verified at the door, it can only go missing
+afterwards through corruption, which is a different failure with a different remedy.
+
+Rejected, and why, so a later reader does not relitigate it: **failing closed inside the predicate**
+would conflate a missing card with an open question and emit a refusal naming a question that may not
+exist. **A distinct unverifiable-blocker refusal at the transition and approve doors** is the complete
+answer, but it reopens §9's shipped doors, all three readers of the predicate, and the coverage gate —
+disproportionate to a hole the write door closes.
+
+**Placement.** §10 and §9 are both closed, so this has no remediation slot. It lands as **block A of
+§11**, out-of-section and flagged as such: it gets **no `N.M` numbers and ticks nothing**, the same
+shape §3c.3 gives a remediation block. `@supervisor` — when you audit §11 on `a6c2561..HEAD`, block A is
+in your range by placement, not by drift; audit it against this ruling, not against §11's spec.
+
+**Section carve.** A (the ruling, above) · B = 11.1–11.2 · C = 11.3–11.4 · D = 11.5.
+
+**[architect]** Brief — §11 **block A** (the ruling above). Out-of-section: **no task numbers, ticks
+nothing.** → @worker
+
+**Deliver.** `blocked-by add` refuses a `--blocker` id that does not resolve to exactly one card.
+`RemoveBlockedBy` gets **no such check** and must keep accepting any id — that is how a bad blocker
+already in the record gets cleared, and the new refusal's remedy depends on it. Pin that with a test.
+
+**Where.** `CardStore.AddBlockedBy` and `CardBlockedByOutcome` (`src/Callboard/Cards/`), the CLI mapping
+in `Cli/CommandDispatcher.cs` and `Cli/BlockedByResult.cs`, plus tests.
+
+**Binding constraints.**
+1. **Resolve through `CardIdentityResolver.Resolve`** — never a hand-rolled directory walk (§7 carried
+   item C). It already returns the four cases you need.
+2. **`onNotFound` and `onDuplicate` refuse.** For `onUnreadable`, decide and **justify in your post**:
+   the corrupt file is the *blocker's*, not the card being written. Look first at how the existing
+   `card-id-unresolvable` / `nit-id-unresolvable` error codes in `CommandDispatcher.cs` already shape
+   this exact problem, and match that precedent rather than inventing a second one.
+3. **Refuse and record, not report.** §9 ruling 1: this asserts something about the record (the id names
+   no card in it) and fires after the card is read, so it takes the `RefuseAndRecord` path and
+   `ICardRefusalReason`, the same shape `AlreadyBlockedBy` already has beside it.
+4. **Order it after `AlreadyBlockedBy`** — a duplicate add is decidable from this card's own field and
+   should not pay a filesystem resolution first. State the ordering you chose in your post.
+5. **§9 ruling 3 — the remedy names a command that exists.** Check the verb spelling against the parser
+   before you write the string.
+6. **§10 ruling — the coverage gate is the standard, not the brief.** A new outcome case means new
+   `Match` arms everywhere and a `RefusalCoverageGateTests` entry. Run it.
+7. **`FindBlockingOpenProductOwnerQuestion` is out of scope** — do not touch it or its doc comment. The
+   read path's skip is the ruling, not an oversight.
+8. Do not touch `Makefile`, `tasks.md`, `CLAUDE.md`, or `.claude/`. Do not commit. Do not tick.
+
+**Done-gates.** `make gates` → quote **all four** exit lines plus `GATES_EXIT:0`, and the suite total
+before and after. Then post your report here and hand off `→ @reviewer`.
+
+**[worker]** §11 block A done. `CardStore.AddBlockedBy` now refuses a blocking card id that does not
+resolve to exactly one card; `RemoveBlockedBy` unchanged and still accepts any id.
+
+**What landed.**
+- `CardBlockedByOutcome.BlockerUnresolvable(BlockerId, Reason)` — new case, `ICardRefusalReason`,
+  `RefusingRule` = `"work-lifecycle: blocked-by names a card that resolves"`.
+- `CardStore.AddBlockedByUnderExistingLock` passes a `validateBeforeWrite` hook (new optional
+  parameter on `UpdateBlockedByUnderExistingLock`, `null` for `RemoveBlockedByUnderExistingLock` —
+  the shared method's own doc comment now states why) that resolves the blocker via
+  `CardIdentityResolver.Resolve` and folds `onNotFound`/`onDuplicate`/`onUnreadable` into one
+  `BlockerUnresolvable` refusal.
+- `CommandDispatcher.MapBlockedByOutcome` maps it to a CLI refusal, code `blocker-unresolvable`.
+- Four new tests in `CardBlockedByTests.cs`: not-found refuses, duplicate refuses, the ordering
+  case (an unresolvable id already on the card still answers `AlreadyBlockedBy`, not
+  `BlockerUnresolvable`), and the pinned counter-case — `RemoveBlockedBy` on an unresolvable id
+  still succeeds. Registered `BlockerUnresolvable` in `RefusalCoverageGateTests.Registry`.
+
+**Constraint 2 — `onUnreadable`.** Refuses, folded into the same `BlockerUnresolvable` case as
+`onNotFound`/`onDuplicate`, rather than `CardCorrupt` (the file that failed to parse is the
+*blocker's*, not the block card this write is touching — `CardCorrupt` would misname it) and rather
+than a fourth CLI-style code kept apart (`ResolveCardReference`'s three-way split exists because that
+caller reports before anything is read or written; here the block card is already read and this is
+one `RefuseAndRecord` against it, so one case covering "the blocker cannot be confirmed to resolve,
+for any of three reasons" is the shape that fits, not the CLI's shape). This is deliberately *not*
+`FindBlockingOpenProductOwnerQuestion`'s own read-path answer to the same three cases (silent skip) —
+that predicate is untouched, per the ruling.
+
+**Constraint 4 — ordering.** `AlreadyBlockedBy` first (decided from `apply`/`onNoChange` against the
+card's own `blocked_by` field, no filesystem access). I also put the pre-existing `LayoutMismatch`
+check (anchoring this write's own target path) ahead of the new resolver check, not stated in the
+brief: it's a second cheap, purely structural fact about *this* write, and running it before the one
+check that walks the whole record (`CardIdentityResolver.Resolve` scans every record directory) keeps
+the "cheapest/most local decides first" ordering consistent rather than adding a second, differently-
+reasoned exception. Verified with a dedicated build (`b-0005`/`b-0004`'s existing layout-mismatch
+tests still pass unchanged with a blocker id that also doesn't resolve).
+
+**Constraint 5 — remedy names a real command.** The brief's own draft text said `--blocker`; there is
+no such flag. `CommandParser.ParseBlockedByMutation`/`ParseBlock` show the blocking card id is
+**positional**, and the verb is `block add-blocker`/`block remove-blocker` — not `blocked-by add`.
+`BlockerUnresolvable.Remedy` names `'block add-blocker'` with no flag.
+
+**Constraint 6 — coverage gate.** New `Match` arm added everywhere: `CardBlockedByOutcome.cs` (11
+existing override sites plus the new case's own), `CommandDispatcher.MapBlockedByOutcome`, and the
+two test-side `AssertUpdated` helpers (`CardBlockedByTests.cs`, `BlockLifecycleIntegrationTests.cs`).
+`RefusalCoverageGateTests` run and green — its three checks (bijection, method exists, `.Refusals`
+polarity) all passed for the new registry entry.
+
+**Fallout fixed, in scope of keeping gates green.** Several pre-existing tests used a fabricated
+`"Q-0001"` blocker id that had never actually resolved to a card — legitimate under the old fail-open,
+now refused under the new check. Gave each a real `Q-0001` question card:
+`CardBlockedByTests.BlockingThenUnblocking_PreservesFlowState_Throughout`,
+`.AddBlockedBy_AlreadyPresent_Refuses_AndRecordsTheRefusal`, three `CommandDispatcherBlockedByTests`
+cases (`AddBlocker_Succeeds_...`, `RemoveBlocker_Succeeds_...`, `AddBlocker_AlreadyBlockedBy_...`),
+and `BlockLifecycleIntegrationTests`'s whole-lifecycle fixture (its `Q-0001` question card left with
+an empty `Section` so it is not "raised in" the section the same test later closes — that close step
+is not this block's concern and was untouched otherwise).
+
+**Gates.** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite **984 → 988**
+(4 new). Working tree has uncommitted changes only in `src/Callboard/Cards/CardBlockedByOutcome.cs`,
+`src/Callboard/Cards/CardStore.cs`, `src/Callboard/Cli/CommandDispatcher.cs`,
+`tests/Callboard.Tests/CardBlockedByTests.cs`, `tests/Callboard.Tests/CommandDispatcherBlockedByTests.cs`,
+`tests/Callboard.Tests/BlockLifecycleIntegrationTests.cs`,
+`tests/Callboard.Tests/RefusalCoverageGateTests.cs`, and this DEVLOG. No `N.M` boxes touched;
+`tasks.md` untouched.
+
+→ @reviewer
+
+**[reviewer]** §11 block A audit — **Approve**.
+
+**Scope check.** Diff touches exactly `src/Callboard/Cards/CardBlockedByOutcome.cs`,
+`src/Callboard/Cards/CardStore.cs`, `src/Callboard/Cli/CommandDispatcher.cs`, and the four listed test
+files, plus this DEVLOG. No `Makefile`, `tasks.md`, `CLAUDE.md`, or `.claude/` edit. No `N.M` box
+ticked. `Cli/CliJsonContext.cs` untouched — correct, since `MapBlockedByOutcome` reuses the existing
+`CommandOutcome.Refusal` shape rather than introducing a new one. No new dependency.
+
+**Guard order traced — cannot fail open.** Read `UpdateBlockedByUnderExistingLock` end to end
+(`CardStore.cs:1558–1617`): reserved-field → block-card → round-history → `apply`/`onNoChange`
+(`AlreadyBlockedBy`/`NotBlockedBy`) → `LayoutMismatch` → `validateBeforeWrite` → write. The new
+resolver check sits last, immediately before the only write in the method, and every earlier branch
+returns before reaching it. `CardIdentityResolver.Resolve` (`CardIdentityResolver.cs:45–89`) has
+exactly three non-success outcomes — `NotFound`, `Duplicate`, `Unreadable` — and
+`AddBlockedByUnderExistingLock`'s `validateBeforeWrite` (`CardStore.cs:1489–1503`) handles all three
+plus `onFound`, each of the three refusing via `RefuseAndRecord` into `BlockerUnresolvable`, `onFound`
+alone returning `null` to let the write proceed. No arm falls through, no default branch, no path
+reaches `AtomicWrite` with an id that didn't resolve. Confirmed constraint 4's ordering claim directly:
+`AlreadyBlockedBy`/`NotBlockedBy` are decided by `apply`/`onNoChange` before `validateBeforeWrite` is
+even invoked, and `LayoutMismatch` is checked before it too, exactly as the worker's post states and
+justifies (the resolver is the one check that walks the whole record, so every cheaper structural
+check decides first).
+
+**`validateBeforeWrite` stays a one-use seam, not a general one.** It's `private`, defaulted to `null`,
+and `RemoveBlockedByUnderExistingLock` passes no argument — confirmed at `CardStore.cs:1526–1532`. A
+dedicated test (`RemoveBlockedBy_UnresolvableId_StillSucceeds`,
+`CardBlockedByTests.cs`) pins that removal of an unresolvable id still succeeds, which is the new
+refusal's own remedy path per the ruling.
+
+**Refuse-and-record confirmed.** `BlockerUnresolvable` implements `ICardRefusalReason`
+(`RefusingRule`/`Remedy`), and all three resolver-failure branches route through `RefuseAndRecord`
+before returning it, matching `AlreadyBlockedBy` beside it — not a bare report.
+
+**Remedy string verified character-for-character.** `CommandParser.ParseBlock`
+(`CommandParser.cs:113–119`) routes `add-blocker`/`remove-blocker` into `ParseBlockedByMutation`, which
+takes the blocking card id as its second positional argument (`CommandParser.cs:325–333`) — there is
+no `--blocker` flag anywhere in the parser. `BlockerUnresolvable.Remedy`
+(`CardBlockedByOutcome.cs:213–214`) names `'block add-blocker'` with the id positional, matching
+exactly.
+
+**Coverage gate.** New `Match` arm threaded through every existing override site in
+`CardBlockedByOutcome.cs` (11 sites) plus `CommandDispatcher.MapBlockedByOutcome`
+(`CommandDispatcher.cs:1382–1385`) and both test-side `AssertUpdated` helpers. No arm stubbed with a
+throw standing in for real handling — the two test helpers' new arm is a diagnostic
+`XunitException` on the "expected Updated" negative path, the same shape every other case there
+already uses, not a swallow. `RefusalCoverageGateTests.Registry` gained the `BlockerUnresolvable` →
+`AddBlockedBy_BlockerIdDoesNotResolve_Refuses_AndRecordsTheRefusal` entry
+(`RefusalCoverageGateTests.cs:157`) and the gate passed.
+
+**Fixture changes — the highest-risk part of this diff — verified individually.** Walked every altered
+fixture in `CardBlockedByTests.cs`, `CommandDispatcherBlockedByTests.cs`, and
+`BlockLifecycleIntegrationTests.cs` against `git diff`:
+- Each now writes a real `Question` card carrying `Q-0001` (`WriteQuestionCard` in the two unit-test
+  files, a `q-0001.md` fixture added to `BlockLifecycleIntegrationTests`'s constructor) before any
+  `add-blocker` call that needs it to resolve. No pre-existing assertion body was touched in any of
+  these tests — only setup gained a line.
+- Confirmed the inverse too: fixtures that do **not** get a `WriteQuestionCard` call
+  (`CommandDispatcherBlockedByTests`: repo-root-not-found ×2, not-a-block-card, card-not-found,
+  layout-mismatch, not-blocked-by, corrupt-card, lock-timeout, unrecognised-role) all refuse at a
+  pipeline stage strictly before the resolver check runs, so a fabricated `Q-0001` never reaches
+  `validateBeforeWrite` in those paths — correctly left alone.
+- `BlockLifecycleIntegrationTests`: the new question card's `Section` is deliberately left blank so it
+  is not "raised in" the section the same fixture's run later closes — the worker's stated reason
+  holds; the close-section assertion later in that test is unaffected by this card's existence.
+- The new duplicate-id test (`AddBlockedBy_BlockerIdIsClaimedByMoreThanOneCard_Refuses_...`) writes two
+  files under different stems both carrying id `Q-0002`, exactly matching how
+  `CardIdentityResolver.Resolve` reaches `Duplicate`.
+- No assertion anywhere was weakened, loosened, or deleted to make a test pass under the new check —
+  every diff to a pre-existing test is additive setup only.
+
+**Gates — reran independently, not taken on the worker's report.**
+```
+BUILD_EXIT:0
+TEST_EXIT:0   (988 total, 0 failed, 0 skipped — 984 → 988, +4 new)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+
+**Out of scope, correctly left alone.** `CardStore.FindBlockingOpenProductOwnerQuestion`
+(`CardStore.cs:1823–1830` doc comment, logic unchanged) — not touched by this diff, matching the
+ruling's explicit instruction. Not raised as a finding.
+
+No blockers. No nits.
+
 ## NEXT
 
 **§10 is closed — supervisor `Approve` on the second pass (`3e85b98..d5af2a5`).** Ten of ten boxes

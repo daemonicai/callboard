@@ -42,6 +42,7 @@ public sealed class CardBlockedByTests : IDisposable
     public void BlockingThenUnblocking_PreservesFlowState_Throughout()
     {
         var path = WriteInitialBlockCard("b-0001", "B-0001", BlockFlowState.Building);
+        WriteQuestionCard("q-0001", "Q-0001");
 
         var beforeBlocking = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal("building", beforeBlocking.Frontmatter.Status);
@@ -72,6 +73,7 @@ public sealed class CardBlockedByTests : IDisposable
     public void AddBlockedBy_AlreadyPresent_Refuses_AndRecordsTheRefusal()
     {
         var path = WriteInitialBlockCard("b-0002", "B-0002", BlockFlowState.Building);
+        WriteQuestionCard("q-0001", "Q-0001");
         AssertUpdated(CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName));
 
         var outcome = CardStore.AddBlockedBy(_root, path, "Q-0001", CardOwner.Architect, Created.AddHours(1), TimeSpan.FromSeconds(5), ChangeName);
@@ -85,6 +87,80 @@ public sealed class CardBlockedByTests : IDisposable
         Assert.Equal(already.RefusingRule, recorded.Rule);
         Assert.Equal(already.Remedy, recorded.Remedy);
         Assert.Equal(["Q-0001"], read.BlockFields.BlockedBy);
+    }
+
+    // §11 block A — Product Owner ruling closing the fail-open carried from §10's `## NEXT`:
+    // AddBlockedBy refuses a blocker id that does not resolve to exactly one card.
+    [Fact]
+    public void AddBlockedBy_BlockerIdDoesNotResolve_Refuses_AndRecordsTheRefusal()
+    {
+        var path = WriteInitialBlockCard("b-0007", "B-0007", BlockFlowState.Building);
+
+        var outcome = CardStore.AddBlockedBy(_root, path, "Q-9999", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var unresolvable = Assert.IsType<CardBlockedByOutcome.BlockerUnresolvable>(outcome);
+        Assert.Equal("Q-9999", unresolvable.BlockerId);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(unresolvable.RefusingRule, recorded.Rule);
+        Assert.Equal(unresolvable.Remedy, recorded.Remedy);
+        Assert.Empty(read.BlockFields.BlockedBy);
+    }
+
+    [Fact]
+    public void AddBlockedBy_BlockerIdIsClaimedByMoreThanOneCard_Refuses_AndRecordsTheRefusal()
+    {
+        var path = WriteInitialBlockCard("b-0008", "B-0008", BlockFlowState.Building);
+        WriteQuestionCard("q-0002a", "Q-0002");
+        WriteQuestionCard("q-0002b", "Q-0002");
+
+        var outcome = CardStore.AddBlockedBy(_root, path, "Q-0002", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var unresolvable = Assert.IsType<CardBlockedByOutcome.BlockerUnresolvable>(outcome);
+        Assert.Equal("Q-0002", unresolvable.BlockerId);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(unresolvable.RefusingRule, recorded.Rule);
+        Assert.Equal(unresolvable.Remedy, recorded.Remedy);
+        Assert.Empty(read.BlockFields.BlockedBy);
+    }
+
+    // Ordering (§11 block A brief item 4): a duplicate add is decidable from this card's own
+    // blocked_by field and must not pay a filesystem resolution first — so an id already recorded
+    // as a blocker, however it got there, still answers AlreadyBlockedBy even when that id itself
+    // no longer (or never did) resolve to any card.
+    [Fact]
+    public void AddBlockedBy_AlreadyBlockedByIsCheckedBeforeBlockerResolution()
+    {
+        var path = WriteInitialBlockCard("b-0009", "B-0009", BlockFlowState.Building);
+        var current = AssertParseSuccess(CardStore.ReadCard(path));
+        var withUnresolvableBlocker = current with { BlockFields = current.BlockFields with { BlockedBy = ["Q-9999"] } };
+        File.WriteAllText(path, CardFileWriter.Serialize(withUnresolvableBlocker), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.AddBlockedBy(_root, path, "Q-9999", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var already = Assert.IsType<CardBlockedByOutcome.AlreadyBlockedBy>(outcome);
+        Assert.Equal("Q-9999", already.BlockingCardId);
+    }
+
+    // Pinned per §11 block A brief: RemoveBlockedBy gets no resolution check and must keep
+    // accepting any id — that is how a bad blocker already on a card gets cleared, and this
+    // refusal's own remedy depends on that route staying open.
+    [Fact]
+    public void RemoveBlockedBy_UnresolvableId_StillSucceeds()
+    {
+        var path = WriteInitialBlockCard("b-0010", "B-0010", BlockFlowState.Building);
+        var current = AssertParseSuccess(CardStore.ReadCard(path));
+        var withUnresolvableBlocker = current with { BlockFields = current.BlockFields with { BlockedBy = ["Q-9999"] } };
+        File.WriteAllText(path, CardFileWriter.Serialize(withUnresolvableBlocker), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.RemoveBlockedBy(_root, path, "Q-9999", CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var removed = AssertUpdated(outcome);
+        Assert.Empty(removed.Card.BlockFields.BlockedBy);
     }
 
     [Fact]
@@ -211,6 +287,18 @@ public sealed class CardBlockedByTests : IDisposable
         return path;
     }
 
+    // Two files sharing one id is exactly what CardIdentityResolver.Resolve reports Duplicate for
+    // (§11 block A) — file stems differ so both land on disk, frontmatter ids collide.
+    private string WriteQuestionCard(string fileStem, string id)
+    {
+        var path = Path.Combine(_directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "A question", "open", CardOwner.Architect, CardScope.Change, "5", Created, Created);
+        var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
     private static CardBlockedByOutcome.Updated AssertUpdated(CardBlockedByOutcome outcome) =>
         outcome.Match(
             onUpdated: static updated => updated,
@@ -222,7 +310,8 @@ public sealed class CardBlockedByTests : IDisposable
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Updated, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Updated, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Updated, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
-            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Updated, got HandEnteredDerivedState: '{handEntered.Key}'"));
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Updated, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onBlockerUnresolvable: static unresolvable => throw new Xunit.Sdk.XunitException($"expected Updated, got BlockerUnresolvable: '{unresolvable.BlockerId}' {unresolvable.Reason}"));
 
     private static CardLock AssertAcquired(CardLockResult result) =>
         result.Match(

@@ -47,6 +47,15 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             CardOwner.Architect, CardScope.Change, string.Empty, T0, T0);
         var sectionCard = new CardFile(sectionFrontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
         File.WriteAllText(_sectionPath = Path.Combine(_directory, "s-0900.md"), CardFileWriter.Serialize(sectionCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        // §11 block A: the run's own AddBlockedBy step below needs a real card behind "Q-0001" —
+        // a blocker id must now resolve. Section left blank, not "S-0900", so this question is not
+        // "raised in" the section under test and the run's own CloseSection step at the end is not
+        // testing a second thing this test does not otherwise exercise.
+        var questionFrontmatter = new CardFrontmatter(
+            "Q-0001", CardKind.Question, "A question", "open", CardOwner.Architect, CardScope.Change, string.Empty, T0, T0);
+        var questionCard = new CardFile(questionFrontmatter, "Body.", [], []);
+        File.WriteAllText(Path.Combine(_directory, "q-0001.md"), CardFileWriter.Serialize(questionCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     public void Dispose()
@@ -217,7 +226,8 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Updated, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Updated, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Updated, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
-            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Updated, got HandEnteredDerivedState: '{handEntered.Key}'"));
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Updated, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onBlockerUnresolvable: static unresolvable => throw new Xunit.Sdk.XunitException($"expected Updated, got BlockerUnresolvable: '{unresolvable.BlockerId}' {unresolvable.Reason}"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

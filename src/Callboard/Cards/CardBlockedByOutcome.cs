@@ -35,7 +35,9 @@ internal abstract record CardBlockedByOutcome
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
         Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable);
 
     /// <param name="Card">The card as written, carrying the updated <c>blocked_by</c> set.</param>
     /// <param name="ActingRole">The role that made this change (§5 remediation, DEVLOG §5 finding
@@ -46,7 +48,8 @@ internal abstract record CardBlockedByOutcome
     internal sealed record Updated(CardFile Card, CardOwner ActingRole) : CardBlockedByOutcome
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onUpdated(this);
     }
 
@@ -59,7 +62,8 @@ internal abstract record CardBlockedByOutcome
     internal sealed record AlreadyBlockedBy(string BlockingCardId) : CardBlockedByOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onAlreadyBlockedBy(this);
 
         public string RefusingRule => "work-lifecycle: blocked-by adds no duplicate entry";
@@ -74,7 +78,8 @@ internal abstract record CardBlockedByOutcome
     internal sealed record NotBlockedBy(string BlockingCardId) : CardBlockedByOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onNotBlockedBy(this);
 
         public string RefusingRule => "work-lifecycle: removing a blocker requires it to be present";
@@ -87,7 +92,8 @@ internal abstract record CardBlockedByOutcome
     internal sealed record NotABlockCard(CardKind Kind) : CardBlockedByOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onNotABlockCard(this);
 
         public string RefusingRule => "work-lifecycle: blocked-by only applies to a block card";
@@ -99,7 +105,8 @@ internal abstract record CardBlockedByOutcome
     internal sealed record CardNotFound(string FilePath) : CardBlockedByOutcome
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onCardNotFound(this);
     }
 
@@ -108,7 +115,8 @@ internal abstract record CardBlockedByOutcome
     internal sealed record LayoutMismatch(string Reason) : CardBlockedByOutcome
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onLayoutMismatch(this);
     }
 
@@ -116,7 +124,8 @@ internal abstract record CardBlockedByOutcome
     internal sealed record CardCorrupt(string FilePath, string Reason) : CardBlockedByOutcome
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onCardCorrupt(this);
     }
 
@@ -130,7 +139,8 @@ internal abstract record CardBlockedByOutcome
     /// above has already passed (§9 remediation S1).</summary>
     internal sealed record RoundDisagreesWithHistory(int StoredRound, int ExpectedRound) : CardBlockedByOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onRoundDisagreesWithHistory(this);
 
         public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
@@ -152,7 +162,8 @@ internal abstract record CardBlockedByOutcome
     internal sealed record HandEnteredDerivedState(string Key) : CardBlockedByOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onHandEnteredDerivedState(this);
 
         public string RefusingRule => "working-context: no figure shall be hand-entered";
@@ -162,12 +173,57 @@ internal abstract record CardBlockedByOutcome
             "this state is derived at request time, never stored, and is available from 'callboard state'.";
     }
 
+    /// <summary><see cref="CardStore.AddBlockedBy"/> only (§11 block A, the Product Owner ruling
+    /// closing the fail-open carried from §10's <c>## NEXT</c>): <paramref name="BlockerId"/> does
+    /// not resolve to exactly one card via <see cref="CardIdentityResolver.Resolve"/> — either no
+    /// card in the record carries it, more than one file claims it, or some other file elsewhere in
+    /// the record could not be read so its presence cannot be confirmed or ruled out. All three
+    /// resolver failures are folded into this one case rather than kept apart the way <see
+    /// cref="Cli.CommandDispatcher.ResolveCardReference"/> keeps its three CLI-layer codes apart: that
+    /// caller reports (nothing has been read or written yet to record against), while this one is
+    /// card-addressed and already past a successful <see cref="CardStore.ReadCard"/> on the block
+    /// card itself, so mapping the unreadable case to <see cref="CardCorrupt"/> would misname a file
+    /// that is not the one this write is even touching. Refusal-shaped and card-addressed:
+    /// deliberately checked <em>after</em> <see cref="AlreadyBlockedBy"/> — a duplicate add is
+    /// decidable from this card's own <see cref="BlockCardFields.BlockedBy"/> field and should not
+    /// pay a filesystem resolution first.
+    ///
+    /// <para>
+    /// <b>Deliberately not checked by <see cref="CardStore.RemoveBlockedBy"/> (Product Owner
+    /// ruling).</b> Removal must keep accepting any id, resolvable or not — that is the only way a
+    /// bad blocker already on a card (recorded before this refusal existed, or arriving from outside
+    /// the tool) can ever be cleared, and this refusal's own remedy depends on that route staying
+    /// open.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Out of scope of this case: <see cref="CardStore.FindBlockingOpenProductOwnerQuestion"/>'s
+    /// read path.</b> That predicate still silently skips an unresolvable <c>blocked_by</c> id — see
+    /// its own doc comment for why a resolution failure is not evidence of an open Product Owner
+    /// question. This case only closes the write door: once an id is verified here, it can only go
+    /// missing afterwards through corruption, a different failure with a different remedy.
+    /// </para>
+    /// </summary>
+    internal sealed record BlockerUnresolvable(string BlockerId, string Reason) : CardBlockedByOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
+            onBlockerUnresolvable(this);
+
+        public string RefusingRule => "work-lifecycle: blocked-by names a card that resolves";
+
+        public string Remedy =>
+            $"'{BlockerId}' {Reason}; correct the id and retry 'block add-blocker' with an id that resolves to exactly one card.";
+    }
+
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within
     /// its timeout, or an I/O error occurred while writing. Tool-failure-shaped.</summary>
     internal sealed record ToolFailure(string Reason) : CardBlockedByOutcome
     {
         internal override TResult Match<TResult>(Func<Updated, TResult> onUpdated, Func<AlreadyBlockedBy, TResult> onAlreadyBlockedBy, Func<NotBlockedBy, TResult> onNotBlockedBy, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockerUnresolvable, TResult> onBlockerUnresolvable) =>
             onToolFailure(this);
     }
 }

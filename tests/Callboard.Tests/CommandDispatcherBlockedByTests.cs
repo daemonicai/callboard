@@ -25,6 +25,7 @@ public sealed class CommandDispatcherBlockedByTests
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialBlockCard(repo.Path, "b-0001", "B-0001");
+        WriteQuestionCard(repo.Path, "q-0001", "Q-0001");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -46,6 +47,7 @@ public sealed class CommandDispatcherBlockedByTests
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialBlockCard(repo.Path, "b-0002", "B-0002");
+        WriteQuestionCard(repo.Path, "q-0001", "Q-0001");
         Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
             ["block", "add-blocker", path, "Q-0001", "--role", "worker", "--change", ChangeName], TextWriter.Null, repo.Path));
         var output = new StringWriter();
@@ -249,6 +251,7 @@ public sealed class CommandDispatcherBlockedByTests
     {
         using var repo = new TempGitRepo();
         var path = WriteInitialBlockCard(repo.Path, "b-0006", "B-0006");
+        WriteQuestionCard(repo.Path, "q-0001", "Q-0001");
         Assert.Equal(CommandDispatcher.SuccessExitCode, RunInRepo(
             ["block", "add-blocker", path, "Q-0001", "--role", "worker", "--change", ChangeName], TextWriter.Null, repo.Path));
         var output = new StringWriter();
@@ -342,6 +345,19 @@ public sealed class CommandDispatcherBlockedByTests
         var card = new CardFile(frontmatter, "Body.", [], [], [], BlockCardFields.Empty, []);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
+    }
+
+    // §11 block A: a blocker id must resolve, so a fixture that adds one has to have created a
+    // real card carrying it first.
+    private static void WriteQuestionCard(string repoRoot, string fileStem, string id)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "A question", "open", CardOwner.Architect, CardScope.Change, "5", FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory) =>

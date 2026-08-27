@@ -1470,7 +1470,15 @@ internal static class CardStore
             heldLock => AddBlockedByUnderExistingLock(heldLock, cardsRoot, blockingCardId, actingRole, timestamp, changeName),
             onTimedOut: timedOut => new CardBlockedByOutcome.ToolFailure(timedOut.Message));
 
-    /// <summary>The read-decide-write step of <see cref="AddBlockedBy"/>.</summary>
+    /// <summary>The read-decide-write step of <see cref="AddBlockedBy"/>. Resolves
+    /// <paramref name="blockingCardId"/> through <see cref="CardIdentityResolver.Resolve"/> — never
+    /// a hand-rolled directory walk (§7 carried item C) — and refuses via
+    /// <see cref="CardBlockedByOutcome.BlockerUnresolvable"/> when it does not resolve to exactly
+    /// one card (§11 block A, Product Owner ruling closing the fail-open carried from §10's
+    /// <c>## NEXT</c>). Checked only once <see cref="UpdateBlockedByUnderExistingLock"/> has already
+    /// decided this add is not a no-op — see that case's own doc comment for why the ordering runs
+    /// the argument's own-field check first. <see cref="RemoveBlockedByUnderExistingLock"/>
+    /// deliberately passes no such validator.</summary>
     internal static CardBlockedByOutcome AddBlockedByUnderExistingLock(
         CardLock heldLock, string cardsRoot, string blockingCardId, CardOwner actingRole, DateTimeOffset timestamp, string? changeName = null) =>
         UpdateBlockedByUnderExistingLock(
@@ -1481,7 +1489,22 @@ internal static class CardStore
             onNoChange: (card, filePath, id) =>
                 RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.AlreadyBlockedBy>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
                     new CardBlockedByOutcome.AlreadyBlockedBy(id),
-                    static reason => new CardBlockedByOutcome.ToolFailure(reason)));
+                    static reason => new CardBlockedByOutcome.ToolFailure(reason)),
+            validateBeforeWrite: (card, filePath, id) =>
+                CardIdentityResolver.Resolve(cardsRoot, id).Match<CardBlockedByOutcome?>(
+                    onFound: static (_, _) => null,
+                    onNotFound: notFoundId =>
+                        RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.BlockerUnresolvable>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                            new CardBlockedByOutcome.BlockerUnresolvable(notFoundId, "names no card in the record"),
+                            static reason => new CardBlockedByOutcome.ToolFailure(reason)),
+                    onDuplicate: (duplicateId, filePaths) =>
+                        RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.BlockerUnresolvable>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                            new CardBlockedByOutcome.BlockerUnresolvable(duplicateId, $"is claimed by {filePaths.Count} card files ({string.Join(", ", filePaths)}), so which one is meant cannot be decided"),
+                            static reason => new CardBlockedByOutcome.ToolFailure(reason)),
+                    onUnreadable: (unreadableId, filePaths) =>
+                        RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.BlockerUnresolvable>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                            new CardBlockedByOutcome.BlockerUnresolvable(unreadableId, $"cannot be confirmed or ruled out — {filePaths.Count} card file(s) elsewhere in the record could not be read ({string.Join(", ", filePaths)})"),
+                            static reason => new CardBlockedByOutcome.ToolFailure(reason))));
 
     /// <summary>
     /// Removes <paramref name="blockingCardId"/> from the block card at <paramref name="filePath"/>'s
@@ -1516,8 +1539,12 @@ internal static class CardStore
     /// The read-decide-write shape <see cref="AddBlockedByUnderExistingLock"/> and
     /// <see cref="RemoveBlockedByUnderExistingLock"/> share — same structural lock precondition as
     /// every other <c>*UnderExistingLock</c> method — differing only in how
-    /// <paramref name="apply"/> decides the new <c>blocked_by</c> set from the current one and what
-    /// <paramref name="onNoChange"/> refuses with when nothing needed to change.
+    /// <paramref name="apply"/> decides the new <c>blocked_by</c> set from the current one, what
+    /// <paramref name="onNoChange"/> refuses with when nothing needed to change, and (§11 block A)
+    /// an optional <paramref name="validateBeforeWrite"/> run only once <paramref name="apply"/> has
+    /// decided a write is actually happening — <see cref="AddBlockedByUnderExistingLock"/> supplies
+    /// one (the blocker-resolves check), <see cref="RemoveBlockedByUnderExistingLock"/> supplies
+    /// none, by design.
     /// </summary>
     private static CardBlockedByOutcome UpdateBlockedByUnderExistingLock(
         CardLock heldLock,
@@ -1527,7 +1554,8 @@ internal static class CardStore
         DateTimeOffset timestamp,
         string? changeName,
         Func<ImmutableArray<string>, string, (bool Updated, ImmutableArray<string> Result)> apply,
-        Func<CardFile, string, string, CardBlockedByOutcome> onNoChange)
+        Func<CardFile, string, string, CardBlockedByOutcome> onNoChange,
+        Func<CardFile, string, string, CardBlockedByOutcome?>? validateBeforeWrite = null)
     {
         ArgumentNullException.ThrowIfNull(heldLock);
         var filePath = heldLock.CardPath;
@@ -1573,6 +1601,15 @@ internal static class CardStore
                 if (anchored is null)
                 {
                     return new CardBlockedByOutcome.LayoutMismatch(layoutFailure!.Reason);
+                }
+
+                // §11 block A: checked last among the pre-write refusals — it is the only one that
+                // walks the whole record (CardIdentityResolver.Resolve), so every cheaper,
+                // structural check (reserved key, card kind, round history, this card's own
+                // blocked_by field, this write's own anchored path) decides first.
+                if (validateBeforeWrite?.Invoke(card, filePath, blockingCardId) is { } validationRefusal)
+                {
+                    return validationRefusal;
                 }
 
                 var updatedCard = card with

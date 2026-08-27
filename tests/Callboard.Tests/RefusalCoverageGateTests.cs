@@ -154,6 +154,7 @@ public sealed class RefusalCoverageGateTests
         { typeof(CardBlockedByOutcome.RoundDisagreesWithHistory), (typeof(CardBlockedByTests), "AddBlockedBy_RoundDisagreesWithHistory_Refuses_NamesBothFigures_AndRecordsTheRefusal") },
         { typeof(CardBlockedByOutcome.AlreadyBlockedBy), (typeof(CardBlockedByTests), "AddBlockedBy_AlreadyPresent_Refuses_AndRecordsTheRefusal") },
         { typeof(CardBlockedByOutcome.NotBlockedBy), (typeof(CardBlockedByTests), "RemoveBlockedBy_NotPresent_Refuses_AndRecordsTheRefusal") },
+        { typeof(CardBlockedByOutcome.BlockerUnresolvable), (typeof(CardBlockedByTests), "AddBlockedBy_BlockerIdDoesNotResolve_Refuses_AndRecordsTheRefusal") },
         { typeof(CardSectionVerdictOutcome.FindingAlreadyOwned), (typeof(CommandDispatcherSectionVerdictRemediationTests), "FindingNew_KeyAlreadyOwnedOnDisk_Refuses_CreatesNoSecondCard") },
         { typeof(CardSectionVerdictOutcome.NewFindingCardAlreadyExists), (typeof(CommandDispatcherSectionVerdictRemediationTests), "FindingNew_TargetFileAlreadyExistsOnDisk_Refuses_AndRecordsAgainstTheSection") },
         { typeof(CardSectionVerdictOutcome.NotASectionCard), (typeof(CardSectionVerdictTests), "RecordSectionVerdict_TargetIsNotASectionCard_Refuses_AndRecordsTheRefusal") },

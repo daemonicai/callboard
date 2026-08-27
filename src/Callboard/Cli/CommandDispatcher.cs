@@ -1346,7 +1346,9 @@ internal static class CommandDispatcher
     /// verbs return <see cref="CardBlockedByOutcome"/> and map every case the same way, including
     /// the op-specific ones each can never itself produce (<see cref="RunBlockAddBlocker"/> never
     /// sees <see cref="CardBlockedByOutcome.NotBlockedBy"/>; <see cref="RunBlockRemoveBlocker"/>
-    /// never sees <see cref="CardBlockedByOutcome.AlreadyBlockedBy"/>) — the exhaustive
+    /// never sees <see cref="CardBlockedByOutcome.AlreadyBlockedBy"/> or
+    /// <see cref="CardBlockedByOutcome.BlockerUnresolvable"/>, deliberately — §11 block A keeps
+    /// removal accepting any id, resolvable or not) — the exhaustive
     /// <see cref="CardBlockedByOutcome.Match{TResult}"/> still forces both handled here regardless
     /// of which verb is actually calling.
     /// </summary>
@@ -1377,7 +1379,10 @@ internal static class CommandDispatcher
                 "card-layout-mismatch", layoutMismatch.Reason),
             onCardCorrupt: corrupt => throw new InvalidOperationException(
                 $"card '{corrupt.FilePath}' could not be read as a block card: {corrupt.Reason}"),
-            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
+            onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason),
+            onBlockerUnresolvable: unresolvable => new CommandOutcome.Refusal(
+                "blocker-unresolvable",
+                $"'{filePath}' names '{unresolvable.BlockerId}' as a blocker, but {unresolvable.Reason}."));
 
     /// <summary>
     /// <c>block approve</c> (§8 block A, review-certification: "Approve is binary and certifies one
