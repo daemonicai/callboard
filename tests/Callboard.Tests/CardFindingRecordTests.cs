@@ -164,12 +164,21 @@ public sealed class CardFindingRecordTests : IDisposable
         var findingPath = Path.Combine(_directory, "f-0003.md");
         var raisedPath = RaisedCardPath(CardKind.Hazard, "h-0002");
 
-        // Pre-occupy the finding's path with unrelated content — forces the finding's own
-        // create-only write to report AlreadyExists once RecordFindingUnderLocks reaches it. The
+        // Pre-occupy the finding's path with an unrelated, readable card — not garbage text (§13:
+        // the identity allocator now confirms, against the whole record, that the id it is about
+        // to issue is not already borne; an unparseable file anywhere in the record reports
+        // Unreadable rather than "confirmed unclaimed", failing the allocation outright and masking
+        // the AlreadyExists case this test targets under a ToolFailure instead). Its own id
+        // ("F-9999") deliberately does not collide with the "F-0001" the fresh counter is about to
+        // issue — this fixture is about the finding's own *path* colliding, not its id. The
         // directory has to exist for this stray write itself (unrelated to what RecordFinding does
         // for its own writes), so it is created here, locally, not in shared setup.
         Directory.CreateDirectory(_directory);
-        File.WriteAllText(findingPath, "not a card", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var unrelatedFrontmatter = new CardFrontmatter(
+            "F-9999", CardKind.Finding, "Unrelated", "open", CardOwner.Architect, CardScope.Change, Section, Recorded, Recorded);
+        File.WriteAllText(
+            findingPath, CardFileWriter.Serialize(new CardFile(unrelatedFrontmatter, "Unrelated.", [], [])),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, raisedPath, "Blind spot title", "Blind spot content.");
 
@@ -186,7 +195,7 @@ public sealed class CardFindingRecordTests : IDisposable
 
         // The pre-existing content at the finding's path is untouched — the finding write really
         // did refuse rather than silently succeeding over it.
-        Assert.Equal("not a card", File.ReadAllText(findingPath));
+        Assert.Equal("F-9999", AssertParseSuccess(CardStore.ReadCard(findingPath)).Frontmatter.Id);
 
         // Nothing else in the directory either — the only two candidate paths are accounted for.
         var filesInDirectory = Directory.GetFiles(_directory, "*.md");
@@ -199,7 +208,15 @@ public sealed class CardFindingRecordTests : IDisposable
         var findingPath = Path.Combine(_directory, "f-0004.md");
         var raisedPath = RaisedCardPath(CardKind.Hazard, "h-0003");
         Directory.CreateDirectory(_registerDirectory);
-        File.WriteAllText(raisedPath, "not a card", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        // A readable, unrelated card — not garbage text; see the sibling fixture above for why
+        // (§13). Its own id ("H-9999") deliberately does not collide with the "H-0001" the fresh
+        // counter is about to issue.
+        var unrelatedFrontmatter = new CardFrontmatter(
+            "H-9999", CardKind.Hazard, "Unrelated", "open", CardOwner.Architect, CardScope.Repository, string.Empty, Recorded, Recorded);
+        File.WriteAllText(
+            raisedPath, CardFileWriter.Serialize(new CardFile(unrelatedFrontmatter, "Unrelated.", [], [])),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, raisedPath, "Blind spot title", "Blind spot content.");
 

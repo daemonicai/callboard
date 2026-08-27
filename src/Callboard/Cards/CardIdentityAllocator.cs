@@ -25,6 +25,24 @@ namespace Callboard.Cards;
 /// counter's on-disk content immediately after writing it, before ever handing the identity back
 /// to a caller, rather than trusting the write call's own success return.
 /// </para>
+///
+/// <para>
+/// <b>The counter's own confirmation, not a second source of truth (work-lifecycle: "Every block
+/// card is minted by the tool"; card-model: "the system SHALL refuse to issue an identity that a
+/// card in the record already bears").</b> Once the counter's new value is confirmed, <see
+/// cref="Allocate"/> calls <see cref="ConfirmUnclaimed"/>, which asks whether the record already
+/// carries a card bearing the number just issued — still under the counter's own lock, so no
+/// second allocation for the same kind can run between the confirmation and this check.
+/// <see cref="ConfirmUnclaimed"/> is deliberately not <see cref="CardIdentityResolver.Resolve"/>:
+/// that type assumes the record sits still while it is read, and this scan cannot — see its own
+/// doc comment for why a file that vanishes mid-scan must not fail an unrelated allocation. This is
+/// deliberately not how "the next number" is derived (see this type's own header paragraph); it is
+/// a check on the number the counter already produced, reported as <see
+/// cref="CardIdentityAllocationResult.Borne"/> rather than handed out silently. The reconciliation
+/// <see cref="VerifyCounters"/> performs — comparing the counter against every id an <c>index
+/// rebuild</c> observes on disk — stays the only way a counter that has fallen behind is repaired;
+/// this confirmation only ever refuses, it never advances or resets the counter itself.
+/// </para>
 /// </summary>
 internal static class CardIdentityAllocator
 {
@@ -51,7 +69,7 @@ internal static class CardIdentityAllocator
             {
                 using (acquired.Lock)
                 {
-                    return AllocateUnderLock(counterPath, kind);
+                    return AllocateUnderLock(cardsRoot, counterPath, kind);
                 }
             },
             onTimedOut: timedOut => new CardIdentityAllocationResult.Failed(timedOut.Message));
@@ -123,7 +141,7 @@ internal static class CardIdentityAllocator
             out number);
     }
 
-    private static CardIdentityAllocationResult AllocateUnderLock(string counterPath, CardKind kind)
+    private static CardIdentityAllocationResult AllocateUnderLock(string cardsRoot, string counterPath, CardKind kind)
     {
         if (!TryReadCounter(counterPath, out var current, out var readFailure))
         {
@@ -157,7 +175,103 @@ internal static class CardIdentityAllocator
                 $"at '{counterPath}'.");
         }
 
-        return new CardIdentityAllocationResult.Allocated(FormatIdentity(kind, next));
+        var issued = FormatIdentity(kind, next);
+
+        // The confirmation (see this type's own header paragraph): still under this call's lock on
+        // the counter, so no concurrent allocation for the same kind can slip between this read and
+        // the caller acting on its result.
+        return ConfirmUnclaimed(cardsRoot, issued);
+    }
+
+    /// <summary>
+    /// The confirmation half of the header paragraph's guarantee, deliberately not
+    /// <see cref="CardIdentityResolver.Resolve"/>: that type answers "which card carries this id"
+    /// against a record assumed to sit still while it is read, and this scan cannot assume that —
+    /// the record is a directory other processes are concurrently writing to (a raise-then-rollback
+    /// elsewhere, most concretely). A file this scan enumerates and then finds gone by the time it
+    /// opens it is not part of the record any more; treating that disappearance as "unreadable"
+    /// would fail an unrelated, legitimate allocation on nothing but bad timing — the false refusal
+    /// the remediation ruling this method exists to satisfy names explicitly.
+    ///
+    /// <para>
+    /// <b>What does not move: a file that exists and will not parse still fails the allocation
+    /// shut.</b> The two are distinguished at the open — <see cref="FileNotFoundException"/>/
+    /// <see cref="DirectoryNotFoundException"/> (gone; skipped, not counted as unreadable) versus
+    /// any other <see cref="IOException"/>/<see cref="UnauthorizedAccessException"/> or a parse
+    /// failure (still <see cref="CardIdentityAllocationResult.Failed"/> — the tool cannot confirm
+    /// the identity is unclaimed, so it declines to issue it). D7's atomic rename is what makes
+    /// leaning on that distinction sound: a reader only ever sees a file's old bytes, its new bytes,
+    /// or nothing at all — never half a file — so existence is the only thing actually racing here.
+    /// </para>
+    /// </summary>
+    private static CardIdentityAllocationResult ConfirmUnclaimed(string cardsRoot, string issued)
+    {
+        var matches = new List<string>();
+        var unreadable = new List<string>();
+
+        foreach (var directory in CardLayout.ResolveRecordDirectories(cardsRoot))
+        {
+            if (!Directory.Exists(directory))
+            {
+                continue;
+            }
+
+            var paths = Directory.EnumerateFiles(directory, "*.md", SearchOption.TopDirectoryOnly)
+                .OrderBy(static path => path, StringComparer.Ordinal)
+                .ToList();
+
+            foreach (var path in paths)
+            {
+                string text;
+                try
+                {
+                    text = File.ReadAllText(path, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                }
+                catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    // Gone between enumeration and open — an artefact of when this scan looked, not
+                    // a fact about the record (the ruling's own wording). Skipped outright: not a
+                    // match, not unreadable, simply absent from the question this scan is asking.
+                    continue;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    unreadable.Add(path);
+                    continue;
+                }
+
+                var card = CardFileParser.Parse(text).Match<CardFile?>(
+                    onSuccess: static success => success.Card,
+                    onFailure: static _ => null);
+                if (card is null)
+                {
+                    unreadable.Add(path);
+                    continue;
+                }
+
+                if (string.Equals(card.Frontmatter.Id, issued, StringComparison.Ordinal))
+                {
+                    matches.Add(path);
+                }
+            }
+        }
+
+        if (matches.Count > 0)
+        {
+            matches.Sort(StringComparer.Ordinal);
+            return new CardIdentityAllocationResult.Borne(issued, matches);
+        }
+
+        if (unreadable.Count > 0)
+        {
+            unreadable.Sort(StringComparer.Ordinal);
+            return new CardIdentityAllocationResult.Failed(
+                $"could not confirm that the newly issued identity '{issued}' is unclaimed: " +
+                $"{unreadable.Count.ToString(CultureInfo.InvariantCulture)} file(s) in the record could not be " +
+                $"read: {string.Join(", ", unreadable)}.");
+        }
+
+        return new CardIdentityAllocationResult.Allocated(issued);
     }
 
     /// <summary>

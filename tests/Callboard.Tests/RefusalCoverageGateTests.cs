@@ -185,6 +185,7 @@ public sealed class RefusalCoverageGateTests
         { typeof(CardCommentPromoteOutcome.CommentNotFound), (typeof(CardCommentPromoteTests), "PromoteComment_CommentDoesNotExist_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
         { typeof(CardCommentPromoteOutcome.RoleNotPermitted), (typeof(CardCommentPromoteTests), "PromoteComment_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
         { typeof(CardCommentPromoteOutcome.AlreadyResolved), (typeof(CardCommentPromoteTests), "PromoteComment_AlreadyResolved_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard") },
+        { typeof(CardCreateOutcome.IdentityAlreadyBorne), (typeof(CommandDispatcherBlockCreateTests), "BlockCreate_ARecordedIdentityIsRefused_AndRecordsAgainstTheCardAlreadyBearingIt") },
     };
 
     /// <summary>

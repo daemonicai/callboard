@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using Callboard.Cards;
 
 namespace Callboard.Tests;
@@ -193,13 +194,97 @@ public sealed class CardIdentityAllocatorTests : IDisposable
         Assert.Equal(1, violation.ObservedMaxId);
     }
 
+    /// <summary>
+    /// The remediation for the reviewer's blocker on §13's 13.1: a file the confirmation scan
+    /// enumerates and then finds gone by the time it opens it — an unrelated card elsewhere being
+    /// created and rolled back concurrently, the exact shape <c>CardFindingRecordConcurrencyTests</c>
+    /// caught this failing under — must never fail an unrelated, legitimate allocation. This test
+    /// races directly at this type's own boundary rather than only transitively through that
+    /// finding-record test: a background racer hammers create-then-delete on a valid, readable,
+    /// non-colliding card at a fixed path inside the register directory the scan walks, while the
+    /// foreground repeatedly allocates <c>Block</c> identities (a kind the racer never touches) for
+    /// several seconds. Before the remediation, <c>CardStore.ReadCard</c>'s own catch clause folds
+    /// <see cref="FileNotFoundException"/>/<see cref="DirectoryNotFoundException"/> into the same
+    /// bucket as genuine corruption — this reliably reproduces an allocation reporting
+    /// <see cref="CardIdentityAllocationResult.Failed"/> over nothing but bad timing, on the
+    /// unfixed code, well within the run's time budget; after it, disappearance is not "unreadable".
+    /// </summary>
+    [Fact]
+    public async Task Allocate_ARecordFileVanishingMidScan_NeverFalselyRefusesAnUnrelatedAllocation()
+    {
+        var registerDirectory = Path.Combine(_root, "callboard", "register");
+        Directory.CreateDirectory(registerDirectory);
+        var racedPath = Path.Combine(registerDirectory, "h-raced.md");
+
+        var racedFrontmatter = new CardFrontmatter(
+            "H-9999", CardKind.Hazard, "Raced", "open", CardOwner.Architect, CardScope.Repository, string.Empty,
+            DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
+        var racedBytes = CardFileWriter.Serialize(new CardFile(racedFrontmatter, "Body.", [], []));
+        var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+
+        var racer = Task.Run(
+            () =>
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    // Atomic create, not File.WriteAllText directly onto racedPath (D7): a plain
+                    // in-place write lets a concurrent reader observe a torn, partially-written file
+                    // — a real parse failure this test is not about, and a race the product itself
+                    // never permits (AtomicWrite always writes beside the target and renames). The
+                    // scan under test must only ever see racedPath fully present or fully absent.
+                    var tempPath = racedPath + ".tmp-" + Guid.NewGuid().ToString("N");
+                    try
+                    {
+                        File.WriteAllText(tempPath, racedBytes, encoding);
+                        File.Move(tempPath, racedPath, overwrite: true);
+                        File.Delete(racedPath);
+                    }
+                    catch (IOException)
+                    {
+                        // Another concurrent create/delete on the same path racing this loop's own
+                        // steps is expected and irrelevant — only the allocator's own reaction to
+                        // the resulting disappearance is what this test is proving.
+                    }
+                    finally
+                    {
+                        if (File.Exists(tempPath))
+                        {
+                            File.Delete(tempPath);
+                        }
+                    }
+                }
+            },
+            TestContext.Current.CancellationToken);
+
+        var results = new List<CardIdentityAllocationResult>();
+        while (!cts.IsCancellationRequested)
+        {
+            results.Add(CardIdentityAllocator.Allocate(_root, CardKind.Block, TimeSpan.FromSeconds(5)));
+        }
+
+        await racer;
+
+        Assert.NotEmpty(results);
+        var falseRefusals = results.OfType<CardIdentityAllocationResult.Failed>().ToList();
+        Assert.True(
+            falseRefusals.Count == 0,
+            "at least one allocation falsely reported it could not confirm the identity was unclaimed, " +
+            "racing an unrelated file's own create/delete cycle: " +
+            string.Join("; ", falseRefusals.Select(static failure => failure.Reason)));
+        Assert.All(results, static result => Assert.IsType<CardIdentityAllocationResult.Allocated>(result));
+    }
+
     private static string AssertAllocated(CardIdentityAllocationResult result) =>
         result.Match(
             onAllocated: success => success.Id,
-            onFailed: failure => throw new Xunit.Sdk.XunitException($"expected allocation to succeed, got failure: {failure.Reason}"));
+            onFailed: failure => throw new Xunit.Sdk.XunitException($"expected allocation to succeed, got failure: {failure.Reason}"),
+            onBorne: borne => throw new Xunit.Sdk.XunitException($"expected allocation to succeed, got Borne: '{borne.Id}'."));
 
     private static string AssertFailed(CardIdentityAllocationResult result) =>
         result.Match(
             onAllocated: success => throw new Xunit.Sdk.XunitException($"expected allocation to fail, got '{success.Id}'."),
-            onFailed: failure => failure.Reason);
+            onFailed: failure => failure.Reason,
+            onBorne: borne => throw new Xunit.Sdk.XunitException($"expected allocation to fail, got Borne: '{borne.Id}'."));
 }

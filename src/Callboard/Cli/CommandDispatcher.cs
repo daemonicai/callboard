@@ -178,6 +178,24 @@ internal static class CommandDispatcher
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
 
+        /// <summary>
+        /// <c>block create</c> (§13, work-lifecycle: "Every block card is minted by the tool") —
+        /// the creation door for a task-implementing <c>block</c> card, placed at <see
+        /// cref="Cards.BlockFlowState.Drafting"/>. The other door (a section verdict's
+        /// <c>--finding-new</c>, creating a remediation card at <c>briefed</c>) is <see
+        /// cref="SectionVerdict"/>'s own <c>NewFindingManifestPaths</c> — this record is only the
+        /// second, named door, never a general block-creation surface (Product Owner ruling: three
+        /// named verbs, not a general creation surface).
+        /// </summary>
+        /// <param name="Tasks">The task references this block implements (e.g. <c>13.1</c>), in
+        /// argv order — checked non-empty per item and non-empty overall during parse, the same
+        /// repeatable-flag shape <c>--claims</c>/<c>--finding-recurred</c> already established.</param>
+        internal sealed record BlockCreate(
+            string FilePath, string Title, CardOwner ActingRole, string Body, IReadOnlyList<string> Tasks, string ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
+
         /// <param name="FilePath">The card file to transition — a path, not a symbolic id: no
         /// section before §5 built an id-to-path lookup that does not depend on the (non-
         /// authoritative, possibly-absent) derived index, and inventing one is out of this
@@ -864,6 +882,8 @@ internal static class CommandDispatcher
 
         TResult Visit(ParsedCommand.IndexRebuild command);
 
+        TResult Visit(ParsedCommand.BlockCreate command);
+
         TResult Visit(ParsedCommand.BlockTransition command);
 
         TResult Visit(ParsedCommand.BlockGate command);
@@ -1008,6 +1028,8 @@ internal static class CommandDispatcher
         public CommandOutcome Visit(ParsedCommand.ObligationCreate command) => RunObligationCreate(command, LockTimeout);
 
         public CommandOutcome Visit(ParsedCommand.DecisionCreate command) => RunDecisionCreate(command, LockTimeout);
+
+        public CommandOutcome Visit(ParsedCommand.BlockCreate command) => RunBlockCreate(command, LockTimeout);
 
         public CommandOutcome Visit(ParsedCommand.SectionCreate command) => RunSectionCreate(command, LockTimeout);
 
@@ -2345,6 +2367,40 @@ internal static class CommandDispatcher
     }
 
     /// <summary>
+    /// <c>block create</c> (§13, work-lifecycle: "Every block card is minted by the tool") — the
+    /// creation door for a task-implementing <c>block</c> card: scope always <see cref="CardScope.
+    /// Change"/> (a block lives in the change that carved it, the same fixed scope <see
+    /// cref="RunSectionCreate"/> already gives <c>section</c>), initial status always <see
+    /// cref="BlockFlowState.Drafting"/>'s wire text — the leftmost node of work-lifecycle's own flow
+    /// diagram, reachable by creation and nothing else. <see cref="BlockCardFields.Round"/> is
+    /// fixed at <c>1</c> and <see cref="BlockCardFields.Base"/>/<see cref="BlockCardFields.
+    /// ReviewedState"/>/<see cref="BlockCardFields.BlockedBy"/>/<see cref="BlockCardFields.
+    /// GateResults"/> all start empty — the same shape <see cref="CardStore.
+    /// RecordSectionVerdictUnderExistingLock"/>'s own <c>--finding-new</c> door builds at <c>
+    /// briefed</c>, except at <c>drafting</c> and carrying <see cref="ParsedCommand.BlockCreate.
+    /// Tasks"/> in place of a finding key.
+    /// </summary>
+    private static CommandOutcome RunBlockCreate(ParsedCommand.BlockCreate parsed, TimeSpan lockTimeout)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
+        var outcome = CardStore.CreateCard(
+            repoRoot, filePath, CardKind.Block, CardScope.Change, parsed.Title,
+            BlockFlowState.Drafting.ToWireString(), parsed.ActingRole, parsed.Body,
+            registerFields: null, parsed.Timestamp, lockTimeout, parsed.ChangeName,
+            blockFields: new BlockCardFields(null, null, parsed.Tasks, 1, [], []));
+
+        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
+    }
+
+    /// <summary>
     /// <c>section create</c> (§7 block A, Product Owner ruling: "<c>section create</c> is in §7's
     /// scope"). Scope is always <see cref="CardScope.Change"/> — the initial status is
     /// <see cref="SectionFlowState.Open"/>'s wire text, read through
@@ -2586,12 +2642,18 @@ internal static class CommandDispatcher
                 Section = created.Card.Frontmatter.Section,
                 ActingRole = actingRole.ToWireString(),
                 Timestamp = created.Card.Frontmatter.Created,
+                Tasks = CardStore.IsBlockCard(created.Card) ? created.Card.BlockFields.Tasks : null,
             }),
             onScopeRefused: refused => new CommandOutcome.Refusal("scope-refused", refused.Reason),
             onAlreadyExists: already => new CommandOutcome.Refusal(
                 "card-already-exists", $"a card already exists at '{already.FilePath}'."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
+            onIdentityAlreadyBorne: borne => new CommandOutcome.Refusal(
+                "identity-already-borne",
+                $"the '{borne.Kind.ToWireString()}' identity counter issued '{borne.Id}', but the record already " +
+                $"carries a card bearing it: {string.Join(", ", borne.CardFilePaths)}.",
+                borne.RefusingRule, borne.Remedy),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
 
     /// <summary>
@@ -3260,6 +3322,11 @@ internal static class CommandDispatcher
                 "card-already-exists", $"a card already exists at '{already.FilePath}'."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
+            onIdentityAlreadyBorne: borne => new CommandOutcome.Refusal(
+                "identity-already-borne",
+                $"the '{borne.Kind.ToWireString()}' identity counter issued '{borne.Id}', but the record already " +
+                $"carries a card bearing it: {string.Join(", ", borne.CardFilePaths)}.",
+                borne.RefusingRule, borne.Remedy),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 
@@ -3494,6 +3561,11 @@ internal static class CommandDispatcher
                 "card-already-exists", $"a card already exists at '{already.FilePath}'."),
             onLayoutMismatch: layoutMismatch => new CommandOutcome.Refusal(
                 "card-layout-mismatch", layoutMismatch.Reason),
+            onIdentityAlreadyBorne: borne => new CommandOutcome.Refusal(
+                "identity-already-borne",
+                $"the '{borne.Kind.ToWireString()}' identity counter issued '{borne.Id}', but the record already " +
+                $"carries a card bearing it: {string.Join(", ", borne.CardFilePaths)}.",
+                borne.RefusingRule, borne.Remedy),
             onToolFailure: toolFailure => throw new InvalidOperationException(toolFailure.Reason));
     }
 

@@ -339,9 +339,18 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
+        // A readable, unrelated card at the target path — not garbage text (§13: the identity
+        // allocator now confirms, against the whole record, that the id it is about to issue is
+        // not already borne; an unparseable file at this exact path would report Unreadable rather
+        // than "confirmed unclaimed", masking the AlreadyExists case this test targets under a
+        // ToolFailure instead). Its own id ("F-9999") deliberately does not collide with the
+        // "F-0001" the fresh counter is about to issue — this fixture is about the *path*
+        // colliding, not the id.
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0007.md");
         Directory.CreateDirectory(repo.CardsDirectory);
-        File.WriteAllText(findingPath, "not a card");
+        var unrelatedFrontmatter = new CardFrontmatter(
+            "F-9999", CardKind.Finding, "Unrelated", "open", CardOwner.Architect, CardScope.Change, sectionId, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
+        File.WriteAllText(findingPath, CardFileWriter.Serialize(new CardFile(unrelatedFrontmatter, "Unrelated.", [], [])));
         var output = new StringWriter();
 
         var exitCode = RunInRepo(

@@ -189,8 +189,20 @@ public sealed class CardCommentPromoteTests : IDisposable
     public void PromoteComment_RaisedCardTargetAlreadyExists_Refuses_WithoutRecording_AndWithoutResolving()
     {
         var path = WriteCardWithComment("b-0005", "B-0005", "thread-1", CardOwner.Reviewer);
+
+        // A readable, unrelated card at the target path — not garbage text (§13: the identity
+        // allocator now confirms, against the whole record, that the id it is about to issue is
+        // not already borne; an unparseable file at this exact path would report Unreadable rather
+        // than "confirmed unclaimed", masking the AlreadyExists case this test targets under a
+        // ToolFailure instead). Its own id ("Q-9999") deliberately does not collide with the
+        // "Q-0001" the fresh counter is about to issue — this fixture is about the *path*
+        // colliding, not the id.
         var raisedPath = Path.Combine(_registerDirectory, "q-0104.md");
-        File.WriteAllText(raisedPath, "not a card", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var unrelatedFrontmatter = new CardFrontmatter(
+            "Q-9999", CardKind.Question, "Unrelated", "open", CardOwner.Architect, CardScope.Repository, string.Empty, Created, Created);
+        File.WriteAllText(
+            raisedPath, CardFileWriter.Serialize(new CardFile(unrelatedFrontmatter, "Unrelated.", [], [])),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var outcome = CardStore.PromoteComment(
             _root, path, "thread-1", raisedPath, CardKind.Question, "Title.", CardOwner.Reviewer,

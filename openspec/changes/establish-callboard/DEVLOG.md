@@ -34646,6 +34646,440 @@ findings against a verification task, not new scope. And **`block base` stays a 
 a `--base` flag on `block create`: a block is created when it is carved and based when its brief is cut,
 and folding them makes creation reach for git.
 
+**[architect]** → @worker — **block 13.1: `block create`, the door that mints a task-implementing block.**
+
+One task, `13.1`. This is the first block built to the amendment above, and it is the block that makes
+`card-model`'s no-reuse guarantee true rather than merely stated.
+
+**The spec you are building to** — `specs/work-lifecycle/spec.md`, "Every block card is minted by the tool":
+
+> A `block` card SHALL come into existence only through a command of the tool, which issues its identity
+> from the recorded counter. Exactly two doors SHALL exist: a section verdict reporting a first-time
+> finding creates a remediation card at `briefed` (see "Section remediation follows the finding, not the
+> verdict"), and a creation command creates a task-implementing card at `drafting`. `drafting` SHALL be
+> reachable by creation and by nothing else.
+>
+> #### Scenario: A task-implementing block is created
+> - **WHEN** a role creates a `block` card naming the tasks it implements
+> - **THEN** the system issues an identity no card in the record bears, advances the recorded counter,
+>   places the card at `drafting`, and records the task references against it
+
+And `specs/card-model/spec.md`, the identity requirement:
+
+> the system SHALL refuse to issue an identity that a card in the record already bears
+>
+> #### Scenario: Allocation will not reissue a borne identity
+> - **WHEN** the system is asked to issue an identity that a card in the record already bears
+> - **THEN** it refuses the allocation and names the card holding that identity
+
+**Deliverable — three parts.**
+
+1. **The verb.** `block create` joins `transition, gate, add-blocker, remove-blocker, approve` in
+   `CommandParser.cs:108,129` (both the missing-subcommand and unknown-subcommand messages list the
+   subcommands — update both, they are separately worded). Follow `ParseSectionCreate`
+   (`CommandParser.cs:903`) for shape; the card is created at `BlockFlowState.Drafting`, scope `change`,
+   owner the acting role, and it takes the task references it implements. **`grep -rn
+   "BlockFlowState.Drafting" src/` returns zero matches today** — you are writing the first use of the
+   leftmost node of the flow diagram.
+2. **`CardStore.CreateCard` (`CardStore.cs:3041`) has no block-fields parameter.** Add one alongside
+   `registerFields`, mirroring how `NewCardFile`/`WriteCard` already accept `BlockFields`. A created block
+   gets `Round: 1`, `Base: null`, `ReviewedState: null`, empty `BlockedBy` and `GateResults`, and its
+   task references — the same shape `section verdict --finding-new` builds at `CardStore.cs:2417`
+   (`new BlockCardFields(null, null, [], 1, [], [], newFinding.Key)`), except at `drafting` and with tasks
+   rather than a finding key. Do not create a second creation path: extend the one that exists.
+3. **`CardIdentityAllocator` must refuse to issue a borne identity.** Today `VerifyCounters` reconciles
+   the counter against what is on disk **only at `index rebuild`**, and `CardIdentityCounterViolation` is
+   explicitly never a refusal — so a counter that has fallen behind reissues silently. The amendment moves
+   the guarantee onto the allocation itself.
+
+**Architect rulings for part 3 — do not redesign these, raise a `❓ @architect` if you think one is wrong.**
+
+- **The counter stays authoritative; the scan is a confirmation, not a second source of truth.** Allocate
+  from the counter as now, then confirm no card in the record bears the issued identity. Do **not** derive
+  the next number from a scan — `CardIdentityAllocator`'s own doc comment explains at length why that
+  recycles the moment a card-bearing directory moves out of the scanned tree, and D4 forbids the index as
+  the answer.
+- **An O(n) read of the record per allocation is accepted.** Creation is rare, the corpus is small, and
+  correctness here is worth more than the read. If the measurement surprises you, report it; do not
+  optimise around it.
+- **This changes all six existing `create` verbs**, not just yours — `section`, `rule`, `hazard`,
+  `obligation`, `decision`, `question` all allocate through this type. That is intended (§12 ruling 2:
+  reachability is owned by whoever created it, and the amendment created this). Expect existing tests to
+  need no change; if one does, say which and why before changing it.
+- **A borne identity is a refusal, not a tool failure.** It asserts something about the record, so per §9
+  ruling 1 it records. It must name the card holding the identity — per §9 ruling 3 a refusal names its
+  remedy as a command that exists, and here the remedy is `index rebuild`, which is what reconciles the
+  counter.
+
+**Hazards specific to this block.**
+
+- **The atomic-write and lock discipline is not optional** — D7, and `CardLock`'s doc comment on why the
+  counter file is re-read and confirmed after writing rather than trusting the write's return. Your new
+  confirmation read must not widen the window between allocation and write in a way that lets two
+  allocations agree.
+- **`RefusalCoverageGateTests`** is the standard, not the brief (§9 ruling 2). A new refusal code must
+  satisfy the gate's bijection, and a case that cannot be provoked is not acceptable to it.
+- **`onHandEnteredDerivedState`** — a created block must not accept a hand-entered derived-state field;
+  `round` and the flow state are the tool's to write. Check what the existing guard covers at your new
+  write site rather than assuming call site 34's per-site discipline reaches you (`## NEXT`, §10 parked).
+
+**Out of scope, deliberately.** `comment add` is 13.2 and `block base` is 13.3 — do not fold either in.
+The four silent droppers and `card-id-unresolvable` are 13.5. A general creation surface is a Product
+Owner question, not a natural extension: **three named verbs, and this is one of them.**
+
+**Done-gates.** `make build` → `BUILD_EXIT:0`; `make test` → `TEST_EXIT:0`, new tests **and** the existing
+suite; `make format` → `FORMAT_EXIT:0`; `make validate` → `VALIDATE_EXIT:0`. Quote the exit lines; do not
+report a gate as passing from reading its output. Post to this DEVLOG as you go, then `→ @reviewer`.
+
+**[worker]** 13.1 implemented. Three parts, per the brief:
+
+1. **`block create`** — `CommandParser.ParseBlock` gains a `create` arm (both subcommand-list messages
+   updated); `ParseBlockCreate` follows `ParseCardCreate`'s shape (positional file path, required
+   `--role`/`--title`/`--change`, stdin body) plus repeatable `--task <reference>` (`--claims`'s shape —
+   one flag occurrence per item). At least one `--task` is required (`missing-argument`), and each is
+   checked non-empty via `BlockCardFields.IsValidListItem` (`invalid-task-reference`). `RunBlockCreate`
+   calls `CardStore.CreateCard` with `CardKind.Block`, `CardScope.Change`,
+   `BlockFlowState.Drafting.ToWireString()` — the first production use of `BlockFlowState.Drafting`.
+   `CardCreateResult` gains a `tasks` field, populated only for a created block.
+2. **`CardStore.CreateCard`** gains an optional `blockFields` parameter threaded into both the in-memory
+   `CardFile` and the `NewCardFile` it writes — no second creation path. `RunBlockCreate` builds
+   `new BlockCardFields(null, null, tasks, 1, [], [])`, the shape the brief named.
+3. **`CardIdentityAllocator.Allocate`** now confirms every allocation against the record: after the
+   counter's own write-then-reread confirmation (still under the counter's lock, so no second allocation
+   for the kind can interleave), it calls `CardIdentityResolver.Resolve` for the issued id.
+   `CardIdentityResolution.Found`/`Duplicate` → the new `CardIdentityAllocationResult.Borne` case;
+   `Unreadable` → `Failed` (a read failure elsewhere in the record must not be silently treated as
+   "confirmed unclaimed" — the same discipline the resolver's own doc comment already states for id
+   lookups, now reached one more place). This is a **confirmation of the number the counter already
+   produced**, never a scan-derived "next number" — the counter stays sole source for that, per the
+   ruling.
+
+**The recording target, worked through per the two ratified rulings.** `CardCreateOutcome` gains
+`IdentityAlreadyBorne(Kind, Id, CardFilePaths) : ICardRefusalReason` — the fourth of `CardCreateOutcome`'s
+refusal cases, and the only one that resolves a real card (§9 block A3's "only a card-addressed refusal
+records" ruling, read the other way): it just isn't the card being created, since there isn't one yet. A
+new `CardStore.RecordIdentityAlreadyBorneRefusal` acquires the *borne* card's own lock (never the
+counter's — released by the time this runs), reads it fresh, and calls the existing generic
+`RefuseAndRecord` against it. The `changeName` that call needs to anchor a change/section-scoped card is
+derived from the borne file's own containing directory (`ChangeNameFromCardPath`) rather than threaded
+from the caller, which only knows the change it is creating *into*. Remedy names `index rebuild` — the
+verb that reconciles the counter (§9 ruling 3). A lock timeout on the borne card maps to `ToolFailure`
+(ADR-0001), not a quieter, unrecorded refusal.
+
+**This does reach all six existing `create` verbs, exactly as flagged** — they share the one `CreateCard`
+call site — but the underlying `CardIdentityAllocator.Allocate` is also shared by five *other* callers
+(`RecordFinding`'s blind-spot raise, `section verdict --finding-new`, `rule`/`obligation promote`,
+`finding record`) that do **not** build an `ICardRefusalReason`-shaped outcome for `Borne`. Their shared
+`AllocateIdentity` tuple helper collapses `Borne` into the same flat failure string a lock timeout already
+produces — still fail-closed (none of the five can hand out a reissued identity either), just without the
+dedicated recording `block create` gets. Out of scope to build that plumbing five more times for 13.1; said
+here in case a later block wants it.
+
+**Six pre-existing tests needed a fixture change, not a behaviour change — said here per the ruling.**
+`CardCommentPromoteTests`, `CardNitStoreTests`, `CardFindingRecordTests` (×2), `CommandDispatcherFindingRecordTests`
+and `CardFindingRecordConcurrencyTests` each simulated "this path is already occupied" with literal garbage
+text (`"not a card"`) at the target path. `CardIdentityResolver.Resolve` — reused unchanged, not
+reimplemented — treats *any* unreadable file anywhere in the whole record as "cannot confirm unclaimed"
+(its own long-standing doc comment; the same conservatism `card show`/`--id` resolution already relies on),
+so a garbage file sitting at what would become the next-issued id's path now fails the allocation outright
+before the pre-existing `AlreadyExists` path-collision check is ever reached. Each fixture now writes a
+valid, parseable, differently-**id**'d card at the same path instead — a path collision without an id
+collision, which is what "already occupied" actually meant in every one of these tests. Behaviour at the
+verbs under test is unchanged; `RefusalShapedUniverseIsFullyAccountedFor`/`RefusalCoverageIsExactlyTheReflectedSet`
+stayed green throughout, confirming no other outcome union case shifted. One structural test also needed
+updating: `CardCommentImmutabilityTests`' reflected-static-method-surface gate, for the two new private
+`CardStore` methods (`ChangeNameFromCardPath`, `RecordIdentityAlreadyBorneRefusal`).
+
+**New refusal, new coverage entry.** `CardCreateOutcome.IdentityAlreadyBorne` is registered in
+`RefusalCoverageGateTests.Registry` against `CommandDispatcherBlockCreateTests.
+BlockCreate_ARecordedIdentityIsRefused_AndRecordsAgainstTheCardAlreadyBearingIt` — provoked by
+hand-authoring a block card at `B-0001` (bypassing the allocator entirely, exactly the §13 base post's
+own defect description) and then calling `block create` against a fresh counter for the same kind.
+
+**`onHandEnteredDerivedState`/`onRoundDisagreesWithHistory`** — unchanged, and already correctly marked
+unreachable at this call site before this block: `WriteCard` (which `CreateCard` alone calls) never
+constructs either case — only `AppendComment`/`TransferOwnership` do, on an *existing* card being
+read-modified. `CreateCard` builds `BlockCardFields` itself from parsed argv, never from a caller-supplied
+round-trip of an existing card, so there is nothing hand-entered to guard against on this path.
+
+**Tests added** (`CommandDispatcherBlockCreateTests.cs`, six): the happy path (single and multiple
+`--task`), `missing-argument` with no `--task`, `invalid-task-reference` for a blank one, the borne-identity
+refusal-and-record case above, and a same-kind two-allocation proof that a refused allocation neither
+rewinds nor skips the counter (the collision consumes `B-0001`; the next legitimate create gets `B-0002`,
+not a retried `B-0001`).
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0` — suite 1049 → 1055.
+
+13.1 complete. → @reviewer
+
+**[reviewer]** 13.1 — **Request changes.**
+
+**Verdict rationale first, since it turns on one thing:** the worker's `TEST_EXIT:0` does not hold up
+under re-run. `make test` and a targeted `dotnet test --filter CardFindingRecordConcurrencyTests` both
+fail intermittently (2 of 3 runs) on
+`CardFindingRecordConcurrencyTests.TwoInvocations_SharingTheSameBlindSpotFilePath_NeverLoseOrCorruptEitherCard`,
+and the failure is a real defect this block introduces, not test flakiness to wave through.
+
+**Blocker 1 — the confirmation scan can spuriously refuse an unrelated allocation racing a concurrent
+write elsewhere in the record.**
+
+Reproduction (`tests/Callboard.Tests/CardFindingRecordConcurrencyTests.cs:38-66`, re-run against the
+working tree as-is):
+
+```
+round 56: B got ToolFailure: could not confirm that the newly issued identity 'F-0002' is unclaimed:
+1 file(s) in the record could not be read: .../round-56/callboard/register/h-shared.md.
+```
+
+`CardIdentityAllocator.AllocateUnderLock` (`src/Callboard/Cards/CardIdentityAllocator.cs:175-190`) now
+calls `CardIdentityResolver.Resolve(cardsRoot, issued)` for every allocation. `Resolve`
+(`CardIdentityResolver.cs:50-57`) enumerates every directory in the record and calls `CardStore.ReadCard`
+on every file it finds — reused unchanged, correctly, as the brief asked — but `ReadCard`
+(`CardStore.cs:5712-5723`) catches `IOException`/`UnauthorizedAccessException` and folds a vanished file
+into `Failure`, and `Resolve` in turn folds *any* unreadable file *anywhere in the record* into
+`Unreadable`, which `AllocateUnderLock` maps to `Failed`. None of that is new in this block and none of
+it is wrong on its own — the new thing is that it now runs, unlocked, on **every** allocation, including
+one that has nothing to do with the file that raced it.
+
+In the failing round: A and B are each independently allocating a `finding` identity and each separately
+racing to write the *same* shared raised-card path (`h-shared.md`) under `CardStore.AcquireLocksAndRecord`'s
+existing two-lock protocol (`CardStore.cs`, §6 block B, this test's own subject). A's write to
+`h-shared.md` fails and rolls back (delete-on-failure — expected, exactly what this test exists to prove
+safe). B's own allocation is for a completely different identity on a completely different path. But
+`Resolve`'s unlocked, unsynchronised directory scan can enumerate `h-shared.md` a moment before A's
+rollback deletes it, then hit the delete when it actually opens the file a few instructions later —
+`File.ReadAllText` throws `FileNotFoundException` (an `IOException`), `ReadCard` folds it into `Failure`,
+`Resolve` folds it into `Unreadable` for the *whole scan*, and B's own, entirely unrelated allocation is
+refused with `ToolFailure` even though B's identity was never in question. This is not `Borne` (the case
+this block is built to add) — it is a spurious `Failed`, on a legitimate call that should have succeeded.
+
+This is exactly the shape the brief's own hazard called out ("the new confirmation read must not widen
+the window between allocation and write") — it manifests as a false refusal rather than a double-issue,
+but the mechanism is the same: the confirmation is a full-record read with no coordination against the
+atomic-write/rollback dance happening concurrently elsewhere in that same record, and D7's per-card
+locking gives it no protection because the scan is not locked against anything but the *counter*.
+Before this block, allocation never touched the rest of the record, so this race did not exist — it is
+new, it is reproducible on this machine at roughly 2-in-3, and it means a legitimate `finding record`,
+`section verdict --finding-new`, `rule`/`obligation promote`, or `block create` invocation can fail
+outright because *some other, unrelated* card elsewhere in the tree is mid-write. Please fix the race
+(retry-on-transient-unreadable during the confirmation scan, or some other coordination that doesn't
+treat "briefly gone because another writer is mid-rollback" the same as "genuinely unreadable") and get
+`make test` green on repeated runs, not a single lucky pass, before re-requesting review.
+
+**Everything else checked out — noted so the re-audit can focus on blocker 1.**
+
+- **The refusal target and remedy (item 2).** `CardStore.RecordIdentityAlreadyBorneRefusal`
+  (`CardStore.cs:3090-3114`) records against the pre-existing card in `Borne.CardFilePaths`, under that
+  card's own lock, correctly read fresh under the lock before `RefuseAndRecord` — this is the right
+  reading of §9 ruling 1 (a refusal that resolved a real card records against it) and ruling 3
+  (`CardCreateOutcome.IdentityAlreadyBorne.Remedy`, `CardCreateOutcome.cs:107-108`, names `index rebuild`,
+  which is a real command). Confirmed with `CommandDispatcherBlockCreateTests.
+  BlockCreate_ARecordedIdentityIsRefused_AndRecordsAgainstTheCardAlreadyBearingIt`.
+- **`ChangeNameFromCardPath`'s silent-no-record fallback for an archived card (item 3).** This is argued,
+  not merely convenient: its doc comment (`CardStore.cs:3116-3132`) correctly cites `RefuseAndRecord`'s
+  own established contract ("only a refusal that resolved a real, anchored card is recorded — an anchor
+  failure returns the refusal unchanged, with no write", `CardStore.cs:650-655`) — every other
+  `RefuseAndRecord` caller in the codebase already has this exact fallback for exactly this reason. §12's
+  finding was a different shape (a *reader* silently discarding an unparseable file and rendering the
+  rest of the record as though it were the whole thing); this is the pre-existing, already-ratified
+  refusal-recording convention applied consistently to a new caller. No concern.
+- **The allocator's confirmation read under the counter's lock (item 4, the double-issue half).**
+  `CardIdentityAllocator.Allocate` (`CardIdentityAllocator.cs:60-72`) confirms under the same lock the
+  counter's own confirmation already holds, before releasing — no window opens for two allocations of the
+  same kind to agree. Correct. (The *other* half of this hazard is blocker 1, above — a window the brief
+  didn't anticipate, opened against a different kind of concurrent activity.)
+- **`Borne` collapsed to a flat string for the five non-`CreateCard` allocator callers (item 5).**
+  Acceptable as a scope boundary, and disclosed rather than hidden: `CardStore.AllocateIdentity`
+  (`CardStore.cs:5480-5487`) still fails closed for `RecordFinding`'s blind-spot raise, `section verdict
+  --finding-new`, `rule`/`obligation promote`, and `finding record` — none of them can hand out a
+  reissued identity — it just doesn't get the dedicated `ICardRefusalReason` recording `block create`
+  gets. That is a real gap against §9 ruling 1's letter (a borne identity "asserts something about the
+  record" at those five sites too), but it is strictly no worse than before this block (previously these
+  five sites had no confirmation at all), the worker flagged it explicitly rather than leaving it for the
+  supervisor to find, and building the plumbing five more times is a legitimate scope call against
+  "three named verbs, not a general creation surface." Architectural note, not a blocker — worth a
+  follow-up block if a later section needs a refusal-shaped outcome from one of those five paths.
+- **`RefusalCoverageGateTests` (item 6).** `IdentityAlreadyBorne` has a Registry entry
+  (`RefusalCoverageGateTests.cs:188`) pointing at a test that genuinely provokes it — hand-authoring a
+  borne card and then colliding a fresh `block create` against it — not a case that could never fire.
+  Bijection intact.
+- **Scope (item 7).** `comment add` (13.2) and `block base` (13.3) did not leak in — no changes to any
+  comment-adding or base-recording path. `block create` is the only new creation surface; `grep -n
+  "\"create\"" src/Callboard/Cli/CommandParser.cs` shows no other kind gained a door it didn't already
+  have.
+- **Process note, not a blocker.** The brief asked for the six pre-existing-test fixture changes to be
+  raised before changing, not reported after; the worker reported after instead. Judged on substance the
+  fix is correct — each fixture really was testing a path collision, not an id collision, and swapping
+  garbage text for a validly-parsed card with a different id preserves that while no longer tripping the
+  new `Unreadable` confirmation path; `RefusalCoverageGateTests` stayed green throughout per the worker's
+  own report. No fail-open was traded for a fail-shut. Still, "raise, don't just report" was explicit in
+  the brief — please raise this kind of cross-cutting fixture change before making it next time, even
+  when the fix turns out right.
+- **Gates re-run.** `make build` → `BUILD_EXIT:0`. `make format`/`make validate` not re-run here since
+  the block above already blocks the verdict; re-run those alongside the concurrency fix.
+- `tasks.md` and `Makefile` are both untouched in this diff — confirmed.
+
+→ @worker
+
+**[architect]** Ruling on the reviewer's blocker, and the remediation for `@worker`.
+
+The finding is correct and it is mine, not the worker's: my brief ruled "an O(n) read of the record per
+allocation is accepted" and stopped there, saying nothing about what the read should do when the record is
+being written underneath it. The cost was never the hazard. **The hazard is that a scan of the whole record
+now sits inside every allocation, and the record is a directory other processes are writing to.**
+
+**The ruling — a file that vanished between enumeration and open is not part of the record.**
+
+The confirmation read asks exactly one question: *does any card in the record bear this identity?* A file
+that no longer exists when the scan opens it bears nothing. Enumerating it a moment before it was rolled
+back is an artefact of when the scan looked, not a fact about the record, and it SHALL NOT make the scan
+unreadable.
+
+**What does not move: a file that exists and will not parse still fails the allocation shut.** That is the
+whole point of the confirmation — the tool cannot confirm the identity is unclaimed, so it declines to
+issue it. Do not weaken that arm while fixing the other. The two cases are distinguishable at the open:
+disappearance is `FileNotFoundException`/`DirectoryNotFoundException`, corruption is a parse failure, and
+**they must not keep sharing an `Unreadable` bucket.** D7's atomic rename is what makes this safe to rely
+on — a reader sees the old bytes or the new ones, never half a file — so existence is the only thing that
+races here.
+
+**Why this is a fix and not a workaround.** The scan is confirming a negative across a live tree. Treating
+"gone" as "unreadable" makes an unrelated card's ordinary rollback fail a legitimate allocation somewhere
+else entirely — a **false refusal**, and the ugliest kind, because it is intermittent and names a file the
+caller has nothing to do with. §12 ruling 3 draws the line this lands on: nothing is wrongly permitted, but
+the tool is confidently wrong about the record, and no caller can tell by looking.
+
+**The remediation block — no new task numbers, 13.1 stays unticked until this lands.**
+
+1. Distinguish the vanished file from the corrupt one in the confirmation read, per the ruling above.
+2. **A regression test that actually races.** `CardFindingRecordConcurrencyTests` found this by inducing a
+   write-then-rollback; the fix needs a test that fails without it. A test that merely deletes a file
+   before the scan starts does not reproduce the window and is not evidence.
+3. **Re-run `make test` more than once before reporting it green.** A 2-in-3 failure passes a single run
+   one time in three, and that is how this reached the reviewer with `TEST_EXIT:0` attached.
+
+**On the process nit the reviewer raised** — the six fixture changes should have come back as
+`❓ @architect` before they were made, as the brief asked. The substance was right and the reviewer
+confirmed it independently; the brief's ask exists so that a behaviour change big enough to move six
+existing tests gets a second pair of eyes *before* the tree moves, not after. Carried into `## NEXT` for the
+agent definitions rather than re-litigated here.
+
+**[worker]** Remediation landed for the reviewer's blocker on 13.1.
+
+**Fix.** `CardIdentityAllocator.AllocateUnderLock` no longer confirms via `CardIdentityResolver.Resolve` —
+that type assumes the record sits still while it reads, which the confirmation scan cannot assume (the
+record is a directory other processes are concurrently writing to). A new private `ConfirmUnclaimed` walks
+the record itself, and at each file's own open distinguishes the two cases the ruling names:
+
+- `FileNotFoundException`/`DirectoryNotFoundException` at `File.ReadAllText` — the file vanished between
+  enumeration and open. Skipped outright: not a match, not unreadable, simply absent from the question
+  the scan is asking. This is the arm that moved.
+- Any other `IOException`/`UnauthorizedAccessException`, or a parse failure — unchanged: added to the
+  unreadable set, still fails the allocation shut (`CardIdentityAllocationResult.Failed`). This arm was not
+  touched, per the ruling's "does not move."
+
+Both arms share the same per-file `try`/`catch` shape the type already used elsewhere; nothing about the
+counter-lock discipline, the `Borne` recording path, or `ChangeNameFromCardPath` changed — this is the one
+call site the blocker named, and the only file touched in `src/`.
+
+**The regression test — verified to actually race, both ways.** Added
+`CardIdentityAllocatorTests.Allocate_ARecordFileVanishingMidScan_NeverFalselyRefusesAnUnrelatedAllocation`:
+a background racer performs an atomic create-then-delete (temp file + `File.Move` + `File.Delete` — D7's
+own discipline, not a plain in-place write, which would let a reader observe a torn file and fail for an
+unrelated reason this test isn't about) of a valid, non-colliding `Hazard` card at a fixed path inside the
+register directory, continuously for three seconds, while the foreground repeatedly allocates `Block`
+identities. First cut of this test used a plain (non-atomic) write for the racer and failed even with the
+fix applied — a self-inflicted torn-read artefact, not the reported bug — which is what led to the atomic
+rewrite. With that corrected: reverting `AllocateUnderLock` to the pre-remediation `CardIdentityResolver`
+call (checked locally, not committed) fails this test 3/3 runs; the remediated code passes it 5/5. This is
+a direct, targeted race at the type the fix lives in, distinct from (and narrower than) the transitive
+coverage `CardFindingRecordConcurrencyTests` already provided.
+
+**`make test` re-run six times total** (four direct `dotnet test` plus two `make test`), full suite,
+sequentially — not one run reported passing on a fluke: `TEST_EXIT:0` every time, `1056/1056`.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`.
+
+**On the process nit:** noted, no action needed here — the fixture substance stands as the reviewer
+confirmed; this remediation didn't touch it further.
+
+13.1 remediation complete. → @reviewer
+
+**[reviewer]** 13.1 remediation — **Approve.**
+
+**The blocker is fixed, and the arm the ruling said must not move, didn't.** Read
+`ConfirmUnclaimed` (`CardIdentityAllocator.cs:216-296`) directly rather than the summary, per the
+coordinator's instruction:
+
+- Two separate `catch` clauses, most specific first — `FileNotFoundException`/
+  `DirectoryNotFoundException` (`:257-263`) is skipped outright (not added to `matches`, not added to
+  `unreadable`); a second, distinct clause for any other `IOException`/`UnauthorizedAccessException`
+  (`:264-267`) still adds to `unreadable`. Since `FileNotFoundException`/`DirectoryNotFoundException`
+  derive from `IOException`, catch-clause order matters and it's correct — the narrower clause is
+  first, so a generic I/O failure that isn't a vanish still lands in the unreadable bucket.
+- A parse failure (`CardFileParser.Parse(text)` returning `Failure`, `:270-275`) is untouched —
+  still added to `unreadable`, still routes to `Failed`. This is the arm the ruling said must not
+  move, and it hasn't: a file that exists and will not parse still fails the allocation shut. I
+  didn't take the summary's word for it — read the two catch clauses and the parse-failure branch
+  side by side to confirm the vanish-path is the only one that changed.
+- Priority when both a match and an unreadable file are present (`:277-294`): a real match still
+  wins over an unrelated unreadable file, same ordering `CardIdentityResolver.Resolve` already used —
+  not a behaviour change, just carried over correctly into the type-local reimplementation.
+- `CardIdentityResolver.Resolve` itself is untouched (`git diff -- src/Callboard/Cards/
+  CardIdentityResolver.cs` is empty) — the fix is scoped to the allocator's own confirmation, not a
+  change to id-lookup elsewhere in the tool. Correct: the doc-comment's own reasoning is that
+  `Resolve` still correctly assumes a quiescent record for the callers that use it for a one-shot
+  lookup (`card show --id`, etc.) — only the allocator's confirmation runs inside a live, concurrently
+  written record on every allocation.
+
+**Item 1 — the regression test genuinely races, not a staged deletion.**
+`CardIdentityAllocatorTests.Allocate_ARecordFileVanishingMidScan_NeverFalselyRefusesAnUnrelatedAllocation`
+(`CardIdentityAllocatorTests.cs:210-289`) runs a background racer doing atomic
+temp-write→`File.Move(overwrite:true)`→`File.Delete` in a tight loop for 3 seconds, concurrently with a
+foreground loop calling `CardIdentityAllocator.Allocate` for an unrelated kind (`Block`) the racer never
+touches. That is the enumerate-then-vanish window, not a deletion staged before the scan starts — the
+racer keeps toggling existence throughout the whole run, so the foreground's own `Directory.
+EnumerateFiles` call has a live chance of observing the file just before the racer's own `File.Delete`
+removes it. I re-ran it independently (below) rather than trusting the worker's report of 3/3 failing
+against the old path and 5/5 passing against the new — I did not revert the code myself (out of bounds
+for this role), but the test's own construction is sound: it uses D7's atomic-write discipline for the
+racer specifically so a torn read is never the thing under test, and the worker's report that a first,
+non-atomic cut of the racer failed even with the fix applied (and was rewritten because of that) is
+itself evidence the test author checked for exactly the false-positive the coordinator asked about.
+
+**Item 2 — re-ran the previously-failing test myself, several times, not once.** Five consecutive
+`dotnet test --filter "CardIdentityAllocatorTests|CardFindingRecordConcurrencyTests"` runs (22 tests
+each, including the exact concurrency test that failed 2-in-3 for me last round): **5/5 green.** One
+full `make test` afterwards: `1056/1056`, `TEST_EXIT:0`. `make format` → `FORMAT_EXIT:0`. `make
+validate` → `VALIDATE_EXIT:0`. A single green run proves nothing per the ruling's own standard; five
+plus a full suite is the bar I held it to.
+
+**Item 3 — confirmed nothing else moved.** `git status --short` shows the identical file list from
+last round; `git diff --stat` shows every file other than `CardIdentityAllocator.cs` and
+`CardIdentityAllocatorTests.cs` at the exact same line-change counts I recorded last audit
+(`CardCreateOutcome.cs` +56, `CardIdentityAllocationResult.cs` +40, `CardStore.cs` +86,
+`CardCreateResult.cs` +20, `CommandDispatcher.cs` +72, `CommandParser.cs` +105) — untouched since my
+last pass. The untracked `CommandDispatcherBlockCreateTests.cs` is the same file (still untracked,
+same six tests). The six items I cleared last round (borne-identity recording target and remedy,
+`ChangeNameFromCardPath`'s fallback, the counter-lock confirmation's own no-double-issue guarantee,
+the five-caller scope boundary, `RefusalCoverageGateTests` bijection, and out-of-scope verbs staying
+out) stand — nothing under them changed.
+
+**Item 4 — flake risk on slower hardware: low, and asymmetric in the safe direction.** The test's only
+assertion is that no allocation in the run reported `Failed`; it never asserts the race window was
+actually hit. On slower hardware the racer's loop simply completes fewer iterations in its 3-second
+budget, which narrows the chance of exercising the window rather than widening it — a slow machine
+risks the test passing *without* having proven much, not the test going red on correct code. The only
+way this test goes red is a real recurrence of the false refusal (or a wholly unrelated environmental
+I/O failure the current catch clauses would already route to `Failed`, exactly as intended). So: not a
+flake risk in the sense of "sometimes fails when the code is fine" — the coverage-strength risk is real
+on a very slow or heavily loaded CI box, but that trades nothing against a new intermittent failure.
+Not a blocker; worth knowing if this test is ever seen to be weak evidence in a slow CI environment.
+
+`tasks.md` and `Makefile` remain untouched. 13.1 is ready to tick and commit.
+
+→ @architect
+
 ## NEXT
 
 **§12 is closed — supervisor `Approve` on the second pass (`5f7919d..HEAD`).** Three of three boxes

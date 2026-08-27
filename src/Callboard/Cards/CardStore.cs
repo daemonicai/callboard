@@ -3051,7 +3051,8 @@ internal static class CardStore
         DateTimeOffset timestamp,
         TimeSpan lockTimeout,
         string? changeName,
-        string section = "")
+        string section = "",
+        BlockCardFields? blockFields = null)
     {
         var scopeValidation = CardScopeRules.Validate(kind, scope);
         if (scopeValidation is CardScopeValidationResult.Refused refused)
@@ -3059,16 +3060,20 @@ internal static class CardStore
             return new CardCreateOutcome.ScopeRefused(refused.Reason);
         }
 
-        var (id, allocationFailure) = AllocateIdentity(cardsRoot, kind, lockTimeout);
-        if (allocationFailure is not null)
+        var allocation = CardIdentityAllocator.Allocate(cardsRoot, kind, lockTimeout);
+        var (id, allocationRefusal) = allocation.Match<(string? Id, CardCreateOutcome? Refusal)>(
+            onAllocated: allocated => (allocated.Id, null),
+            onFailed: failed => (null, new CardCreateOutcome.ToolFailure(failed.Reason)),
+            onBorne: borne => (null, RecordIdentityAlreadyBorneRefusal(cardsRoot, kind, borne, actingRole, timestamp, lockTimeout)));
+        if (allocationRefusal is not null)
         {
-            return new CardCreateOutcome.ToolFailure(allocationFailure);
+            return allocationRefusal;
         }
 
         var frontmatter = new CardFrontmatter(id!, kind, title, initialStatus, actingRole, scope, section, timestamp, timestamp);
-        var cardFile = new CardFile(frontmatter, body, [], [], FindingFields: null, RegisterFields: registerFields);
+        var cardFile = new CardFile(frontmatter, body, [], [], FindingFields: null, RegisterFields: registerFields, BlockFields: blockFields);
 
-        var writeResult = WriteCard(cardsRoot, filePath, new NewCardFile(frontmatter, body, RegisterFields: registerFields), lockTimeout, changeName);
+        var writeResult = WriteCard(cardsRoot, filePath, new NewCardFile(frontmatter, body, RegisterFields: registerFields, BlockFields: blockFields), lockTimeout, changeName);
         return writeResult.Match<CardCreateOutcome>(
             onSuccess: _ => new CardCreateOutcome.Created(cardFile),
             onNotFound: notFound => new CardCreateOutcome.ToolFailure(
@@ -3080,6 +3085,61 @@ internal static class CardStore
             onToolFailure: toolFailure => new CardCreateOutcome.ToolFailure(toolFailure.Reason),
             onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
                     onHandEnteredDerivedState: static _ => throw new InvalidOperationException("unreachable: AtomicWrite never returns this case; a reserved derived-state field is refused before this point."));
+    }
+
+    /// <summary>
+    /// <see cref="CardIdentityAllocationResult.Borne"/>'s CLI-facing disposition (§13, card-model:
+    /// "the system SHALL refuse to issue an identity that a card in the record already bears"):
+    /// unlike <see cref="CardCreateOutcome"/>'s other three refusals, this one resolved a real card
+    /// — just not the one being created — so it is recorded, against the first (ordinally sorted)
+    /// card in <paramref name="borne"/>'s <see cref="CardIdentityAllocationResult.Borne.
+    /// CardFilePaths"/>, under that card's own lock (never the counter's — the counter's lock was
+    /// already released by <see cref="CardIdentityAllocator.Allocate"/> returning). The change name
+    /// <see cref="RefuseAndRecord{TOutcome, TRefusal}"/> needs to anchor a change/section-scoped
+    /// card is derived from the resolved file's own containing directory rather than threaded
+    /// through from the caller, which only knows the change it is creating <em>into</em>, not the
+    /// change the borne card happens to already live in.
+    /// </summary>
+    private static CardCreateOutcome RecordIdentityAlreadyBorneRefusal(
+        string cardsRoot, CardKind kind, CardIdentityAllocationResult.Borne borne, CardOwner actingRole, DateTimeOffset timestamp, TimeSpan lockTimeout)
+    {
+        var refusal = new CardCreateOutcome.IdentityAlreadyBorne(kind, borne.Id, borne.CardFilePaths);
+        var filePath = borne.CardFilePaths[0];
+
+        var lockResult = CardLock.Acquire(filePath, lockTimeout);
+        return lockResult.Match(
+            onAcquired: acquired =>
+            {
+                using (acquired.Lock)
+                {
+                    var current = ReadCard(filePath);
+                    return current.Match<CardCreateOutcome>(
+                        onSuccess: success => RefuseAndRecord<CardCreateOutcome, CardCreateOutcome.IdentityAlreadyBorne>(
+                            cardsRoot, success.Card, filePath, ChangeNameFromCardPath(filePath), actingRole, timestamp, refusal,
+                            onToolFailure: static reason => new CardCreateOutcome.ToolFailure(reason)),
+                        onFailure: _ => refusal);
+                }
+            },
+            onTimedOut: timedOut => new CardCreateOutcome.ToolFailure(timedOut.Message));
+    }
+
+    /// <summary>
+    /// The change name a card at <paramref name="filePath"/> would need to anchor under its own
+    /// scope, read straight off the path rather than threaded through a caller that does not
+    /// necessarily know it: <see cref="CardLayout.ChangesDirectory"/> and <see cref="CardLayout.
+    /// ArchivedChangeDirectory"/> both end the path in <c>&lt;change-name&gt;/&lt;file&gt;.md</c>, so
+    /// the containing directory's own name is the change name either way. Harmless when the card
+    /// turns out to be capability- or repository-scoped — <see cref="CardLayout.DirectoryFor"/>
+    /// ignores this value for those scopes — and, for an archived change, deliberately does not
+    /// anchor at all: <see cref="AnchoredCardPath.TryCreate"/> resolves a change-scoped name to the
+    /// <em>live</em> changes directory only, so a borne identity that turns out to live in an
+    /// archived change reports without recording, the same "no anchor, no record" fallback every
+    /// other <see cref="RefuseAndRecord{TOutcome, TRefusal}"/> caller already gets for free.
+    /// </summary>
+    private static string? ChangeNameFromCardPath(string filePath)
+    {
+        var directory = Path.GetDirectoryName(filePath);
+        return string.IsNullOrEmpty(directory) ? null : Path.GetFileName(directory);
     }
 
     /// <summary>
@@ -5411,10 +5471,22 @@ internal static class CardStore
         onDecision: static () => throw new InvalidOperationException("unreachable: FindingBlindSpotRaiseRequest only ever carries Obligation or Hazard."),
         onSection: static () => throw new InvalidOperationException("unreachable: FindingBlindSpotRaiseRequest only ever carries Obligation or Hazard."));
 
+    /// <summary>
+    /// Shared by every caller below except <see cref="CreateCard"/> (§13: <see cref="CreateCard"/>
+    /// needs the full <see cref="CardIdentityAllocationResult.Borne"/> shape, to record its refusal
+    /// against the card already bearing the identity — none of these five callers build a
+    /// <see cref="ICardRefusalReason"/>-shaped outcome for that case, so a borne identity collapses
+    /// into the same flat <c>Failure</c> string a lock timeout or an unverifiable counter already
+    /// does here. Still fail-closed — none of these five can hand out a reissued identity either —
+    /// just without the dedicated recording <see cref="CreateCard"/> gets.
+    /// </summary>
     private static (string? Id, string? Failure) AllocateIdentity(string cardsRoot, CardKind kind, TimeSpan lockTimeout) =>
         CardIdentityAllocator.Allocate(cardsRoot, kind, lockTimeout).Match(
             onAllocated: allocated => ((string?)allocated.Id, (string?)null),
-            onFailed: failed => ((string?)null, (string?)failed.Reason));
+            onFailed: failed => ((string?)null, (string?)failed.Reason),
+            onBorne: borne => ((string?)null, (string?)
+                $"identity '{borne.Id}' is already borne by the record ({string.Join(", ", borne.CardFilePaths)}); " +
+                "run 'index rebuild' to reconcile the identity counter."));
 
     /// <summary>Shared by <see cref="ApplyBlockTransitionUnderExistingLock"/>,
     /// <see cref="RecordGateResultUnderExistingLock"/>, <see cref="UpdateBlockedByUnderExistingLock"/>

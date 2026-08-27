@@ -192,8 +192,19 @@ public sealed class CardNitStoreTests : IDisposable
             ReplyTo: null, To: CardOwner.Architect, Resolves: null, UnknownHeaderFields: [], IsNit: true);
         var path = WriteBlockCard("b-0003", "B-0003", BlockFlowState.InReview, comments: [nit]);
 
+        // A readable, unrelated card at the target path — not garbage text (§13: the identity
+        // allocator now confirms, against the whole record, that the id it is about to issue is
+        // not already borne; an unparseable file at this exact path would be reported Unreadable
+        // rather than "confirmed unclaimed", masking the AlreadyExists case this test targets under
+        // a ToolFailure instead). Its own id ("O-9999") deliberately does not collide with the
+        // "O-0001" the fresh counter is about to issue — this fixture is about the *path*
+        // colliding, not the id.
         var raisedPath = Path.Combine(_directory, "o-0001.md");
-        File.WriteAllText(raisedPath, "an unrelated file already occupies this path");
+        var unrelatedFrontmatter = new CardFrontmatter(
+            "O-9999", CardKind.Obligation, "Unrelated", "open", CardOwner.Architect, CardScope.Change, "9", Created, Created);
+        File.WriteAllText(
+            raisedPath, CardFileWriter.Serialize(new CardFile(unrelatedFrontmatter, "Unrelated.", [], [])),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         var raiseRequest = new NitDispositionRaiseRequest(CardKind.Obligation, raisedPath, "Address later", "Discharge this.");
 
         var outcome = CardStore.DispositionNit(
@@ -205,7 +216,7 @@ public sealed class CardNitStoreTests : IDisposable
 
         // The unrelated file is untouched, and the disposition never lands on the block card either
         // — all-or-nothing.
-        Assert.Equal("an unrelated file already occupies this path", File.ReadAllText(raisedPath));
+        Assert.Equal("O-9999", AssertParseSuccess(CardStore.ReadCard(raisedPath)).Frontmatter.Id);
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Single(read.Comments);
         var refusal = Assert.Single(read.Refusals);

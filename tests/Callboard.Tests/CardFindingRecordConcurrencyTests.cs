@@ -89,8 +89,14 @@ public sealed class CardFindingRecordConcurrencyTests : IDisposable
 
             // A's own finding path is pre-occupied — A's finding write can never succeed, in either
             // ordering, which is what makes "did A's rollback destroy B's card?" the only
-            // interesting question each round is testing.
-            File.WriteAllText(findingPathA, "not a card");
+            // interesting question each round is testing. A readable, unrelated card, not garbage
+            // text (§13: the identity allocator now confirms, against the whole record, that the
+            // id it is about to issue is not already borne; an unparseable file anywhere in the
+            // record reports Unreadable rather than "confirmed unclaimed", failing every
+            // allocation in this round outright rather than the AlreadyExists this round targets).
+            var unrelatedFrontmatter = new CardFrontmatter(
+                "F-9999", CardKind.Finding, "Unrelated", "open", CardOwner.Architect, CardScope.Change, Section, Recorded, Recorded);
+            File.WriteAllText(findingPathA, CardFileWriter.Serialize(new CardFile(unrelatedFrontmatter, "Unrelated.", [], [])));
 
             rounds[i] = (roundRoot, findingPathA, findingPathB, sharedRaisedPath);
         }

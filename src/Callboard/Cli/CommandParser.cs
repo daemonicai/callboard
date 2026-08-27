@@ -94,8 +94,9 @@ internal static class CommandParser
         new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.IndexRebuild(workingDirectory));
 
     /// <summary>
-    /// <c>block</c>'s only job is routing to a subcommand: <c>transition</c>, <c>gate</c> (§5
-    /// block D), <c>add-blocker</c> and <c>remove-blocker</c> (§5 block D). Same peek-don't-take
+    /// <c>block</c>'s only job is routing to a subcommand: <c>create</c> (§13, the door work-
+    /// lifecycle's "Every block card is minted by the tool" names), <c>transition</c>, <c>gate</c>
+    /// (§5 block D), <c>add-blocker</c> and <c>remove-blocker</c> (§5 block D). Same peek-don't-take
     /// shape as <see cref="ParseIndex"/>, same reason.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseBlock(CommandDispatcher.CommandContext context)
@@ -105,7 +106,10 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'block' requires a subcommand. Known subcommands: transition, gate, add-blocker, remove-blocker, approve."));
+                    "'block' requires a subcommand. Known subcommands: create, transition, gate, add-blocker, remove-blocker, approve."));
+            case "create":
+                context.Arguments.TryTake();
+                return ParseBlockCreate(context);
             case "transition":
                 context.Arguments.TryTake();
                 return ParseBlockTransition(context);
@@ -126,8 +130,101 @@ internal static class CommandParser
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: transition, gate, add-blocker, remove-blocker, approve."));
+                    $"no such 'block' subcommand: '{subcommand}'. Known subcommands: create, transition, gate, add-blocker, remove-blocker, approve."));
         }
+    }
+
+    /// <summary>
+    /// Builds <c>block create</c>'s <see cref="CommandDispatcher.ParsedCommand.BlockCreate"/> (§13,
+    /// work-lifecycle: "Every block card is minted by the tool") — one positional token (card file
+    /// path), <c>--role</c>/<c>--title</c>/<c>--change</c> required the same shape <see
+    /// cref="ParseSectionCreate"/> already gives <c>section create</c>, plus repeatable <c>--task
+    /// &lt;reference&gt;</c> (§8 remediation blocker 3's shape, same as <c>--claims</c>/<c>
+    /// --finding-recurred</c>: one flag occurrence per item, taken in argv order). At least one
+    /// <c>--task</c> is required — a block that names none is not "naming the tasks it implements"
+    /// (work-lifecycle's own scenario text), and an empty task reference is refused the same way
+    /// <see cref="BlockCardFields.IsValidListItem"/> already refuses one everywhere else it appears.
+    /// The body is read from stdin, the same read-only-extraction discipline <see
+    /// cref="ParseCardCreate"/> already applies.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseBlockCreate(CommandDispatcher.CommandContext context)
+    {
+        var filePath = context.Arguments.TryTake();
+        if (filePath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block create' requires a card file path."));
+        }
+
+        string? title = null;
+        string? roleText = null;
+        string? changeName = null;
+        var tasks = new List<string>();
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--title"] = value => title = value,
+            ["--role"] = value => roleText = value,
+            ["--change"] = value => changeName = value,
+            ["--task"] = value => tasks.Add(value),
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (title is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block create' requires '--title <text>'."));
+        }
+
+        if (roleText is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block create' requires '--role <role>'."));
+        }
+
+        if (!CardOwnerWireFormat.TryParse(roleText, out var role))
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
+        }
+
+        if (changeName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'block create' requires '--change <name>'."));
+        }
+
+        if (tasks.Count == 0)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument",
+                "'block create' requires at least one '--task <reference>' — a block card is created naming " +
+                "the tasks it implements."));
+        }
+
+        foreach (var task in tasks)
+        {
+            if (!BlockCardFields.IsValidListItem(task))
+            {
+                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                    "invalid-task-reference",
+                    "a task reference cannot be empty or whitespace-only — task references are never empty."));
+            }
+        }
+
+        var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
+        if (stdinRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(stdinRefusal);
+        }
+
+        var body = StdinBodyReader.ReadBody(stdin!);
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.BlockCreate(
+            filePath, title, role, body, tasks, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

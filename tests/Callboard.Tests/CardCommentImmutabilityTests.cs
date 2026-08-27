@@ -108,6 +108,7 @@ public sealed class CardCommentImmutabilityTests
             "ApplyBlockTransitionUnderExistingLock", // same, lock already held
             "ArchiveChange",                        // §7 block D: settles open obligations via DischargeRegisterCard (unchanged), then Directory.Move's the whole change directory — never opens, reads, or rewrites a repository- or capability-scoped card, and never touches Comments on any card it does settle
             "AtomicWrite",                          // the shared byte-writer every path above funnels through; it writes whatever CardFileWriter.Serialize(card) produces for the CardFile each of those paths built — none of them builds one with a truncated Comments list
+            "ChangeNameFromCardPath",               // §13: pure string derivation off a card's own file path (its containing directory's own name), shared only by RecordIdentityAlreadyBorneRefusal; never touches a CardFile
             "CloseSection",                         // §5 block E: read-decide-write on Frontmatter.Status/SectionFields.ClosedBy/ClosedAt only; never touches Comments
             "CloseSectionUnderExistingLock",        // same, lock already held
             "CompactRules",                         // §7 block F: dedupes/self-checks on paths, then acquires N+1 locks in ordinal path order and delegates to CompactRulesUnderLocks — never touches a CardFile itself
@@ -155,6 +156,7 @@ public sealed class CardCommentImmutabilityTests
             "RecordApprovalUnderExistingLock",      // §8 block A: read-decide-write on Frontmatter.Status/BlockFields.ReviewedState/Transitions/Claims/Limits only, in one write with the transition; never touches Comments
             "RecordGateResult",                     // §5 block D: read-modify-write on BlockFields.GateResults only; never touches Frontmatter.Status or Comments — see the structural argument in GateStatus's doc comment
             "RecordGateResultUnderExistingLock",    // same, lock already held
+            "RecordIdentityAlreadyBorneRefusal",    // §13, card-model: "SHALL refuse to issue an identity that a card in the record already bears" — acquires the lock of the card already bearing the contested identity and delegates to RefuseAndRecord; appends one CardRefusalEntry to that card's Refusals, never touches Comments on it or on the card being created (there isn't one)
             "RecordSectionAuthorisation",            // §8a block C: role check, then acquires the section's lock and delegates to RecordSectionAuthorisationUnderExistingLock; never touches a CardFile itself
             "RecordSectionAuthorisationUnderExistingLock", // §8a block C: role check first, then append-only write on SectionFields.Authorisations only; never touches Frontmatter.Status or Comments
             "RecordSectionVerdict",                 // §5 block E: append-only write on SectionFields.Verdicts only; never touches Frontmatter.Status or Comments

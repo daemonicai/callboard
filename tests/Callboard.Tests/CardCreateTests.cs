@@ -162,6 +162,7 @@ public sealed class CardCreateTests : IDisposable
             onScopeRefused: refused => throw new Xunit.Sdk.XunitException($"expected AlreadyExists, got ScopeRefused: {refused.Reason}"),
             onAlreadyExists: static _ => null,
             onLayoutMismatch: layoutMismatch => throw new Xunit.Sdk.XunitException($"expected AlreadyExists, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onIdentityAlreadyBorne: borne => throw new Xunit.Sdk.XunitException($"expected AlreadyExists, got IdentityAlreadyBorne: '{borne.Id}'"),
             onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"expected AlreadyExists, got ToolFailure: {toolFailure.Reason}"));
     }
 
@@ -191,6 +192,7 @@ public sealed class CardCreateTests : IDisposable
             onScopeRefused: static refused => throw new Xunit.Sdk.XunitException($"expected Created, got ScopeRefused: {refused.Reason}"),
             onAlreadyExists: static already => throw new Xunit.Sdk.XunitException($"expected Created, got AlreadyExists: '{already.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected Created, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onIdentityAlreadyBorne: static borne => throw new Xunit.Sdk.XunitException($"expected Created, got IdentityAlreadyBorne: '{borne.Id}'"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Created, got ToolFailure: {toolFailure.Reason}"));
 
     private static CardCreateOutcome.ScopeRefused AssertScopeRefused(CardCreateOutcome outcome) =>
@@ -199,7 +201,17 @@ public sealed class CardCreateTests : IDisposable
             onScopeRefused: static refused => refused,
             onAlreadyExists: static already => throw new Xunit.Sdk.XunitException($"expected ScopeRefused, got AlreadyExists: '{already.FilePath}'"),
             onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected ScopeRefused, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onIdentityAlreadyBorne: static borne => throw new Xunit.Sdk.XunitException($"expected ScopeRefused, got IdentityAlreadyBorne: '{borne.Id}'"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected ScopeRefused, got ToolFailure: {toolFailure.Reason}"));
+
+    private static CardCreateOutcome.IdentityAlreadyBorne AssertIdentityAlreadyBorne(CardCreateOutcome outcome) =>
+        outcome.Match(
+            onCreated: static created => throw new Xunit.Sdk.XunitException($"expected IdentityAlreadyBorne, got Created: '{created.Card.Frontmatter.Id}'"),
+            onScopeRefused: static refused => throw new Xunit.Sdk.XunitException($"expected IdentityAlreadyBorne, got ScopeRefused: {refused.Reason}"),
+            onAlreadyExists: static already => throw new Xunit.Sdk.XunitException($"expected IdentityAlreadyBorne, got AlreadyExists: '{already.FilePath}'"),
+            onLayoutMismatch: static layoutMismatch => throw new Xunit.Sdk.XunitException($"expected IdentityAlreadyBorne, got LayoutMismatch: {layoutMismatch.Reason}"),
+            onIdentityAlreadyBorne: static borne => borne,
+            onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected IdentityAlreadyBorne, got ToolFailure: {toolFailure.Reason}"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(
