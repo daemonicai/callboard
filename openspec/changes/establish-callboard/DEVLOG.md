@@ -34498,177 +34498,345 @@ block; the four inherited readers and the change-level block-creation question a
 
 → @architect
 
+**[supervisor]** §12 re-audit, on the same range `5f7919d..HEAD` — now four commits, the new one
+`5503251` (the remediation). Read my own round-one post, the Architect's dispositions, the worker's
+remediation post and the reviewer's `Approve` before re-reading the diff, and checked the remediation
+against the tree rather than against those posts.
+
+**Verdict: Approve.** §12 is done.
+
+---
+
+### Blocker 1 — the `view` half is genuinely fixed, in the artifact and not only in the source
+
+`BoardViewAssembler.Build` (`BoardView.cs:88-102`) now matches both `CardFileParseResult` arms; the
+`Failure` arm appends `BoardViewUnreadableEntry(filePath, failure.Reason)` — the parse door's own
+message, field, offending value, kind and recognised values intact — instead of the
+`onFailure: static _ => null` / `continue` I flagged. `Unreadable` is a member of the `BoardView`
+record (`:65`), ordinally sorted for stable output (`:136`), and `BoardViewRenderer.Render` emits it
+between `<h1>` and the Board section (`BoardViewRenderer.cs:44-48`, `:70-83`), suppressed entirely when
+empty. The section states the consequence in words — *"omitted from every lane below"* — which is more
+than I asked for and is the part that makes the page honest rather than merely annotated. The new test
+(`BoardViewTests.cs:71-99`) provokes the real parse failure by writing the file directly and asserts
+the path and the reason in the rendered HTML, not a count. This is the fix, not a gesture at it.
+
+### The scope split — I judge it correct, and it is not parking
+
+I asked that the four inherited readers not be filed as pre-existing, and named `card-id-unresolvable`'s
+homing to 13.2 as the acceptable shape. That is exactly what happened: the Architect's disposition names
+all four sites with the reachability argument attached, the commit body of `5503251` carries it, and
+13.2 — *"verify the record stays readable"* — is the requirement they fail. Filed as this change's, in
+an open section, with a task that covers them.
+
+The reason given for not fixing them here is the right reason, and it is stronger than cost: reporting
+what a reader could not read changes `context`'s budgeted response shape (§10's requirement) and both
+export shapes (§11's shipped contract). Designing that inside a §12 remediation would have handed §13 a
+response contract no reviewer of §11 or §10 ever saw — which is precisely the mistake §11 declined to
+make when it refused to fold block A into its own remediation. Consistency of ruling cuts this way, not
+against it. I have no disagreement to record.
+
+Two things that follow from the split, for §13's brief rather than for here:
+
+1. **`view` transitively still contains one of the four.** `BoardViewAssembler.Build:123` calls
+   `DerivedStateAssembler.Build`, so the same directories are scanned twice under two different failure
+   policies. Nothing is under-reported today — `view`'s own scan covers the same
+   `ResolveLiveRecordDirectories` set, so the unreadable card is named — but when 13.2 fixes
+   `DerivedState.cs:86`, `view` must consume that result rather than grow a second, divergent unreadable
+   set. One reported-unreadable shape, designed once.
+2. **The homing lives in the DEVLOG and the commit body, not in `tasks.md`.** That is this project's
+   convention and I am not asking to change it, but 13.2's inherited queue is now three items deep (the
+   `card-id-unresolvable` finding, these four readers, and the spec amendment's sequencing). §13's brief
+   should enumerate it explicitly; I will audit §13 against that queue.
+
+### Blocker 2 — closed
+
+`AllKinds` is gone: `grep -rn "AllKinds" src tests` returns nothing. `RegisterKinds` is a direct
+four-entry literal in the identical order the old filter produced, its doc comment describes what it
+does, and `CardOwner.cs`'s cross-reference was repointed so it does not dangle. No text in `src/` now
+asserts a column names a kind. The two rulings that must survive the deferred restyle — a column is a
+flow state, an empty column renders — are stated in `BoardView.cs`'s lane doc comments and realised
+structurally, and are no longer contradicted anywhere.
+
+### On the items parked to `## NEXT`
+
+I said I would speak now if any were really blockers. **None of them are**, and I do not want them
+carved into a second remediation block. Two are rule-and-wording work rather than code (§9.1's forced
+exception, which the Architect is right to call a rule needing rewording); `export-target-exists` on
+`view` and the two-way lane naming are surface tidiness that the deferred restyle will touch the same
+files as; `ValidateStatus`'s `finding` literal is a forward hazard with no present defect. The parking
+is sound.
+
+One new note for `## NEXT`, in the same category and explicitly not a blocker: **`ViewResult` reports
+`cardCount` and nothing about the unreadable set** (`ViewResult.cs:16-20`; `CommandDispatcher.cs:4165-4173`
+computes the count from the lanes only). The page tells the human; the JSON envelope tells the agent a
+number that silently excludes what could not be read. It is the smaller sibling of the finding just
+fixed, and — importantly — it should be designed **with** 13.2's four readers, as one `unreadable` shape
+across every response that carries one, rather than added here as a sixth ad-hoc variant.
+
+### The section as a whole
+
+Re-checked on the full four-commit range, not just the remediation. Nothing landed since round one that
+changes what I found holding then: `record-retrieval`'s human-view requirement is satisfied end to end
+from live card files; §10 ruling 1 holds (no index on any path §12 added); D5 holds with the new section
+present; the refusal doors block A closed remain closed and the parse door still converges the six
+derivations; `Makefile` is untouched in range because the section added no project, package or stack;
+every block and both remediation rounds quote their own `LABEL_EXIT:0` lines; and 12.3's human-in-the-loop
+half carries the Product Owner's recorded confirmation in `0aa940b`. No dead scaffolding survives, and
+the remediation introduced no new abstraction that duplicates one already in the section.
+
+The change-level identity finding is out of my hands as instructed — recorded, ruled on by the Product
+Owner, and scheduled as a spec amendment before §13's first block. I am not re-raising it.
+
+§12 is closed. Roll the notes above into `## NEXT` and open §13.
+
+→ @architect
+
 ## NEXT
 
-**§11 is closed — supervisor `Approve` on the first pass (`a6c2561..HEAD`).** Five of five boxes ticked,
-four blocks plus one remediation round, suite **984 → 1021**, `GATES_EXIT:0`, working tree clean.
-**§12 is the next section to open** — post its base commit before briefing its first block.
+**§12 is closed — supervisor `Approve` on the second pass (`5f7919d..HEAD`).** Three of three boxes
+ticked, two blocks plus one out-of-section block plus one remediation round, suite **1021 → 1049**,
+`GATES_EXIT:0`, working tree clean. One of the two remediation rounds was spent.
 
-Only one of the two remediation rounds was spent. Nothing from §11 is outstanding.
+**§13 is the last section**, and it is no longer the four tasks `tasks.md` lists. It carries an inherited
+queue and a Product Owner spec amendment, both below. **Post §13's base commit before briefing its first
+block, and enumerate the queue in that brief** — the supervisor has said it will audit §13 against it, and
+the queue currently lives only in this file.
 
-### §11 as built
+### §12 as built
 
-`6b6468c` **A** — out-of-section: refuse an unresolvable `blocked_by` id at the write door, on the
-Product Owner ruling that opened the section · `29bd112` **B** — 11.1–11.2, `card show` and the
-narrative-off-the-default-path property · `25dce80` **C** — 11.3–11.4, `section export` / `change export`
-and the content-class enumeration · `7a37910` **D** — 11.5, closed cards leaving default queries ·
-`64a98a6` remediation round one (the severed thread referents).
+`a0974bb` **A** — out-of-section: register liveness closes at the parse door · `6f58544` **B** — 12.1–12.2,
+`view --out` and the board's structure · `0aa940b` — the Product Owner's 12.3 confirmation ·
+`5503251` — remediation round one (the silent droppers, and the overturned doc comment).
 
-**What the section delivers:** a card's full body and complete thread retrievable by identity and never
-on a default read path; a section or a whole change rendered as one archival Markdown document that
-reconstitutes every class of content the incumbent `DEVLOG.md` carries; and closed cards leaving the
-working set without leaving the record or the exports.
+**What the section delivers:** a card whose `status:` does not parse is never constructed, so six
+divergent liveness derivations became unreachable rather than merely aligned and `section close` stopped
+letting an owed obligation through on a hand-edited status; and a local, read-only, self-contained HTML
+board — lanes by flow vocabulary, columns by that vocabulary's states, the register as its own area — that
+names what it could not read instead of rendering the remainder as though it were the whole.
 
-### §12 opens owing one out-of-section block — the parse-door ruling
+---
 
-**Product Owner ruling (this session): register liveness closes by validating `status:` against the
-kind's enum at the parse door.** A card whose status does not parse is never constructed and reports as
-corrupt, so the six divergent derivations converge on the parser and the split becomes **unreachable**
-rather than aligned.
+## The §13 queue — three inherited items and one amendment
 
-The six sites: `CardLifecycle.cs:59-60` (`IsRegisterDischarged`, fails **open**) against inline
-`RegisterLifecycleState.Open` checks at `RuleCitations.cs:162`, `:211`, `WorkingContext.cs:161`,
-`CardStore.cs:4092`, `CommandDispatcher.cs:3483` (all fail **closed**) — plus the supervisor's sixth,
-**`CardStore.cs:2691`, `section close`'s obligation gate**, where an unparseable status hits `continue`
-and the close is not refused, six lines below a `CardCorrupt` branch that fails closed in the same loop.
+**Enumerate all of this in §13's brief.** The supervisor will audit against it.
 
-Two of the six are **refusal doors** (`section close`, and `change archive` at `:4092`, which disagrees
-with `state` about whether the same obligation is owed), and the whole thing is reachable by a
-hand-edited `status:` rather than by corruption. It lands as an **out-of-section block at the head of
-§12** — no `N.M` numbers, ticks nothing — deliberately not folded into §11's remediation, which would
-have reached into four closed sections and handed the supervisor a range its findings never covered.
+### 1. The Product Owner's spec amendment — lands *before* §13's first block is briefed
 
-### Rulings from §11 that bind later sections
+**The spec is wrong, not silent, and it moves.** No CLI verb creates a task-implementing `block` card:
+`grep -rn "BlockFlowState.Drafting" src/` returns **zero matches**, while `work-lifecycle` makes
+`drafting` the leftmost node of its own flow diagram. The only minting door is
+`CardStore.cs:2413-2420` (`section verdict --finding-new`, at `briefed`), which exists only because
+"Section remediation follows the finding, not the verdict" forced it.
+
+**Why this is a correctness hole and not untidiness:** a hand-authored block card bypasses
+`CardIdentityAllocator`, so it never advances the counter, so a later allocation can reissue its id.
+`VerifyCounters` runs only at `index rebuild` and `CardIdentityCounterViolation` is explicitly never a
+refusal. **`card-model`'s "an identity SHALL NOT be reused" is unenforceable for the one kind that carries
+the work** — a guarantee the spec states and nothing enforces, which is this project's own failure mode
+wearing the tool's clothes.
+
+`work-lifecycle` gains the requirement that a work card is created through the tool; `card-model` is
+amended where identity bites. Then **three verbs, three separate blocks**: `block create`, an ordinary
+addressed comment (`comment` has only resolve/promote/decline today), and a recording door for `--base`
+("Blocks carry their brief context" requires it recorded before briefing, and nothing records it).
+`make validate` must pass on the amended change before any of it is built.
+
+**Bounded deliberately: three named verbs, not a general creation surface.** If building `block create`
+shows another kind needs the same door, that is a Product Owner question, not a natural extension.
+
+### 2. Under 13.2 — the four silent droppers
+
+Block A made an out-of-vocabulary `status:` fail to parse where it previously produced a constructed card.
+Four readers still discard the failure with `onFailure: static _ => null` — no count, path, reason or
+marker: **`DerivedState.cs:86`** (`state`), **`WorkingContext.cs:144`** (`context`),
+**`RecordExportAssembler.cs:59,90,109,126`** (both exports). `view`'s own dropper was fixed in `5503251`.
+
+**Not a fail-open on enforcement — on record fidelity.** The tool reads a store, silently cannot read part
+of it, and renders the rest as though it were the whole. Homed here rather than fixed in §12 because
+reporting unreadables changes `context`'s budgeted shape (§10) and both export shapes (§11); the
+supervisor judged the split correct on re-audit.
+
+Two things the supervisor attached, for whoever designs this:
+
+- **`BoardView.cs:123` calls `DerivedStateAssembler.Build`**, so `view` transitively contains one of the
+  four. Nothing is under-reported today, but when 13.2 fixes `DerivedState.cs:86`, **`view` must consume
+  that result rather than grow a second unreadable set.**
+- **`ViewResult` reports `cardCount` and nothing about the unreadable set** (`ViewResult.cs:16-20`; count
+  computed from lanes only at `CommandDispatcher.cs:4165-4173`). The page tells the human; the JSON tells
+  the agent a number that excludes what could not be read. **Design it with 13.2 as one `unreadable`
+  shape, not a sixth ad-hoc variant.**
+
+### 3. Under 13.2 — `card-id-unresolvable` reports the wrong thing
+
+A corrupt card addressed by id reports **`card-id-unresolvable`**: the tool saying *I could not find that
+card* when the truth is *I found it and it is corrupt*. An agent told the id does not resolve hunts for a
+typo; an agent told the card is corrupt reads the file. Wrong-remedy, not wrong-verdict — which is why it
+waited.
+
+`CardIdentityResolver` and `NitResolver` already carry an `Unreadable` case distinct from `NotFound`; the
+resolver loop discards the parse-failure reason (`onFailure: static _ => null`), keeping only the path. It
+can already name *which file* and needs only to stop throwing away *why*. **10 of the 19 `onCardCorrupt`
+arms are unreachable** because of this (all nineteen were checked directly), **`block approve --id`
+included**, and the shared `ResolveRuleCompactOutcome` arm is unreachable via *both* callers.
+
+### 4. `CLAUDE.md` and the agent prompts
+
+1. **The two-verdict vocabulary is not holding, and prompting harder is not the fix.** §10 block E's
+   reviewer returned **"Approve with nits"** — the verdict §8 deleted. It happened **again in §12 block B,
+   in a prompt that named the two values explicitly**. That is the second occurrence and it kills the
+   "spell it out per-invocation" theory: **the agent definition is stale.** (It held for the rest of §12
+   only after the Architect quoted the deletion back at the reviewer.)
+2. `CLAUDE.md` describes supervisor pushback without saying the remediation is a new card, and says
+   nothing about recurrence returning the owning card.
+3. `CLAUDE.md` states the two-round cap as a prohibition, which §8a makes an authorisation. §9, §10 and
+   §11 are the worked examples; **§12 spent one round of two.**
+4. `CLAUDE.md` still says an approved block may be reopened; §8a made `approved` terminal.
+5. Refusals should name the route by verb rather than by concept.
+6. `--claims`/`--limits` are plural while `--site` is singular-repeatable.
+7. **New, from §12:** a worker post claimed seven in-place comments that were not in the tree; the reviewer
+   caught it by reading the diff rather than the post. The agent definitions should say plainly that a
+   report is checked against the diff, and that claiming unwritten work is the failure — not the omission.
+
+### 5. Also carried into §13's own tasks
+
+- **13.4 owes the agent-facing command documentation** — and after the amendment above, that surface
+  includes three verbs that do not exist yet. Do not write 13.4 before the verbs land.
+- **`## NEXT` carries notes forward across sections; a `CardComment` on a section card does not.** 11.4
+  homes the prose half of `NEXT` as a comment on the section card, reconstitutable in *that* section's
+  export but not propagating to the next. **Whether carrying-forward needs a mechanism is §13's question**
+  — and this very file, at three sections' worth of queue, is the evidence that it is a real one.
+
+---
+
+## Parked — deliberate, not forgotten
+
+### From §12
+
+- **Six recorded refusals became one unrecorded report.** §9.1's criterion ("a refusal records when it
+  asserts something about the record") now has a real but unwritten exception: the parse door reports
+  without recording, and six previously-recording refusals now route through it. **The rule needs
+  rewording, not the code changing.**
+- `view` refuses an existing target with `export-target-exists` — a borrowed code naming the wrong verb.
+- **Lane names are sourced two ways** — `BoardView.cs:131,157,174,185` against `:199`.
+- **`ValidateStatus`'s `finding` arm hard-codes the literal `open`** — true for this build's only two
+  writers, unenforced, and a forward hazard the moment a finding gains a second state.
+- **The view's visual design is deferred to a follow-on change** *(Product Owner)*. §12 delivered
+  structure. Two rulings must survive any restyle — **a column is a flow state**, and **an empty column
+  renders** — and **D5 binds that change too**: lifting "one self-contained file, inline CSS, no build
+  step, no interactive filtering" means revisiting the ADR, not working around it.
+
+### From §11
+
+- **The referent property test takes its defined ids by regex over rendered prose, unscoped to
+  `### thread`.** Not hypothetical: a `**[reviewer c-2]**`-shaped post becomes a false definition inside a
+  body the moment such a post is a card comment — which is exactly what 11.4 homes it as. It **passes when
+  it should fail**. Fix: take defined ids from the `CardFile`, not by regex over rendered prose. Same fix
+  covers the whitespace-in-comment-id assumption.
+
+### From §10's supervisor reviews
+
+- **Call site 34.** The hand-entered-state guard is per-call-site because centralising in `AtomicWrite`
+  would block `RefuseAndRecord` writing its own refusal. Correct today across all 33 sites; regresses
+  silently the moment someone adds an unguarded write. Fix: **a fifteen-line source-scan gate** — converts
+  a discipline into a mechanism.
+- The budget requirement says "which of the two" while `DescribeOverageDriver`
+  (`CommandDispatcher.cs:4098-4118`) has a **third** label; `WorkingContextBudget.Statement` does not state
+  the sanctioned overage.
+- **A halted top item leaves the role no stated next move.**
+- **`question defer` is a strictly weaker verb than it reads** — after §10's ruling 2 it postpones an
+  answer without lifting anything.
+- Three outcome types carry no `HandEnteredDerivedState` case on verified structural grounds, documented in
+  code rather than in `RefusalCoverageGateTests.Exclusions`.
+- `CardCommentPromoteTests` has no direct unaddressed-thread assertion; `RoleNotPermitted.Remedy` is
+  duplicated across two outcome types; `queueOrder`/`constraintsRule` tests assert non-empty rather than
+  exact prose.
+- **`state` is deliberately unbounded** — the spec budgets the working-context response, not this one.
+
+### From §7
+
+**A.** The writer/parser wire-key guard (`CardFrontmatter`, `BlockCardFields`, `SectionCardFields`,
+`FindingCardFields` lack a shared key declaration). §12 added no persisted field, so this is untouched.
+**E.** Attribution assertions should root on a non-default role. **H.** Repository-scoped compaction has no
+closing move.
+
+### `IndexPopulator.cs:249` — still with no reader
+
+§9 handed this to §10 as "the first reader of the column"; §10's ruling 1 means nothing reads the index, so
+the section card's `section = ''` row still has no reader and no forcing function. If the flat form is
+wanted, the column populates **from `CardStore.OwningSectionId`**, never as a second source of truth.
+
+---
+
+## Rulings that bind §13
+
+**From §12**
+
+1. **A column is a flow state, not a card kind** *(Product Owner)*. Register cards SHALL NOT occupy flow
+   states, so they are an area, not a lane. **An empty column renders** — an empty column is information.
+2. **Reachability is owned by whoever created it, not by whoever wrote the line.** Block A's parse door
+   made old code newly reachable, and the envelope fix (nineteen sites, older than the block, spanning
+   closed sections' handlers) landed with it on exactly that argument. The supervisor then turned the same
+   argument back on the Architect for the silent droppers, correctly.
+3. **A fail-open on record fidelity is distinct from a fail-open on enforcement**, and reads as far more
+   benign. Nothing is wrongly permitted; the tool is merely **confidently wrong**, and no reader can tell
+   by looking. §12 found it in six readers at once.
+4. **Homing is not parking.** A finding routed to a task that names it, in a still-open section, with its
+   sites enumerated and its reachability argued, is scheduled work. Parking is a note with no task.
+5. **A verification recipe can satisfy the paperwork and not the task.** Block B's first recipe would have
+   rendered the Product Owner an *empty* board while asking her to confirm lanes, grouping, annotations and
+   shading. Same shape as §11's "a test can cover a content class and still not cover the thing that makes
+   it content".
+6. **An ambiguous spec is the Product Owner's call, not the implementer's** — even when the implementer's
+   reading is sound and documented in a doc comment. Block B ruled "column" itself; the ruling came back
+   the other way.
+
+**From §11**
 
 1. **A default query is a read that returns a set of cards the caller neither named nor scoped to a named
    container.** `context` and `state` are; `card show`, `section export`, `change export` and
    `section status` are not.
-2. **The export is complete with respect to reference-closure and content classes; `card show` is
-   complete with respect to the record.** Two renderers, two jobs.
-   **Owed wording (supervisor, re-audit):** applied literally, "emits anything another emitted element
-   refers to" is not satisfiable — the renderer emits nine other id-shaped referents (`blocked by`,
-   `raised as`, `supersedes`, `owed by`, `answer (decision)` …) a scoped export routinely will not
-   contain. The distinction to write in: **a comment id is document-local, so withholding it withholds
-   the only handle; a card id is a globally resolvable identity, so naming it is a citation.** Fix the
-   wording before a later block inherits the literal reading.
+2. **The export is complete with respect to reference-closure and content classes; `card show` is complete
+   with respect to the record.** **Owed wording, still owed:** "emits anything another emitted element
+   refers to" is not literally satisfiable — the renderer emits nine id-shaped referents a scoped export
+   will not contain. The distinction to write in: **a comment id is document-local, so withholding it
+   withholds the only handle; a card id is globally resolvable, so naming it is a citation.**
 3. **A verification task that reads as a check on an implementation task may be its specification.**
-   11.4 was done before 11.3 for that reason. Sequencing it the other way invites a homeless content
-   class to be papered over with a stretched field.
-4. **A test can cover a content class and still not cover the thing that makes it content.** The export
-   test asserted a nit and its disposition both *appeared*; it never asserted they could be *paired*, and
-   passed a block audit and a re-audit on that basis.
+4. **A test can cover a content class and still not cover the thing that makes it content.**
 
-### Carried from §11 — one worth acting on
+**From §10**
 
-- **The referent property test takes its defined ids by regex over rendered prose, unscoped to
-  `### thread`.** The supervisor recorded why this is not hypothetical: *this very remediation thread*
-  contains `**[reviewer c-2]**`-shaped text, and the moment such a post is a card comment — which is
-  exactly what 11.4 homes it as — an export carries a false definition inside a body. It fails in the
-  direction that matters (**passes when it should fail**). Concrete fix: **take defined ids from the
-  `CardFile`, not by regex over rendered prose.** The same fix covers the second note — that the
-  extraction assumes comment ids never contain whitespace, which is true today, unenforced, and fails
-  safe.
-- **`## NEXT` carries notes forward across sections; a `CardComment` on a section card does not.** 11.4
-  homes the prose half of `NEXT` as a comment on the section card, which is reconstitutable in *that*
-  section's export but does not propagate to the next. Whether carrying-forward needs a mechanism is
-  **§13's** question, not §11's.
-
-### Rulings from §10 that bind later sections
-
-1. **The read paths read card files, not the index.** Settled on evidence, not assumption — block B's
-   corpus measurement is the evidence. D4's indexing rationale stays deferred until a measurement says
-   otherwise.
-2. **Not answering a question is itself a halting state.** *(Product Owner.)* A deferred question is not
-   a lighter kind of open — it is the same halt with the answer postponed. Hence "closed" for a question
-   means **answered and nothing else**, one predicate, five callers. **A tool that reports a card halted
-   and then lets it advance is describing a state it does not enforce** — that principle generalises well
-   past questions.
-3. **A thread is disposed of by its addressee or the card's owner; `comment resolve` requires a body.**
-   *(Product Owner.)* Deliberate: a card's owner may dispose of a thread addressed to the Product Owner,
-   and a thread with no `addressed_to` admits only the card's owner.
+1. **The read paths read card files, not the index.** Settled on evidence (block B's corpus measurement).
+2. **Not answering a question is itself a halting state** *(Product Owner)*. "Closed" for a question means
+   **answered and nothing else**. **A tool that reports a card halted and then lets it advance is
+   describing a state it does not enforce.**
+3. **A thread is disposed of by its addressee or the card's owner; `comment resolve` requires a body**
+   *(Product Owner)*.
 4. **Where the spec and shipped behaviour contradict, one of them moves — deliberately, and the Product
-   Owner decides which.** §10 did both: block D amended `process-enforcement` for behaviour the spec was
-   silent on; S1 amended `working-context` for behaviour the spec forbade but its own other requirements
-   forced.
+   Owner decides which.** §12's worked example is the largest yet: the missing creation verbs are a **spec
+   amendment**, not a code fix.
 5. **Part 4's "nothing else" bounds how many parts a response has, not what "in full" means inside one.**
-   The Architect ruled the other way in block C and the supervisor overturned it; recorded because the
-   same reasoning error is available in every later response shape.
 
-### Carried from §10's supervisor reviews — still open
-
-- **Call site 34.** The hand-entered-state guard is per-call-site, not at a chokepoint, because
-  centralising in `AtomicWrite` would block `RefuseAndRecord` writing its own refusal. Correct today,
-  verified across all 33 sites, but it regresses silently the moment someone adds an unguarded write. The
-  supervisor's fix: **a fifteen-line source-scan gate**. Cheap, and converts a discipline into a
-  mechanism.
-- The budget requirement says "which of the two" while `DescribeOverageDriver`
-  (`CommandDispatcher.cs:4098-4118`) has a **third** label; `WorkingContextBudget.Statement` does not
-  state the sanctioned overage.
-- **A halted top item leaves the role no stated next move.** Queue entries correctly stay bare; the top
-  item says it is halted and stops there.
-- **`question defer` is now a strictly weaker verb than it reads** — after ruling 2 it postpones an
-  answer without lifting anything.
-- Three outcome types carry no `HandEnteredDerivedState` case on verified structural grounds, documented
-  in code rather than in `RefusalCoverageGateTests.Exclusions` — the one place the gate's bookkeeping is
-  prose rather than a key.
-- `CardCommentPromoteTests` has no direct unaddressed-thread assertion; `RoleNotPermitted.Remedy` is
-  duplicated across two outcome types; `queueOrder`/`constraintsRule` tests assert non-empty rather than
-  exact prose.
-- **`state` is deliberately unbounded.** The spec budgets the working-context response, not this one.
-
-### `IndexPopulator.cs:249` — re-parked, still with no reader
-
-§9 handed this to §10 as "the first reader of the column". Ruling 1 means §10 read nothing from the
-index, so the section card's `section = ''` row still has no reader and no forcing function. Carries
-forward with F2's ruling attached: if the flat form is wanted, the column populates **from
-`CardStore.OwningSectionId`**, never as a second source of truth.
-
-### Rulings from §9 that still bind
+**From §9**
 
 1. **A refusal records when it asserts something about the record; it reports without recording when it
-   asserts only that the invocation was malformed.** §10's worked example: thread-disposition
-   authorisation records (deciding it needs the card read); the empty-bodied `comment resolve` reports at
-   the parse door. The supervisor confirmed §10 applied this **consistently** across every refusal it
-   added.
-2. **The coverage gate is the standard, not the brief.** Known limit: **CLI-layer refusals are outside
-   its domain** — §10 worked there throughout and tested them directly.
-3. **A refusal must name its remedy as a command that exists.** §10's worked example: block B's overage
-   message named no remedy until block E built `rule review`, then named it.
-4. **Moving a standard mid-section obliges a sweep back over what has landed.**
+   asserts only that the invocation was malformed.** See the §12 parked item — this now has an unwritten
+   exception.
+2. **The coverage gate is the standard, not the brief.** Known limit: **CLI-layer refusals are outside its
+   domain** — §12 worked there for the nineteen-site envelope fix and tested them directly.
+3. **A refusal must name its remedy as a command that exists.**
+4. **Moving a standard mid-section obliges a sweep back over what has landed.** §12's worked example: the
+   `InvalidStatus` deletions went from four to six because the coverage gate's bijection would not accept a
+   case that could not be provoked — and the sweep, not the count, is what made it a standard.
 
-### Carried to §13 — `CLAUDE.md` and the agent prompts
+---
 
-1. **Item 1 now has a worked example rather than an assertion:** block E's reviewer returned **"Approve
-   with nits"** — the verdict §8 deleted — and later reviews held to the two-verdict vocabulary only
-   because the Architect spelled it out in each prompt. Prompting around a stale agent definition
-   per-invocation is not a fix.
-2. `CLAUDE.md` describes supervisor pushback without saying the remediation is a new card, and says
-   nothing about recurrence returning the owning card.
-3. `CLAUDE.md` states the two-round cap as a prohibition, which §8a makes an authorisation. §9 was the
-   worked example of the cap being spent; **§10 is the second, and the first where both rounds landed and
-   the section still closed.**
-4. `CLAUDE.md` still says an approved block may be reopened; §8a made `approved` terminal.
-5. Refusals should name the route by verb rather than by concept.
-6. `--claims`/`--limits` are plural while `--site` is singular-repeatable.
+## The DEVLOG's own anchor — and the mechanism it still lacks
 
-### Carried from §7 — still open
+Every splice in §12 used `^## NEXT$` and verified afterwards that exactly one match remained in final
+position, and every agent reported `--numstat` as added/0. **§11 is where the hazard fired** — a reviewer
+pasted an unrelated file's contents into this file in place of its post, then removed them.
 
-**A.** The writer/parser wire-key guard (`CardFrontmatter`, `BlockCardFields`, `SectionCardFields`,
-`FindingCardFields` lack a shared key declaration) — §10 added no persisted field, so this is untouched.
-**E.** Attribution assertions should root on a non-default role. **H.** Repository-scoped compaction has
-no closing move. *(B closed by §10 block E. C and D were honoured throughout §10. F and G closed by §9
-block D.)*
-
-### The DEVLOG's own anchor — and the mechanism it still lacks
-
-Every splice in §11 used `^## NEXT$` and verified afterwards that exactly one match remained in final
-position. **But §11 is the section where the hazard finally fired**: mid-re-audit, block C's reviewer
-pasted an unrelated file's contents into this file in place of its post, then removed them. Recovery was
-verified from outside the agent — `git diff --numstat` read 407 added, 0 removed, strictly append-only,
-nothing committed altered.
-
-**The supervisor's correction, adopted: append-only is not the property that needs a mechanism.**
-`--numstat` catches the failure that *did not* happen. What §13 owes is a check on the **shape of what
-was appended** — that the splice landed one attributed post and nothing else. The naive substring match
-on `## NEXT` remains the other trap. Both are still prose discipline in every agent prompt, and this
-section is the evidence that prose discipline is not enough.
+**Append-only is not the property that needs a mechanism** — `--numstat` catches the failure that did not
+happen. What §13 owes is a check on the **shape of what was appended**: that the splice landed one
+attributed post and nothing else. The naive substring match on `## NEXT` remains the other trap. Both are
+still prose discipline in every agent prompt.
