@@ -32082,6 +32082,420 @@ No blockers.
 
 → @architect
 
+**[supervisor]** §11 section review — scope `a6c2561..HEAD` (4 commits: block A `6b6468c`, B
+`29bd112`, C `25dce80`, D `7a37910`). Read the whole thread, the four briefs, five reviewer verdicts,
+and `specs/record-retrieval/spec.md`'s two requirements plus the closed-cards scenario.
+
+**Verdict: Request changes.** One blocker, and it is exactly the shape a diff-local review cannot
+reach: the section shipped **two renderers over one record**, and they disagree on what "in full"
+means.
+
+**Gates — reran in the foreground, exit lines read directly, not inferred from output.**
+```
+BUILD_EXIT:0
+TEST_EXIT:0    (1020 total, 0 failed, 0 skipped)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+Matches the reported 1020 at `7a37910` (894 → 984 across §10; 1005, 1018, 1020 across §11).
+
+### Blocker — the export emits references into a namespace it never prints
+
+`RecordExportRenderer.AppendThread` (`src/Callboard/Cards/RecordExportRenderer.cs:399-448`) renders
+every comment's `To`, `ReplyTo`, `Resolves`, nit metadata and `Disposition` — but **never the
+comment's own `Id`**. `CardComment.Id` (`src/Callboard/Cards/CardComment.cs:50`) is the only handle
+those three fields refer by, and block B decided it is part of "in full": `card show` emits it
+(`Cli/CardShowResult.cs:116`).
+
+So an exported document contains lines of the form
+
+```
+**[worker]** 2026-08-27T09:00:00.0000000+00:00 (replies to c-2) (resolves c-2) [disposition: fix-before-land]
+```
+
+where `c-2` appears nowhere else in the document. Two consequences, both against 11.4's own central
+claim:
+
+1. **The "nit + its disposition" row of the 11.4 table is rendered but not reconstitutable.** The
+   table (block C's post) homes the pair as `IsNit`/`Required`/`Sites` **plus** a later comment's
+   `Resolves`/`Disposition`. The export emits both halves and destroys the link between them. In a
+   three-comment fixture adjacency makes it guessable; in the 31,000-line DEVLOG this export exists to
+   replace — where a nit is disposed rounds later, among dozens of threads — it is not recoverable at
+   all. `record-retrieval` requires every class to be *"reconstitutable by this export"*, and this
+   class is not.
+2. **Same for the thread's reply structure** (`ReplyTo`). The incumbent DEVLOG carried reply structure
+   in prose and position, unambiguously. The export replaces that with an identifier it withholds — a
+   net loss against the log it is specified to approximate, and a degraded-mode regression: a human
+   reading the exported artefact cannot resolve a reference the tool itself put there.
+
+`RecordExportTests.SectionExport_RendersEveryContentClass_InReadingOrder`
+(`tests/Callboard.Tests/RecordExportTests.cs:110-189`) asserts `[NIT, sites: ...]` and
+`[disposition: fix-before-land]` each appear. It never asserts they can be **paired**, which is why
+this passed block C's audit and its re-audit.
+
+**Why block review could not catch it.** Block B's reviewer checked `CardShowResult` field-for-field
+against `CardFile`/`CardComment` — correct, nothing dropped. Block C's reviewer checked the 11.4 table
+row-by-row against the *model* and confirmed the renderer reads every group — also correct. Nobody
+compared **B's output to C's**, because no single diff contains both. `RecordExportRenderer` sits in
+`Cards/` and renders from `CardFile`; `CardShowResult` sits in `Cli/`. The layering is right; the
+agreement was never established.
+
+### The same divergence, secondary, to settle in the same block
+
+`card show` emits, and the export drops: `unknownFrontmatterFields` (`CardShowResult.cs:57`),
+`unknownHeaderFields` (`:149`), every sequence entry's `unknownFields` (`:166,229,245,258,301,318,449`),
+and `CardApprovalClaim.Id` (`:236`).
+
+The unknown-field groups are not incidental. `CardFile`'s own doc comment
+(`Cards/CardFile.cs:12-20`) makes preserving them the extensibility rule §2 owns for the format,
+explicitly on ADR-0003's degraded-mode footing — *"a record humans are expected to hand-edit"*. The
+export is the **archival** artefact, and it silently discards the one category of content the record
+goes out of its way never to lose. Block C's reviewer noticed one instance
+(`SectionVerdictEntry.UnknownFields`) and reasoned it away per-field; the section-level view is that
+this is a uniform, undecided divergence across seven sites, not a per-field judgement call.
+
+I am not prescribing that it must be emitted — an archival document reasonably declines to carry
+forward-compat wire debris. I am blocking on it being **decided and recorded** rather than left as
+drift between two renderers, because "what does a full rendering of a card include" is now answered
+twice, differently, in one codebase.
+
+### Suggested remediation shape — one fix block, no new `N.M` numbers
+
+- `RecordExportRenderer.AppendThread`: emit each comment's own `Id` on its header line, so `ReplyTo`
+  and `Resolves` resolve within the document.
+- One test asserting the **pairing**, not the presence: from the exported text, locate the
+  disposition's `resolves` target and assert the comment bearing that id is the one carrying
+  `[NIT, ...]`. A test that only asserts both strings appear is what let this through.
+- State the unknown-fields boundary in `RecordExportRenderer`'s class doc comment, one way or the
+  other, and say which in the DEVLOG. If the answer is "emit them", it is a `### unknown fields`
+  block per card and per comment; if "deliberately not", the reason belongs beside the claim that
+  every content class has a rendering.
+- Optional, and I would take it: `RecordExportAssembler.ReadingOrderDescription`
+  (`Cards/RecordExportAssembler.cs:34`) is a `const` referenced by **nothing but a `<see cref>`** in
+  another file's doc comment (grepped `src` and `tests`). Emitting it into the exported document's
+  header would turn near-dead scaffolding into the thing that makes the artefact self-describing to a
+  reader with no tool — which is the property this whole capability is for.
+
+### Everything else in the section holds
+
+- **Block A, audited against the Product Owner ruling under this heading, not against §11's spec.**
+  The write-door refusal is correctly placed: `AlreadyBlockedBy` and `LayoutMismatch` (both decidable
+  from this write's own inputs) run before the resolver walk, and `validateBeforeWrite` sits
+  immediately before the only write. `FindBlockingOpenProductOwnerQuestion` untouched, per the ruling.
+  Out-of-section placement, no `N.M`, ticks nothing — as ruled. Correct.
+- **Refusal coverage as a set.** `BlockerUnresolvable` is the section's only *recording* refusal and
+  takes `RefuseAndRecord` with `ICardRefusalReason`; its remedy names `block add-blocker` with a
+  positional id, which is what `CommandParser.ParseBlockedByMutation` actually accepts (§9 ruling 3
+  holds — the brief's own draft named a `--blocker` flag that does not exist, and the worker caught
+  it). Everything blocks B–D added is a pure read and reports with a bare `CommandOutcome.Refusal`, no
+  `Rule`/`Remedy`, no lock, never the index — §9 ruling 1 holds across the set. Registry entry added
+  and the coverage gate run.
+- **The spec's second half — narrative off every default read path — holds as a union, not just per
+  command.** `card show`, `section export`, `change export` are all caller-named or
+  caller-scoped, none is a default query. `context` is pinned by
+  `CommandDispatcherContextNarrativeLeakTests` against the raw serialised response (a leak through a
+  field the test never names would still be caught). I checked the other default path the section did
+  not: `StateResult` (`Cli/StateResult.cs`) carries ids, titles, paths and flags only — no `body`, no
+  `comments`. The union holds.
+- **Budget guarantee end to end.** The section's two unbounded read paths both stay off the
+  working-context response: `card show` is the quotable path by design, and export writes a file and
+  puts only the path on the envelope (decision 2) rather than a multi-megabyte escaped line. Nothing
+  §11 added widens `context`.
+- **Write protocol.** The one write the section adds is the export file, and it is temp-file +
+  atomic rename (`RecordExportWriter.WriteAtomically`), with the temp cleaned up in `finally` and no
+  card lock taken — correct, since the target is not a card.
+- **CLI surface reads as one design.** `card show` top-level and kind-agnostic; `section export` /
+  `change export` as subcommands of nouns that already have subcommand tables; positional ids
+  throughout; `--out` / `--force` identical in both export subcommands; `card` added to the
+  `unknown-command` known-verbs list. No drift.
+- **11.5's `## NEXT` decomposition** — re-checked against `proposal.md:36` as invited. It holds. The
+  resume-point half is genuinely what §10's derived `state`/`context` compute, and the prose half is
+  narrative attached to a card, which is what a `CardComment` already is. No field was stretched.
+- No dead scaffolding beyond the `ReadingOrderDescription` note above; no duplicated abstraction;
+  every gate target still covers what the section shipped (no new project or package).
+- No human-in-the-loop task in this section, so no missing Product Owner confirmation.
+
+### ❓ @architect — the liveness split is a Product Owner ruling, not a `## NEXT` carry
+
+Block D's reviewer found and demonstrated it. I am escalating its placement, and I found one site it
+did not.
+
+`CardLifecycle.IsRegisterDischarged` (`Cards/CardLifecycle.cs:59-60`) is `TryParse && == Discharged`,
+so an unparseable `status:` reads **live**. Five inline checks are `TryParse && == Open`
+(`Cards/RuleCitations.cs:162,211`, `Cards/WorkingContext.cs:161`, `Cards/CardStore.cs:4092`,
+`Cli/CommandDispatcher.cs:3483`), so the identical failure reads **not live**. The reviewer's
+demonstration stands.
+
+**The sixth site, which changes the severity: `CardStore.cs:2691` — `section close`'s obligation
+gate.** An obligation owed by the section whose `status:` does not parse hits `continue` and is never
+counted as open, so **the close is not refused**. Six lines above it, in the same loop, a card that
+fails to *parse* refuses the whole close (`CardCorrupt`) — the comment there even says "conservative
+... an unreadable card anywhere in this directory refuses the whole close". So one loop fails closed
+on a corrupt file and open on a corrupt status value, which is the identical asymmetry the ruling at
+the top of this section settled for `blocked_by`.
+
+That means the divergence is not confined to report paths. It reaches **two refusal doors**:
+
+- `section close` (`CardStore.cs:2691`) — closes a section with an unsettled obligation.
+- `change archive` (`CardStore.cs:4092`) — archives a change while `state`
+  (`Cards/DerivedState.cs:88` → `IsClosed`) simultaneously reports that same obligation live and owed.
+  Two enforcement answers about one card, contradicting.
+
+And it is reachable without corruption: `CardFrontmatter.Status` is a free string, nothing validates
+it against the kind's enum at parse time, so a hand-edited card — which ADR-0003 explicitly invites —
+gets there. A typo, again, not a disk fault.
+
+**My recommendation: put it to the Product Owner now, before §12 opens.** Not a §11 remediation block
+— §11 neither introduced nor worsened it, and no block was authorised to touch those files. But not a
+`## NEXT` carry either: a `## NEXT` carry is precisely how the identical defect class survived §10's
+four blocks and two audits, and it was only closed because it became a Product Owner ruling at the top
+of this section. Repeating the weaker mechanism for a **worse** instance — one that reaches refusal
+doors rather than a read path — would be a knowing regression in process.
+
+It needs a decision, not an implementation, and the decision is not §11's: whether to fail closed at
+all six sites, or to **validate `status:` against the kind's enum at the parse door** — the one place
+all six converge, and the answer that makes the class unreachable rather than handled six times — or
+to state a deliberate per-site policy. That spans §5, §7, §9 and §10. If the ruling is "fix", block A
+of this section is the precedent for where it lands: out-of-section, no `N.M`, ticks nothing.
+
+Also worth acting on whatever the ruling: `CardLifecycle`'s class doc comment claims to be "the one
+place 'closed' is defined per kind", and that is not true of the shipped codebase.
+
+### The DEVLOG splice incident — the carry is sufficient, with one sharpening
+
+The architect's verification was the right one and I am not re-opening it: `git diff --numstat` showing
+407 added / 0 removed proves no committed line was altered, and exactly one `^## NEXT$` remains in
+final position (I re-checked both). Making this a §11 finding would push a tooling obligation into a
+section that does not own the tooling; §13 already owes the anchor check and this widens it correctly.
+
+The sharpening: **append-only is not the property that needs the mechanism.** `--numstat` against
+`HEAD` catches deletion of committed lines, which is the failure that did not happen. It would not
+catch an auditor *appending* foreign content that then gets committed — which is the failure that
+nearly did. The check §13 owes should be about the shape of what was appended (attribution prefix
+present, no unexpected `^## ` heading introduced, the anchor still last), not about line arithmetic.
+
+### For `## NEXT` when this section eventually closes
+
+- The register-liveness ruling above, once the Product Owner has made it, plus the `CardLifecycle`
+  doc-comment correction.
+- `change export`'s asymmetry with `section export`, which block C's reviewer flagged and I confirm is
+  real: `section export` resolves through `ResolveRecordDirectories` and therefore works on a card in
+  an **archived** change, while `change export` gates on `Directory.Exists` under the live changes root
+  only (`Cli/CommandDispatcher.cs:4147-4153`) and cannot export an archived change at all. The refusal
+  text says *"no live change named ..."*, which is accurate but names a distinction the surface offers
+  no way to cross. Given §13 owns archival, decide it there rather than leaving it as an accident.
+- `--out` is resolved relative to **repo root**, not the caller's working directory
+  (`Path.GetFullPath(Path.Combine(repoRoot, parsed.OutputPath))`, `CommandDispatcher.cs:4100,4155`).
+  Absolute paths behave; a relative `--out out.md` typed from a subdirectory lands somewhere the caller
+  did not point at. §12's human view will be the second command to take an output path — settle the
+  convention once, there, and make both obey it.
+- Block C's reviewer's note that `CardsForChange` reads `ReadAllCards(changeDirectory)` twice. Correct
+  as written, not worth complicating today.
+
+→ @architect
+
+**[architect]** Supervisor findings answered — one remediation block, one Product Owner ruling.
+
+### The blocker is real. I verified it before acting.
+
+`RecordExportRenderer.AppendThread` emits `(replies to …)`, `(resolves …)` and `[disposition: …]`, and
+emits no comment's own `Id` anywhere in the document. The referents point at nothing. The supervisor's
+reading of why two audits passed it is right and worth keeping: `SectionExport_RendersEveryContentClass_
+InReadingOrder` asserts both strings **appear**, never that they can be **paired**. A test can cover a
+content class and still not cover the thing that makes it content.
+
+### The boundary the supervisor asked me to decide, decided
+
+It declined to prescribe whether `unknownFrontmatterFields`, `unknownHeaderFields`, the sequences'
+`unknownFields` and `CardApprovalClaim.Id` should be exported, asking only that the boundary be **stated
+rather than left as drift**. It is this:
+
+> **The export is complete with respect to reference-closure and content classes. `card show` is complete
+> with respect to the record.**
+
+Two renderers, two jobs. The export is *"a single readable document approximating the shape of the log it
+replaces"* — a human archival artefact, so it emits every DEVLOG content class, and it emits anything
+another emitted element refers to, because a document that names an identifier it never defines is
+broken **as a document**. `card show` is the machine-facing quotable path and stays complete with respect
+to the record, unknown fields verbatim included.
+
+Applied: **comment `Id` is emitted** (a referent of `ReplyTo`/`Resolves`, so reference-closure demands
+it). **`CardApprovalClaim.Id` is emitted only if another exported element refers to it** — check, do not
+assume. **The `unknown*` groups are not exported**: they are forward-compatibility capture, not a DEVLOG
+content class, and `card show` already preserves them. Put this in `RecordExportRenderer`'s doc comment
+so the next reader inherits the rule rather than the outcome.
+
+### ❓→ Product Owner: answered. Register liveness closes at the parse door.
+
+The supervisor escalated the six-site split and argued it needed a ruling now rather than a `## NEXT`
+carry, because a `## NEXT` carry is exactly how the identical class survived §10. It also found a
+**sixth** site the block reviewer missed — `CardStore.cs:2691`, `section close`'s obligation gate, six
+lines below a `CardCorrupt` branch that fails closed on the same loop — putting the divergence on two
+**refusal doors** and making it reachable by a hand-edited `status:` rather than by corruption.
+
+**Ruling: validate `status:` against the kind's enum at the parse door.** A card whose status does not
+parse never gets constructed; it reports as a corrupt card, the path that already exists. All six sites
+converge on the parser, so the divergence becomes **unreachable** rather than aligned — the class dies
+instead of six instances being fixed. `record-retrieval`'s damage-containment already expects per-card
+failure, so a corrupt card reporting as corrupt is the intended shape.
+
+**Placement: an out-of-section block at the head of §12**, the same shape block A took this morning — no
+`N.M` numbers, ticks nothing. §5, §7, §9 and §10 are all closed, so there is no remediation slot, and it
+must not be folded into §11's remediation: that would reach into four closed sections from inside a
+remediation block, and hand the supervisor a re-audit range containing work its own findings never
+covered. **This is not §11's to fix, and §11 does not wait on it.**
+
+### The splice carry, sharpened
+
+The supervisor accepted my `## NEXT` carry with a correction I am adopting: append-only is not the
+property that needs a mechanism. `--numstat` catches the failure that **did not** happen. §13's check
+should be about the **shape of what was appended**, not the fact that nothing was removed.
+
+---
+
+**[architect]** Brief — §11 **remediation block**. No `N.M` numbers, ticks nothing. → @worker
+
+1. **Emit each comment's `Id`** in `RecordExportRenderer.AppendThread` so `ReplyTo`, `Resolves` and the
+   nit/disposition pairing resolve **inside the exported document**. Place it where a reader can match a
+   referent to its definition by eye; the shape is yours.
+2. **Check `CardApprovalClaim.Id`** against the same test — is it referred to by anything else the export
+   emits? Emit it if so; if not, say so and leave it out.
+3. **Record the boundary above verbatim** in `RecordExportRenderer`'s class doc comment, along with the
+   `unknown*` exclusion and why.
+4. **Fix the test that let this through.** `SectionExport_RendersEveryContentClass_InReadingOrder` asserts
+   presence, not pairing. Add an assertion that every referent the document contains — every `replies
+   to`, `resolves`, and disposition target — **resolves to a definition in the same document.** Write it
+   so it would have failed before your change; say in your post how you confirmed that.
+5. **Do not touch liveness.** The parse-door ruling above is §12's, not this block's.
+
+Scope: the export renderer and its tests. No `Makefile`/`tasks.md`/`CLAUDE.md`/`.claude/`. Do not commit,
+do not tick. **Done-gates:** `make gates` → all four exit lines plus `GATES_EXIT:0`, suite before and
+after (1020 at `7a37910`). Post here, `→ @reviewer`.
+
+**[worker]** §11 remediation block done — all four items.
+
+1. **Comment `Id` now emitted.** `RecordExportRenderer.AppendThread`'s header line is now
+   `**[<author> <id>]** <timestamp>`, e.g. `**[reviewer c-2]** 2026-08-27T...`. Placed right in the
+   header — the same line a reader is already looking at when they meet `(replies to c-2)`,
+   `(resolves c-2)` or `[disposition: ...]` later in the thread, so the eye finds the definition by
+   scanning upward for the bracketed id rather than hunting.
+2. **`CardApprovalClaim.Id` — not referred to, left out.** Checked: the renderer's claim line
+   (`AppendSequences`) emits `claim.Round` and `claim.Text` only; nothing else this renderer emits —
+   no field, no other sequence, no comment — carries or resolves a claim id. There is no referent to
+   close, so per the ruling it stays unemitted.
+3. **Boundary recorded verbatim** in `RecordExportRenderer`'s class doc comment, as a new `<para>`:
+   states the "reference-closure and content classes" vs. "complete with respect to the record" split,
+   names why `Id` is emitted and `CardApprovalClaim.Id` isn't, and names the `unknown*` groups
+   (`CardFile.UnknownFrontmatterFields`, comment header unknowns, every sequence entry's own
+   `UnknownFields`) as deliberately excluded — forward-compatibility capture for a hand-editable
+   format, not a DEVLOG content class, already preserved verbatim by `card show`.
+4. **New test: `SectionExport_EveryThreadReferent_ResolvesToADefinitionInTheSameDocument`.** A
+   property over the whole document, not a spot check on one comment: regex-collects every id a
+   comment header defines (`\*\*\[[a-z][a-z-]*\s+(\S+)\]\*\*`) and every id a `replies to`/`resolves`
+   referent names, asserts the fixture actually exercises both (`Assert.Contains("c-1", referents)`,
+   same for `c-2` — a fixture with zero referents would make the property vacuously true), then
+   asserts every referent is in the defined set. **Confirmed it can fail:** copied the renderer aside,
+   reverted `AppendThread`'s header line to the pre-fix `**[<author>]** <timestamp>` (no id), rebuilt,
+   ran the new test alone — it failed with `Assert.Contains() Failure: Item not found in set / Set: []
+   / Not found: "c-1"` (referents non-empty, defined-ids empty, exactly the severed-link shape the
+   supervisor described), then restored the fixed file and confirmed it matched byte-for-byte before
+   re-running. Also updated `SectionExport_RendersEveryContentClass_InReadingOrder`'s stale
+   `Assert.Contains("**[worker]**", ...)` to `"**[worker c-1]**"` — the only other place in the test
+   file asserting the old header shape.
+5. **Liveness untouched**, as briefed — no change to `CardLifecycle`, `RuleCitations`, `WorkingContext`,
+   `CardStore`, or `CommandDispatcher`.
+
+**Gates.** `BUILD_EXIT:0`, `TEST_EXIT:0` (1021 total — 1020 at `7a37910` plus this block's one new
+test — 0 failed, 0 skipped), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** §11 remediation block audit — **Approve**.
+
+### Verified independently, not from the worker's transcript
+
+**Reference-closure, read from the renderer itself.** `AppendThread`
+(`src/Callboard/Cards/RecordExportRenderer.cs:419-469`) now emits each comment's own `Id` in the header
+(`**[<author> <id>]** <timestamp>`, `:429-430`). Every referent the renderer can emit resolves to a
+definition it also emits: `ReplyTo` (`:436-439`) and `Resolves` (`:441-444`) both print a comment id, and
+those ids are exactly the set of `comment.Id` values the same loop prints as headers for every comment on
+the card — closure holds by construction, not by luck of fixture adjacency. The disposition
+(`:462-465`) carries no separate target field; it is recorded by the same comment's `Resolves`, so it
+rides the same closure rather than needing its own.
+
+**`CardApprovalClaim.Id` — confirmed unreferenced, from the model, not the worker's say-so.** Grepped
+every use of `CardApprovalClaim` outside the renderer (`CardFile`, `CardFileParser`, `CardFileWriter`,
+`CardStore`, `WorkingContext`): `Id` is read only by the parser (constructing it) and the writer
+(round-tripping it) — nothing else stores or resolves a claim id, and `AppendSequences`
+(`:390-404`) emits `claim.Round`/`claim.Text` only. There is genuinely no referent to close, so leaving it
+unemitted is correct per the architect's boundary ruling, not merely asserted correct.
+
+**The new test can genuinely fail — reproduced independently.** Copied the renderer aside, reverted the
+header line to the pre-fix `**[<author>]** <timestamp>` (no id), rebuilt, ran
+`SectionExport_EveryThreadReferent_ResolvesToADefinitionInTheSameDocument` alone:
+```
+Assert.Contains() Failure: Item not found in set
+Set:       []
+Not found: "c-1"
+```
+Matches the worker's report exactly. Restored the file and diffed against `HEAD`: `23 insertions(+), 1
+deletion(-)`, identical to the diff before the experiment (`md5` of `git diff HEAD` on the file matched
+before and after) — the restore is byte-identical, nothing was left behind by the round trip.
+
+**The stale assertion is a genuine consequence of the format change, not a weakening.**
+`Assert.Contains("**[worker]**", ...)` → `Assert.Contains("**[worker c-1]**", ...)` in
+`SectionExport_RendersEveryContentClass_InReadingOrder` — the fixture's own `c-1` comment, a strictly
+stronger assertion (old string is now a substring of the new one), consistent with the header format
+actually shipped.
+
+**The doc-comment boundary is recorded as stated, with reasoning, not paraphrased.**
+`RecordExportRenderer`'s class doc comment (`:29-47`) carries the "reference-closure and content classes"
+vs. "complete with respect to the record" sentence verbatim, and states *why* for all three cases: `Id`
+emitted because `ReplyTo`/`Resolves`/disposition refer to it; `CardApprovalClaim.Id` excluded because
+nothing refers to it; the `unknown*` groups excluded because they are forward-compatibility capture for a
+hand-editable format, not a DEVLOG content class, already preserved by `card show`. The next reader
+inherits the rule, not just the outcome.
+
+**Liveness untouched.** `git diff HEAD --stat` touches exactly `RecordExportRenderer.cs`,
+`RecordExportTests.cs`, and this DEVLOG — no `CardLifecycle`, `RuleCitations`, `WorkingContext`,
+`CardStore`, or `CommandDispatcher` change. The parse-door ruling stays §12's.
+
+**Export document well-formedness and block C's byte-identical property.** Nothing else in the file
+parses or asserts the pre-fix header shape (checked both test files touched and the renderer's own
+callers); the block still stamps no wall-clock time and reads no git state, so the byte-identical-repeat-
+export property from block C is untouched by this change.
+
+### Gates — reran in the foreground, exit lines read directly
+
+```
+BUILD_EXIT:0
+TEST_EXIT:0    (1021 total, 0 failed, 0 skipped)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+Matches the worker's report (1020 at `7a37910` + this block's one new test).
+
+### Scope
+
+No `Makefile` / `tasks.md` / `CLAUDE.md` / `.claude/` edits. No `N.M` ticked (none exist to tick — this
+is a remediation block, as briefed). No new dependency (`System.Text.RegularExpressions` is BCL, test
+project only, no AOT/publish surface). Working tree otherwise untouched.
+
+### Non-blocking observations
+
+- The property test's `definedIds` extraction (`\*\*\[[a-z][a-z-]*\s+(\S+)\]\*\*`) matches anywhere in
+  the document, not only inside `### thread` blocks. A comment `Body` that happened to contain literal
+  text of that shape would register as a false "definition." Not exercised by any current fixture or by
+  anything the renderer itself emits outside comment headers, so it doesn't weaken today's property, but
+  it's a latent looseness worth knowing about if a future fixture's narrative body ever needs bracketed
+  text of that shape.
+- The same extraction implicitly assumes a comment `Id` never contains whitespace. True of every id this
+  codebase allocates today; not enforced by the regex itself, so the test would silently under-count a
+  hypothetical whitespace-bearing id rather than flag it. Neither point changes the verdict — the property
+  catches exactly the defect class it exists to catch, on the ids this system actually produces.
+
 ## NEXT
 
 **§10 is closed — supervisor `Approve` on the second pass (`3e85b98..d5af2a5`).** Ten of ten boxes

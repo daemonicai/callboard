@@ -25,6 +25,26 @@ namespace Callboard.Cards;
 /// git" discipline the block C brief states — which is what makes exporting the same record twice
 /// byte-identical: nothing on this path varies with when the export command happened to run.
 /// </para>
+///
+/// <para>
+/// <b>The export is complete with respect to reference-closure and content classes. <c>card show</c>
+/// is complete with respect to the record.</b> (§11 section review, supervisor finding.) Two
+/// renderers, two jobs. This export is a single readable document approximating the shape of the
+/// log it replaces, so it emits every DEVLOG content class, and it emits anything another emitted
+/// element refers to — a document that names an identifier it never defines is broken as a
+/// document. That is why <see cref="AppendThread"/> emits each <see cref="CardComment.Id"/>: it is
+/// the only handle <see cref="CardComment.ReplyTo"/> and <see cref="CardComment.Resolves"/> (and,
+/// through <c>Resolves</c>, a nit's disposition) refer to, and without it those referents point at
+/// nothing inside the exported document itself. <see cref="CardApprovalClaim.Id"/> is deliberately
+/// <b>not</b> emitted: nothing else this renderer emits refers to it, so there is no referent to
+/// close. <c>card show</c> stays the machine-facing path that is complete with respect to the
+/// record — unknown fields verbatim included (<see cref="CardFile.UnknownFrontmatterFields"/>,
+/// a comment's own unknown header fields, and every sequence entry's own unknown-fields group).
+/// This renderer deliberately does <b>not</b> export those groups: they are forward-compatibility
+/// capture for a hand-editable format (<see cref="CardFile"/>'s own doc comment), not a DEVLOG
+/// content class, and <c>card show</c> already preserves them verbatim for the reader who needs
+/// them.
+/// </para>
 /// </summary>
 internal static class RecordExportRenderer
 {
@@ -406,7 +426,8 @@ internal static class RecordExportRenderer
         builder.Append("### thread\n\n");
         foreach (var comment in card.Comments)
         {
-            builder.Append("**[").Append(comment.Author.ToWireString()).Append("]** ").Append(comment.Timestamp.ToString("O"));
+            builder.Append("**[").Append(comment.Author.ToWireString()).Append(' ').Append(comment.Id)
+                .Append("]** ").Append(comment.Timestamp.ToString("O"));
             if (comment.To is not null)
             {
                 builder.Append(" → @").Append(comment.To.ToWireString());

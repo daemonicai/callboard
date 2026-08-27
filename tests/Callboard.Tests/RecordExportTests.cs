@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Callboard.Cards;
 using Callboard.Cli;
 
@@ -178,13 +179,69 @@ public sealed class RecordExportTests
         Assert.Contains("claim [round 1]: Renders every content class.", text, StringComparison.Ordinal);
 
         // Thread: the worker's report (handoff via 'to'), the reviewer's nit, and its disposition.
-        Assert.Contains("**[worker]**", text, StringComparison.Ordinal);
+        Assert.Contains("**[worker c-1]**", text, StringComparison.Ordinal);
         Assert.Contains("Implemented the renderer.", text, StringComparison.Ordinal);
         Assert.Contains("[NIT, sites: src/Foo.cs:10]", text, StringComparison.Ordinal);
         Assert.Contains("[disposition: fix-before-land]", text, StringComparison.Ordinal);
 
         // The rule card, resolved through Section, not through the change directory.
         Assert.Contains("Export never reads the index", text, StringComparison.Ordinal);
+    }
+
+    // §11 section-review remediation: the test above asserts the nit and its disposition each
+    // *appear* in the exported text, never that they can be *paired* — which is exactly why it
+    // passed block C's audit and its re-audit even though the document had no way to match a
+    // `(replies to c-2)` or `(resolves c-2)` referent back to the comment defining `c-2`. This is a
+    // property over the whole document, not a spot check on one comment: every referent any comment
+    // header contains — `replies to`, `resolves` (and, through it, every disposition, since a
+    // disposition is recorded by resolving the nit it dispositions) — must resolve to some
+    // comment's own id, defined by that same id appearing in another comment's own header, inside
+    // the exported document itself. A reader with no tool and no other file open must be able to
+    // find the definition of every name the document uses.
+    [Fact]
+    public void SectionExport_EveryThreadReferent_ResolvesToADefinitionInTheSameDocument()
+    {
+        using var repo = new TempGitRepo();
+
+        var sectionPath = Path.Combine(repo.ChangesDirectory, "s-0001.md");
+        var sectionFrontmatter = new CardFrontmatter("S-0001", CardKind.Section, "A section", "open", CardOwner.Architect, CardScope.Change, string.Empty, Earlier, Earlier);
+        WriteCard(sectionPath, new CardFile(sectionFrontmatter, "Body.", [], []));
+
+        var blockPath = Path.Combine(repo.ChangesDirectory, "b-0001.md");
+        var blockFrontmatter = new CardFrontmatter("B-0001", CardKind.Block, "Implement the export", "in-review", CardOwner.Architect, CardScope.Change, "S-0001", Middle, FixedNow);
+        var comments = new[]
+        {
+            new CardComment("c-1", CardOwner.Worker, Middle, "Implemented the renderer.", null, CardOwner.Reviewer, null, []),
+            new CardComment("c-2", CardOwner.Reviewer, FixedNow, "One nit: tighten a doc comment.", "c-1", CardOwner.Worker, null, [], IsNit: true, Required: false, Sites: ["src/Foo.cs:10"]),
+            new CardComment("c-3", CardOwner.Worker, FixedNow, "Tightened.", "c-2", null, "c-2", [], Disposition: NitDisposition.FixBeforeLand),
+        };
+        WriteCard(blockPath, new CardFile(blockFrontmatter, "Block body.", comments, []));
+
+        var outPath = Path.Combine(repo.Path, "out.md");
+        var exitCode = CommandDispatcher.Run(
+            ["section", "export", "S-0001", "--out", outPath], new StringWriter(), TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+
+        var text = File.ReadAllText(outPath);
+
+        var definedIds = Regex.Matches(text, @"\*\*\[[a-z][a-z-]*\s+(\S+)\]\*\*")
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var referents = Regex.Matches(text, @"\((?:replies to|resolves) ([^)]+)\)")
+            .Select(match => match.Groups[1].Value)
+            .ToList();
+
+        // The fixture must actually exercise the property under test — a fixture with no
+        // referents at all would make every assertion below vacuously true.
+        Assert.True(referents.Count > 0, text);
+        Assert.Contains("c-1", referents);
+        Assert.Contains("c-2", referents);
+
+        foreach (var referent in referents)
+        {
+            Assert.Contains(referent, definedIds);
+        }
     }
 
     // §11 block C reviewer finding: SectionExport_IsByteIdentical_AcrossTwoRuns below only proves
