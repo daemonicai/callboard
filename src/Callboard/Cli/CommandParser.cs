@@ -674,15 +674,58 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'change' requires a subcommand. Known subcommands: archive."));
+                    "'change' requires a subcommand. Known subcommands: archive, export."));
             case "archive":
                 context.Arguments.TryTake();
                 return ParseChangeArchive(context);
+            case "export":
+                context.Arguments.TryTake();
+                return ParseChangeExport(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'change' subcommand: '{subcommand}'. Known subcommands: archive."));
+                    $"no such 'change' subcommand: '{subcommand}'. Known subcommands: archive, export."));
         }
+    }
+
+    /// <summary>
+    /// Builds <c>change export &lt;change-name&gt; --out &lt;path&gt; [--force]</c>'s
+    /// <see cref="CommandDispatcher.ParsedCommand.ChangeExport"/> (§11 block C, record-retrieval:
+    /// "The system SHALL render a section, or a whole change, as a single readable document").
+    /// One positional token — the change's own name, the same directory-name-not-file-path shape
+    /// <see cref="ParseChangeArchive"/> already established for <c>change</c>'s other subcommand.
+    /// <c>--out</c> is required (block C brief: no default path, so callboard never writes into the
+    /// repository the caller did not ask for); <c>--force</c> is presence-only and refuses an
+    /// existing target when absent.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseChangeExport(CommandDispatcher.CommandContext context)
+    {
+        var changeName = context.Arguments.TryTake();
+        if (changeName is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'change export' requires a change name."));
+        }
+
+        string? outputPath = null;
+        var force = false;
+        var flagRefusal = ConsumeKnownFlags(
+            context,
+            new Dictionary<string, Action<string>>(StringComparer.Ordinal) { ["--out"] = value => outputPath = value },
+            new Dictionary<string, Action>(StringComparer.Ordinal) { ["--force"] = () => force = true });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (outputPath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'change export' requires '--out <path>'."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.ChangeExport(
+            changeName, outputPath, force, context.WorkingDirectory));
     }
 
     /// <summary>
@@ -785,7 +828,7 @@ internal static class CommandParser
             case null:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
-                    "'section' requires a subcommand. Known subcommands: create, verdict, authorise, close, status."));
+                    "'section' requires a subcommand. Known subcommands: create, verdict, authorise, close, status, export."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseSectionCreate(context);
@@ -801,11 +844,52 @@ internal static class CommandParser
             case "status":
                 context.Arguments.TryTake();
                 return ParseSectionStatus(context);
+            case "export":
+                context.Arguments.TryTake();
+                return ParseSectionExport(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
-                    $"no such 'section' subcommand: '{subcommand}'. Known subcommands: create, verdict, authorise, close, status."));
+                    $"no such 'section' subcommand: '{subcommand}'. Known subcommands: create, verdict, authorise, close, status, export."));
         }
+    }
+
+    /// <summary>
+    /// Builds <c>section export &lt;section-id&gt; --out &lt;path&gt; [--force]</c>'s
+    /// <see cref="CommandDispatcher.ParsedCommand.SectionExport"/> (§11 block C). One positional
+    /// card id — matching <c>card show &lt;id&gt;</c>'s own correction, not a file path the way
+    /// <see cref="ParseSectionStatus"/>'s predates it — resolved through <see cref="Cards.
+    /// CardIdentityResolver"/> at execute time. Same required <c>--out</c>/presence-only
+    /// <c>--force</c> shape as <see cref="ParseChangeExport"/>.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseSectionExport(CommandDispatcher.CommandContext context)
+    {
+        var sectionId = context.Arguments.TryTake();
+        if (sectionId is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'section export' requires a section id."));
+        }
+
+        string? outputPath = null;
+        var force = false;
+        var flagRefusal = ConsumeKnownFlags(
+            context,
+            new Dictionary<string, Action<string>>(StringComparer.Ordinal) { ["--out"] = value => outputPath = value },
+            new Dictionary<string, Action>(StringComparer.Ordinal) { ["--force"] = () => force = true });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (outputPath is null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "missing-argument", "'section export' requires '--out <path>'."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.SectionExport(
+            sectionId, outputPath, force, context.WorkingDirectory));
     }
 
     /// <summary>

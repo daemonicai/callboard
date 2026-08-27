@@ -803,6 +803,32 @@ internal static class CommandDispatcher
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
+
+        /// <summary>
+        /// <c>section export &lt;section-id&gt; --out &lt;path&gt; [--force]</c> (§11 block C,
+        /// record-retrieval: "The system SHALL render a section ... as a single readable
+        /// document"). <see cref="SectionId"/> is resolved through <see cref="Cards.
+        /// CardIdentityResolver.Resolve"/>, the same identity-addressing every other §11 verb uses,
+        /// never a hand-rolled directory walk. A pure read of the record — no timestamp, no acting
+        /// role, no lock on any card; the only write this drives is <see cref="OutputPath"/> itself,
+        /// via temp-file-then-rename (D7).
+        /// </summary>
+        internal sealed record SectionExport(string SectionId, string OutputPath, bool Force, string WorkingDirectory) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
+
+        /// <summary>
+        /// <c>change export &lt;change-name&gt; --out &lt;path&gt; [--force]</c> (§11 block C) —
+        /// <see cref="SectionExport"/>'s whole-change sibling. <see cref="ChangeName"/> names a
+        /// directory (<see cref="Cards.CardLayout.ChangesDirectory"/>), not a card id, the same
+        /// reason <see cref="ChangeArchive.ChangeName"/> is a directory name rather than an
+        /// identity to resolve.
+        /// </summary>
+        internal sealed record ChangeExport(string ChangeName, string OutputPath, bool Force, string WorkingDirectory) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
     }
 
     /// <summary>
@@ -898,6 +924,10 @@ internal static class CommandDispatcher
         TResult Visit(ParsedCommand.State command);
 
         TResult Visit(ParsedCommand.CardShow command);
+
+        TResult Visit(ParsedCommand.SectionExport command);
+
+        TResult Visit(ParsedCommand.ChangeExport command);
     }
 
     /// <summary>
@@ -1009,6 +1039,10 @@ internal static class CommandDispatcher
         public CommandOutcome Visit(ParsedCommand.State command) => RunState(command);
 
         public CommandOutcome Visit(ParsedCommand.CardShow command) => RunCardShow(command);
+
+        public CommandOutcome Visit(ParsedCommand.SectionExport command) => RunSectionExport(command);
+
+        public CommandOutcome Visit(ParsedCommand.ChangeExport command) => RunChangeExport(command);
     }
 
     internal static int Run(
@@ -4024,6 +4058,115 @@ internal static class CommandDispatcher
         }
 
         return new CommandOutcome.Success(BuildCardShowResult(filePath!, card!));
+    }
+
+    /// <summary>
+    /// <c>section export &lt;section-id&gt; --out &lt;path&gt; [--force]</c> (§11 block C,
+    /// record-retrieval: "The system SHALL render a section ... as a single readable document
+    /// ... containing its cards, threads, verdicts and findings in reading order"). A pure read —
+    /// no lock, no timestamp, no acting role — resolved through <see cref="
+    /// ResolveAnyCardReferenceWithCard"/>, exactly <see cref="RunCardShow"/>'s own shape. The only
+    /// write on this path is <see cref="ParsedCommand.SectionExport.OutputPath"/> itself, via
+    /// <see cref="Cards.RecordExportWriter.WriteAtomically"/> (D7): a <see cref="Cards.
+    /// RecordExportWriteOutcome.ToolFailure"/> is thrown, never hand-mapped to a refusal, the same
+    /// "a caller wired over this type must let it reach a tool-failure exit" discipline every other
+    /// <c>ToolFailure</c> case in this dispatcher already follows (ADR-0001).
+    /// </summary>
+    private static CommandOutcome RunSectionExport(ParsedCommand.SectionExport parsed)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var (refusal, _, card) = ResolveAnyCardReferenceWithCard(repoRoot, parsed.SectionId, "'section export'");
+        if (refusal is not null)
+        {
+            return refusal;
+        }
+
+        var sectionCard = card!;
+        if (!CardStore.IsSectionCard(sectionCard))
+        {
+            return new CommandOutcome.Refusal(
+                "not-a-section-card",
+                $"'section export' names id '{parsed.SectionId}', but that card's kind is " +
+                $"'{sectionCard.Frontmatter.Kind.ToWireString()}', not 'section'.");
+        }
+
+        var outputPath = Path.GetFullPath(Path.Combine(repoRoot, parsed.OutputPath));
+        var cardsInReadingOrder = RecordExportAssembler.CardsForSection(repoRoot, sectionCard);
+        var document = RecordExportRenderer.Render(
+            $"Section export: {sectionCard.Frontmatter.Id} — {sectionCard.Frontmatter.Title}", cardsInReadingOrder);
+
+        return RecordExportWriter.WriteAtomically(outputPath, document, parsed.Force).Match<CommandOutcome>(
+            onWritten: () => new CommandOutcome.Success(new SectionExportResult
+            {
+                SectionId = sectionCard.Frontmatter.Id,
+                Title = sectionCard.Frontmatter.Title,
+                OutputPath = outputPath,
+                CardCount = cardsInReadingOrder.Count,
+            }),
+            onTargetExists: () => new CommandOutcome.Refusal(
+                "export-target-exists",
+                $"'{outputPath}' already exists; pass '--force' to overwrite it — an export is derived and regenerable."),
+            onToolFailure: static reason => throw new InvalidOperationException(reason));
+    }
+
+    /// <summary>
+    /// <c>change export &lt;change-name&gt; --out &lt;path&gt; [--force]</c> (§11 block C) —
+    /// <see cref="RunSectionExport"/>'s whole-change sibling. <see cref="ParsedCommand.
+    /// ChangeExport.ChangeName"/> is a directory name, not a card id — validated and resolved the
+    /// same way <see cref="RunChangeArchive"/> resolves its own first argument, never through
+    /// <see cref="Cards.CardIdentityResolver"/> (a change has no card of its own to resolve).
+    /// </summary>
+    private static CommandOutcome RunChangeExport(ParsedCommand.ChangeExport parsed)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        string relativeChangeDirectory;
+        try
+        {
+            relativeChangeDirectory = CardLayout.ChangesDirectory(parsed.ChangeName);
+        }
+        catch (ArgumentException ex)
+        {
+            return new CommandOutcome.Refusal("invalid-change-name", ex.Message);
+        }
+
+        var changeDirectory = Path.GetFullPath(
+            Path.Combine(repoRoot, relativeChangeDirectory.Replace('/', Path.DirectorySeparatorChar)));
+        if (!Directory.Exists(changeDirectory))
+        {
+            return new CommandOutcome.Refusal(
+                "change-not-found",
+                $"no live change named '{parsed.ChangeName}' exists under '{CardLayout.ChangesRootDirectory}'.");
+        }
+
+        var outputPath = Path.GetFullPath(Path.Combine(repoRoot, parsed.OutputPath));
+        var cardsInReadingOrder = RecordExportAssembler.CardsForChange(repoRoot, changeDirectory);
+        var document = RecordExportRenderer.Render($"Change export: {parsed.ChangeName}", cardsInReadingOrder);
+
+        return RecordExportWriter.WriteAtomically(outputPath, document, parsed.Force).Match<CommandOutcome>(
+            onWritten: () => new CommandOutcome.Success(new ChangeExportResult
+            {
+                ChangeName = parsed.ChangeName,
+                OutputPath = outputPath,
+                CardCount = cardsInReadingOrder.Count,
+            }),
+            onTargetExists: () => new CommandOutcome.Refusal(
+                "export-target-exists",
+                $"'{outputPath}' already exists; pass '--force' to overwrite it — an export is derived and regenerable."),
+            onToolFailure: static reason => throw new InvalidOperationException(reason));
     }
 
     /// <summary>

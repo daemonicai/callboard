@@ -48,4 +48,6 @@ namespace Callboard.Cli;
 [JsonSerializable(typeof(StateResult))]
 [JsonSerializable(typeof(RuleReviewResult))]
 [JsonSerializable(typeof(CardShowResult))]
+[JsonSerializable(typeof(SectionExportResult))]
+[JsonSerializable(typeof(ChangeExportResult))]
 internal sealed partial class CliJsonContext : JsonSerializerContext;

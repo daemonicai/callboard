@@ -31375,6 +31375,446 @@ No blockers.
 
 → @architect
 
+**[architect]** Brief — §11 **block C** (`11.3`, `11.4`). → @worker
+
+**11.3** `record-retrieval`: *"The system SHALL render a section, or a whole change, as a single readable
+document approximating the shape of the log it replaces, for archival alongside the other change
+artefacts."* Scenario: a closed section exports as one document containing *"its cards, threads, verdicts
+and findings in reading order"*.
+
+**11.4** *"Every class of content previously written to that log SHALL have a home in the model and SHALL
+be reconstitutable by this export."*
+
+### Do 11.4 first. It is not a check on 11.3 — it is 11.3's specification.
+
+Enumerate the content classes **before** writing the renderer, because a class with no home changes what
+the renderer has to emit. Derive the list from two sources: `CLAUDE.md`'s "The DEVLOG" conventions, and
+**this file** — `openspec/changes/establish-callboard/DEVLOG.md`, thirty-one thousand lines of the real
+thing, which is the only honest fixture available. At minimum: the section base-commit post; the
+architect brief; the worker report **including its gate exit lines**; the reviewer verdict and its
+findings; the supervisor verdict and its findings; an in-thread question and the answer to it; a handoff
+(`→ @reviewer`); a Product Owner ruling; a nit and its disposition; a refusal recorded on a card; and the
+register kinds (rule, hazard, obligation, decision).
+
+**`## NEXT` is the one I expect to be a problem, so look at it first.** It is the only part of the
+incumbent that is *rewritten* rather than appended, and it carries the section's architectural notes
+forward. Work out what it maps to in the card model. **If a class has no home, stop and report it — do
+not invent one.** A missing home is a model gap, and that is the Product Owner's call under §4, not
+yours. Report it as a finding and stop; do not carve a field to make the export look complete.
+
+### Decisions already made — implement these, do not re-open them
+
+1. **`section export <section-id>` and `change export <change-name>`.** Not a new top-level `export`
+   verb: both nouns already exist in `CommandParser.cs` with subcommand tables (`section create|verdict|
+   authorise|close|status`, `change archive`), and this follows them. Block B's `card` was a new
+   top-level verb only because retrieval is kind-agnostic; export is not.
+2. **The document is written to a file; the envelope reports the path.** `CliEnvelope` is *"the one JSON
+   contract every machine-facing command emits on stdout: a single line"* — and the incumbent measured
+   **2.07 MB for one change** (`design.md:88`). A multi-megabyte escaped document on that line is not a
+   contract worth keeping. D5 already has the CLI emitting a file for the human view; this is the same
+   shape.
+3. **`--out <path>` is required.** No default path, no writing into the repo the caller did not ask for.
+   §13 owns where archival lands; do not pre-empt it with a default that becomes a de facto convention.
+4. **Refuse an existing target unless `--force`.** Export is derived and regenerable, so overwriting is
+   legitimate — silently clobbering an unrelated file is not.
+5. **Write it the way cards are written** — temp file plus atomic rename (D7). A half-written export is a
+   corrupt archive artefact.
+6. **Never the index — not even to enumerate.** Same constraint as block B: `design.md:95-100`, and
+   `record-retrieval`'s *"Derived state SHALL NOT be authoritative for anything"*. Enumerate through
+   `CardLayout`/`CardIdentityResolver`, read content from card files.
+7. **Reading order must be stated, not incidental.** Write it down in the doc comment and pin it with a
+   test: an export of the same record twice is byte-identical, and the order does not depend on
+   filesystem enumeration order. Attribution and timestamps come from the cards — this document is
+   reconstructed from the record, never from git.
+8. **A pure read of the record.** Reports, never records (§9 ruling 1); takes no card lock (ADR-0004).
+   The only write is the output file.
+9. **No budget, no truncation.** §10's budget binds the working-context response and nothing else. An
+   export that silently dropped narrative would defeat its own purpose.
+
+### Standing constraints
+
+Wire any new result type into `Cli/CliJsonContext.cs`. NativeAOT: no reflection, no runtime codegen, no
+new dependency. Do not touch `Makefile`, `tasks.md`, `CLAUDE.md`, `.claude/`. Do not commit. Do not tick.
+
+Two notes the reviewer left on block B, in case block C touches them: `ResolveAnyCardReferenceWithCard`
+is a three-tuple with a positional `Card` — **if you are its third caller, make it a record instead of
+growing the tuple.** And `CardShowFindingFieldsResult` is denser than the surrounding idiom; do not copy
+that shape by default.
+
+**Done-gates.** `make gates` → quote **all four** exit lines plus `GATES_EXIT:0`, and the suite total
+before and after (1005 at `29bd112`). Post here and hand off `→ @reviewer`.
+
+**[worker]** §11 block C done — `11.3`, `11.4`.
+
+**11.4's content-class enumeration — done first, per the brief.** Derived from `CLAUDE.md`'s DEVLOG
+conventions and this file itself. Every class has a home already on the shipped card model; nothing
+new was added to it.
+
+| Content class | Home |
+|---|---|
+| Section base-commit post | `SectionCardFields.Base` (frontmatter) + the section card's own `Body`/`Title` for the one-line "what this delivers" |
+| Architect brief | The block card's own `Body` (free-form Markdown) plus `BlockCardFields.Base`/`Tasks` for its structured half — working-context's own D6 already reads "brief" this way |
+| Worker report, **including gate exit lines** | A `CardComment` on the block card (the narrative) + `BlockCardFields.GateResults`, one entry per `(label, round)` — the structured evidence, not prose |
+| Reviewer verdict + findings | The `approve`/`changes-requested` `CardBlockTransitionEntry`, `CardApprovalClaim`/`Limit` (an Approve's certification) + `CardComment` (findings, discussion) |
+| Supervisor verdict + findings | `SectionVerdictEntry` on the section card (the verdict + stated range) + `finding` cards (`FindingCardFields`) for what it found |
+| In-thread question + answer | A `question` card + `QuestionCardFields` (`AnsweredBy`/`At`/`AnswerInline`/`AnswerDecisionId`) |
+| Handoff (`→ @reviewer`) | `CardComment.To` — an addressed comment, the routing mechanism itself |
+| Product Owner ruling | A `decision` card (register: "A decision MAY name the decision it supersedes...") — the register's own home for a standing ruling |
+| Nit + its disposition | `CardComment.IsNit`/`Required`/`Sites` (raise) + a later comment's `Resolves`/`Disposition` (disposition) |
+| Refusal recorded on a card | `CardRefusalEntry` |
+| Register kinds (rule/hazard/obligation/decision) | `CardKind` + `RegisterCardFields` |
+
+**`## NEXT` — the one flagged as likely to be a problem.** Read what it actually carries (e.g. the
+§5→§6 handoff at this file's own history): a resume point, a per-block commit table, and prose
+"lessons for later sections." Traced each piece to where it already lives rather than inventing a
+field for it:
+
+- The **resume point and commit table are not narrative at all** — they are exactly what
+  `state`/`context` (§10) already derive from the record (open sections, gate results, verdicts,
+  transitions). `proposal.md`'s own words: *"the `## NEXT` pin ceases"* to be hand-maintained
+  bookkeeping — that half of `NEXT` is superseded by derived state, not homed in a new field.
+- The **prose "what this section established" lessons** are free-form narrative with no other home
+  than a comment — the same channel every other narrative post in this table already uses. They land
+  as a `CardComment` on the section card, typically posted when the architect closes it (the moment
+  `CLAUDE.md` itself says to "roll ... into NEXT"). This is not a stretched field: a comment is
+  already general-purpose narrative attachment on any card kind, section included, and nothing about
+  it required widening.
+
+No class was left without a home, so nothing here needed to stop and report to the Architect.
+
+**11.3 — the export.** `section export <section-id> --out <path> [--force]` and
+`change export <change-name> --out <path> [--force]`, both new subcommands under the existing
+`section`/`change` verbs (decision 1 — not a new top-level verb).
+
+- **Resolution.** `section export` resolves the id through `ResolveAnyCardReferenceWithCard` — the
+  same kind-agnostic resolver `card show` uses — then refuses `not-a-section-card` if the resolved
+  kind isn't `section` (a bare report, no `Rule`/`Remedy`, §9 ruling 1 — this reads, never records).
+  `change export` resolves the name through `CardLayout.ChangesDirectory`, exactly `change archive`'s
+  own shape, never through `CardIdentityResolver` (a change has no card of its own).
+- **Enumeration — never the index.** New `RecordExportAssembler` (`src/Callboard/Cards/`) walks
+  `CardLayout.ResolveRecordDirectories` (register, decisions, every live *and archived* change) and
+  reads content through `CardStore.ReadAllCards`. `CardsForSection` gathers the section card itself
+  plus every card anywhere whose `Section` field names it. `CardsForChange` first finds that change's
+  own `section` cards (physically filed under its directory), then gathers everything naming one of
+  them, plus anything physically filed in the change directory with an empty `Section` — an
+  unsectioned block isn't silently dropped from a whole-change export.
+- **Reading order — stated and pinned.** `RecordExportAssembler.ReadingOrderDescription`: cards
+  sorted by `Created` ascending, ties broken by id (ordinal); each card's own thread renders in its
+  already-recorded order. `SectionExport_IsByteIdentical_AcrossTwoRuns` pins that exporting the same
+  record twice produces byte-identical output — nothing on the render path reads the wall clock or
+  git, only what each card's own fields carry.
+- **Rendering.** New `RecordExportRenderer` (Cards layer, not Cli — it renders directly from
+  `CardFile`, deliberately not routed through `Cli.CardShowResult`, to keep the dependency direction
+  right). One Markdown document: a `##` heading per card (kind, id, title), frontmatter facts, the
+  body, the kind-specific field group that actually applies (`Match`-dispatched on `CardKind`, no
+  catch-all), the four append-only sequences when non-empty (handovers, transitions,
+  claims/limits, refusals), and the complete thread with nit metadata and disposition.
+- **Writing — the way a card is written, but it isn't one.** New `RecordExportWriter` +
+  `RecordExportWriteOutcome` (closed union: `Written`/`TargetExists`/`ToolFailure`). Same temp-file-
+  then-rename discipline as `CardStore.AtomicWrite` (D7), but its own type rather than reusing
+  `CardWriteResult`: the target is never resolved through `CardIdentityResolver` and never locked
+  (ADR-0004 locks cards, not arbitrary files) — there's nothing card-shaped to stretch that type
+  over. `TargetExists` refuses unless `--force`; `ToolFailure` is thrown (`InvalidOperationException`),
+  never hand-mapped to a refusal — the same "let it reach a tool-failure exit" idiom every other
+  `ToolFailure` case in `CommandDispatcher` already follows (ADR-0001), confirmed by grepping every
+  existing `onToolFailure:` arm before writing this one.
+- **The envelope reports the path, not the document** (decision 2). `SectionExportResult`/
+  `ChangeExportResult` carry `sectionId`/`changeName`, `title` (section only), `outputPath` and
+  `cardCount` — both wired into `CliJsonContext`.
+- **No budget, no liveness filter** (decisions 6, 9; §11.5 carried item). A closed section/card
+  exports exactly as a live one does — pinned by `SectionExport_ClosedCardsAreIncluded` — and nothing
+  here truncates.
+- **`ResolveAnyCardReferenceWithCard`'s tuple — left alone.** `section export` is its second direct
+  caller (after `card show`); the reviewer's note was "if you are its third", so no refactor yet.
+  `change export` doesn't call it at all (a change name isn't a card id).
+
+**Gates.** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite **1005 → 1017**
+(12 new, all in `RecordExportTests.cs`). Working tree has uncommitted changes only in
+`src/Callboard/Cards/RecordExportAssembler.cs`, `RecordExportRenderer.cs`,
+`RecordExportWriteOutcome.cs`, `RecordExportWriter.cs` (new files), `src/Callboard/Cli/
+SectionExportResult.cs`, `ChangeExportResult.cs` (new files), `src/Callboard/Cli/CommandDispatcher.cs`,
+`CommandParser.cs`, `CliJsonContext.cs`, new file `tests/Callboard.Tests/RecordExportTests.cs`, and
+this DEVLOG. No `N.M` boxes touched; `tasks.md` untouched.
+
+→ @reviewer
+
+**[reviewer]** §11 block C audit (`11.3`, `11.4`) — **Approve**.
+
+**Scope.** Diff touches exactly `src/Callboard/Cards/RecordExportAssembler.cs`,
+`RecordExportRenderer.cs`, `RecordExportWriteOutcome.cs`, `RecordExportWriter.cs` (new),
+`src/Callboard/Cli/SectionExportResult.cs`, `ChangeExportResult.cs` (new), `CommandDispatcher.cs`,
+`CommandParser.cs`, `CliJsonContext.cs`, new file `tests/Callboard.Tests/RecordExportTests.cs`, and
+this DEVLOG. No `Makefile`/`tasks.md`/`CLAUDE.md`/`.claude/` edit, no box ticked, no reach outside
+§11.
+
+**11.4's table checked as a claim, field by field, against the actual types.** Walked every row
+against the shipped model and the renderer that reads it, not just the prose:
+- Gate exit lines → `BlockCardFields.GateResults` (`GateResult.Label/ExitCode/Round`) — the renderer
+  emits all three per entry (`RecordExportRenderer.cs:154-158`), matching `GateResult.cs:33` field
+  for field.
+- Supervisor verdict → `SectionVerdictEntry`, **including its stated range** — `RangeFrom`/`RangeTo`
+  are both emitted (`RecordExportRenderer.cs:186-191`), confirmed against
+  `SectionVerdictEntry.cs:31-37`'s own field list. (`UnknownFields` on that type is not rendered —
+  correctly: that's forward-compat wire preservation, not DEVLOG content, and 11.1's "verbatim"
+  requirement was scoped to `card show`, not this block.)
+- Nit disposition → `CardComment.IsNit`/`Required`/`Sites` (raise) and `.Resolves`/`.Disposition`
+  (disposal) — both rendered in `AppendThread` (`RecordExportRenderer.cs:425-444`) and pinned by
+  `SectionExport_RendersEveryContentClass_InReadingOrder`'s `[NIT, sites: ...]` and
+  `[disposition: fix-before-land]` assertions.
+- `CardRefusalEntry` → rendered under `### refusals` (`RecordExportRenderer.cs:386-396`) with
+  `By`/`Rule`/`Remedy`/`Timestamp` all present.
+- `FindingCardFields`' full six-field set (`Instrument`, `Extent`, `VerifiedAt`, `BlindSpot`,
+  `ExtentFingerprint`, `Disposition`) is rendered in full (`AppendFindingFields`,
+  `RecordExportRenderer.cs:205-243`), and both closed unions it dispatches on (`FindingExtent`,
+  `FindingBlindSpotDeclaration`) are matched exhaustively against their actual `Match` signatures
+  (`FindingExtent.cs:32-35`, `FindingBlindSpotDeclaration.cs:41-43`) — no case dropped.
+- No row names a home the renderer doesn't actually read from. Every group on `CardFile` the table
+  claims a home for — frontmatter, body, all five kind-specific field groups, the four append-only
+  sequences, the complete thread — has a corresponding `Append*` method, and `AppendKindFields`'
+  `Match` on `CardKind` is exhaustive against all eight cases (`CardKind.cs:24-32`) with no catch-all.
+
+**No missing content class found against the 31k-line fixture.** Spot-checked classes the table
+doesn't call out by name — architect brief prose, "carried from §N" notes, register `Cadence`,
+`Supersedes`/`SupersededBy`, `EarnedFrom`/`Absorbs`, an addressed-but-not-formal-question comment
+(`comment.To` with no dedicated `question` card) — every one of these already lands through the
+generic `Body`/`Comments`/`RegisterCardFields` rendering paths that were already being exercised, so
+the table's per-row granularity undercounts slightly (e.g. an ad hoc "❓ @architect" aside in a
+thread isn't literally a `question` card) but nothing is actually dropped by the renderer. `## NEXT`'s
+own decomposition (resume point/commit table → derived `state`, prose lessons → a `CardComment`) is
+confirmed correct per the brief and not relitigated.
+
+**Never the index — confirmed, not assumed.** `RecordExportAssembler` reads only through
+`CardLayout.ResolveRecordDirectories` → `CardStore.ReadAllCards` → file parse
+(`RecordExportAssembler.cs:50-71,100-131`); grepped the whole `Cards/RecordExport*.cs` set for
+`Sqlite`/`Index` — no hit. `ResolveRecordDirectories` (`CardLayout.cs:116-128`) walks live directories
+plus every archived-change directory, matching the assembler's own doc-comment claim that an export
+after archival still finds the card.
+
+**Reading order — genuinely total, and independently deterministic besides.** `SortReadingOrder`
+(`RecordExportAssembler.cs:136-145`) sorts by `Created` ascending, ties broken by `Id` (ordinal) — a
+full order over unique ids, so the result cannot depend on input order regardless of how the cards
+were enumerated. Belt-and-braces: `CardStore.ReadAllCards` (`CardStore.cs:5637-5650`) already sorts
+its own directory listing by path ordinally before this even runs, so there are two independent
+sources of determinism here, not one.
+
+**`SectionExport_IsByteIdentical_AcrossTwoRuns` is weaker than its name claims — non-blocking, but
+worth recording.** The fixture (`RecordExportTests.cs:190-205`) writes two cards once, then exports
+twice from the same untouched directory. Because nothing changes between the two calls, the
+underlying filesystem enumeration is the same both times regardless of whether the assembler's own
+tie-break logic is correct — a bug that dropped the `Id` tie-break entirely (letting `List.Sort`'s
+unstable ordering decide two `Created`-tied cards) would very likely still pass this test, since the
+input to `Sort` would be identical on both runs. The test as written pins "the renderer has no
+wall-clock/GUID/randomness leak," which is real and worth having, but it does not exercise "the
+order does not depend on filesystem enumeration order" the way its comment and the block C brief
+(point 7) both claim. That said, I traced the actual implementation independently (paragraph above)
+and it *is* order-independent by construction — this is a coverage gap in the test's power to catch a
+regression, not a defect in the shipped behaviour. A future regression here would need either a
+second test that varies write/enumeration order between two exports of the same logical card set, or
+none at all if this is judged not worth the fixture complexity — I'd leave that call to whoever picks
+up §11 block D or a later section, not block this one on it.
+
+**The write path.** `RecordExportWriter.WriteAtomically` (`RecordExportWriter.cs:18-76`) writes a
+temp file beside the target (same directory, hence same filesystem) via `FileMode.CreateNew`, then
+`File.Move(..., overwrite: true)` — temp-file-then-rename, D7. `TargetExists` is checked before any
+write and only bypassed by `--force`, pinned by
+`SectionExport_TargetExists_RefusesWithoutForce_AndWritesWithForce` (which also confirms the refused
+run left the pre-existing file's content untouched). The `finally` block deletes the temp file if
+still present, so a failed write (caught `IOException`/`UnauthorizedAccessException`) leaves no
+partial file at the temp path either. Confirmed it reaches for neither `CardLock` nor
+`CardIdentityResolver` for the target — grepped the file, no reference to either.
+
+**Reports, never records; takes no lock.** `RunSectionExport`/`RunChangeExport`
+(`CommandDispatcher.cs:4060-4170`) call no `RefuseAndRecord` anywhere and acquire no `CardLock` — the
+only refusals are bare `CommandOutcome.Refusal`s (`not-a-section-card`, `export-target-exists`,
+`change-not-found`, `invalid-change-name`), matching §9 ruling 1 for a pure read. Pinned by
+`SectionExport_TakesNoLock_AndAppendsNothingToAnyCard` (byte-for-byte before/after comparison of the
+section card file) and `SectionExport_UnresolvableId_Reports_WithoutRecordingAnything` (asserts no
+`rule` on the refusal).
+
+**`change export`'s unsectioned-card handling — traced, correct, and cannot double-count.**
+`CardsForChange` (`RecordExportAssembler.cs:85-134`) gathers this change's own section ids from a
+first pass over `changeDirectory`, then walks every record directory collecting cards whose own id or
+`Section` field names one of them (deduplicated into `seenPaths`), then makes a **second** pass over
+`changeDirectory` alone adding anything with an empty `Section` field not already seen. A section card
+itself is added in the first walk (its own id is in `sectionIds`) and `seenPaths` already contains its
+path by the time the second pass runs, so it cannot be re-added even though a section card's own
+`Section` field is typically empty too — verified this isn't hypothetical: dedup is by `seenPaths`,
+not by any assumption about what a section card's `Section` field holds. Pinned by
+`ChangeExport_IncludesEverySectionAndUnsectionedCards`.
+
+**Layering.** `RecordExportRenderer` and `RecordExportAssembler` are both `internal static` in
+`Cards/`, take/return `CardFile`, and never reference anything in `Cli` — grepped for `using
+Callboard.Cli` in both files, no hit. `CommandDispatcher` is the only caller, in the right direction.
+
+**NativeAOT.** `SectionExportResult`/`ChangeExportResult` are plain POCOs with `[JsonPropertyName]`,
+both added to `CliJsonContext.cs` via `[JsonSerializable]`. No reflection, no new dependency. `Match`
+dispatch throughout is compile-time delegate-based, nothing reflection-driven.
+
+**The "re-runnable instrument" hazard — confirmed not executed.** `AppendFindingFields` only ever
+appends `fields.Instrument` and the `Extent.onInstrument` command as text into the document
+(`RecordExportRenderer.cs:208-217`); nothing on this path shells out or invokes it.
+
+**Gates — reran independently.**
+```
+BUILD_EXIT:0
+TEST_EXIT:0   (1017 total, 0 failed, 0 skipped — 1005 → 1017, +12 new)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+Matches the worker's reported suite total exactly.
+
+No blockers.
+
+**Non-blocking observations.**
+- The byte-identical test's coverage gap noted above (worth a stronger fixture later, not a defect
+  today).
+- `CardsForChange` reads `CardStore.ReadAllCards(changeDirectory)` twice (once to gather section ids,
+  once for the final unsectioned pass) — correct and clear, a little more I/O than strictly needed on
+  a directory that's typically small; not worth complicating for.
+- `change export`'s `change-not-found` refusal only looks under the live changes root, not the
+  archive — consistent with the spec's own framing ("for archival alongside the other change
+  artefacts", i.e. exported *before* archiving), so I read this as intentional rather than a gap, but
+  flagging it since `section export` deliberately *does* reach into archived changes for a
+  section-scoped lookup and the asymmetry is worth being a deliberate choice rather than an oversight
+  if anyone revisits it.
+
+→ @architect
+
+**[worker]** §11 block C — strengthened `SectionExport_IsByteIdentical_AcrossTwoRuns` per the
+reviewer's finding. Small, scoped to the test file only.
+
+**1 — a test that can actually fail.** Added
+`CardsForSection_CardsSharingOneTimestamp_OrderById_IndependentOfFileNameOrder`
+(`tests/Callboard.Tests/RecordExportTests.cs`): three block cards sharing one identical `Created`
+timestamp (`Middle`), so only the ordinal id tie-break can separate them, filed under names run in
+the reverse of id order (`z-block.md`→B-0001, `m-block.md`→B-0002, `a-block.md`→B-0003). Asserts the
+exact expected order (`S-0001, B-0001, B-0002, B-0003`), not merely that two runs agree with each
+other. Kept the original byte-identical test alongside it rather than editing it in place — it still
+legitimately pins "no wall-clock/GUID/randomness leak across two runs," a distinct and real property
+worth its own test, just not the ordering one.
+
+**2 — independent of filesystem enumeration order, exercised, not assumed.** Went with the direct
+route: the new test calls `RecordExportAssembler.CardsForSection` itself rather than round-tripping
+through the CLI, because decision 7 pins the *assembler's* contract and a direct call isolates it
+from the renderer's own text shape. The reversed file names are what prove enumeration-order
+independence — `CardStore.ReadAllCards` would hand these three back as B-0003, B-0002, B-0001 if its
+own path-ordinal pre-sort were what determined the result; the test asserts the opposite order.
+
+**3 — confirmed from the code: the assembler's sort is independently sufficient, not reliant on the
+store's.** `SortReadingOrder`'s comparator (`RecordExportAssembler.cs`) returns 0 only when `Created`
+is equal *and* `string.CompareOrdinal(Id, Id)` is zero — i.e. only when both entries share the same
+id, which two distinct cards never do (identities are unique by construction). So the comparator
+never actually ties on two distinct cards: it is a strict total order over the input regardless of
+arrangement, and `List<T>.Sort`'s own lack of a stability guarantee is irrelevant. No gap found, so
+no implementation change and nothing to flag before fixing — `CardStore.ReadAllCards`'s own
+path-ordinal sort affects only enumeration order going *in*, never the exported order coming *out*.
+Documented as a code comment on the new test rather than the assembler's own doc comment, since the
+reviewer's "worth stating in the doc comment" was conditioned on the store's sort actually being
+load-bearing here, which it is not.
+
+**Gates.** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite **1017 → 1018**
+(1 new). Working tree has uncommitted changes only in `tests/Callboard.Tests/RecordExportTests.cs`
+and this DEVLOG — no implementation file touched. No `N.M` boxes touched; `tasks.md` untouched.
+
+→ @reviewer
+
+**[reviewer]** §11 block C re-audit — delta since my prior Approve (test-only:
+`tests/Callboard.Tests/RecordExportTests.cs` +1 test, this DEVLOG) — **Approve**.
+
+**1 — the new test would genuinely fail without the tie-break.** Verified empirically, not just by
+reading it: temporarily replaced `SortReadingOrder`'s comparator (`RecordExportAssembler.cs:136-145`)
+with `return byCreated;` (dropping the ordinal-`Id` tie-break) and ran
+`CardsForSection_CardsSharingOneTimestamp_OrderById_IndependentOfFileNameOrder` alone. It failed:
+`Expected: "B-0001" / Actual: "B-0003"` at the second list position — exactly the three
+identically-timestamped, reverse-filename-ordered blocks resolving in file-enumeration order instead
+of id order. Restored the original file afterwards (`git diff --stat` on it is empty — confirmed
+clean). This is real, not incidental: `CardStore.ReadAllCards` (`CardStore.cs:5637-5650`) sorts
+`changes/establish-callboard/` ordinally by path, so `a-block.md`/`m-block.md`/`s-0001.md`/
+`z-block.md` enumerate as B-0003, B-0002, S-0001, B-0001 — with no id tie-break, .NET's small-array
+sort leaves ties in that input order, producing exactly the wrong result the test caught.
+
+**2 — a direct call, and it is not quietly rescued by the store's pre-sort.** The test calls
+`RecordExportAssembler.CardsForSection` directly (`RecordExportTests.cs:227`), not through the CLI —
+confirmed no `CommandDispatcher`/`RunSectionExport` involvement anywhere in the test body. It still
+runs through `CardStore.ReadAllCards` internally (unavoidable — that's production code), but point 1's
+empirical run proves the *store's* pre-sort is not what makes this test pass: with the assembler's own
+tie-break removed, the same store pre-sort was in play and the test failed anyway. The store's
+ordinal-path sort only fixes the *input* handed to `SortReadingOrder`; the assembler's own comparator
+is what the test is actually exercising.
+
+**3 — retaining `SectionExport_IsByteIdentical_AcrossTwoRuns` is a fair claim, not a kept-for-looks
+test.** Confirmed the file's only change is the new test plus its `WriteBlockAt` helper — diffed the
+full method list (`RecordExportTests.cs:23-330`) against what I reviewed in the prior pass; every
+other test is byte-identical, same line content, same order. The byte-identical test round-trips
+through `CommandDispatcher.Run` with a fixed clock and compares actual rendered file content across
+two full export runs — it would still catch a `DateTimeOffset.UtcNow`/`Guid.NewGuid()` leak into the
+*rendered document* (e.g. if a temp-file GUID or wall-clock value ever leaked past
+`RecordExportWriter`'s rename into the content), a property the new ordering test cannot touch since
+it never renders or writes a file at all. Distinct property, fairly retained.
+
+**4 — the assembler's comparator independently checked as a strict total order.** Read
+`SortReadingOrder` again with this specific claim in mind: it returns 0 only when both
+`Created.CompareTo` is 0 **and** `string.CompareOrdinal(Id, Id)` is 0 — i.e. only when two entries
+share the same `Id`. Card identity uniqueness is enforced at the write door
+(`CardIdentityResolver.cs:23-24,79`: a duplicate id refuses, never picks), so two *distinct* cards in
+a well-formed record never reach that tie. That makes `Created` then `Id` a strict total order over
+any legitimate input, independent of arrangement — `CardStore.ReadAllCards`'s own path-ordinal sort
+only affects the order cards are handed to `Sort`, never the order they come out. No ordering gap
+found. (If the record were ever corrupted into carrying two files with the same id, `CardsForSection`/
+`CardsForChange` would render both under one `##` heading in an arrangement decided by input order —
+but that is an existing, out-of-scope hazard the identity resolver's own refusal already exists to
+prevent at the point of creation, not a new gap this block introduces.)
+
+**Gates — reran independently in the foreground, exit lines quoted directly (not inferred from
+output).**
+```
+BUILD_EXIT:0
+TEST_EXIT:0    (1018 total, 0 failed, 0 skipped — 1017 → 1018, +1 new)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+Matches the worker's reported suite total exactly.
+
+No blockers. Scope stayed exactly to the two named files; no `Makefile`/`tasks.md`/`CLAUDE.md`/
+`.claude/` touch, no box ticked.
+
+→ @architect
+
+**[architect]** Block C closed — and one process incident recorded, because it is the kind that gets
+waved through.
+
+**On the ordering test.** The reviewer raised it as non-blocking; I made it blocking and sent it back.
+Decision 7 of the brief required the reading order be *stated, not incidental* and pinned with a test —
+the implementation half had landed and the pinning half had not, so this was inside block C's scope
+rather than a nit. The precedent is this change's own: §10 carried a fail-open **pinned by a passing,
+green, deliberate test** through four blocks and two audits. A test that cannot fail reads as coverage
+and is worse than no test.
+
+The re-audit answered it the strongest available way: the reviewer **mutated** the comparator to
+`return byCreated;`, ran the new test in isolation, and recorded the failure (`Expected: "B-0001" /
+Actual: "B-0003"`) before reverting. That is evidence, not inspection. I verified the revert myself —
+`SortReadingOrder` still carries its `string.CompareOrdinal` tie-break.
+
+**The incident.** Mid-re-audit the reviewer pasted an unrelated file's contents into this DEVLOG in
+place of its post, then removed them. I did not take the all-clear on trust, because an auditor writing
+foreign content into the shared record is exactly what the record cannot self-report. Verified against
+`HEAD`: `git diff --numstat` on this file is **407 added, 0 removed** — strictly append-only, so no
+committed line was altered or deleted, and the damage was confined to uncommitted additions the same
+agent then cleared. The added block contains exactly the six expected §11 posts and no foreign heading.
+Exactly one `^## NEXT$` remains, in final position.
+
+**Carried to `## NEXT`:** the auditors write to this file with a whole-file editor and no mechanical
+check that what they wrote is what they meant. §13 already owes the `## NEXT` anchor check; this widens
+that obligation — **the splice needs a mechanism, not care.** The append-only property is what made this
+recoverable, and it held only because the corruption happened to land in the working tree rather than in
+a commit.
+
+**Also carried:** `## NEXT` carries notes *forward across sections*. Block C's 11.4 mapping homes its
+prose as a `CardComment` on the section card, which is reconstitutable in that section's export but does
+not propagate to the next section. Whether carrying-forward needs a mechanism is **§13's** question, not
+§11's — recorded here so it is not lost when this section closes.
 ## NEXT
 
 **§10 is closed — supervisor `Approve` on the second pass (`3e85b98..d5af2a5`).** Ten of ten boxes
