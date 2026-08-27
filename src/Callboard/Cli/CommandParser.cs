@@ -1370,7 +1370,7 @@ internal static class CommandParser
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "missing-subcommand",
                     "'rule' requires a subcommand. Known subcommands: create, discharge, promote, author, compact, " +
-                    "propose-compact, promote-constitution."));
+                    "propose-compact, promote-constitution, review."));
             case "create":
                 context.Arguments.TryTake();
                 return ParseRuleCreate(context);
@@ -1392,11 +1392,14 @@ internal static class CommandParser
             case "promote-constitution":
                 context.Arguments.TryTake();
                 return ParseRulePromoteConstitution(context);
+            case "review":
+                context.Arguments.TryTake();
+                return ParseRuleReview(context);
             case var subcommand:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
                     "unknown-subcommand",
                     $"no such 'rule' subcommand: '{subcommand}'. Known subcommands: create, discharge, promote, " +
-                    "author, compact, propose-compact, promote-constitution."));
+                    "author, compact, propose-compact, promote-constitution, review."));
         }
     }
 
@@ -1759,6 +1762,44 @@ internal static class CommandParser
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RulePromoteConstitution(
             id, role, context.WorkingDirectory, context.Clock()));
+    }
+
+    /// <summary>
+    /// Builds <c>rule review</c>'s <see cref="CommandDispatcher.ParsedCommand.RuleReview"/> (§10
+    /// block E). No <c>--id</c>, no <c>--role</c>: this is a read over the whole live register, not
+    /// a single card, and mutates nothing, so there is no acting role to record — the same reason
+    /// <see cref="ParseState"/> takes none. <c>--ceiling</c> is optional; its absence is not an
+    /// error, it selects <see cref="CommandDispatcher.DefaultRuleReviewCeiling"/> instead and
+    /// records that the default, not the flag, is what applied.
+    /// </summary>
+    private static CommandDispatcher.ParseResult ParseRuleReview(CommandDispatcher.CommandContext context)
+    {
+        string? ceilingText = null;
+
+        var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
+        {
+            ["--ceiling"] = value => ceilingText = value,
+        });
+        if (flagRefusal is not null)
+        {
+            return new CommandDispatcher.ParseResult.Refused(flagRefusal);
+        }
+
+        if (ceilingText is null)
+        {
+            return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleReview(
+                CommandDispatcher.DefaultRuleReviewCeiling, CeilingIsDefault: true, context.WorkingDirectory));
+        }
+
+        if (!int.TryParse(ceilingText, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var ceiling) ||
+            ceiling < 0)
+        {
+            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
+                "invalid-ceiling", $"'{ceilingText}' is not a valid ceiling — it must be a non-negative integer."));
+        }
+
+        return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleReview(
+            ceiling, CeilingIsDefault: false, context.WorkingDirectory));
     }
 
     /// <summary>

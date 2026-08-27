@@ -29777,6 +29777,241 @@ change to the guard, the key set, or any outcome type — test-only, in
 `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite: **966**, up from 964
 (+2, exactly the two new tests).
 
+**[architect]** Block E briefed → @worker. **The register-size review's CLI surface.** §10's last block.
+No task numbers, ticks nothing — carried item **B** from §7's close: `RuleCitations`' register-size
+review has been implemented since §7 and **no command reaches it**. `## NEXT` says §10 owes it one.
+
+### What already exists — this block builds no new logic
+
+`src/Callboard/Cards/RuleCitations.cs` already implements the whole review:
+
+- `CeilingPassed(liveRuleCount, ceiling)` — deliberately takes the ceiling as a **caller-supplied
+  parameter**, not a constant, because the spec says "a **stated** size ceiling" and its own doc comment
+  records that it is "stated by whoever calls this, not fixed by this". **This block is that caller, and
+  stating it is the job.**
+- `UncitedOpenRules(cardsRoot)` — the human review queue, computed fresh on every call, never persisted,
+  walking `ResolveLiveRecordDirectories` only.
+
+`specs/register/spec.md`, *Register size triggers review, never eviction*: the ceiling **SHALL NOT act
+as a hard cap**, citation counts **surface candidates only**, and an uncited rule is **queued for a
+human and never retired automatically** — "a rule that never fires may be one that is working, and
+counting cannot distinguish that from a dead one". Both scenarios: passing the ceiling **raises a review
+and retires nothing**; an uncited rule **is queued and remains live until a human rules on it**.
+
+### Architect rulings
+
+**The command is `callboard rule review [--ceiling <n>]`.** `rule` is an existing noun with
+`create`/`discharge`/`promote`/`author`/`compact`/`propose-compact`/`promote-constitution`; this is one
+more subcommand under it, not a new top-level verb.
+
+**The default ceiling is 50, overridable by `--ceiling`.** A named constant carrying its reasoning, not
+a literal at a call site. The reasoning to record: **the register ships first and unconditionally in
+every `context` response**, so its size is subtracted from every brief's budget before any work-specific
+content is assembled. Block B measured the real ceiling at 8,100 characters; a register much beyond ~50
+live rules starts crowding out the brief it exists to inform. **State in the response both the ceiling
+used and whether it came from the flag or the default** — "a stated ceiling" is only stated if the
+caller can see which number was applied.
+
+**This command retires, discharges and mutates nothing.** It is a read. If implementing it tempts you
+toward a write path, that is the requirement's central prohibition and the answer is no.
+
+**`CountCitations` is explicitly appropriate here.** Carried item D bans it from *per-brief* paths
+because it is O(rules × cards); `rule review` is the deliberate, on-demand review it was written for.
+Note in your post that this is the sanctioned caller, so a later reader does not mistake it for the
+violation the carried item warns about.
+
+**Update block B's sanctioned-overage message to name this verb.** When the register and brief alone
+exceed the budget ceiling, block B states the overage but deliberately names **no remedy command**,
+because none existed — `## NEXT` and B's own DEVLOG post record that as owed to this block. §9 ruling 3
+requires a refusal to name its remedy as a command that exists; as of this block, one does. Wire it up
+and say so in your post. **This is the reason E is in §10 at all rather than parked**, so do not skip it.
+
+### Binding constraints
+
+- `CardLayout.ResolveLiveRecordDirectories` only — never the archive. `UncitedOpenRules` already gets
+  this right and its doc comment explains exactly why (§7 remediation blocker 2: counting archived
+  change-scoped rules would grow the queue monotonically forever). Do not undo that.
+- §9's refusal rulings apply to anything you refuse; the coverage gate does not see CLI-layer refusals,
+  so test those directly.
+- ADR-0002 / D2 — NativeAOT: no reflection, no runtime codegen, source-generated JSON only.
+  `TreatWarningsAsErrors` is on.
+- Block F's `ICommandVisitor<TResult>`: a new subcommand means a new `ParsedCommand` case, a new
+  interface member and a new `CommandRunner.Visit`.
+
+### Tests
+
+Both spec scenarios: passing the ceiling raises a review and **retires nothing** (assert the cards are
+untouched, not merely that no error occurred); an uncited rule is queued and **remains live**. Plus: the
+default ceiling applies when `--ceiling` is absent and the response says which was used, a ceiling not
+passed still reports the queue, and the CLI-layer refusals for a malformed `--ceiling`.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT`, `TEST_EXIT`, `FORMAT_EXIT`, `VALIDATE_EXIT`
+individually. Suite stands at **966**. Read the exit line, never the log.
+
+Post to the DEVLOG under `## 10.` as `[worker]`, then `→ @reviewer`.
+
+**[worker]** Block E done — `callboard rule review [--ceiling <n>]` is the CLI surface for
+`RuleCitations`' register-size review. Carried item B is closed.
+
+**No new review logic.** `RunRuleReview` (`CommandDispatcher.cs`) is a pure read: it resolves the
+repo root, calls `RuleCitations.CeilingPassed(liveRuleCount, ceiling)` and `RuleCitations.
+UncitedOpenRules(cardsRoot)`, and maps both straight onto `RuleReviewResult`. It retires,
+discharges and mutates nothing — no `AtomicWrite`, no lock, no timestamp on the command itself.
+Both spec scenarios are proven by re-reading the cards from disk afterwards, not just by the exit
+code: `CeilingPassed_RaisesTheReview_AndRetiresNothing` asserts three rule cards are byte-identical
+and still `open` after a ceiling-exceeding call; `UncitedOpenRule_IsQueued_AndRemainsLive` does the
+same for the uncited case.
+
+**One new helper, not new decision logic:** `RuleCitations.CountLiveOpenRules(cardsRoot)` — the
+figure `CeilingPassed`'s `liveRuleCount` parameter needs, that nothing before this block exposed as
+a single count. It's the same walk `UncitedOpenRules` already does (`ResolveLiveRecordDirectories`
+only, never the archive, for the identical "a never-promoted change-scoped rule in an archived
+change would otherwise inflate this monotonically forever" reason its doc comment gives) minus the
+citation check — a count, not a review verdict. Two new `RuleCitationsTests` pin it against a
+discharged rule (excluded) and an archived change-scoped open rule (excluded).
+
+**`RuleCitations.CountCitations` is the sanctioned caller here** (reached transitively through
+`UncitedOpenRules`) — carried item D bans it from the per-brief `context`/`state` paths because
+it's O(rules × cards); `rule review` is the deliberate, on-demand review it was written for. Noted
+in both the method's own doc comment and `RunRuleReview`'s, so a later reader doesn't mistake this
+call site for the one the carried item warns against.
+
+**The ceiling is stated, not just applied.** `ParsedCommand.RuleReview` always carries a concrete
+`Ceiling` plus a `CeilingIsDefault` flag; `CommandParser.ParseRuleReview` sets the flag from
+whether `--ceiling` was present, defaulting to the new `CommandDispatcher.
+DefaultRuleReviewCeiling = 50` (doc comment carries the reasoning: the register ships first and
+unconditionally in every `context` response, ahead of block B's own measured 8,100-character
+budget, and a register much beyond ~50 live rules starts crowding it out). `RuleReviewResult`
+echoes both back as `ceiling`/`ceilingSource` (`"flag"` or `"default"`) — a caller can always see
+which number was actually checked.
+
+**Block B's sanctioned-overage message now names this verb.** `BuildBudgetedContextResult`'s
+`overageStatement` — the one case where register + brief alone exceed the 8,100-character ceiling
+even with every narrative comment dropped — previously stated the overage and named no remedy,
+because none existed. It now closes with `'callboard rule review' starts the register's own size
+review — the sanctioned path to reducing it.` (§9 ruling 3: a message may only name a command that
+exists). Kept the existing driver-naming logic (register vs. brief vs. thread-structural overhead)
+untouched — this is an addition, not a rewrite of that message. New test
+`RegisterAndBriefAloneExceedCeiling_OverageStatement_NamesRuleReviewAsTheRemedy` pins the new
+sentence; the existing `...NamesTheBriefWhenItIsTheDriver` test still passes unchanged.
+
+**Wiring, mechanically:** `ParsedCommand.RuleReview` (no `CardOwner`, no lock, no timestamp — same
+shape as `Context`/`State`, since nothing here writes), a new `ICommandVisitor<TResult>.Visit`
+member, `CommandRunner.Visit` delegating to `RunRuleReview`, `ParseRule`'s switch gaining a
+`"review"` case (and both its subcommand-list messages updated to include it), `RuleReviewResult`/
+`RuleReviewUncitedRuleResult` in `Cli/RuleReviewResult.cs`, registered in `CliJsonContext` for
+source-generated JSON (no reflection). `--ceiling` is parsed and validated at the CLI layer — a
+non-integer or negative value refuses `invalid-ceiling` before any card is touched; three malformed
+inputs (`not-a-number`, `-1`, empty string) are each tested directly, since the coverage gate
+doesn't see CLI-layer refusals.
+
+Tests added: 8 in `CommandDispatcherRuleReviewTests.cs` (both spec scenarios with untouched-cards
+assertions, default-ceiling-applies-and-is-stated, ceiling-not-passed-still-reports-the-queue,
+malformed `--ceiling` ×3 via `[Theory]`, outside-any-git-repository), 2 in `RuleCitationsTests.cs`
+(`CountLiveOpenRules`), 1 in `CommandDispatcherContextBudgetTests.cs` (the overage message). Suite:
+**977**, up from 966 (+11).
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** Block E audited. Verdict: **Approve with nits.**
+
+Re-ran the gates myself rather than trusting the report: `BUILD_EXIT:0`, `TEST_EXIT:0` (977 total,
+0 failed — confirmed the 966→977 (+11) move), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+
+**Mutation-free, verified.** `RunRuleReview` (`CommandDispatcher.cs:4013`) takes no lock, writes no
+card, records no timestamp — it resolves the repo root and calls two pure functions
+(`RuleCitations.CeilingPassed`, `RuleCitations.UncitedOpenRules`), mapping both onto
+`RuleReviewResult`. `ParsedCommand.RuleReview` carries no `CardOwner` and no clock, matching
+`State`'s read-only shape. Both spec-scenario tests
+(`CommandDispatcherRuleReviewTests.cs:26,49`) genuinely assert the record, not just the exit code:
+each captures `File.ReadAllBytes` before the call and asserts byte-identity after, plus re-parses
+the card and checks `status` is still `open` — this is exactly the "retires nothing" claim the spec
+makes, proven against the file system rather than against a mock.
+
+**The ceiling is stated, not silently defaulted.** `DefaultRuleReviewCeiling = 50`
+(`CommandDispatcher.cs:3959`) is a named constant with a doc comment carrying the reasoning (register
+ships first in every `context` response, ahead of block B's measured 8,100-character ceiling).
+`ParsedCommand.RuleReview.CeilingIsDefault` is set by `CommandParser.ParseRuleReview` from whether
+`--ceiling` was present, and `RuleReviewResult` echoes both `ceiling` and `ceilingSource`
+(`"flag"`/`"default"`) back on every response — `CeilingAbsent_AppliesTheDefault_AndStatesWhichApplied`
+pins this.
+
+**`CountLiveOpenRules` walks exactly the same population as `UncitedOpenRules`.** Both iterate
+`CardLayout.ResolveLiveRecordDirectories` only (never `ResolveRecordDirectories`'s archive), filter
+to `CardStore.IsRuleCard`, and check `RegisterLifecycleStateWireFormat.TryParse(...) &&
+ReferenceEquals(state, RegisterLifecycleState.Open)` — identical predicate, so the ceiling is
+measured against the same set the queue is drawn from; they cannot disagree. `RuleCitationsTests.cs`
+adds the archive-exclusion test for the new method independently
+(`CountLiveOpenRules_ChangeScopedOpenRuleInAnArchivedChange_IsNotCounted`), proving the §7
+remediation-blocker-2 exclusion holds for the count too, not just for the queue.
+
+**Block B's overage message and the CLI refusals check out.** `'callboard rule review'` is the
+correct verb, spelled as `CommandParser` actually parses it (`rule` → `review` case,
+`CommandParser.cs:1395`). `RegisterAndBriefAloneExceedCeiling_OverageStatement_NamesRuleReviewAsTheRemedy`
+drives a real overage (10,000-char body) and asserts the computed string contains "rule review",
+not a constant-equality check against the literal — genuine coverage. `--ceiling`'s three malformed
+cases (`not-a-number`, `-1`, empty) refuse `invalid-ceiling` in `CommandParser.ParseRuleReview`
+before `RunRuleReview` is ever reached — confirmed `ConsumeKnownFlags` takes the next token
+unconditionally as `--ceiling`'s value (no flag-lookahead), so the `-1` case genuinely exercises the
+negative-integer check rather than a missing-value path. Nothing is recorded on any of the three
+refusal paths — they never reach `RunRuleReview`, so no card is ever touched.
+
+**`CountCitations` is correctly the sanctioned caller here**, and it is the only new call site: the
+one pre-existing call outside `RuleCitations` itself (`CommandDispatcher.cs:3433`, `rule
+propose-compact`) predates this block and is unchanged. Both `RunRuleReview`'s and
+`CountLiveOpenRules`'/`UncitedOpenRules`' doc comments note carried item D does not apply here, so a
+later reader won't mistake this on-demand path for a per-brief one.
+
+**AOT/idiom clean.** `RuleReviewResult`/`RuleReviewUncitedRuleResult` are registered in
+`CliJsonContext` via `[JsonSerializable]`; `ToJsonElement` calls
+`CliJsonContext.Default.RuleReviewResult` — no reflection-based overload anywhere on this path. The
+new `ParsedCommand.RuleReview` case, `ICommandVisitor<TResult>.Visit` member, and
+`CommandRunner.Visit` delegation follow block F's shape exactly.
+
+**Nit — misattached XML doc comment (`RuleCitations.cs:129–189`).** `CountLiveOpenRules` was
+inserted between `UncitedOpenRules`' pre-existing doc comment and the `UncitedOpenRules` method
+itself. The result: `CountLiveOpenRules` (a plain count) is now documented by the "SHALL be placed
+in a review queue for a human..." comment that actually describes `UncitedOpenRules`, and
+`UncitedOpenRules` — the method implementing the spec's central non-eviction rule — is left with
+*no* doc comment at all. `CountLiveOpenRules` does have its own second `<summary>` block
+immediately above it (lines 145–155), so the two blocks now sit back-to-back as one contiguous
+`///` run attached to `CountLiveOpenRules`, and `UncitedOpenRules` inherits nothing. Non-blocking —
+no behavioural effect, `FORMAT_EXIT:0` doesn't check doc-comment attachment — but this project treats
+doc comments as the citation trail for compliance reasoning, and right now the trail for
+`UncitedOpenRules` is silently gone. Please move the pre-existing `<summary>` (lines 129–144) back
+to sit directly above `UncitedOpenRules` (line 189), after `CountLiveOpenRules` and its own comment.
+
+**Nit — light duplication.** `CountLiveOpenRules` and `UncitedOpenRules` now run the same
+directory-walk-and-filter loop independently rather than sharing it. Given the brief's "no new
+review logic" constraint and that unifying them would mean threading the citation check through a
+shared enumerator, I'm not asking for a rework — flagging only so it's visible if a future block
+touches either.
+
+Approved to land as-is; the misattached doc comment is a documentation fix, not a code fix, so I'd
+take it as a quick follow-up rather than a blocking round-trip if the Architect agrees.
+
+**[worker]** Fixed: reviewer's finding on `RuleCitations.CountLiveOpenRules`'s doc comment.
+Inserting the new method between `UncitedOpenRules`'s pre-existing `<summary>` and the
+`UncitedOpenRules` method itself had left both `<summary>` blocks contiguous and both attached to
+`CountLiveOpenRules` — so `UncitedOpenRules`, the method implementing the requirement's central
+rule, carried no documentation at all, and `CountLiveOpenRules` wrongly carried the §7 remediation
+blocker 2 reasoning (never touching the archive, discharged rules never queued, names cards without
+mutating them) that belongs to `UncitedOpenRules`.
+
+Reattached: `UncitedOpenRules` has its original doc comment back, unchanged. `CountLiveOpenRules`
+now has its own short comment — what it counts, that it deliberately walks the identical population
+`UncitedOpenRules` does (same directories, same open-rule predicate) so the ceiling and the queue
+are measured against one set, and that it excludes the archive for the same reason. No behaviour
+change, no test change — `git diff` on `RuleCitations.cs` is comment-only.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite: **977**, unchanged.
+
+→ @reviewer
+
 ## NEXT
 
 **§10 is open and in flight.** Base `3e85b98`. Two of its six blocks have landed; **block A (10.1–10.3)

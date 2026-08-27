@@ -191,6 +191,22 @@ public sealed class CommandDispatcherContextBudgetTests
         Assert.DoesNotContain("the register is the larger", overageStatement, StringComparison.Ordinal);
     }
 
+    // §10 block E: now that `rule review` exists, the overage message names it as the remedy
+    // (§9 ruling 3 — a message may only name a command that exists).
+    [Fact]
+    public void RegisterAndBriefAloneExceedCeiling_OverageStatement_NamesRuleReviewAsTheRemedy()
+    {
+        using var repo = new TempGitRepo();
+        WriteRule(repo, "r-0001", "R-0001", "open");
+        var hugeBody = new string('x', 10_000);
+        WriteBlockWithComments(repo, "b-huge-3", "B-0007", CardOwner.Worker, "in-review", hugeBody, commentCount: 1, commentBodyLength: 50);
+
+        var budget = Context(repo, "worker").GetProperty("budget");
+
+        var overageStatement = budget.GetProperty("overageStatement").GetString()!;
+        Assert.Contains("rule review", overageStatement, StringComparison.Ordinal);
+    }
+
     private static (string Path, string Id) WriteBlock(TempGitRepo repo, string fileStem, string id, CardOwner owner, string status)
     {
         var path = Path.Combine(repo.ChangesDirectory, fileStem + ".md");

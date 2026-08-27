@@ -156,6 +156,38 @@ public sealed class RuleCitationsTests : IDisposable
         Assert.False(RuleCitations.CeilingPassed(liveRuleCount: 10, ceiling: 50));
     }
 
+    // §10 block E's caller: the figure `rule review` states the ceiling against — every live
+    // (open) rule counts, cited or not, and a discharged one never does.
+    [Fact]
+    public void CountLiveOpenRules_CountsOpenRepositoryRules_NotDischargedOnes()
+    {
+        WriteRepositoryRule("r-0021", "R-0021", "Body.");
+        WriteRepositoryRule("r-0022", "R-0022", "Body.");
+        var dischargedPath = Path.Combine(_registerDirectory, "r-0023.md");
+        WriteRuleCardAt(dischargedPath, "R-0023", CardScope.Repository, RegisterLifecycleState.Discharged, "Body.");
+
+        var count = RuleCitations.CountLiveOpenRules(_root);
+
+        Assert.Equal(2, count);
+    }
+
+    // Same exclusion UncitedOpenRules already gets right, proven independently for the count: a
+    // never-promoted change-scoped rule left open in an archived change is not part of the live
+    // register and must not inflate this figure.
+    [Fact]
+    public void CountLiveOpenRules_ChangeScopedOpenRuleInAnArchivedChange_IsNotCounted()
+    {
+        WriteRepositoryRule("r-0024", "R-0024", "Body.");
+        var archivedDirectory = Path.Combine(
+            _root, CardLayout.ArchiveDirectory.Replace('/', Path.DirectorySeparatorChar), "2026-01-01-old-change");
+        Directory.CreateDirectory(archivedDirectory);
+        WriteRuleCardAt(Path.Combine(archivedDirectory, "r-0025.md"), "R-0025", CardScope.Change, RegisterLifecycleState.Open, "Body.");
+
+        var count = RuleCitations.CountLiveOpenRules(_root);
+
+        Assert.Equal(1, count);
+    }
+
     [Fact]
     public void UncitedOpenRules_ContainsOnlyOpenRulesWithZeroCitations()
     {

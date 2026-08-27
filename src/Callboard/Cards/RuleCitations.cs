@@ -127,6 +127,49 @@ internal static class RuleCitations
     internal static bool CeilingPassed(int liveRuleCount, int ceiling) => liveRuleCount > ceiling;
 
     /// <summary>
+    /// The number of live (<see cref="RegisterLifecycleState.Open"/>) <c>rule</c> cards anywhere
+    /// under <see cref="CardLayout.ResolveLiveRecordDirectories"/> — deliberately the same
+    /// population <see cref="UncitedOpenRules"/> walks (same directories, same open-rule
+    /// predicate), so the ceiling and the queue are always measured against one identical set, and
+    /// excluding the archive for the exact same reason <see cref="UncitedOpenRules"/>'s own doc
+    /// comment gives. A pure count, not a decision: it names how many rules are live, nothing about
+    /// whether that is too many — <see cref="CeilingPassed"/>'s <c>liveRuleCount</c> parameter is
+    /// this figure, stated against a caller-supplied ceiling by <c>rule review</c> (§10 block E).
+    /// </summary>
+    internal static int CountLiveOpenRules(string cardsRoot)
+    {
+        var count = 0;
+
+        foreach (var directory in CardLayout.ResolveLiveRecordDirectories(cardsRoot))
+        {
+            if (!Directory.Exists(directory))
+            {
+                continue;
+            }
+
+            foreach (var (_, result) in CardStore.ReadAllCards(directory))
+            {
+                var card = result.Match<CardFile?>(
+                    onSuccess: static success => success.Card,
+                    onFailure: static _ => null);
+
+                if (card is null || !CardStore.IsRuleCard(card))
+                {
+                    continue;
+                }
+
+                if (RegisterLifecycleStateWireFormat.TryParse(card.Frontmatter.Status, out var state) &&
+                    ReferenceEquals(state, RegisterLifecycleState.Open))
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
     /// Register: "A rule that is never cited SHALL be placed in a review queue for a human and
     /// SHALL NOT be retired automatically." The queue is this call's return value, computed fresh
     /// every time — never a persisted list a write path could forget to clear — over every

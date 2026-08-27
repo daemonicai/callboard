@@ -715,6 +715,22 @@ internal static class CommandDispatcher
         }
 
         /// <summary>
+        /// <c>rule review [--ceiling &lt;n&gt;]</c> (§10 block E, carried item B from §7's close,
+        /// register: "Register size triggers review, never eviction"). Read-only, so no timestamp,
+        /// no lock and no <see cref="CardOwner"/> — the same shape <see cref="State"/> takes, for
+        /// the same reason: nothing here writes to any card. <see cref="Ceiling"/> is always a
+        /// concrete value (the caller's <c>--ceiling</c>, or <see cref="CommandDispatcher.
+        /// DefaultRuleReviewCeiling"/> when the flag is absent) — <see cref="CeilingIsDefault"/>
+        /// is what lets the response state <em>which</em> one applied, since a ceiling is only
+        /// "stated" (the register's own wording) if the caller can see whether it came from the
+        /// flag or the default.
+        /// </summary>
+        internal sealed record RuleReview(int Ceiling, bool CeilingIsDefault, string WorkingDirectory) : ParsedCommand
+        {
+            internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
+        }
+
+        /// <summary>
         /// <c>nit raise</c> (§8 block B, review-certification: "A nit SHALL be raised as an
         /// addressed comment, not as a card"). Named by <c>--id</c> — the block card it is raised
         /// against, resolved through <see cref="Cards.CardIdentityResolver"/> at execute time.
@@ -840,6 +856,8 @@ internal static class CommandDispatcher
 
         TResult Visit(ParsedCommand.RulePromoteConstitution command);
 
+        TResult Visit(ParsedCommand.RuleReview command);
+
         TResult Visit(ParsedCommand.BlockApprove command);
 
         TResult Visit(ParsedCommand.NitRaise command);
@@ -946,6 +964,8 @@ internal static class CommandDispatcher
         public CommandOutcome Visit(ParsedCommand.RuleProposeCompact command) => RunRuleProposeCompact(command, LockTimeout);
 
         public CommandOutcome Visit(ParsedCommand.RulePromoteConstitution command) => RunRulePromoteConstitution(command, LockTimeout);
+
+        public CommandOutcome Visit(ParsedCommand.RuleReview command) => RunRuleReview(command);
 
         public CommandOutcome Visit(ParsedCommand.BlockApprove command) => RunBlockApprove(command, LockTimeout);
 
@@ -3932,6 +3952,67 @@ internal static class CommandDispatcher
     }
 
     /// <summary>
+    /// The default <c>rule review</c> ceiling, used whenever <c>--ceiling</c> is absent (§10 block
+    /// E). Not tuned to any fixture — the reasoning is that the register (<see cref="Cards.
+    /// WorkingContext.LiveRulesAndHazards"/>) ships first and unconditionally in every <c>context</c>
+    /// response, so its size comes out of every brief's budget (<see cref="WorkingContextBudget.
+    /// CharacterCeiling"/>, 8,100 characters, block B's own measured figure) before any work-
+    /// specific content is assembled at all. A register much beyond roughly fifty live rules starts
+    /// crowding out the brief it exists to inform, which is the point at which a human should look
+    /// at compacting it — hence 50, not some other round number.
+    /// </summary>
+    internal const int DefaultRuleReviewCeiling = 50;
+
+    /// <summary>
+    /// <c>rule review [--ceiling &lt;n&gt;]</c> (§10 block E, carried item B, register: "Register
+    /// size triggers review, never eviction" — the ceiling SHALL NOT act as a hard cap, citation
+    /// counts surface candidates only, and an uncited rule SHALL be queued for a human and SHALL
+    /// NOT be retired automatically). A pure read: no lock, no timestamp, no write of any kind to
+    /// any card — <see cref="Cards.RuleCitations.CeilingPassed"/> is a predicate over two integers
+    /// and <see cref="Cards.RuleCitations.UncitedOpenRules"/> only names cards, so nothing this
+    /// method calls can retire, discharge or otherwise mutate a rule card. <see cref="ParsedCommand.
+    /// RuleReview.Ceiling"/> and <see cref="ParsedCommand.RuleReview.CeilingIsDefault"/> are both
+    /// echoed back on <see cref="RuleReviewResult"/> unchanged — stating the ceiling only means
+    /// something if the caller can see which value applied.
+    ///
+    /// <para>
+    /// <b><see cref="Cards.RuleCitations.CountCitations"/>, indirectly via <see cref="Cards.
+    /// RuleCitations.UncitedOpenRules"/>, is the sanctioned caller here.</b> Carried item D forbids
+    /// it on the per-brief <c>context</c>/<c>state</c> paths, since it is O(rules × cards) and those
+    /// run on every working-context request; this command is the deliberate, on-demand review those
+    /// citation counts exist for in the first place, paid for only when a caller actually asks for
+    /// it. Do not mistake this call site for the one the carried item warns against.
+    /// </para>
+    /// </summary>
+    private static CommandOutcome RunRuleReview(ParsedCommand.RuleReview parsed)
+    {
+        var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
+        if (repoRoot is null)
+        {
+            return new CommandOutcome.Refusal(
+                "repo-root-not-found",
+                $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
+        }
+
+        var liveRuleCount = RuleCitations.CountLiveOpenRules(repoRoot);
+        var uncited = RuleCitations.UncitedOpenRules(repoRoot);
+
+        return new CommandOutcome.Success(new RuleReviewResult
+        {
+            Ceiling = parsed.Ceiling,
+            CeilingSource = parsed.CeilingIsDefault ? "default" : "flag",
+            LiveRuleCount = liveRuleCount,
+            CeilingPassed = RuleCitations.CeilingPassed(liveRuleCount, parsed.Ceiling),
+            UncitedOpenRules = [.. uncited.Select(static entry => new RuleReviewUncitedRuleResult
+            {
+                Id = entry.Card.Frontmatter.Id,
+                FilePath = entry.FilePath,
+                Title = entry.Card.Frontmatter.Title,
+            })],
+        });
+    }
+
+    /// <summary>
     /// Assembles <see cref="ContextResult"/> under §10 block B's character budget (D6: "register,
     /// then brief, then unresolved threads addressed to the caller, then narrative"). The
     /// register and the brief are never touched; narrative — the comment bodies on threads
@@ -3977,11 +4058,11 @@ internal static class CommandDispatcher
 
         // Every narrative comment is already dropped (kept reached 0) and the response still
         // doesn't fit — the one case working-context accepts the response failing its own stated
-        // budget: neither the register nor the brief may be shortened. The register-size review
-        // is the intended remedy, but it has no CLI surface yet (block E lands after this one) —
-        // naming a verb nobody has built repeats a §9 mistake, so this states the situation and
-        // names whichever of the two actually drives the overage, rather than blaming the
-        // register unconditionally (§10 block B review nit).
+        // budget: neither the register nor the brief may be shortened. This states the situation,
+        // names whichever of the two actually drives the overage rather than blaming the register
+        // unconditionally (§10 block B review nit), and — now that block E has given the
+        // register-size review a CLI surface — names `rule review` as the remedy (§9 ruling 3: a
+        // refusal/overage message may only name a command that exists).
         var finalCharacterCount = result.Budget.CharacterCount;
         var overage = finalCharacterCount - WorkingContextBudget.CharacterCeiling;
         var driver = DescribeOverageDriver(context);
@@ -3990,7 +4071,8 @@ internal static class CommandDispatcher
             $"{WorkingContextBudget.CharacterCeiling}-character ceiling — even with every narrative " +
             $"comment body already dropped ({allCommentIds.Count}). The register, the brief, and each " +
             $"addressed thread's structural facts may never be shortened; {driver} needs size reduction " +
-            "to bring this back under budget.";
+            "to bring this back under budget. 'callboard rule review' starts the register's own size " +
+            "review — the sanctioned path to reducing it.";
         var allOmitted = allCommentIds;
         var allOmittedStatement = allCommentIds.Count > 0 ? DescribeTruncation(allOmitted) : null;
         return FinalizeBudget(role, context, allOmitted, allCommentIds.Count > 0, allOmittedStatement, exceededCeiling: true, overageStatement, recognisedCommandName);
