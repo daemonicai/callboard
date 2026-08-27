@@ -137,7 +137,7 @@
 - [x] 11.2 Verify no narrative outside the caller's queue reaches the working-context response
 - [x] 11.3 Implement section and whole-change export approximating the incumbent's shape
 - [x] 11.4 Verify every class of content previously written to `DEVLOG.md` has a home and is reconstitutable
-- [ ] 11.5 Implement closed cards leaving default queries while remaining in the record and exports
+- [x] 11.5 Implement closed cards leaving default queries while remaining in the record and exports
 
 ## 12. Human view
 

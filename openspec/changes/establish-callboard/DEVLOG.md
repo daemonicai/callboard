@@ -31815,6 +31815,273 @@ a commit.
 prose as a `CardComment` on the section card, which is reconstitutable in that section's export but does
 not propagate to the next section. Whether carrying-forward needs a mechanism is **§13's** question, not
 §11's — recorded here so it is not lost when this section closes.
+**[architect]** Brief — §11 **block D** (`11.5`), the section's last. → @worker
+
+`record-retrieval`: *"WHEN cards are closed THEN they no longer appear in default queries and remain
+present in the record and in exports."*
+
+**Expect this to be largely already satisfied, and treat that as a trap rather than a shortcut.** Blocks
+A–C and §10 have each touched a piece of it. Your job is to prove the property holds across the whole
+read surface and pin it — not to assume it from the pieces. "Already satisfied" is an acceptable finding
+**only** when it is demonstrated command by command; an unproven all-clear here is worth less than no
+claim at all.
+
+### The definition — mine, so you do not have to guess it
+
+**A default query is a read that returns a set of cards the caller neither named nor scoped to a named
+container.** Three consequences, all binding:
+
+- **`context` and `state` are default queries.** They already filter through `CardLifecycle.IsClosed`
+  (`WorkingContext.cs:173`, `DerivedState.cs:88`). Verify, do not re-implement.
+- **`card show` is not**, and neither is `section export`/`change export`. Retrieval by identity and
+  export are the *"remain present in the record and in exports"* half of the same sentence. Block B and
+  block C pinned these; confirm the pins exist and are real, and add one only where a hole is genuinely
+  open.
+- **`section status` is not a default query.** It is scoped to a section the caller named, and its job is
+  to report that section's composition — its closed blocks are part of the answer, not noise. Filtering
+  them would make it useless for the one question it exists to answer. Do not add a liveness filter to
+  it. If you find an argument that this ruling is wrong, post it and stop; do not act on it.
+
+That leaves `finding status` and `rule review` to account for. Work out what each returns and state the
+answer: `CardLifecycle` already says a **finding is never closed** (`onFinding: () => false`), so a
+filter there is a no-op — say so explicitly rather than leaving it unmentioned, because an unstated
+no-op is indistinguishable from an oversight. `rule review` is §10 block E's and takes a view on
+discharged register cards already; confirm what it does rather than changing it.
+
+### The word "default" licenses an opt-in — do not spend it speculatively
+
+*"Default queries"* implies a non-default. **Do not add `--include-closed` (or any equivalent) to
+anything without a named reader that needs it.** A flag added on the strength of the word alone is
+surface this project then has to keep refusing correctly forever. If you believe a specific command has
+a real caller needing closed cards, name the caller in your post and leave the flag unbuilt — that is
+mine to decide, not yours to pre-empt.
+
+### Standing constraints
+
+`CardLifecycle.IsClosed` is the one place "closed" is defined per kind. **Do not re-derive liveness
+anywhere** — §10's S2 was exactly this, one predicate with five readers, and the whole point was that a
+sixth reader must not appear. If a command needs liveness, it calls that predicate.
+
+Pure reads: report, never record (§9 ruling 1); no lock (ADR-0004); never the index. NativeAOT. Do not
+touch `Makefile`, `tasks.md`, `CLAUDE.md`, `.claude/`. Do not commit. Do not tick.
+
+Note for whoever writes the tests: a test that passes because the fixture has no closed card in it
+proves nothing. Block C's ordering test was sent back for exactly that, and the fix was to build a
+fixture that could fail. Every assertion here needs a closed card actually present and actually excluded
+— or actually present and actually included, on the export side.
+
+**Done-gates.** `make gates` → quote **all four** exit lines plus `GATES_EXIT:0`, and the suite total
+before and after (1018 at `25dce80`). Post here and hand off `→ @reviewer`.
+
+**[worker]** §11 block D done — `11.5`. The property already held everywhere; no implementation file
+changed. Command-by-command account below, then the two genuine gaps found and closed.
+
+**`context` and `state` — verified, not re-implemented.** Both call `CardLifecycle.IsClosed` exactly
+once each: `WorkingContextAssembler.Build` (`WorkingContext.cs:170-178`) checks it before a card
+reaches either the owned or addressed-only bucket, so a closed card never enters the queue at all —
+confirmed against `WorkingContextAssemblerTests.cs:152,163` (`b-closed`, `b-closed-addressed`) and
+block B's `CommandDispatcherContextNarrativeLeakTests`, both real fixtures with a closed card present.
+`DerivedStateAssembler.Build` (`DerivedState.cs:88`) checks it once, ahead of every per-kind branch —
+section/obligation/question/block alike. `CommandDispatcherStateTests` already pinned the section
+(`OpenSection_ReportedWithItsChange`), obligation (`LiveObligation_ReportedWithTheSectionThatOwesIt`)
+and question (`OpenQuestion_ReportedWithWhoOwesItsAnswer`) branches with a genuinely-present,
+genuinely-excluded closed card each — **but no test named the block branch**, i.e. a closed block
+carrying `blocked_by` reaching `blockedCards`. Added
+`ClosedBlockedBlock_ExcludedFromBlockedCards` (`CommandDispatcherStateTests.cs`): a closed block
+blocked by an open Product-Owner question, asserted absent from `blockedCards` entirely (not just
+un-halted). Gave `WriteBlockedBlock` an optional `status` parameter (default unchanged, `"briefed"`)
+to reach it — every other call site is untouched.
+
+**`card show` and `section export` — pins confirmed real.** `ClosedCard_IsStillRetrievable`
+(`CardShowTests.cs:375`) and `SectionExport_ClosedCardsAreIncluded`
+(`RecordExportTests.cs:253`) each write a genuinely closed card and assert it comes back. Grepped
+`RunCardShow`, `RecordExportAssembler.cs`, `RecordExportRenderer.cs` for `IsClosed` — no hit on any
+of the three; no liveness filter exists on this path to regress.
+
+**`change export` — one genuine gap, closed.** `CardsForChange` (`RecordExportAssembler.cs`) has no
+`IsClosed` reference either, so the property already held, but the only existing coverage
+(`ChangeExport_IncludesEverySectionAndUnsectionedCards`) carries a closed section incidentally, never
+asserts on that fact, and never exercises a closed *block*. Added
+`ChangeExport_ClosedCardsAreIncluded` (`RecordExportTests.cs`), matching the section-export pin's own
+shape: a closed block card, asserted present in the rendered document by name.
+
+**`section status` — no liveness filter, and none added.** Re-read `SectionStatusResult` field by
+field: every field but `AgeingThreads` reads the one section card the command opened directly (no set
+to filter), and `AgeingThreads` itself comes from `CardStore.FindAgeingAddressedThreads`, grepped for
+`IsClosed` — no hit. There is currently no card-set field on this result for a liveness filter to even
+attach to; the ruling holds by the response having nothing shaped like a default query to filter.
+Left untouched, per the brief.
+
+**`finding status` — the stated no-op.** `CardLifecycle.IsClosed`'s `onFinding: () => false` means
+this check, if it were ever consulted on this path, would never exclude anything — but `finding
+status` doesn't consult it at all: like `card show`, it resolves one id via `CardStore.ReadCard` and
+answers from that one card (`CommandDispatcher.cs:2162+`), never a set. So there are two independent
+reasons a finding is never dropped here, not one: it isn't a default query (retrieval by identity), and
+even where `IsClosed` *is* checked elsewhere (`context`/`state`), a finding never trips it. Both are
+worth stating so neither reads as an oversight. No test added — there is no closed-finding state to
+construct (`onFinding` always answers `false`), so a test asserting inclusion would assert a tautology.
+
+**`rule review` — confirmed, not changed, per the brief.** `RuleCitations.CountLiveOpenRules` and
+`.UncitedOpenRules` (`RuleCitations.cs:139-166,188-`) each check `RegisterLifecycleState.Open`
+directly rather than calling `CardLifecycle.IsClosed` — its own inline equivalent for the register
+two-state lifecycle, predating this block (§10 block E). Already pinned with a genuinely-present,
+genuinely-excluded discharged rule: `RuleCitationsTests.cs:160-205`
+(`UncitedOpenRules_DiscardedRule...`, count and queue both). Not touched, per the brief — this is an
+existing inline check, not a new sixth reader introduced by this block, and re-deriving it onto
+`CardLifecycle.IsClosed` now would be a drive-by refactor outside `11.5`'s scope.
+
+**No `--include-closed` or equivalent added anywhere.** No caller was named needing one; per the
+brief, that is the architect's call to make, not mine to pre-empt.
+
+**Gates.** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite **1018 → 1020**
+(2 new: `ClosedBlockedBlock_ExcludedFromBlockedCards` in `CommandDispatcherStateTests.cs`,
+`ChangeExport_ClosedCardsAreIncluded` in `RecordExportTests.cs`). Working tree has uncommitted changes
+only in `tests/Callboard.Tests/CommandDispatcherStateTests.cs`, `tests/Callboard.Tests/
+RecordExportTests.cs`, and this DEVLOG — no implementation file touched, no `N.M` box ticked,
+`tasks.md` untouched.
+
+→ @reviewer
+
+**[reviewer]** §11 block D audit (`11.5`) — **Approve**.
+
+**Scope.** Diff is exactly `tests/Callboard.Tests/CommandDispatcherStateTests.cs`,
+`tests/Callboard.Tests/RecordExportTests.cs`, and this DEVLOG. No implementation file touched, no
+`Makefile`/`tasks.md`/`CLAUDE.md`/`.claude/` edit, no `N.M` box ticked (`tasks.md` line 140 for `11.5`
+confirmed still `- [ ]`). No `--include-closed` or equivalent added anywhere — grepped both diffs, no
+hit.
+
+**Priority item — the `RegisterLifecycleState.Open` inline-check pattern, assessed on its own, not as
+a blocker here.**
+
+The divergence is real, and I demonstrated it by running the CLI, not just by reading:
+`CardLifecycle.IsRegisterDischarged` (`CardLifecycle.cs:59-60`) is `TryParse && == Discharged` — an
+unparseable `status:` fails to `Discharged`, so `IsClosed` returns `false` (treated **live**). The
+inline checks (`RuleCitations.cs:162,211`; `WorkingContext.cs:161`; `CardStore.cs:4092`;
+`CommandDispatcher.cs:3483`) are all `TryParse && == Open` — the same parse failure fails to `Open`,
+so the card is treated as **not live**. Opposite fail-behaviour for the identical failure mode
+(readable frontmatter, unparseable per-kind status), assigned by which formula happens to run over
+that card.
+
+**Reachability, traced and then run.** A card's `status:` is a free string (`CardFrontmatter.Status`
+in `CardFrontmatter.cs:37`) — nothing validates it against a kind's enum at parse time, so a
+`kind: obligation` or `kind: rule` card with `status: bogus` parses as `onSuccess`, not `onFailure`;
+it never reaches `ArchiveChange`'s own fail-closed `CardsUnreadable` gate (`CardStore.cs:4104-4109`),
+which only catches parse failure of the whole file, not an invalid enum value inside a parsed file. I
+built the CLI (`make build`, clean) and ran it against two hand-written cards in a scratch repo:
+`O-0001` (`kind: obligation`, `status: bogus`, `owed_by: S-0001`) and `R-0001` (`kind: rule`,
+`status: bogus`), both otherwise well-formed. Results:
+- `context --role architect`: `O-0001` appears in `queue`, becomes `topItem`, `halted: false` —
+  treated as a fully live, actionable obligation. `liveRules` is `[]` — `R-0001` does not appear
+  anywhere in the response (not in `liveRules`, not in the queue): it is silently and completely
+  excluded, with nothing in the response flagging that a rule card exists with an unreadable status.
+- `state`: `liveObligations` contains `O-0001` (`owedBySectionId: "S-0001"`, a section that doesn't
+  even exist in the fixture) — same live treatment.
+- `rule review`: `liveRuleCount: 0`, `uncitedOpenRules: []` — `R-0001` is invisible here too, matching
+  `context`'s treatment of it.
+
+**Is it "the same asymmetry" from the ruling under `## 11.`?** Not the identical shape. That ruling
+was about one predicate (`FindBlockingOpenProductOwnerQuestion`) disagreeing with itself depending on
+*which kind of failure* hit the same blocker id. What I found here is different in shape but the same
+defect *class*: liveness for the register lifecycle is derived by at least five independent call
+sites using two different formulas that disagree on the unparseable-status case, and the split falls
+along **card kind** — obligation/decision go through `CardLifecycle.IsClosed` (fails open on
+corruption), rule/hazard go through the inline `==Open` checks (fails closed on corruption) — not
+along which command is asking. Within any *one* response, a rule/hazard card and an obligation/
+decision card never collide on the same card (kind dispatch is exclusive), so there's no
+single-predicate self-contradiction the way the ruling described. But it is still a real, reachable,
+demonstrated defect: an architect running `context` or `state` today gets an obligation with a
+corrupted status reported as live and actionable, while a rule with the identical corruption vanishes
+without a trace — both wrong, in opposite directions, and neither is a stated, deliberate ruling the
+way the `blocked_by` asymmetry was before this session settled it. It also means `CardLifecycle`'s
+own doc comment claim of being "the one place 'closed' is defined per kind" is not true in practice —
+`RuleCitations`/`WorkingContext`'s rule/hazard branch/`CardStore.ArchiveChange`/the compaction-propose
+check in `CommandDispatcher` all re-derive register liveness with a different formula, which is
+exactly the "sixth reader" §10 S2 and this block's own brief warned against, except there turn out to
+already be several, predating this block and out of its scope to fix.
+
+There is a second-order consequence worth naming: `CardStore.ArchiveChange`'s own obligation gate
+(`CardStore.cs:4085-4089`) uses the fail-closed-on-corruption formula, so a corrupt-status obligation
+is *not* counted as open there — meaning `change archive` would not flag it as orphaned and would not
+block on it, while `state` simultaneously reports the same card as a live, owed obligation. A change
+could archive clean by this gate's reckoning while `state` insists an obligation is still owed against
+it.
+
+**Verdict on this finding: real, not blocking this diff.** It predates block D (block D changed no
+implementation and was explicitly briefed to confirm `rule review`, not touch it), and none of the
+five call sites are new here. I'm posting it as a finding for the section and for whoever picks this
+up next, since it sits squarely in the territory §10 S2 and this session's `blocked_by` ruling both
+just closed for other predicates. Recommend the architect treat this as a `## NEXT` carry-forward for
+a future section (or a targeted remediation) rather than something owed inside §11: it touches
+`RuleCitations`, `WorkingContext`, `CardStore.ArchiveChange`, and `CommandDispatcher`'s compaction
+path, none of which block D's brief authorised touching.
+
+**11.5 command-by-command account, verified against the code.**
+- `context`/`state`: `CardLifecycle.IsClosed` called once each (`WorkingContext.cs:173`,
+  `DerivedState.cs:88`), ahead of every per-kind branch — confirmed by reading both methods; a closed
+  card cannot reach ownership, addressing, or any per-kind derived-state branch. Matches the worker's
+  claim of "verified, not re-implemented."
+- `card show`, `section export`, `change export`: grepped `RunCardShow`, `RecordExportAssembler.cs`,
+  `RecordExportRenderer.cs` for `IsClosed` myself — no hit in any of the three, confirming no
+  liveness filter exists there to regress.
+- `section status`: re-read `SectionStatusResult` — every field but `AgeingThreads` reads the single
+  named section card directly (no set to filter over), and `AgeingThreads` comes from
+  `CardStore.FindAgeingAddressedThreads`, which I grepped for `IsClosed` — no hit. The ruling's
+  "nothing shaped like a default query to filter" holds; correctly left untouched.
+- `finding status`: confirmed `onFinding: () => false` in `CardLifecycle.cs` makes any liveness check
+  a no-op, and confirmed independently that this path never calls `IsClosed` at all — it resolves one
+  id and answers from that single card, the same identity-retrieval shape as `card show`. Two
+  independent reasons stated, neither an oversight; agree no test is owed for a state that cannot be
+  constructed.
+- `rule review`: `RuleCitations.CountLiveOpenRules`/`.UncitedOpenRules` use the inline `== Open`
+  check, predating this block (§10 block E), already pinned by `RuleCitationsTests.cs:160-205` with a
+  genuinely-present, genuinely-excluded discharged rule. Confirmed not touched by this diff (`git
+  diff` shows no change to `RuleCitations.cs`). Correct to leave alone per the brief — the corruption-
+  case divergence above is a pre-existing, out-of-scope defect, not something this block introduced
+  or was asked to fix.
+
+**The two new tests earn their place — checked, not accepted on the worker's account.**
+- `ClosedBlockedBlock_ExcludedFromBlockedCards`
+  (`CommandDispatcherStateTests.cs`): writes a genuinely closed block (`status: "closed"`) with a
+  real `blocked_by: ["Q-0001"]` against a real, resolvable open question card, and asserts
+  `blockedCards` is empty. Traced `DerivedStateAssembler.Build` (`DerivedState.cs:88`,`115-121`): the
+  `IsClosed` check runs before the `IsBlockCard(card) && BlockFields.BlockedBy.Length > 0` branch that
+  populates `blockedCards`, so this closed block would appear if the guard regressed — the only block
+  in the fixture, so an empty result is unambiguous, not a weak "still contains other stuff" check.
+  This is a genuine coverage gap closed: the three existing `state` liveness pins (section,
+  obligation, question) had no block-branch equivalent before this.
+- `ChangeExport_ClosedCardsAreIncluded` (`RecordExportTests.cs`): writes a real closed block
+  (`status: "closed"`) under a real open section, runs `change export` end to end via
+  `CommandDispatcher.Run`, and asserts `## block B-0001` appears in the rendered output file. Grepped
+  `RecordExportAssembler.cs`/`RecordExportRenderer.cs` myself for `IsClosed` — no hit, so there is
+  nothing on this path that could regress it today, but the test is real: if a liveness filter were
+  ever added to `CardsForChange` or the renderer, this fixture (a closed card that must appear) would
+  catch it, unlike the pre-existing `ChangeExport_IncludesEverySectionAndUnsectionedCards`, which
+  carries a closed section incidentally but never names or asserts on that fact.
+
+**Gates — reran independently in the foreground, exit lines read directly.**
+```
+BUILD_EXIT:0
+TEST_EXIT:0    (1020 total, 0 failed, 0 skipped — 1018 → 1020, +2 new)
+FORMAT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+Matches the worker's reported suite total exactly.
+
+No blockers.
+
+**Non-blocking observations.**
+- The priority item above (register-lifecycle liveness split across five call sites with two
+  disagreeing formulas on unparseable status) — real, demonstrated, out of this block's scope, and
+  worth a `## NEXT` line for the section or a dedicated remediation in a later section.
+- `CardLifecycle`'s own doc comment ("the one place 'closed' is defined per kind") is no longer an
+  accurate claim about the codebase now that `RuleCitations`, `WorkingContext`'s rule/hazard branch,
+  `CardStore.ArchiveChange`, and `CommandDispatcher`'s compaction-propose check all maintain their own
+  parallel formula for the register lifecycle's two states. Worth a note or a correction whenever
+  someone next touches that file, not urgent.
+
+→ @architect
+
 ## NEXT
 
 **§10 is closed — supervisor `Approve` on the second pass (`3e85b98..d5af2a5`).** Ten of ten boxes

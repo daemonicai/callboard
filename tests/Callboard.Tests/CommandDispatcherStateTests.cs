@@ -141,6 +141,24 @@ public sealed class CommandDispatcherStateTests
         Assert.False(blocked.TryGetProperty("haltedByQuestionId", out var haltId) && haltId.ValueKind != JsonValueKind.Null);
     }
 
+    // §11.5, record-retrieval: "closed cards no longer appear in default queries" — `state` is one
+    // of the two default queries (11.5's own ruling); a closed block carrying `blocked_by` must not
+    // surface in `blockedCards` either, the one field on this response `DerivedStateAssembler`
+    // populates from block cards. `CardLifecycle.IsClosed` is checked once, ahead of every per-kind
+    // branch (`DerivedState.cs:88`) — this exercises that check reaching the block branch, which no
+    // existing test names directly.
+    [Fact]
+    public void ClosedBlockedBlock_ExcludedFromBlockedCards()
+    {
+        using var repo = new TempGitRepo();
+        WriteQuestion(repo, "q-0001", "Q-0001", CardOwner.ProductOwner, "open");
+        WriteBlockedBlock(repo, "b-0001", "B-0001", blockedBy: ["Q-0001"], status: "closed");
+
+        var result = State(repo);
+
+        Assert.Empty(result.GetProperty("blockedCards").EnumerateArray());
+    }
+
     [Fact]
     public void TaskCompletion_CountedFromTheRealTasksMdFile()
     {
@@ -243,10 +261,10 @@ public sealed class CommandDispatcherStateTests
         WriteCard(path, card);
     }
 
-    private static void WriteBlockedBlock(TempGitRepo repo, string fileStem, string id, IReadOnlyList<string> blockedBy)
+    private static void WriteBlockedBlock(TempGitRepo repo, string fileStem, string id, IReadOnlyList<string> blockedBy, string status = "briefed")
     {
         var path = System.IO.Path.Combine(repo.ChangesDirectory, fileStem + ".md");
-        var frontmatter = new CardFrontmatter(id, CardKind.Block, "A block", "briefed", CardOwner.Worker, CardScope.Change, string.Empty, FixedNow, FixedNow);
+        var frontmatter = new CardFrontmatter(id, CardKind.Block, "A block", status, CardOwner.Worker, CardScope.Change, string.Empty, FixedNow, FixedNow);
         var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: null, Tasks: [], Round: null, BlockedBy: blockedBy, GateResults: []);
         var card = new CardFile(frontmatter, "Body.", [], [], BlockFields: blockFields);
         WriteCard(path, card);

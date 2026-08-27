@@ -336,6 +336,26 @@ public sealed class RecordExportTests
         Assert.Contains("## block B-0002", text, StringComparison.Ordinal);
     }
 
+    // §11.5, record-retrieval: "closed cards ... remain present ... in exports" — the other half of
+    // block C's own closed-card pin (SectionExport_ClosedCardsAreIncluded), exercised through
+    // `change export` specifically. `ChangeExport_IncludesEverySectionAndUnsectionedCards` happens
+    // to carry a closed section already, but doesn't name that fact or assert on it; this test
+    // makes the property an explicit, named claim with a closed *block* card present.
+    [Fact]
+    public void ChangeExport_ClosedCardsAreIncluded()
+    {
+        using var repo = new TempGitRepo();
+        WriteSection(repo, "s-0001", "S-0001", "open");
+        WriteBlock(repo, "b-0001", "B-0001", "S-0001", status: "closed");
+        var outPath = Path.Combine(repo.Path, "out.md");
+
+        var exitCode = CommandDispatcher.Run(
+            ["change", "export", "establish-callboard", "--out", outPath], new StringWriter(), TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        Assert.Contains("## block B-0001", File.ReadAllText(outPath), StringComparison.Ordinal);
+    }
+
     private static string? RefusalCode(StringWriter output)
     {
         using var doc = JsonDocument.Parse(output.ToString());
