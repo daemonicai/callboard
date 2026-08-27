@@ -35974,120 +35974,119 @@ Recorded in `## NEXT`.
 
 ## NEXT
 
-**§12 is closed — supervisor `Approve` on the second pass (`5f7919d..HEAD`).** Three of three boxes
-ticked, two blocks plus one out-of-section block plus one remediation round, suite **1021 → 1049**,
-`GATES_EXIT:0`, working tree clean. One of the two remediation rounds was spent.
+**§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the
+section is not closed and must not be treated as closed.** Five blocks have landed; four tasks remain.
 
-**§13 is the last section**, and it is no longer the four tasks `tasks.md` lists. It carries an inherited
-queue and a Product Owner spec amendment, both below. **Post §13's base commit before briefing its first
-block, and enumerate the queue in that brief** — the supervisor has said it will audit §13 against it, and
-the queue currently lives only in this file.
+### Landed in §13
 
-### §12 as built
+`a32f481` — the Product Owner's spec amendment (§13's base is deliberately the commit *before* it, so the
+supervisor audits the amendment alongside what was built to it) · `e2bea69` **13.1** `block create` ·
+`d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test fix,
+carved from this file rather than from a task, ticking nothing.
 
-`a0974bb` **A** — out-of-section: register liveness closes at the parse door · `6f58544` **B** — 12.1–12.2,
-`view --out` and the board's structure · `0aa940b` — the Product Owner's 12.3 confirmation ·
-`5503251` — remediation round one (the silent droppers, and the overturned doc comment).
+Suite **1049 → 1082**. Two remediation rounds spent, on 13.1 and 13.3, both reviewer-raised and both real.
 
-**What the section delivers:** a card whose `status:` does not parse is never constructed, so six
-divergent liveness derivations became unreachable rather than merely aligned and `section close` stopped
-letting an owed obligation through on a hand-edited status; and a local, read-only, self-contained HTML
-board — lanes by flow vocabulary, columns by that vocabulary's states, the register as its own area — that
-names what it could not read instead of rendering the remainder as though it were the whole.
+### The resume point
+
+**13.4 — extend the hook boundary to deny agent writes to the card store.** Then 13.5, 13.6, 13.7.
+
+**13.5, 13.6 and 13.7 are not ordinary blocks.** Read them before carving:
+
+- **13.5 owes the inherited queue below**, not just its own sentence — the four silent droppers and
+  `card-id-unresolvable`. Both are enumerated under "Homed under 13.5".
+- **13.5 and 13.6 are human-in-the-loop verification** — the record staying readable when the tool cannot
+  run, and a card's state being determinable from the file alone. CLAUDE.md §4: implement and self-test as
+  far as automation reaches, then hand the Product Owner an exact, copy-pasteable recipe and **wait for
+  her confirmation before ticking**. §12.3 is the worked example. **A verification recipe can satisfy the
+  paperwork and not the task** (§12 ruling 5) — §12's first recipe would have shown her an empty board
+  while asking her to confirm its contents.
+- **13.7 documents the agent-facing command surface**, which now includes three verbs that did not exist
+  this morning. Write it after 13.4–13.6, not before.
+
+**Then the section review.** Spawn the supervisor on `f100b77..HEAD`, pointed at the amended
+`work-lifecycle` and `card-model` requirements — not just at the four task lines. It has said it will audit
+§13 against the queue in this file.
 
 ---
 
-## The §13 queue — three inherited items and one amendment
+## Homed under 13.5 — enumerated, not parked
 
-**Enumerate all of this in §13's brief.** The supervisor will audit against it.
+### The four silent droppers
 
-### 1. The Product Owner's spec amendment — lands *before* §13's first block is briefed
-
-**The spec is wrong, not silent, and it moves.** No CLI verb creates a task-implementing `block` card:
-`grep -rn "BlockFlowState.Drafting" src/` returns **zero matches**, while `work-lifecycle` makes
-`drafting` the leftmost node of its own flow diagram. The only minting door is
-`CardStore.cs:2413-2420` (`section verdict --finding-new`, at `briefed`), which exists only because
-"Section remediation follows the finding, not the verdict" forced it.
-
-**Why this is a correctness hole and not untidiness:** a hand-authored block card bypasses
-`CardIdentityAllocator`, so it never advances the counter, so a later allocation can reissue its id.
-`VerifyCounters` runs only at `index rebuild` and `CardIdentityCounterViolation` is explicitly never a
-refusal. **`card-model`'s "an identity SHALL NOT be reused" is unenforceable for the one kind that carries
-the work** — a guarantee the spec states and nothing enforces, which is this project's own failure mode
-wearing the tool's clothes.
-
-`work-lifecycle` gains the requirement that a work card is created through the tool; `card-model` is
-amended where identity bites. Then **three verbs, three separate blocks**: `block create`, an ordinary
-addressed comment (`comment` has only resolve/promote/decline today), and a recording door for `--base`
-("Blocks carry their brief context" requires it recorded before briefing, and nothing records it).
-`make validate` must pass on the amended change before any of it is built.
-
-**Bounded deliberately: three named verbs, not a general creation surface.** If building `block create`
-shows another kind needs the same door, that is a Product Owner question, not a natural extension.
-
-### 2. Under 13.2 — the four silent droppers
-
-Block A made an out-of-vocabulary `status:` fail to parse where it previously produced a constructed card.
-Four readers still discard the failure with `onFailure: static _ => null` — no count, path, reason or
+Block A of §12 made an out-of-vocabulary `status:` fail to parse where it previously produced a constructed
+card. Four readers still discard the failure with `onFailure: static _ => null` — no count, path, reason or
 marker: **`DerivedState.cs:86`** (`state`), **`WorkingContext.cs:144`** (`context`),
 **`RecordExportAssembler.cs:59,90,109,126`** (both exports). `view`'s own dropper was fixed in `5503251`.
 
-**Not a fail-open on enforcement — on record fidelity.** The tool reads a store, silently cannot read part
-of it, and renders the rest as though it were the whole. Homed here rather than fixed in §12 because
-reporting unreadables changes `context`'s budgeted shape (§10) and both export shapes (§11); the
-supervisor judged the split correct on re-audit.
-
-Two things the supervisor attached, for whoever designs this:
+**A fail-open on record fidelity, not on enforcement** (§12 ruling 3): nothing is wrongly permitted, the
+tool is merely confidently wrong, and no reader can tell by looking. Two attachments from the supervisor:
 
 - **`BoardView.cs:123` calls `DerivedStateAssembler.Build`**, so `view` transitively contains one of the
-  four. Nothing is under-reported today, but when 13.2 fixes `DerivedState.cs:86`, **`view` must consume
-  that result rather than grow a second unreadable set.**
+  four. When 13.5 fixes `DerivedState.cs:86`, **`view` must consume that result rather than grow a second
+  unreadable set.**
 - **`ViewResult` reports `cardCount` and nothing about the unreadable set** (`ViewResult.cs:16-20`; count
-  computed from lanes only at `CommandDispatcher.cs:4165-4173`). The page tells the human; the JSON tells
-  the agent a number that excludes what could not be read. **Design it with 13.2 as one `unreadable`
+  computed from lanes only at `CommandDispatcher.cs:4165-4173`). **Design it with 13.5 as one `unreadable`
   shape, not a sixth ad-hoc variant.**
 
-### 3. Under 13.2 — `card-id-unresolvable` reports the wrong thing
+### `card-id-unresolvable` reports the wrong thing
 
-A corrupt card addressed by id reports **`card-id-unresolvable`**: the tool saying *I could not find that
+A corrupt card addressed by id reports **`card-id-unresolvable`** — the tool saying *I could not find that
 card* when the truth is *I found it and it is corrupt*. An agent told the id does not resolve hunts for a
-typo; an agent told the card is corrupt reads the file. Wrong-remedy, not wrong-verdict — which is why it
-waited.
+typo; an agent told the card is corrupt reads the file. **Wrong-remedy, not wrong-verdict.**
 
 `CardIdentityResolver` and `NitResolver` already carry an `Unreadable` case distinct from `NotFound`; the
 resolver loop discards the parse-failure reason (`onFailure: static _ => null`), keeping only the path. It
 can already name *which file* and needs only to stop throwing away *why*. **10 of the 19 `onCardCorrupt`
-arms are unreachable** because of this (all nineteen were checked directly), **`block approve --id`
-included**, and the shared `ResolveRuleCompactOutcome` arm is unreachable via *both* callers.
-
-### 4. `CLAUDE.md` and the agent prompts
-
-1. **The two-verdict vocabulary is not holding, and prompting harder is not the fix.** §10 block E's
-   reviewer returned **"Approve with nits"** — the verdict §8 deleted. It happened **again in §12 block B,
-   in a prompt that named the two values explicitly**. That is the second occurrence and it kills the
-   "spell it out per-invocation" theory: **the agent definition is stale.** (It held for the rest of §12
-   only after the Architect quoted the deletion back at the reviewer.)
-2. `CLAUDE.md` describes supervisor pushback without saying the remediation is a new card, and says
-   nothing about recurrence returning the owning card.
-3. `CLAUDE.md` states the two-round cap as a prohibition, which §8a makes an authorisation. §9, §10 and
-   §11 are the worked examples; **§12 spent one round of two.**
-4. `CLAUDE.md` still says an approved block may be reopened; §8a made `approved` terminal.
-5. Refusals should name the route by verb rather than by concept.
-6. `--claims`/`--limits` are plural while `--site` is singular-repeatable.
-7. **New, from §12:** a worker post claimed seven in-place comments that were not in the tree; the reviewer
-   caught it by reading the diff rather than the post. The agent definitions should say plainly that a
-   report is checked against the diff, and that claiming unwritten work is the failure — not the omission.
-
-### 5. Also carried into §13's own tasks
-
-- **13.4 owes the agent-facing command documentation** — and after the amendment above, that surface
-  includes three verbs that do not exist yet. Do not write 13.4 before the verbs land.
-- **`## NEXT` carries notes forward across sections; a `CardComment` on a section card does not.** 11.4
-  homes the prose half of `NEXT` as a comment on the section card, reconstitutable in *that* section's
-  export but not propagating to the next. **Whether carrying-forward needs a mechanism is §13's question**
-  — and this very file, at three sections' worth of queue, is the evidence that it is a real one.
+arms are unreachable** because of this, **`block approve --id` included**, and the shared
+`ResolveRuleCompactOutcome` arm is unreachable via *both* callers.
 
 ---
+
+## `CLAUDE.md` and the agent definitions — still owed
+
+1. **The two-verdict vocabulary is not holding, and prompting harder is not the fix.** §10 block E and §12
+   block B both returned "Approve with nits" — the verdict §8 deleted — the second time in a prompt that
+   named the two values explicitly. **The agent definition is stale.** (Held all through §13, but only
+   because every invocation restated it.)
+2. `CLAUDE.md` describes supervisor pushback without saying the remediation is a new card, and says nothing
+   about recurrence returning the owning card.
+3. `CLAUDE.md` states the two-round cap as a prohibition, which §8a makes an authorisation.
+4. `CLAUDE.md` still says an approved block may be reopened; §8a made `approved` terminal.
+5. Refusals should name the route by verb rather than by concept. **13.3 is the worked example** — and it
+   found the reverse case too: a refusal naming a verb that did not exist.
+6. `--claims`/`--limits` are plural while `--site` is singular-repeatable.
+7. A report is checked against the diff, and **claiming unwritten work is the failure, not the omission**
+   (§12 block B).
+8. **New, from §13:** a worker followed the codebase over a brief that contradicted it (`--body` does not
+   exist; bodies come from stdin) and did not raise it. **The substance was right and the silence was
+   wrong** — a brief that contradicts the codebase is a defect in the brief, and the Architect cannot fix
+   what the worker does not report.
+
+---
+
+## Rulings from §13
+
+1. **A spec that states only its refusals leaves the permitted case to inference, and inference diverges**
+   *(Product Owner)*. My amendment's scenario said "records against a block that already has one →
+   refuses" while its own prose said "SHALL NOT **change**", twice. Two verbs sharing the `base-immutable`
+   code diverged on exactly that gap. The requirement now carries **two** scenarios — the refusal *and*
+   the permitted resupply. **Write the permitted case down.**
+2. **The callers of this tool are agents, and an agent that cannot tell whether its call landed must be
+   able to ask again without being punished for asking.** Under the old reading a retry both failed and
+   left a permanently recorded refusal indistinguishable from a real attempted overwrite. **This is a
+   property to audit the whole CLI against, not a fact about `block base`.**
+3. **Confirming a negative across a live tree must distinguish *gone* from *unreadable*.** 13.1's scan
+   folded a file that vanished between enumeration and open into the same bucket as a corrupt one, failing
+   an unrelated legitimate allocation 2 runs in 3. A vanished file bears no identity; a file that exists
+   and will not parse still fails shut. D7's atomic rename is what makes existence the only racing fact.
+4. **A queue item's premise decays and must be re-checked at briefing time.** Both of this file's §13
+   premises were wrong: "nothing records `base`" (`block transition --base` had shipped since §5), and
+   "`comment add` makes the §11 defect reachable" (`comment resolve` had made it reachable in §9). Neither
+   was harmful, because both were checked. **Verify the premise, then brief.**
+5. **A regression test nobody has watched fail is a guess** — and a *report* of having watched it fail is
+   still a report. 13.1's fix was verified 3/3 against the old code; the referent block's reviewer went
+   further and reproduced the defect from first principles against the real binary in a scratch repo
+   rather than accepting the worker's account of an xunit message.
 
 ## Parked — deliberate, not forgotten
 
@@ -36108,11 +36107,15 @@ included**, and the shared `ResolveRuleCompactOutcome` arm is unreachable via *b
 
 ### From §11
 
-- **The referent property test takes its defined ids by regex over rendered prose, unscoped to
-  `### thread`.** Not hypothetical: a `**[reviewer c-2]**`-shaped post becomes a false definition inside a
-  body the moment such a post is a card comment — which is exactly what 11.4 homes it as. It **passes when
-  it should fail**. Fix: take defined ids from the `CardFile`, not by regex over rendered prose. Same fix
-  covers the whitespace-in-comment-id assumption.
+- ~~The referent property test takes its defined ids by regex over rendered prose.~~ **Fixed in `d524f38`
+  (§13).** It had been reachable from shipped code since §9, not from 11.4 as this entry predicted.
+- **New residual from that fix, same family:** the referent scan is now scoped to each card's `### thread`
+  via a `ThreadSections` helper that splits on `## ` headings — sound, because `AppendThread` is the
+  renderer's only `## ` emitter and always last. But **a comment body containing a literal line starting
+  `## ` truncates the scoped capture early**, silently dropping later referents from the scan. It **loses
+  coverage rather than manufacturing a false definition**, so it fails safe rather than green — which is
+  why it is parked and not homed. Still a document-parsing assumption about text a caller controls, in the
+  very test that exists because one of those was wrong.
 
 ### From §10's supervisor reviews
 
