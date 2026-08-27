@@ -867,11 +867,18 @@ internal static class CommandDispatcher
     /// <see cref="Run"/>'s single <see cref="ICommandVisitor{TResult}"/> implementation — the
     /// visitor arm that used to be 36 named parameters at <see cref="ParsedCommand.Accept{TResult}"/>'s
     /// one call site is now one short method per case, listed in the same order those parameters
-    /// were declared in so the diff from the old shape reads as a move. Carries only what every
-    /// handler call needs beyond the parsed command itself — <paramref name="LockTimeout"/> — the
-    /// same value every arm of the old delegate list closed over.
+    /// were declared in so the diff from the old shape reads as a move. Carries what every handler
+    /// call needs beyond the parsed command itself: <paramref name="LockTimeout"/> — the same
+    /// value every arm of the old delegate list closed over — and <paramref name="
+    /// RecognisedCommandName"/>, the exact <see cref="CliEnvelope.Command"/> string <see
+    /// cref="WriteEnvelope"/> will embed for this invocation (§10 block B review, blocker 1: it
+    /// echoes every consumed argument, not just the verb — <c>"context --role worker"</c>, not
+    /// <c>"context"</c> — so <c>context</c> is the one handler that needs it before it can price
+    /// its own response against the line that actually ships). Computed once in <see cref="Run"/>,
+    /// after parsing has finished consuming every token it will consume, so it is already the
+    /// final value <see cref="WriteEnvelope"/> recomputes the same way afterward.
     /// </summary>
-    private readonly record struct CommandRunner(TimeSpan LockTimeout) : ICommandVisitor<CommandOutcome>
+    private readonly record struct CommandRunner(TimeSpan LockTimeout, string RecognisedCommandName) : ICommandVisitor<CommandOutcome>
     {
         public CommandOutcome Visit(ParsedCommand.Version command) => RunVersion();
 
@@ -945,7 +952,7 @@ internal static class CommandDispatcher
 
         public CommandOutcome Visit(ParsedCommand.CommentDecline command) => RunCommentDecline(command, LockTimeout);
 
-        public CommandOutcome Visit(ParsedCommand.Context command) => RunContext(command);
+        public CommandOutcome Visit(ParsedCommand.Context command) => RunContext(command, RecognisedCommandName);
     }
 
     internal static int Run(
@@ -968,11 +975,18 @@ internal static class CommandDispatcher
         {
             var context = new CommandContext(arguments, input, isInputRedirected, workingDirectory, resolvedClock);
             var parseResult = EnforceNoUnconsumedArguments(CommandParser.Parse(command, context), arguments);
+
+            // Parsing has already consumed every token it will consume by this point, so this is
+            // already the final value — the same one WriteEnvelope's own call below recomputes —
+            // which is what lets CommandRunner hand it to `context` before that handler needs to
+            // price its own response against the line that will actually ship (§10 block B review,
+            // blocker 1).
+            var recognisedCommandName = RecognisedCommand(command, arguments);
             var outcome = parseResult.Match(
-                onReady: ready => ready.Command.Accept(new CommandRunner(resolvedLockTimeout)),
+                onReady: ready => ready.Command.Accept(new CommandRunner(resolvedLockTimeout, recognisedCommandName)),
                 onRefused: refused => refused.Refusal);
 
-            WriteEnvelope(output, RecognisedCommand(command, arguments), outcome);
+            WriteEnvelope(output, recognisedCommandName, outcome);
 
             return ExitCodeFor(outcome);
         }
@@ -3700,7 +3714,7 @@ internal static class CommandDispatcher
     /// is a per-brief path). <see langword="private"/>: <see cref="CommandParser"/> cannot name
     /// this method.
     /// </summary>
-    private static CommandOutcome RunContext(ParsedCommand.Context parsed)
+    private static CommandOutcome RunContext(ParsedCommand.Context parsed, string recognisedCommandName)
     {
         var repoRoot = RepoRootResolver.Resolve(parsed.WorkingDirectory);
         if (repoRoot is null)
@@ -3712,16 +3726,197 @@ internal static class CommandDispatcher
 
         var context = WorkingContextAssembler.Build(repoRoot, parsed.Role);
 
-        return new CommandOutcome.Success(new ContextResult
+        return new CommandOutcome.Success(BuildBudgetedContextResult(parsed.Role, context, recognisedCommandName));
+    }
+
+    /// <summary>
+    /// Assembles <see cref="ContextResult"/> under §10 block B's character budget (D6: "register,
+    /// then brief, then unresolved threads addressed to the caller, then narrative"). The
+    /// register and the brief are never touched; narrative — the comment bodies on threads
+    /// addressed to the caller — starts fully included and shrinks from the low-priority end
+    /// (oldest first stays, most recently addressed goes first — the order <see cref="
+    /// WorkingContextTopItem.UnresolvedThreadIdsAddressedToCaller"/> already returns them in,
+    /// since comments are appended chronologically) until the response actually emitted
+    /// (<see cref="MeasureEmittedLength"/> — the <see cref="CliEnvelope"/>-wrapped line, not a
+    /// bare <see cref="ContextResult"/>, and using <paramref name="recognisedCommandName"/>, the
+    /// exact <see cref="CliEnvelope.Command"/> string this invocation will actually carry) fits
+    /// the ceiling. Every candidate is priced by building it and measuring the real serialisation,
+    /// never estimated from a comment's raw string length (§10 block B review, blockers 1/2: a
+    /// per-comment cost model that ignores JSON key/quote overhead and escaping, and a bare-
+    /// <see cref="ContextResult"/> measurement that ignores the envelope's own <c>command</c> field
+    /// echoing every consumed argument — not just the verb — are exactly the class of defect this
+    /// build measures its way around instead of risking again).
+    /// </summary>
+    private static ContextResult BuildBudgetedContextResult(CardOwner role, WorkingContext context, string recognisedCommandName)
+    {
+        var allCommentIds = context.TopItem?.UnresolvedThreadIdsAddressedToCaller ?? [];
+
+        var kept = allCommentIds.Count;
+        ContextResult result;
+        while (true)
         {
-            Role = parsed.Role.ToWireString(),
+            var omitted = allCommentIds.Skip(kept).ToList();
+            var truncated = omitted.Count > 0;
+            var truncationStatement = truncated ? DescribeTruncation(omitted) : null;
+            result = FinalizeBudget(role, context, omitted, truncated, truncationStatement, exceededCeiling: false, overageStatement: null, recognisedCommandName);
+
+            if (result.Budget.CharacterCount <= WorkingContextBudget.CharacterCeiling || kept == 0)
+            {
+                break;
+            }
+
+            kept--;
+        }
+
+        if (result.Budget.CharacterCount <= WorkingContextBudget.CharacterCeiling)
+        {
+            return result;
+        }
+
+        // Every narrative comment is already dropped (kept reached 0) and the response still
+        // doesn't fit — the one case working-context accepts the response failing its own stated
+        // budget: neither the register nor the brief may be shortened. The register-size review
+        // is the intended remedy, but it has no CLI surface yet (block E lands after this one) —
+        // naming a verb nobody has built repeats a §9 mistake, so this states the situation and
+        // names whichever of the two actually drives the overage, rather than blaming the
+        // register unconditionally (§10 block B review nit).
+        var finalCharacterCount = result.Budget.CharacterCount;
+        var overage = finalCharacterCount - WorkingContextBudget.CharacterCeiling;
+        var driver = DescribeOverageDriver(context);
+        var overageStatement =
+            $"the response is {finalCharacterCount} characters — {overage} over the " +
+            $"{WorkingContextBudget.CharacterCeiling}-character ceiling — even with every narrative " +
+            $"comment body already dropped ({allCommentIds.Count}). The register, the brief, and each " +
+            $"addressed thread's structural facts may never be shortened; {driver} needs size reduction " +
+            "to bring this back under budget.";
+        var allOmitted = allCommentIds;
+        var allOmittedStatement = allCommentIds.Count > 0 ? DescribeTruncation(allOmitted) : null;
+        return FinalizeBudget(role, context, allOmitted, allCommentIds.Count > 0, allOmittedStatement, exceededCeiling: true, overageStatement, recognisedCommandName);
+    }
+
+    /// <summary>
+    /// The rough JSON size of one addressed thread's structural entry (<c>commentId</c>,
+    /// <c>author</c>, <c>timestamp</c>, <c>truncated</c>) once its body is withheld — a diagnostic
+    /// estimate for <see cref="DescribeOverageDriver"/>'s prose, not part of the character count
+    /// itself (that is always the real measured <see cref="MeasureEmittedLength"/> value).
+    /// </summary>
+    private const int ApproximateStructuralCharsPerThread = 100;
+
+    /// <summary>
+    /// Names whichever of the register, the brief, or the addressed threads' own structural
+    /// overhead actually drives an overage, for <see cref="BuildBudgetedContextResult"/>'s message
+    /// — never a fixed guess (§10 block B review nit: a message that always blames the register
+    /// even when the top item's own body is oversized misnames its own cause). A card carrying
+    /// enough addressed threads can exceed the ceiling on structural facts alone — <c>id</c>/
+    /// <c>author</c>/<c>timestamp</c> are kept even once every body is dropped — so that is a third
+    /// candidate driver, not only register-versus-brief.
+    /// </summary>
+    private static string DescribeOverageDriver(WorkingContext context)
+    {
+        var registerLength = context.LiveRulesAndHazards.Sum(static entry => entry.Card.Frontmatter.Title.Length + entry.Card.Body.Length);
+
+        var topItem = context.TopItem;
+        var briefLength = topItem is null
+            ? 0
+            : topItem.Card.Body.Length
+                + (topItem.Card.BlockFields.Base?.Length ?? 0)
+                + topItem.Card.BlockFields.Tasks.Sum(static task => task.Length)
+                + topItem.BindingConstraints.Sum(static constraint => constraint.Card.Frontmatter.Title.Length + constraint.Card.Body.Length);
+
+        var addressedThreadCount = topItem?.UnresolvedThreadIdsAddressedToCaller.Count ?? 0;
+        var threadStructuralLength = addressedThreadCount * ApproximateStructuralCharsPerThread;
+
+        if (addressedThreadCount > 0 && threadStructuralLength >= registerLength && threadStructuralLength >= briefLength)
+        {
+            return $"the volume of the {addressedThreadCount} addressed threads' own structural facts (kept even with every body dropped)";
+        }
+
+        return registerLength >= briefLength ? "the register" : "the top item's own brief";
+    }
+
+    /// <summary>
+    /// Builds <paramref name="context"/>'s <see cref="ContextResult"/> and measures the exact
+    /// line it would put on stdout (<see cref="MeasureEmittedLength"/>), then rebuilds it with
+    /// that length recorded as <see cref="ContextBudgetResult.CharacterCount"/> — iterated to a
+    /// fixed point, not substituted once, since <see cref="ContextBudgetResult.CharacterCount"/>
+    /// is itself a field of the object being measured: writing a longer number into it can grow
+    /// the serialised length by a digit or two, which the very first substitution would then
+    /// under-report (§10 block B review, blocker 2's smaller instance). Converges in at most a
+    /// couple of rounds — digit count only grows, and only at a power of ten — so four attempts is
+    /// generous headroom, not a magic number tuned to one fixture.
+    /// </summary>
+    private static ContextResult FinalizeBudget(
+        CardOwner role, WorkingContext context, IReadOnlyList<string> omittedNarrativeCommentIds, bool truncated,
+        string? truncationStatement, bool exceededCeiling, string? overageStatement, string recognisedCommandName)
+    {
+        var characterCount = 0;
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            var probe = BuildContextResult(role, context, omittedNarrativeCommentIds, characterCount, truncated, truncationStatement, exceededCeiling, overageStatement);
+            var measured = MeasureEmittedLength(probe, recognisedCommandName);
+            if (measured == characterCount)
+            {
+                return probe;
+            }
+
+            characterCount = measured;
+        }
+
+        return BuildContextResult(role, context, omittedNarrativeCommentIds, characterCount, truncated, truncationStatement, exceededCeiling, overageStatement);
+    }
+
+    /// <summary>
+    /// The character length of the line this response would actually put on stdout — the
+    /// <see cref="CliEnvelope"/>-wrapped serialisation <see cref="WriteEnvelope"/> itself writes,
+    /// not the bare <see cref="ContextResult"/> in isolation (§10 block B review, blocker 1: the
+    /// envelope's own <c>{"ok":...,"command":...,"result":</c> wrapper and closing brace are
+    /// fixed overhead a measurement of the bare result silently misses, so the stated ceiling
+    /// would bound something that never ships). <paramref name="recognisedCommandName"/> must be
+    /// the exact string <see cref="WriteEnvelope"/> will embed as <see cref="CliEnvelope.Command"/>
+    /// — <see cref="ArgumentCursor.ConsumedTokens"/> means that string echoes every consumed
+    /// argument for this invocation (<c>"context --role worker"</c>), not just the verb, so a
+    /// hard-coded <c>"context"</c> would silently under-measure the real line.
+    /// </summary>
+    private static int MeasureEmittedLength(ContextResult result, string recognisedCommandName)
+    {
+        var envelope = new CliEnvelope { Ok = true, Command = recognisedCommandName, Result = result.ToJsonElement() };
+        return JsonSerializer.Serialize(envelope, CliJsonContext.Default.CliEnvelope).Length;
+    }
+
+    private static string DescribeTruncation(IReadOnlyCollection<string> omittedNarrativeCommentIds)
+    {
+        var count = omittedNarrativeCommentIds.Count;
+        var noun = count == 1 ? "comment body" : "comment bodies";
+        var verb = count == 1 ? "was" : "were";
+        return $"{count} narrative {noun} addressed to the caller {verb} dropped to fit the " +
+            $"{WorkingContextBudget.CharacterCeiling}-character ceiling: {string.Join(", ", omittedNarrativeCommentIds)}.";
+    }
+
+    private static ContextResult BuildContextResult(
+        CardOwner role, WorkingContext context, IReadOnlyList<string> omittedNarrativeCommentIds, int characterCount,
+        bool truncated, string? truncationStatement, bool exceededCeiling, string? overageStatement) => new()
+        {
+            Role = role.ToWireString(),
             LiveRules = [.. context.LiveRulesAndHazards.Where(static entry => CardStore.IsRuleCard(entry.Card)).Select(ToContextRegisterCardResult)],
             LiveHazards = [.. context.LiveRulesAndHazards.Where(static entry => CardStore.IsHazardCard(entry.Card)).Select(ToContextRegisterCardResult)],
             QueueOrder = WorkingContextAssembler.QueueOrderDescription,
             Queue = [.. context.Queue.Select(ToContextQueueEntryResult)],
-            TopItem = context.TopItem is { } topItem ? ToContextTopItemResult(topItem) : null,
-        });
-    }
+            TopItem = context.TopItem is { } topItem ? ToContextTopItemResult(topItem, omittedNarrativeCommentIds) : null,
+            Budget = new ContextBudgetResult
+            {
+                TokenBudget = WorkingContextBudget.TokenBudget,
+                CharactersPerToken = WorkingContextBudget.CharactersPerToken,
+                MarginFraction = WorkingContextBudget.MarginFraction,
+                CharacterCeiling = WorkingContextBudget.CharacterCeiling,
+                CharacterCount = characterCount,
+                Statement = WorkingContextBudget.Statement,
+                Truncated = truncated,
+                TruncationStatement = truncationStatement,
+                OmittedNarrativeCommentIds = omittedNarrativeCommentIds,
+                ExceededCeiling = exceededCeiling,
+                OverageStatement = overageStatement,
+            },
+        };
 
     private static ContextRegisterCardResult ToContextRegisterCardResult((string FilePath, CardFile Card) entry) => new()
     {
@@ -3741,9 +3936,10 @@ internal static class CommandDispatcher
         Updated = entry.Card.Frontmatter.Updated,
     };
 
-    private static ContextTopItemResult ToContextTopItemResult(WorkingContextTopItem topItem)
+    private static ContextTopItemResult ToContextTopItemResult(WorkingContextTopItem topItem, IReadOnlyList<string> omittedNarrativeCommentIds)
     {
         var card = topItem.Card;
+        var omittedSet = new HashSet<string>(omittedNarrativeCommentIds, StringComparer.Ordinal);
 
         ContextVerdictResult? verdict = null;
         if (topItem.PreviousRoundClaims.Count > 0 || topItem.PreviousRoundLimits.Count > 0)
@@ -3769,20 +3965,28 @@ internal static class CommandDispatcher
             ReferencedTasks = [.. card.BlockFields.Tasks],
             ConstraintsRule = WorkingContextAssembler.ConstraintsRuleDescription,
             Constraints = [.. topItem.BindingConstraints.Select(ToContextRegisterCardResult)],
-            UnresolvedThreadsAddressedToCaller = [.. topItem.UnresolvedThreadIdsAddressedToCaller.Select(threadId => ToContextThreadResult(card, threadId))],
+            UnresolvedThreadsAddressedToCaller = [.. topItem.UnresolvedThreadIdsAddressedToCaller.Select(threadId => ToContextThreadResult(card, threadId, omittedSet))],
             PreviousRoundVerdict = verdict,
         };
     }
 
-    private static ContextThreadResult ToContextThreadResult(CardFile card, string commentId)
+    /// <summary>
+    /// One unresolved thread addressed to the caller — structural facts (id, author, timestamp)
+    /// are always carried; <see cref="ContextThreadResult.Body"/> is withheld exactly when
+    /// <paramref name="commentId"/> is in <paramref name="omittedNarrativeCommentIds"/> (§10
+    /// block B: "a thread's structural facts ... are routing, not narrative, and are kept").
+    /// </summary>
+    private static ContextThreadResult ToContextThreadResult(CardFile card, string commentId, IReadOnlySet<string> omittedNarrativeCommentIds)
     {
         var comment = card.Comments.First(comment => comment.Id == commentId);
+        var truncated = omittedNarrativeCommentIds.Contains(commentId);
         return new ContextThreadResult
         {
             CommentId = comment.Id,
             Author = comment.Author.ToWireString(),
             Timestamp = comment.Timestamp,
-            Body = comment.Body,
+            Body = truncated ? null : comment.Body,
+            Truncated = truncated,
         };
     }
 

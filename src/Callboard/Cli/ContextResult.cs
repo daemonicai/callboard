@@ -39,7 +39,81 @@ internal sealed class ContextResult : ICommandResult
     [JsonPropertyName("topItem")]
     public ContextTopItemResult? TopItem { get; init; }
 
+    /// <summary>The stated character budget this response was measured against, and what — if
+    /// anything — was shortened to fit it (§10 block B; working-context: "the budget SHALL be a
+    /// requirement of the response and not a target it may exceed" / "truncation is never
+    /// silent"). Always present, even when nothing was truncated — the budget is stated
+    /// unconditionally, not only when it binds.</summary>
+    [JsonPropertyName("budget")]
+    public required ContextBudgetResult Budget { get; init; }
+
     public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CliJsonContext.Default.ContextResult);
+}
+
+/// <summary>
+/// The character budget a <see cref="ContextResult"/> was measured against (D6, §10 block B) —
+/// the constants and prose from <see cref="WorkingContextBudget"/>, plus what this particular
+/// response actually measured and truncated. <see cref="ExceededCeiling"/> is the one case the
+/// spec accepts the response failing its own budget: register and brief may never shorten, so
+/// when they alone exceed <see cref="CharacterCeiling"/>, the only honest move left is to drop
+/// every narrative comment body and say so (working-context: "the budget SHALL be a requirement
+/// ... it SHALL state explicitly that it has truncated and what").
+/// </summary>
+internal sealed class ContextBudgetResult
+{
+    [JsonPropertyName("tokenBudget")]
+    public required int TokenBudget { get; init; }
+
+    [JsonPropertyName("charactersPerToken")]
+    public required double CharactersPerToken { get; init; }
+
+    [JsonPropertyName("marginFraction")]
+    public required double MarginFraction { get; init; }
+
+    [JsonPropertyName("characterCeiling")]
+    public required int CharacterCeiling { get; init; }
+
+    /// <summary>The measured character length of this response as actually emitted (with
+    /// whatever narrative truncation below already applied) — the same
+    /// <see cref="System.Text.Json.JsonSerializer"/> encoding the caller receives, not an
+    /// approximation of it.</summary>
+    [JsonPropertyName("characterCount")]
+    public required int CharacterCount { get; init; }
+
+    [JsonPropertyName("statement")]
+    public required string Statement { get; init; }
+
+    /// <summary><see langword="true"/> exactly when at least one comment body was shortened
+    /// (dropped) to fit the ceiling — see <see cref="OmittedNarrativeCommentIds"/> for which.
+    /// </summary>
+    [JsonPropertyName("truncated")]
+    public required bool Truncated { get; init; }
+
+    /// <summary>States what was truncated, in prose, when <see cref="Truncated"/> is
+    /// <see langword="true"/> — working-context: "truncation is never silent".</summary>
+    [JsonPropertyName("truncationStatement")]
+    public string? TruncationStatement { get; init; }
+
+    /// <summary>The ids of every unresolved-thread comment whose body was dropped for budget.
+    /// Each still appears in <see cref="ContextTopItemResult.UnresolvedThreadsAddressedToCaller"/>
+    /// with its structural fields intact (id, author, timestamp) and <see cref="
+    /// ContextThreadResult.Truncated"/> set — only the body text is withheld.</summary>
+    [JsonPropertyName("omittedNarrativeCommentIds")]
+    public required IReadOnlyList<string> OmittedNarrativeCommentIds { get; init; }
+
+    /// <summary><see langword="true"/> when the register and brief alone — before any narrative
+    /// is even considered — already exceed <see cref="CharacterCeiling"/>. The only case where
+    /// this response cannot satisfy its own stated budget: neither may shorten, so the response
+    /// is delivered whole anyway, over budget, with <see cref="OverageStatement"/> saying by how
+    /// much. A signal the register needs size compaction, not a defect in this measurement.
+    /// </summary>
+    [JsonPropertyName("exceededCeiling")]
+    public required bool ExceededCeiling { get; init; }
+
+    /// <summary>States the overage, in characters, when <see cref="ExceededCeiling"/> is
+    /// <see langword="true"/>.</summary>
+    [JsonPropertyName("overageStatement")]
+    public string? OverageStatement { get; init; }
 }
 
 /// <summary>One live <c>rule</c> or <c>hazard</c> card, delivered whole (register: "The register
@@ -147,9 +221,13 @@ internal sealed class ContextTopItemResult
     public ContextVerdictResult? PreviousRoundVerdict { get; init; }
 }
 
-/// <summary>One unresolved thread addressed to the role that requested this context — the comment
-/// itself, in full, since this is the top item's own detail (part 3), not narrative from another
-/// queue member.</summary>
+/// <summary>One unresolved thread addressed to the role that requested this context — the
+/// comment itself, since this is the top item's own detail (part 3), not narrative from another
+/// queue member. <see cref="CommentId"/>, <see cref="Author"/> and <see cref="Timestamp"/> are
+/// structural routing facts (§10 block B: "a thread's structural facts ... are routing, not
+/// narrative, and are kept") and are always present, even when <see cref="Truncated"/> is
+/// <see langword="true"/> — a caller must still know a thread exists and is theirs even when its
+/// text was shortened for budget.</summary>
 internal sealed class ContextThreadResult
 {
     [JsonPropertyName("commentId")]
@@ -161,8 +239,18 @@ internal sealed class ContextThreadResult
     [JsonPropertyName("timestamp")]
     public required DateTimeOffset Timestamp { get; init; }
 
+    /// <summary>The comment's text — the narrative this response can shorten for budget.
+    /// <see langword="null"/> exactly when <see cref="Truncated"/> is <see langword="true"/>;
+    /// never empty otherwise (record-retrieval guarantees no comment is ever empty-bodied).
+    /// </summary>
     [JsonPropertyName("body")]
-    public required string Body { get; init; }
+    public string? Body { get; init; }
+
+    /// <summary><see langword="true"/> when <see cref="Body"/> was dropped to fit the response's
+    /// character budget (<see cref="ContextBudgetResult"/>) — the structural fields above still
+    /// identify the thread; only its text is withheld.</summary>
+    [JsonPropertyName("truncated")]
+    public required bool Truncated { get; init; }
 }
 
 /// <summary>A block card's certification record from one round — <see cref="Cards.

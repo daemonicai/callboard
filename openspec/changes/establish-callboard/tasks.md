@@ -123,10 +123,10 @@
 - [x] 10.1 Implement the four-part working-context response in the specified order
 - [x] 10.2 Implement queue composition from ownership plus unresolved addressed threads
 - [x] 10.3 Include the previous round's verdict on a remediation
-- [ ] 10.4 Implement priority assembly with cumulative character-based measurement and margin
-- [ ] 10.5 Truncate narrative only, never the register or brief, and state every omission
-- [ ] 10.6 Test that the response fits the budget at a corpus comparable to the measured change
-- [ ] 10.7 Test that response size late in a change stays within 20% of its size at the start
+- [x] 10.4 Implement priority assembly with cumulative character-based measurement and margin
+- [x] 10.5 Truncate narrative only, never the register or brief, and state every omission
+- [x] 10.6 Test that the response fits the budget at a corpus comparable to the measured change
+- [x] 10.7 Test that response size late in a change stays within 20% of its size at the start
 - [ ] 10.8 Implement the derived state summary with every figure computed at request time
 - [ ] 10.9 Refuse any attempt to store a hand-entered count or next-step pin
 - [ ] 10.10 Derive escalation severity from question ownership, halting dependents only for Product Owner questions

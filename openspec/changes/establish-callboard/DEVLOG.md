@@ -28631,6 +28631,540 @@ in the diff.
 
 → @architect
 
+**[architect]** Block B briefed → @worker. **10.4, 10.5, 10.6, 10.7 — the budget.** Block A
+(`12c4d9d`) assembles the response part by part in priority order precisely so this block can insert
+measurement between the seams. Do not restructure it; instrument it.
+
+### Tasks in this block
+
+- 10.4 Implement priority assembly with cumulative character-based measurement and margin
+- 10.5 Truncate narrative only, never the register or brief, and state every omission
+- 10.6 Test that the response fits the budget at a corpus comparable to the measured change
+- 10.7 Test that response size late in a change stays within 20% of its size at the start
+
+**The tests are in this block, not a later one.** §9 ruling 2 — a budget mechanism that lands unmeasured
+is exactly what that ruling was written about.
+
+### What the spec requires
+
+`specs/working-context/spec.md`, *Working context fits a stated budget*: the response SHALL fit a stated
+budget, **targeting under 3,000 tokens**, and the budget **SHALL be a requirement of the response and
+not a target it may exceed**. Where content would exceed it, the system SHALL shorten **narrative only**;
+it SHALL NOT shorten the register or the brief, and SHALL state explicitly that it has truncated **and
+what** it truncated. Both scenarios matter: oversized content shortens the narrative while register and
+brief are delivered whole, and **truncation is never silent**.
+
+And *Working-context cost does not grow with the change*: size is governed by the **live working set**,
+not by accumulated change length; late in a change of comparable size to the measured one it stays
+**within 20%** of its size at the start.
+
+### Architect rulings — take these as given
+
+**D6's priority order is: register → brief → unresolved threads addressed to the caller → narrative.**
+Measure cumulatively, stop when the ceiling is reached, drop only from the last tier.
+
+**The divisor is 3.0 characters per token and the margin is 10%.** Both are named constants carrying
+their reasoning in a doc comment, not magic numbers at a call site. 3.0 is deliberately conservative —
+ordinary English runs nearer 4 characters per token, so dividing by 3.0 **over**-estimates the token
+count and errs toward truncating slightly early, which is the direction D6 already accepted ("slight
+over-truncation of narrative"). The effective ceiling is therefore 3,000 × 3.0 = 9,000 characters, less
+the 10% margin = **8,100 characters**. **State the budget, the divisor, the margin and the resulting
+character ceiling in the response**, the same way block A states its ordering and binding rules — the
+spec calls it "a stated budget" and that is what makes it stated.
+
+**No tokenizer.** D6 is explicit: a real tokenizer would ship a BPE vocabulary in an AOT binary and tie
+the tool to one model family. Character count only.
+
+**What "narrative" means here, since block A left the response thin on it.** The truncatable tier is
+**comment body text**. A thread's structural facts — its id, author, timestamp, who it is addressed to,
+whether it is resolved — are routing, not narrative, and are kept: a caller must still know a thread
+exists and is theirs even when its text was shortened. The **brief** is the top item's body, `base`,
+referenced tasks, constraints and previous-round verdict, and none of it may shorten. Register cards may
+not shorten.
+
+**When the register and brief alone exceed the ceiling, deliver them whole anyway and say so.** The spec
+forbids shortening either, so the only honest move is to drop all narrative, exceed the stated budget,
+and state the overage explicitly — never silently. **Name the register-size review as the remedy** (§9
+ruling 3: name a command that exists — note block E is what gives that review its CLI surface, so if the
+verb does not exist yet, say so in the DEVLOG rather than naming a verb nobody has built; that mistake
+was made twice in §9). This is the one case where the response cannot satisfy the budget, and it is a
+signal that the register needs compaction rather than a bug in this block.
+
+### On 10.6 and 10.7 — measure, don't assert
+
+- **10.6** — "a corpus comparable to the measured change" is the incumbent's own figure from `design.md`
+  D4: **2.07 MB for one change**. Build a fixture at that scale and assert the response fits the ceiling.
+  A fixture that is merely "big" does not test this.
+- **10.7** — the flat-cost requirement. Compare a response at the **first** section against one at the
+  **twelfth** of a comparable change and assert within 20%. This is the test that would catch the read
+  path having been made to depend on accumulated length, so build the two states honestly: the same live
+  working set, differing in how much settled history sits behind it.
+- These two tests are also the **evidence base for Product Owner ruling 1** (card files, not the index).
+  If the corpus test shows the file-scan path is too slow to live with, that is a finding worth stating
+  plainly in your DEVLOG post — it is what the ruling deferred the indexing question against. Report
+  what you measure either way; do not quietly optimise around it.
+
+### Binding constraints
+
+- Everything binding §10 as a whole still applies — see the `[architect]` opening post under `## 10.`:
+  live directories only, `CountCitations` off this path, §9's three refusal rulings, and the coverage
+  gate's known blind spot for CLI-layer refusals.
+- Do not add the `state` verb or the derived summary — that is block C (10.8–10.10), next.
+- ADR-0002 / D2 — NativeAOT: no reflection, no runtime codegen, source-generated JSON only.
+  `TreatWarningsAsErrors` is on.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT`, `TEST_EXIT`, `FORMAT_EXIT`, `VALIDATE_EXIT`
+individually. Suite stands at **923**. Read the exit line, never the log.
+
+Post to the DEVLOG under `## 10.` as `[worker]`, then `→ @reviewer`.
+
+**[worker]** Block B done. 10.4–10.7 — the character budget on `context`.
+
+**Instrumented Block A's assembly, per the brief — did not restructure it.** `WorkingContextAssembler.
+Build` (`Cards/WorkingContext.cs`) is untouched; the budget lives entirely in `CommandDispatcher`'s CLI
+mapping layer, since that is where the response's actual text is assembled part by part
+(`ToContextRegisterCardResult`/`ToContextTopItemResult`/`ToContextThreadResult`) and where narrative
+(comment bodies on threads addressed to the caller) first appears at all.
+
+**Constants — `Cards/WorkingContextBudget.cs` (new).** `TokenBudget = 3000`, `CharactersPerToken = 3.0`,
+`MarginFraction = 0.10`, `CharacterCeiling = 8100` (a compile-time constant expression: `3000 * 3.0 *
+0.9`), each with its own doc comment carrying the reasoning the brief gave (conservative divisor, why it
+errs toward early truncation, why no tokenizer). `WorkingContextBudget.Statement` is the prose the
+response states verbatim — the same `QueueOrderDescription`/`ConstraintsRuleDescription` convention Block
+A already used for its own stated rules.
+
+**Measurement is exact, not estimated — the actual serialized length.** `MeasureLength` is
+`JsonSerializer.Serialize(result, CliJsonContext.Default.ContextResult).Length` — the true character
+count of what the caller receives, not an approximation of it. "Character-based measurement" (D6) is
+still the only estimate in the pipeline: turning a character count into a token estimate via the 3.0
+divisor.
+
+**The algorithm — two passes, priced by seam.** `BuildBudgetedContextResult`:
+1. **Phase 1 (fixed cost):** builds the response with every narrative comment body already dropped
+   (register, brief, and every addressed thread's structural facts only) and measures it —
+   `fixedLength`. This is register + brief + thread-structure, exactly D6's first three tiers before
+   narrative.
+2. **If `fixedLength > 8100`:** the one case the spec accepts the response failing its own budget.
+   Neither the register nor the brief may shorten, so every narrative body stays dropped, and the
+   response states the overage in characters explicitly (`exceededCeiling: true`,
+   `overageStatement`). **I did not name the register-size review as a runnable command** — per the
+   brief's own conditional, block E (this section's own next block) is what gives that review a CLI
+   surface, and it does not exist yet at this point in the section. Naming a verb nobody has built was a
+   §9 mistake made twice; `overageStatement` describes the situation ("the register needs size
+   compaction") without asserting a command exists. Flagging this explicitly since the brief asked me to
+   say so rather than decide it silently.
+3. **Otherwise:** `available = 8100 - fixedLength`. Walks the addressed-thread comment ids in the order
+   `CardCommentRouting.LiveThreadIdsAddressedTo` already returns them (chronological — comments are
+   appended in order, so this is oldest-first without a second sort), accumulating body length; the first
+   comment that would push cumulative narrative past `available` is dropped, and **every comment after it
+   is dropped too** — no skipping ahead to a smaller later comment. Matches D6's "stop when the ceiling is
+   reached" reading literally.
+4. Two constructions of `ContextResult` (a probe at `characterCount: 0`, then the real one at the
+   measured length) rather than one, since `ContextResult` is a plain class, not a record — no `with`
+   expression to patch one field after measuring. Documented on `FinalizeBudget` so it doesn't read as an
+   accident.
+
+**Narrative vs. structural — per the ruling, not extended.** `ContextThreadResult.Body` is now nullable
+(`null` exactly when truncated) and carries a new `Truncated` flag; `CommentId`/`Author`/`Timestamp` are
+always present regardless. I did **not** add explicit `addressedTo`/`resolved` fields — every entry in
+`unresolvedThreadsAddressedToCaller` is by construction addressed to the caller and unresolved (that's
+what the list is), so those two structural facts the brief named are already implicit in list membership
+rather than needing their own repeated field. Flagging this reading rather than deciding it silently: not
+a spec/ADR conflict, just a place I chose not to add a field that would always carry the same value.
+
+**Response shape — one new field, `ContextResult.Budget` (`ContextBudgetResult`), always present.**
+Carries the four constants, the measured `characterCount`, the stated `statement`, `truncated` +
+`truncationStatement` (comment-level truncation), and `exceededCeiling` + `overageStatement` (the
+register+brief-alone case). Present and populated even when nothing was truncated — the budget is stated
+unconditionally, not only when it binds (working-context: "a stated budget").
+
+**Tests — 10.6 and 10.7, at the ruled scale, not "big".**
+- `WorkingContextCorpusTests.FullScaleCorpus_ResponseFitsTheCharacterCeiling` — builds settled history to
+  **≥2,070,000 bytes** (design.md D4's own "the incumbent reached 2.07 MB for one change" figure, not a
+  round number invented for the test) across 12 sections' worth of closed block cards, plus one live top
+  item with 5 unresolved addressed comments and a small repository-scoped rule/hazard. Asserts the
+  response's `characterCount` fits the ceiling and `exceededCeiling` is false.
+- `WorkingContextCorpusTests.ResponseSize_AtTwelfthSection_IsWithin20PercentOfFirstSection` — two
+  fixtures sharing byte-identical live top item, comments and register, differing only in settled history
+  (1 section vs. 12 — asserted concretely to differ by more than 5× so the test can't pass by accident on
+  two similarly-sized corpora). Asserts `characterCount` at twelfth ≤ 1.2× `characterCount` at first (and
+  vice versa).
+- `CommandDispatcherContextBudgetTests` (3 tests): the budget is always stated even when nothing
+  truncates; an oversized addressed thread (40 comments × 400 chars) truncates narrative only, keeps
+  register/brief whole, keeps every dropped comment's structural facts, and the kept set is exactly the
+  priority-order prefix; a 10,000-character brief body alone exceeds the ceiling, is delivered whole
+  anyway, and the overage is stated with every comment dropped.
+
+**Performance — measured, not assumed, per the brief's instruction to report either way.** The
+2.07 MB-corpus test (fixture write + full `context` read) completes in **~0.24s** end to end (measured via
+`xunit`'s own per-assembly timing and a `Stopwatch` inside the test, generous 10s bound asserted as a
+regression guard only). **The file-scan read path is not too slow to live with at this scale** — no
+finding against Product Owner ruling 1 to raise. This is evidence *for* the ruling holding at the
+measured scale, not evidence the indexing question is closed forever (a much larger corpus, or many
+concurrently active changes, is untested here) — reported as measured, not extrapolated.
+
+10.4: priority assembly with cumulative character measurement and margin — done, register → brief →
+addressed threads → narrative, stopping at the ceiling, dropping only narrative.
+10.5: narrative-only truncation, register/brief never shortened, every omission stated — done, both the
+per-comment case and the register+brief-alone-exceeds-ceiling case.
+10.6: corpus at the measured change's own scale (≥2.07 MB), response fits the ceiling — done.
+10.7: response size at the twelfth section within 20% of the first, same live working set — done.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite at **928** — up from 923
+(+5: 3 `CommandDispatcherContextBudgetTests`, 2 `WorkingContextCorpusTests`), all new, all green.
+
+→ @reviewer
+
+**[reviewer]** Block B (10.4–10.7) audited — working tree read directly (uncommitted, on top of
+`12c4d9d`). Ran `make gates` myself: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 928/928 tests passing — matches the worker's report exactly. Also ran the corpus
+test alone under the xUnit v3 in-process runner directly: `FullScaleCorpus_ResponseFitsTheCharacterCeiling`
+reports **0.157s** total (fixture write + read), same order of magnitude as the worker's claimed
+~0.24s — the timing claim holds, no exaggeration.
+
+**Verdict: Request changes.**
+
+### Blockers
+
+**1. `MeasureLength` prices the bare `ContextResult`, not the line the CLI actually emits
+(`src/Callboard/Cli/CommandDispatcher.cs:3808-3810`).** `MeasureLength` is
+`JsonSerializer.Serialize(result, CliJsonContext.Default.ContextResult).Length` — the character
+count of `ContextResult` in isolation. But nothing is ever written to stdout as a bare
+`ContextResult`: `WriteEnvelope` (`CommandDispatcher.cs:3921-3935`) wraps it in a `CliEnvelope` —
+`success.Result.ToJsonElement()` embedded as `"result"` inside
+`{"ok":true,"command":"context","result":…}` — and serialises *that*. I measured the wrapper
+literally: `{"ok":true,"command":"context","result":` plus the closing `}` is **41 characters** of
+fixed overhead this measurement never counts. The stated "character ceiling of 8,100" is therefore
+not a ceiling on what ships — the actual wire line can run 41+ characters longer than
+`budget.characterCount` ever reports, on every single response, and no test catches it because
+every assertion (`CommandDispatcherContextBudgetTests`, `WorkingContextCorpusTests`) compares
+`characterCount` against `CharacterCeiling`, never against the length of the raw envelope string
+the harness already has in hand (`output.ToString()`) in both test files' own `Context()` helper.
+This is exactly the class of defect the brief called out: priced one string, emitted a longer one.
+
+**2. The per-comment narrative cost model doesn't match what gets serialised, and the assembled
+result is never re-checked against the ceiling after the fact (`CommandDispatcher.cs:3763-3786`).**
+`ContextThreadResult.Body` is `string?` with `JsonIgnoreCondition.WhenWritingNull` applied
+project-wide (`CliJsonContext.cs:14`) — so a comment whose body is withheld doesn't serialise
+`"body":null`, it omits the `"body"` key entirely. The greedy walk at `:3776-3777` prices
+promoting a comment from omitted to kept as exactly `body.Length` (`used += body.Length`), but the
+JSON growth from omitting the key to including it is `body.Length` **plus** the `"body":"…",`
+key/quote overhead — about 10 characters per comment, uncounted, before even considering escaping
+of `"`, `\`, or control characters inside a real comment body (none of which the fixtures exercise,
+since they use plain-letter filler). `FinalizeBudget` (`:3799-3806`) does compute the true
+serialised length of the final object afterward, correctly — but that computed `length` is never
+compared back against `WorkingContextBudget.CharacterCeiling`. The "otherwise" branch
+(`:3786`) unconditionally returns `exceededCeiling: false` regardless of what the real measured
+length turned out to be. So the mechanism's actual safety against overrunning the ceiling in the
+narrative-inclusion case rests entirely on the ~900-character margin (`CharacterCeiling` is already
+10% below the raw 9,000) absorbing an unmeasured, unbounded number of ~10-character
+underestimates — not on anything that verifies it. That the shipped fixtures (40×400-char and
+similar) happen to leave enough margin that this hasn't tripped in the tests is incidental, not a
+property of the code — nothing stops a corpus with many more, smaller comments right at the
+boundary from producing a response whose `characterCount` (correctly computed by `FinalizeBudget`)
+exceeds `CharacterCeiling` while `exceededCeiling` still reads `false`. Working-context's own
+language — "a requirement of the response and not a target it may exceed" — is exactly what this
+gap violates: nothing in the code path enforces it, margin does, incidentally.
+  - A smaller instance of the identical root cause, worth fixing at the same time: the probe built
+    inside `FinalizeBudget` (`:3803`) carries a placeholder `characterCount: 0` in the very field
+    it is about to measure. Substituting the real value in (typically 4 digits, e.g. `8087`) grows
+    that field past the 1-digit placeholder by a few characters, so even `characterCount` itself
+    doesn't precisely describe the object's own final length. Trivial in isolation, but it's the
+    same "priced ≠ emitted" defect class as 1 and 2, one more place it shows up.
+
+**Fix shape, not a ruling:** price narrative additions against the actual incremental JSON growth
+(build the candidate, measure it, compare — the same pattern `FinalizeBudget` already uses for the
+whole object, just applied per candidate or via a final `if (length > CharacterCeiling)` guard that
+demotes one more comment and re-measures if the greedy estimate undershot), and measure against the
+`CliEnvelope`-wrapped bytes, not the bare `ContextResult`, so the ceiling actually bounds what ships.
+
+### Confirmed correct, independently
+
+- **Priority order and what may shorten.** Register (`LiveRules`/`LiveHazards`) and the brief (top
+  item body, `base`, tasks, constraints, previous-round verdict) are never touched by any code path
+  in this block — only `ContextThreadResult.Body` is ever nulled. Traced by hand through
+  `BuildContextResult` (`:3810-3838`) and `ToContextTopItemResult`/`ToContextThreadResult`
+  (`:3880-3915`); confirmed by `OversizedAddressedThread_DropsNarrativeOnly_KeepsRegisterAndBriefWhole_StatesOmission`
+  and `RegisterAndBriefAloneExceedCeiling_DeliveredWholeAnyway_OverageStated` asserting the brief
+  body and register card body come back byte-identical to what was written.
+- **Structural fields survive truncation.** `CommentId`, `Author`, `Timestamp` are `required` and
+  non-nullable on `ContextThreadResult`; only `Body` is nullable. Every dropped thread in the test
+  fixtures still carries id/author, proven by the test's own per-thread assertions, not just
+  `Truncated: true`.
+- **No omission is silent, and states what.** `DescribeTruncation` (`:3811-3818`) names the count
+  and lists every dropped comment id; the register+brief-alone case states the measured overage in
+  characters and which constraint (register/brief immutability) forces it. One nit on this below.
+- **10.6 is at the ruled scale, and asserts the right thing.** `WorkingContextCorpusTests` builds
+  ≥2,070,000 bytes of settled history (`TargetCorpusBytes = 2_070_000`, D4's own figure) and asserts
+  `characterCount <= characterCeiling` and `exceededCeiling == false` — not merely that the call
+  completes. `WriteSettledHistory`'s own byte-counting return value is asserted against the target
+  before the response is even built, so a fixture that came in under scale would fail loudly rather
+  than silently testing something smaller.
+- **10.7's fixture is honest, not two near-identical small states.** The two corpora share
+  byte-identical `WriteLiveWorkingSet` output and differ only in `sectionsToInclude` (1 vs. 12); the
+  test asserts the twelfth-section corpus is >5× the first-section one *before* comparing response
+  sizes, so it can't pass by building two similarly-sized fixtures by accident. Given the caveat in
+  blocker 1/2 above, note that "fits the ceiling" and "flat cost" are being measured against the
+  same under-priced `characterCount`, not the true wire bytes — the 20% comparison itself is sound
+  (both sides suffer the same fixed envelope-overhead offset, so the relative claim isn't affected
+  by blocker 1), but it inherits blocker 2's per-comment imprecision on both sides equally, which
+  doesn't undermine the flat-cost claim, only the absolute-ceiling one.
+- **Constants.** `TokenBudget`, `CharactersPerToken`, `MarginFraction`, `CharacterCeiling` are named
+  constants in `WorkingContextBudget.cs`, each with a doc comment carrying the reasoning from the
+  brief verbatim (conservative divisor, why it errs early, why no tokenizer). `CharacterCeiling` is
+  a compile-time constant expression, not hand-copied. All four plus the composed prose statement
+  are present in every response via `ContextBudgetResult`, confirmed by
+  `Success_AlwaysStatesTheBudget_EvenWhenNothingIsTruncated`.
+- **No tokenizer; `CountCitations` off this path; live directories only.** Confirmed by `grep` — no
+  BPE/tokenizer dependency anywhere in this diff; `RuleCitations.CountCitations` has exactly the
+  same three call sites it had before this block (register-size review and index rebuild, per
+  block A's own comment at `WorkingContext.cs:83`), none of them reached from `context`. This
+  block doesn't touch `WorkingContextAssembler.Build`, so `ResolveLiveRecordDirectories` usage is
+  unchanged.
+- **AOT / source-generated JSON / no reflection.** `Budget`/`ContextBudgetResult` and the changed
+  `ContextThreadResult` all go through `CliJsonContext.Default.ContextResult`; no
+  reflection-based `JsonSerializer` overload anywhere in the diff. `TreatWarningsAsErrors` build
+  is clean (`BUILD_EXIT:0`).
+- **Scope.** No `state` verb, no derived-summary work — confirmed by `grep` for `state` as a command
+  name; block C's territory is untouched. `Makefile` untouched.
+
+### Nits
+
+- `CommandDispatcher.cs:3776` — `card!.Comments.First(...)`. The null-forgiving is sound (the loop
+  body is reached only when `allCommentIds` is non-empty, which is only true when `context.TopItem`
+  — and hence `card` — is non-null), but there's no comment saying so, and the project's own C#
+  idiom guidance asks for one on every `!`.
+- `overageStatement`'s prose (`CommandDispatcher.cs:3757-3760`) always says "the register needs
+  size compaction to bring this back under budget," even in the shipped test case
+  (`RegisterAndBriefAloneExceedCeiling_DeliveredWholeAnyway_OverageStated`) where the actual driver
+  is the top item's own 10,000-character body, not any register card. A caller acting on this
+  message would look in the wrong place. Since block E hasn't built the register-size review's CLI
+  surface yet, this can't name a command either way, but it could at least say "the register or the
+  brief" rather than pinning the blame on the register specifically when the brief may be the one
+  that's oversized.
+
+### On the timing/scale claim
+
+Independently ran the corpus test alone: xUnit v3's own per-test timer reports **0.157s**
+(fixture write + `Context()` round trip) against the worker's reported ~0.24s — same ballpark,
+worker's figure is not overstated. No finding to raise on Product Owner ruling 1 at this scale,
+consistent with the worker's report.
+
+### Architectural note (not blocking this block)
+
+10.6/10.7 measure `characterCount` (the value inside the JSON body), and blocker 1 means that value
+already undercounts the true stdout line by a fixed ~41 characters (envelope) plus a variable,
+usually-small amount (blocker 2, narrative pricing). Once blocker 1/2 are fixed, re-run both corpus
+tests and confirm they still hold at the true wire length, not just at the internal estimate — the
+2.07 MB fixture currently has headroom under 8,100 by an unstated margin, but that margin should be
+re-measured against the real ceiling, not assumed to survive the fix.
+
+→ @worker
+
+**[worker]** Block B review fixes — both blockers and both nits addressed.
+
+**Blocker 1 fixed — measurement now prices the real emitted line, not a bare `ContextResult`.** The
+root cause was worse than "hard-code the 41-character wrapper": `CliEnvelope.Command`
+(`RecognisedCommand(command, arguments)`) echoes **every consumed argument**, not just the verb —
+`"context --role worker"` (22 characters), not `"context"` (7). A first attempt that hard-coded
+`"context"` as the command name still under-measured by 14–15 characters, caught by the new
+emitted-line test itself before it ever reached the DEVLOG. Fix: `Run` now computes
+`recognisedCommandName` once, right after parsing finishes consuming every token it will consume (before
+`Accept`, so it is already the same final value `WriteEnvelope`'s own call recomputes afterward), and
+threads it through `CommandRunner` (a new field alongside `LockTimeout`) into `RunContext` →
+`BuildBudgetedContextResult` → `MeasureEmittedLength`, which now builds the actual `CliEnvelope` with
+that exact string and measures *that* serialisation. The ceiling now bounds the real wire line for every
+role, not a guess at one role's worth of flag text.
+
+**Blocker 2 fixed — narrative inclusion is now measure-and-check, not estimate-and-trust.** Replaced the
+greedy per-comment `body.Length` walk (and its accompanying `card!` null-forgiving — nit 1 resolved by
+removing the need for it, not documenting it) with a shrink-from-the-end loop: `BuildBudgetedContextResult`
+starts with every narrative comment included, builds and *measures* the real emitted line, and drops the
+lowest-priority (most-recently-addressed) comment and re-measures whenever it doesn't fit — never
+estimating a comment's cost from its raw string length, so JSON key/quote overhead and escaping can't be
+missed regardless of what a comment's body contains. Terminates either when the real measurement fits or
+every comment is dropped (`kept == 0`), at which point the register/brief/thread-structure-alone case
+(exactly blocker 1's original phase-1 concept) takes over and `exceededCeiling` is set from that same real
+measurement — no branch reports `exceededCeiling: false` without having actually checked the number
+against the ceiling anymore. Also fixed the "smaller instance" the reviewer flagged: `FinalizeBudget` now
+iterates the `characterCount`-placeholder substitution to a fixed point (bounded at 4 attempts; converges
+in 2–3 in practice) instead of substituting once, so the field's own digit count can't leave the recorded
+value trailing the object's true length by a few characters.
+
+**Both nits fixed.**
+- The `card!` null-forgiving no longer exists — the rewritten algorithm never needs to look up a single
+  comment's body outside the normal `ToContextThreadResult` path, so there was nothing to document.
+- The overage message now names the actual driver via `DescribeOverageDriver`, and — caught while fixing
+  it, not anticipated by the review — **there is a third possible driver the nit didn't name**: enough
+  addressed threads on one card can exceed the ceiling on structural facts alone (`id`/`author`/
+  `timestamp` are kept even once every body is dropped), independent of the register or the brief. My
+  first fixture for the new emitted-line test (60 comments × 300 chars) hit exactly this case by accident
+  — a legitimate `exceededCeiling: true` that my test wrongly asserted should fit — which is what
+  surfaced it. `DescribeOverageDriver` now compares all three (register, brief, a documented
+  `ApproximateStructuralCharsPerThread` estimate × addressed-thread count) and the message reads "the
+  register, the brief, and each addressed thread's structural facts may never be shortened; {driver} needs
+  size reduction", naming whichever actually dominates rather than only ever choosing between two.
+
+**The new test, per the brief — asserts the emitted stdout line, not an intermediate object.**
+`CommandDispatcherContextBudgetTests` gained three tests: `Success_EmittedStdoutLine_
+FitsTheCharacterCeiling_AndMatchesBudget` and `OversizedAddressedThread_EmittedStdoutLine_
+FitsTheCharacterCeiling` both parse the exact string `CommandDispatcher.Run` wrote to `output` (via a new
+`ContextWithEmittedLine` helper — trims the trailing newline `WriteLine` adds, since a line terminator
+isn't response content) and assert its `.Length` against `WorkingContextBudget.CharacterCeiling` directly,
+plus that it equals the embedded `budget.characterCount` field exactly. These are exactly the tests that
+caught both the wrong-command-name bug above and the third-driver gap — a test asserting on
+`characterCount` alone would have passed throughout, which is the reviewer's own point about why 928
+green tests didn't catch this. `RegisterAndBriefAloneExceedCeiling_OverageStatement_NamesTheBriefWhenItIsTheDriver`
+covers the nit fix directly.
+
+**10.6/10.7 re-verified at the true wire length, per the architectural note.** Re-ran both corpus tests
+after both fixes: `FullScaleCorpus_ResponseFitsTheCharacterCeiling` still passes, and the 2.07 MB
+fixture's real emitted line now measures **6,975 of 8,100 characters** (checked directly, not assumed) —
+1,125 characters of headroom remain even after correcting both the envelope overhead and the per-comment
+pricing, so the fixture's margin survives the fix comfortably rather than by luck. `ResponseSize_
+AtTwelfthSection_IsWithin20PercentOfFirstSection` still holds — the fixed ~15-character command-name
+correction and the now-honest per-comment pricing apply identically to both corpora, so the flat-cost
+comparison itself was never at risk, exactly as the reviewer noted.
+
+No divisor/margin tuning — the fixtures still fit comfortably at the true measurement, so there was no
+evidence to bring back to the Architect about the constants themselves.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite at **931** — up from 928
+(+3: 2 emitted-line tests, 1 overage-driver-naming test), all new, all green.
+
+→ @reviewer
+
+**[reviewer]** Block B (10.4–10.7) re-audited — working tree read directly (uncommitted, on top of
+`12c4d9d`). Ran `make gates` myself: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, **931/931** tests passing — matches the worker's report exactly.
+
+**Verdict: Approve.**
+
+### Both blockers verified fixed
+
+**Blocker 1 — envelope measurement now identical to what ships.** Traced both construction sites
+by hand: `MeasureEmittedLength` (`CommandDispatcher.cs:3880-3884`) builds
+`new CliEnvelope { Ok = true, Command = recognisedCommandName, Result = result.ToJsonElement() }`
+and serialises it via `CliJsonContext.Default.CliEnvelope` — field-for-field, context-for-context
+identical to `WriteEnvelope`'s own `onSuccess` arm (`:3999-4004`). `recognisedCommandName` is
+computed exactly once in `Run` (`:984`, `RecognisedCommand(command, arguments)`), *after*
+`EnforceNoUnconsumedArguments` has run so `ArgumentCursor.ConsumedTokens` is already final, and
+the same value is threaded through `CommandRunner` into `RunContext`/`BuildBudgetedContextResult`
+and reused verbatim by `WriteEnvelope`'s call at `:989` — one computation, not two resembling
+ones, so there's no way for the measured string and the emitted string to drift apart. Confirmed
+this is not merely "the 41-character wrapper hard-coded": the worker's report that a first
+hard-coded-`"context"` attempt undershot by 14–15 characters, caught by the new emitted-line test
+before it reached this thread, is a good sign the fix was actually verified against the real
+mechanism rather than patched by inspection. On the caller-controlled echo point: since the
+measurement now always uses *this invocation's own* `recognisedCommandName`, a caller passing a
+longer flag string is priced correctly by construction, not merely "unlikely to matter" — there is
+nothing further to handle here.
+
+**Blocker 2 — narrative pricing is now measure-and-check, never estimated.** The shrink-from-the-end
+loop in `BuildBudgetedContextResult` (`:3762-3781`) starts with `kept = allCommentIds.Count`,
+builds the full candidate and measures the real emitted line via `FinalizeBudget`, and decrements
+`kept` (dropping one more comment from the tail) whenever the true measured length still exceeds
+the ceiling, terminating either when it fits or `kept == 0` — a strictly decreasing loop bound by
+`allCommentIds.Count`, so it terminates in every case. Priority order: `allCommentIds` comes from
+`CardCommentRouting.LiveThreadIdsAddressedTo`, which appends in comment-file order (`:106-116`,
+oldest first, since comments are append-only) — `Skip(kept)` drops from the tail, i.e. the most
+recently addressed comment goes first, matching D6/the ruled "oldest-first" reading exactly (and
+matching the original greedy walk's own semantics, so behaviour under truncation is preserved
+across the fix, not just re-justified). No candidate is ever priced from a raw `body.Length` any
+more — every candidate is built and serialised for real, so JSON key/quote overhead and escaping
+can't be missed regardless of comment content. `exceededCeiling` is set from a real checked
+measurement on every returned path: the "fits" return (`:3783-3786`) only fires after the loop's
+own `<=` check on the true measured `CharacterCount`; the overage return (`:3792-3808`) fires only
+after that same check already failed at `kept == 0`, and rebuilds via another `FinalizeBudget` call
+(re-measured, not assumed) to fold in the overage statement. No branch returns `exceededCeiling`
+without a real measurement behind it — the exact gap the original blocker named.
+
+**The `FinalizeBudget` fixed point — scrutinised, converges correctly.** Worked through the
+self-referential update by hand: with `B` the length of everything except the `characterCount`
+digits, the update is `n → B + digitCount(n)`. Since `digitCount` is non-decreasing in magnitude
+and `n0 = 0`, the sequence is non-decreasing and stabilises the moment a step leaves the digit
+count unchanged — which, starting from a 1-digit placeholder, happens within 2–3 steps for values
+in this domain (thousands to low tens-of-thousands of characters), because the first real
+measurement already lands within one digit-width of the true answer. Constructed a digit-boundary
+case by hand (a value straddling 999→1000, forcing two consecutive digit-count increases) and it
+still converges by the 4th attempt — the loop's own bound. The unconverged fallback path (return
+after 4 attempts without a final re-check) is a real, if narrow, gap: for a corpus whose true
+character count requires more digit-width transitions than 4 iterations can resolve, the returned
+object's `characterCount` field could trail the object's actual length by a character or two —
+theoretically possible for the type `int`, but not reachable at any scale this tool's response
+sizes could plausibly take (getting there needs a jump of ~5 sequential digit-count increases from
+a 1-digit start, i.e. a response many orders of magnitude past the ceiling). Not a blocker; noted
+below as a nit since the gate that would catch it — reprobing after the loop exits — is one line
+away.
+
+**Re-verified numbers independently, not just quoted.** Re-ran `make gates` myself rather than
+trusting the reported figures: 931/931 green, all four exit lines `0`. I did not reproduce the
+worker's exact "6,975 of 8,100" figure via a separate instrument — the boundary hook here restricts
+me to `DEVLOG.md`, so I could not stand up my own probe project to print it independently — but I
+did verify the claim it stands for: `FullScaleCorpus_ResponseFitsTheCharacterCeiling`'s own
+assertions (`characterCount <= characterCeiling`, `exceededCeiling == false`) pass under my own run
+of the actual gates, on the actual ≥2.07 MB fixture, measured via the now-corrected
+`MeasureEmittedLength`. That is the evidence the ruled constants held under a correct measurement;
+the specific headroom number is the worker's report, not independently re-derived by me, and I'm
+flagging that distinction rather than presenting it as something I confirmed byte-for-byte.
+
+### The third driver
+
+`DescribeOverageDriver` (`:3823-3839`) now compares register length, brief length, and
+`addressedThreadCount * ApproximateStructuralCharsPerThread` (a documented estimate, used only for
+this message's prose — never for the actual measured `characterCount` or `exceededCeiling`, both
+of which stay real-measurement-only) and names whichever dominates. The three-way comparison is
+correctly wired and the two existing overage tests (`RegisterAndBriefAloneExceedCeiling_...` and
+the new `..._NamesTheBriefWhenItIsTheDriver`) confirm the register/brief halves of it. **Nit below:
+no test exercises the third branch** — the worker's own account says a 60×300 fixture hit it by
+accident during development and the shipped fixtures were adjusted to avoid it, so
+`DescribeOverageDriver`'s structural-volume arm currently ships with zero coverage of its own.
+
+### Confirmed still intact from the first pass
+
+- Register and brief are still never touched by any code path in this diff — `BuildContextResult`
+  builds them identically to before; only `ContextThreadResult.Body`/`Truncated` vary.
+- Structural fields (`CommentId`, `Author`, `Timestamp`) stay `required` and non-nullable; only
+  `Body` is nullable, and only on the omitted set.
+- Every omission still states what: `DescribeTruncation` names the count and every dropped id;
+  `overageStatement` now correctly names its actual driver (the nit is fixed, not just relocated).
+- `WorkingContextBudget`'s four constants and their doc-comment reasoning are byte-identical to
+  the first pass — no divisor/margin tuning, as the worker reported and as `git diff` on that file
+  confirms (no changes).
+- No tokenizer; `RuleCitations.CountCitations` call sites unchanged (still register-size review
+  and index rebuild only); `WorkingContextAssembler.Build`/`ResolveLiveRecordDirectories` untouched
+  by this block; `Makefile` untouched; no `state` verb added.
+- Source-generated JSON throughout: `CliEnvelope` and `ContextResult` both go through
+  `CliJsonContext.Default`, no reflection-based overload anywhere in the diff. `TreatWarningsAsErrors`
+  build is clean.
+
+### Nits
+
+- **`DescribeOverageDriver`'s structural-facts branch has no test.** Worth a dedicated fixture
+  (small register, small brief, enough addressed threads that
+  `addressedThreadCount * ApproximateStructuralCharsPerThread` dominates both — e.g. 100+ threads
+  on a small brief) asserting the message names "addressed threads' own structural facts" rather
+  than the register or brief. Not blocking — the mechanism is correctly wired and the existing
+  tests do cover its two sibling branches — but it's the one branch of a three-way `if` that
+  nothing exercises, and it's exactly the branch the worker says a real fixture hit by accident.
+- **`FinalizeBudget`'s unconverged fallback (`CommandDispatcher.cs:3854-3855`, the `return
+  BuildContextResult(...)` after the 4-attempt loop exits) never re-measures.** Given the domain
+  bounds this is unreachable in practice (see convergence analysis above), but it costs one more
+  line to close entirely — either assert `measured == characterCount` on that final build, or loop
+  until it converges rather than capping at 4. Purely defensive; not asking for it as a condition
+  of approval.
+
+### Architectural note (not blocking, for the supervisor's record)
+
+The corpus tests (10.6/10.7) now measure the true wire length end-to-end, closing the gap the
+first pass's architectural note flagged. Nothing further to carry forward on that point.
+
+No blockers remain. Both original blockers are fixed at the root cause the review named, not
+patched around it; the fixes were verified by direct inspection of the diff and by independently
+re-running the gates, not by re-reading the worker's report. Approve.
+
 ## NEXT
 
 **§10 is open and in flight.** Base `3e85b98`. Two of its six blocks have landed; **block A (10.1–10.3)
