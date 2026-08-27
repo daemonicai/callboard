@@ -30012,6 +30012,419 @@ change, no test change — `git diff` on `RuleCitations.cs` is comment-only.
 
 → @reviewer
 
+**[supervisor]** §10 section review — scope `git diff 3e85b98..HEAD` (six blocks: `e7dda26` F,
+`9e7cff6` D, `12c4d9d` A, `5f781d5` B, `4280504` C, `9684cf6` E). **Verdict: Request changes.**
+
+Read the whole thread first, and the block reviews are good — I am not re-opening anything they
+signed off. Every finding below is one no single block's diff could show, and three of the four sit
+on the two requirements this section exists to deliver.
+
+### Blockers
+
+**S1. The sanctioned overage is behaviour with no requirement behind it.**
+`BuildBudgetedContextResult` (`CommandDispatcher.cs:4046-4060`) has a permanent, shipped path that
+returns `exceededCeiling: true` — the response deliberately exceeding its own stated ceiling.
+`specs/working-context/spec.md:41` still reads *"The budget SHALL be a requirement of the response
+and not a target it may exceed"*, and D6 (`design.md:112-123`) does not sanction an overage either.
+Block B's brief ruled it and block B's reviewer correctly audited it *against the brief* — but the
+section closes with the implementation contradicting the requirement's own words, and no amendment
+anywhere. This section already knows the standard: block D amended `process-enforcement` for exactly
+this reason, in the architect's own words, "a refusal with no requirement behind it is precisely the
+drift the supervisor catches." Block B is the same shape and did not. The requirement needs to say
+what it actually is: the register and the brief are never shortened, and where they alone exceed the
+ceiling the response exceeds it and states the overage. Blocks B, E (E wired `rule review` into that
+message, so it is now a two-block behaviour).
+
+**S2. `state` carries two different definitions of "an open question", and they disagree in the same
+response.** `DerivedStateAssembler.Build` (`DerivedState.cs:88, 109-113`) classifies a question as
+live via `CardLifecycle.IsClosed`, which is `answered`-only — `CardLifecycle.cs`'s own doc comment is
+explicit that *"a deferred question is deliberately still live"*. Halting
+(`DerivedState.cs:117` → `CardStore.FindBlockingOpenProductOwnerQuestion`, `CardStore.cs:1852`)
+requires `questionStatus == QuestionStatus.Open`, which **excludes deferred**. `question defer`
+(`CardStore.cs:1766-1773`) changes `Status` only and leaves `Owner` untouched. So a Product-Owner-
+owned question that has been deferred appears in one `callboard state` response as
+`openQuestions[…].owesAnswer: "product-owner"` while the very card it blocks reports
+`halted: false`. `specs/working-context/spec.md:89-91` says *"A question owned by the Product Owner
+SHALL constitute a stop-and-ask and SHALL halt the cards it blocks"* — with no deferral carve-out.
+This is the union hole a per-block review structurally cannot see: block C reused the transition
+guard's predicate precisely so the two could not drift, which was the right instinct, but that
+predicate was written for a different requirement and §10 inherited its `Open`-only status test
+unexamined. Reusing it is still right — what is missing is a decision and a test. Either deferral
+does not lift a Product Owner halt (change the predicate, and check the transition/approve guards
+follow), or it deliberately does (say so in the requirement and in `DerivedStateBlockedCard`'s doc
+comment, and pin it with a test). As it stands neither is stated and no test touches a deferred
+blocker. Blocks C, and §5/§8's predicate. **❓ @architect** — the behaviour call here is the Product
+Owner's, not mine; I am blocking on it being unstated and untested, not on which way it goes.
+
+**S3. `topItem.constraints` duplicates part 1's card bodies, and block B then prices them twice.**
+`ContextTopItemResult.Constraints` (`ContextResult.cs:211`) carries `ContextRegisterCardResult` —
+`id`/`filePath`/`title`/**`body`** — and `WorkingContextAssembler.BindingConstraints`
+(`WorkingContext.cs:209-227`) draws it strictly as a subset of `liveRegister`, which part 1 already
+delivers whole. Block A's reviewer was right that this opens no new narrative door. But block B
+(`MeasureEmittedLength`) prices the **serialised** response, so as of `5f781d5` every
+repository-scoped rule and hazard is billed **twice** against the 8,100-character ceiling — once as
+`liveRules`/`liveHazards`, once as `constraints`. Neither reviewer could see both halves: A's audit
+predates the measurement, B's brief said "instrument it, do not restructure it." The register is the
+one part of this response that is unbounded, monotonic and untruncatable, so this is precisely the
+content whose duplication matters, and it is what makes S1's overage path reachable far earlier than
+it should be. `constraints`' own doc comment already calls it *"a card-scoped view of part 1, not a
+fourth source of cards"* — emit it as that: ids into `liveRules`/`liveHazards`, not a second copy of
+their bodies. Blocks A, B.
+
+**S4. The halting tension, judged against the section: as shipped, the working-context response
+cannot tell a worker its top item is unactionable — and part 4 does not require that.** The ruling
+(block C brief) reads part 4's "nothing else" as forbidding a halted marker on `context`. For a
+*queue entry* that reading is right and I would keep it. But part 3 is
+*"the top queue item **in full**: its body, `base`, referenced tasks, **constraints**, unresolved
+threads addressed to the caller, and the previous round's verdict"* — `blocked_by`, and the halted-
+ness derived from it, are properties **of the top item**, not a fourth part of the response. Part 4
+bounds how many parts there are; it does not bound what "in full" means inside part 3.
+
+The consequence as it stands is not merely a missing convenience. A worker's top item can be a block
+that `block transition` and `block approve` will both refuse
+(`blocked-by-open-product-owner-question`), and `context` — the command whose whole purpose is
+"everything that role needs to act" — reports nothing about it. The one command that does carry the
+fact, `state`, is deliberately not role-scoped, so it cannot say *which* halted card is this role's
+top item; a worker has to run two commands and join them by hand. That is the incumbent's failure
+mode, rebuilt. Note also that `constraints` as ruled adds no information over part 1 (S3), so part 3
+currently carries **no** item-specific constraint at all, which is a thin reading of a field the spec
+names explicitly.
+
+Recommendation: `topItem` carries `blockedBy` (the ids, from `BlockCardFields.BlockedBy`) and a
+derived `halted` + `haltedByQuestionId`/`Title`, computed by the same
+`FindBlockingOpenProductOwnerQuestion` `state` uses — one predicate, three readers, no drift. Queue
+entries stay exactly as they are. Blocks A, C.
+
+### Suggested remediation shape — one block
+
+1. Amend `specs/working-context/spec.md`'s *Working context fits a stated budget* to state the
+   register/brief precedence and the stated overage (S1). Model it on block D's own amendment.
+2. Settle deferral vs. halting: `❓ @architect` → Product Owner, then either narrow/widen
+   `FindBlockingOpenProductOwnerQuestion`'s status test or record the carve-out in the requirement —
+   plus a test with a deferred Product-Owner-owned blocker either way (S2).
+3. `topItem.constraints` → id references into part 1; re-run `WorkingContextCorpusTests` and record
+   the new headroom against 8,100 (S3).
+4. `topItem` gains `blockedBy` + derived `halted`/`haltedBy…`, from the shared predicate; queue
+   entries untouched; a test that a halted top item is legible from `context` alone (S4).
+
+3 and 4 pull in opposite directions on budget, so land them together and re-measure once.
+
+### Scope — clean
+
+F, D and E belong here. F was `## NEXT`'s ruling ("whoever next touches the CLI surface"), and §10
+adds two verbs to it; D was §9's deferred F3 and the window had been open since `8298539`; E is
+carried item B and is what lets block B's overage message name a real command, which is the reason it
+could not be parked. Nothing landed outside this change's proposal and specs. `process-enforcement`'s
+two new requirements are the correct footprint for D's Product Owner ruling.
+
+### Checked and sound — not re-litigating any of it
+
+- **Refusal coverage as a set.** §9 ruling 1 is applied *consistently*, not just case by case: every
+  CLI-layer refusal §10 minted (`missing-argument`, `unrecognised-role`, `repo-root-not-found`,
+  `invalid-ceiling`, and `comment resolve`'s empty body) asserts only that the invocation was
+  malformed and reports without recording; every refusal that needed the card read
+  (`RoleNotPermitted` ×2, `HandEnteredDerivedState` ×20) records. No case straddles the line, and
+  every one of the CLI-layer refusals has its own direct test — which matters, because the coverage
+  gate cannot see them.
+- **The hand-entered guard's reach.** Verified independently, not from the thread: 34 `AtomicWrite`
+  occurrences in `CardStore.cs`, 33 real call sites, every one either guarded on entry, a fresh-card
+  write with `[]` in the `UnknownFrontmatterFields` position, or `RefuseAndRecord`/`RestoreCardContent`.
+  `CompactRulesUnderLocks` is guarded via `ReadOpenChangeScopedRule`, `CloseSection` via
+  `ValidateBlockForLanding`. Leaving `AtomicWrite` itself unguarded is right: a blanket guard would
+  refuse the write whose entire job is recording that the card is tainted.
+- **"Documented in code, not in `Exclusions`" for the three no-case types.** I agree with the
+  reviewer. `Exclusions` names a case that exists but is untested; `CardCreateOutcome`,
+  `CardFindingRecordOutcome` and `ChangeArchiveOutcome` carry no such case at all, structurally, and
+  an entry keyed on a type with no member would be asking the gate to track an absence. The gate's
+  "exactly one of {implemented-and-tested, keyed exclusion}" rule is not violated, because there is
+  no case to place.
+- **Escalation severity is genuinely never stored** — `Halted` exists only on `DerivedStateBlockedCard`,
+  computed per request; nothing persists it, and `DerivedStateFieldKeys` reserves the write door.
+  **Every `state` figure is genuinely derived at request time** — one fresh walk per call, no
+  memoisation, no index read, `tasks.md` counted by `File.ReadLines` on every call.
+- **The read paths agree on live/closed/ownership.** `context` and `state` both walk
+  `ResolveLiveRecordDirectories` and both classify through `CardLifecycle.IsClosed`; `state`'s
+  `owesAnswer` is the same `Frontmatter.Owner` `context` queues on. The only disagreement I found is
+  S2, and it is inside `state`, not between the two.
+- **CLI surface coherence.** `invalid-ceiling` fits the existing `invalid-*` family; all three verbs
+  use the same envelope, the same camelCase, the same `id`/`filePath`/`title` triple, and the same
+  "peek, don't take" funnel for unknown flags. `budget` on `ContextResult` is an addition to part 4's
+  "nothing else" but is required by the sibling requirement's "a **stated** budget" — I examined it
+  and it holds.
+- **ADRs.** No second surface, no daemon, no reflection or runtime codegen (`[GeneratedRegex]`, not
+  `RegexOptions.Compiled`; source-generated JSON throughout); no new persisted card field, so carried
+  item A and the index/rebuild path are untouched and no record/index divergence became reachable;
+  the three new commands are pure reads taking no lock and writing nothing; `tasks.md` is read and
+  never written. Every block's DEVLOG entry quotes all four exit lines.
+
+### Architectural notes — for `## NEXT`, not the fix block
+
+- **Call site 34.** The per-call-site guard shape is correct, but it holds by convention. The gate
+  that would close it is mechanical and cheap — I wrote it in fifteen lines to audit this section:
+  every method in `CardStore.cs` containing an `AtomicWrite(` on an existing card must also contain a
+  `ReservedDerivedStateFieldKeyIn` call. Worth adding when someone next extends `CardStore`.
+- **`state` is unbounded, and that is currently fine but not permanent.** Its size tracks open
+  sections/obligations/questions/blocked cards, which a long-running repository accumulates. Revisit
+  when §11/§12 add read paths, not now.
+- **`CountLiveOpenRules` counts rules only, while part 1 ships rules *and* hazards.**
+  `DefaultRuleReviewCeiling`'s doc comment justifies 50 by the register's cost in every `context`
+  response — but the figure it is checked against omits half of what ships. Cosmetic today; worth
+  aligning.
+- **`state`'s halting resolves blockers through `CardIdentityResolver`, which walks
+  `ResolveRecordDirectories` (archive included)** — the one place §10's read paths reach past carried
+  item C. Deliberate and inherited, but unstated in `state`'s own doc comment.
+- **`callboard state --role worker`** falls through to the generic `unrecognised-argument`. Given
+  `context` requires `--role`, a message saying `state` is not role-scoped would serve the caller
+  better.
+- **Record consistency on the "Approve with nits" item.** For the record: that verdict is on **block
+  E**, not block A — block A's reviewer posted `Request changes` then `Approve`. Block E also closes
+  with a worker fix and a dangling `→ @reviewer` and no closing verdict; the reviewer had explicitly
+  pre-authorised landing the comment-only fix, so I am not treating it as an ungated commit, but §10's
+  last block has no terminal sign-off post. The reviewer-prompt fix stays carried to §13.
+
+Two of my four blockers (S1, S2) are decisions to record rather than code to write, and S3/S4 are one
+field each. This should converge in one block.
+
+**[architect]** Remediation block briefed → @worker. **Supervisor findings S3 and S4 only.** No task
+numbers, ticks nothing — every box in §10 is already ticked; the DEVLOG is this block's record (§3c.3).
+
+**S1 and S2 are NOT in this block.** Both are Product Owner calls and both are parked awaiting an
+answer — see the two `❓` posts below. Do not touch the overage path's *existence* (S1) and do not touch
+the deferred-question predicate (S2). If your S3/S4 work brings you against either, stop and say so
+rather than pre-empting the ruling.
+
+### S3 — `topItem.constraints` duplicates part 1's bodies, and the budget bills them twice
+
+`ContextResult.cs:211` carries full `ContextRegisterCardResult` values — including `body` — drawn
+strictly as a subset of `liveRegister`. Block A's reviewer cleared this on part 4 grounds, correctly:
+nothing arrives from outside the three parts. **Block B then changed what that costs.** Once the budget
+began measuring the serialised response, every repository-scoped rule and hazard started being billed
+**twice** against the 8,100-character ceiling — once in part 1, once again in part 3.
+
+The register is the one part of the response that is both **untruncatable and monotonic**, so this is
+what drags the sanctioned overage from a theoretical edge into something reachable early in a change.
+
+**Fix: emit ids.** The field's own doc comment already describes it as ids; the implementation carries
+whole cards. Part 1 delivers every one of those cards in full and unconditionally, so an id is a
+complete reference — the caller already holds the body. Keep the stated `constraintsRule` prose as is;
+only the payload changes.
+
+Re-measure afterwards and **report the new corpus figure**: block B recorded 6,975 of 8,100 characters
+at true wire length on the 2.07 MB corpus. I want the post-dedupe number in your post.
+
+### S4 — the halting tension, reversed: the top item carries its halted-ness
+
+I ruled in block C's brief that 10.10 lands in `state` and not `context`, on the grounds that part 4's
+"nothing else" forbade widening the working-context response. **The supervisor has judged that ruling
+wrong at section scale and I accept the correction.** Recording the reasoning, because it matters more
+than the change:
+
+> Part 4 bounds **how many parts the response has**. It does not bound what "in full" means inside part
+> 3 — and blocked-ness and halted-ness are properties *of the top item*, which part 3 exists to deliver
+> in full.
+
+The behaviour as shipped is not coherent: a worker's top item can be a block that **`block transition`
+and `block approve` will both refuse**, and `context` says nothing about it. `state` holds the fact but
+is deliberately not role-scoped, so it cannot tell a role which halted card is *its* top item. Combined
+with S3, part 3 currently carries no item-specific constraint at all.
+
+**Fix: carry blocked-ness and halted-ness on the top item in part 3** — what blocks it, and whether it
+is halted pending a Product Owner question. Reuse block C's derivation
+(`CardStore.FindBlockingOpenProductOwnerQuestion`); do not write a second one, or `context` and `state`
+will drift the way S2 shows they already can.
+
+**The ruling stands for queue entries.** Only the **top item** gains this. Extending it to every queue
+entry is over-broad, and the supervisor says so explicitly — part 3 is "the top queue item in full", not
+"the queue in full".
+
+### Constraints
+
+- Everything binding §10 still applies — see the opening `[architect]` post under `## 10.`: live
+  directories only, `CountCitations` off per-brief paths, §9's three refusal rulings, and the coverage
+  gate's blind spot for CLI-layer refusals.
+- **S4 widens part 3, so part 4 gets re-examined.** Justify in your post why each field you add is part
+  of "the top queue item in full" rather than a fourth part by another name. That is the test block A
+  was audited against and it still applies.
+- **S4 adds to the response, S3 removes from it.** Both change the measured size, so the budget must be
+  re-measured **after both**, not after either.
+- ADR-0002 / D2 — NativeAOT: no reflection, no runtime codegen, source-generated JSON only.
+  `TreatWarningsAsErrors` is on.
+
+### Tests
+
+- S3: the top item's constraints reference part 1's cards by id, part 1 still delivers them in full, and
+  the corpus response is measurably smaller than before.
+- S4: a top item blocked by an open Product Owner question reports halted; one blocked only by another
+  role's question reports blocked but not halted; an unblocked top item reports neither. The `context`
+  and `state` answers for the same record **agree** — assert that directly, since divergence between the
+  two read paths is exactly what the supervisor caught.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT`, `TEST_EXIT`, `FORMAT_EXIT`, `VALIDATE_EXIT`
+individually. Suite stands at **977**. Read the exit line, never the log.
+
+Post to the DEVLOG under `## 10.` as `[worker]`, then `→ @reviewer`.
+
+**[worker]** Remediation block done — S3 and S4. S1 and S2 untouched, per brief.
+
+**S3 — `topItem.constraints` now carries ids.** `ContextTopItemResult.Constraints` is
+`IReadOnlyList<string>` (`ContextResult.cs:205-213`); `CommandDispatcher.ToContextTopItemResult` maps
+`topItem.BindingConstraints` to `constraint.Card.Frontmatter.Id` instead of the full
+`ContextRegisterCardResult`. `WorkingContextAssembler.BindingConstraints`'s internal shape
+((FilePath, Card) tuples) is untouched — only the wire payload changed, as the brief asked. Also
+dropped the constraint-body term from `DescribeOverageDriver`'s brief-length estimate
+(`CommandDispatcher.cs`), since that diagnostic no longer ships in the response it's estimating.
+Part 1 (`liveRules`/`liveHazards`) still delivers every card in full — unchanged.
+
+**S4 — the top item now carries `blockedBy`/`halted`/`haltedByQuestionId`/`haltedByQuestionTitle`.**
+`WorkingContextTopItem` (`WorkingContext.cs`) gains `BlockedByIds`, `Halted`,
+`HaltedByQuestionId`, `HaltedByQuestionTitle`, computed in `WorkingContextAssembler.Build` from
+`top.Card.BlockFields.BlockedBy` and `CardStore.FindBlockingOpenProductOwnerQuestion(cardsRoot,
+top.Card)` — the exact same predicate `DerivedStateAssembler.Build` calls for `state`'s
+`BlockedCards`, not a second derivation. `ContextTopItemResult` carries the four fields verbatim;
+queue entries (`ContextQueueEntryResult`) are untouched, per the ruling that only the top item
+gains this.
+
+Justifying each field as "the top item in full", not a fourth part: `blockedBy` is
+`BlockCardFields.BlockedBy` — a field already on the card the top item *is*, the same way `base` and
+`referencedTasks` are. `halted`/`haltedByQuestionId`/`haltedByQuestionTitle` are a pure function of
+that same field plus the live record (which query/hazard question it resolves to) — no new card
+reaches the response that part 1 doesn't already carry or that `blockedBy` doesn't already name.
+None of the four is a new source of cards or a new response section; all four describe the one card
+part 3 already expands in full.
+
+**Budget, re-measured after both.** `WorkingContextCorpusTests.FullScaleCorpus_ResponseFitsTheCharacterCeiling`
+on the 2.07 MB corpus now measures **5,877 of 8,100 characters** (was 6,975 before this block) — S3's
+removal outweighs S4's addition, since the corpus fixture's live register (one rule, one hazard) is
+small and the top item there carries no `blocked_by`.
+
+**Tests.** `CommandDispatcherContextTests`: updated the existing constraints assertion to read
+plain ids; added an unblocked-top-item assertion (`blockedBy` empty, `halted` false, no halting-
+question fields) to the existing success test. Two new tests:
+`TopItem_BlockedByOpenProductOwnerQuestion_ReportsHalted_AndAgreesWithState` and
+`TopItem_BlockedByNonProductOwnerQuestion_ReportsBlocked_ButNotHalted_AndAgreesWithState` — each
+calls both `context --role worker` and `state`, and asserts the two commands' `halted`/
+`haltedByQuestionId` agree on the same record (the divergence class S2 showed already exists
+elsewhere, and S4's whole point is that `context` and `state` must not repeat it here).
+
+**Constraints held.** Live directories only (no archive reach added); `CountCitations` untouched;
+§9's refusal rulings untouched — no new refusal in this block; NativeAOT — no reflection, no
+runtime codegen, source-generated JSON only (`ContextResult`'s new/changed properties are plain
+`string`/`bool`/`IReadOnlyList<string>`, no new type needing its own JSON context entry beyond what
+already exists); `TreatWarningsAsErrors` is on and the build is clean.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. Suite now at **979** (977 + 2
+new tests).
+
+→ @reviewer
+
+**[reviewer]** §10 remediation (S3, S4 only) — audit of the uncommitted working tree against `9684cf6`.
+
+## Verdict: Approve
+
+Scope held to exactly what the brief asked. `git diff --stat` touches only
+`src/Callboard/Cards/WorkingContext.cs`, `src/Callboard/Cli/CommandDispatcher.cs`,
+`src/Callboard/Cli/ContextResult.cs`, `tests/Callboard.Tests/CommandDispatcherContextTests.cs`, plus
+this DEVLOG. **`CardStore.cs` has zero diff** — `FindBlockingOpenProductOwnerQuestion`
+(`CardStore.cs:1837`) and `question defer`'s status-only mutation are untouched, so S2's predicate is
+exactly as the supervisor left it, not pre-empted. `BuildBudgetedContextResult`
+(`CommandDispatcher.cs:4033-4076`) still carries the `exceededCeiling: true` branch verbatim — S1's
+overage path was not touched, existence or otherwise. Neither `Makefile` nor `tasks.md` appears in the
+diff.
+
+### S3 — constraints reduced to ids
+
+- `ContextTopItemResult.Constraints` is now `IReadOnlyList<string>` (`ContextResult.cs:222-223`),
+  populated from `constraint.Card.Frontmatter.Id` (`CommandDispatcher.cs:4250`).
+  `WorkingContextAssembler.BindingConstraints` (`WorkingContext.cs`) is untouched — still the full
+  `(FilePath, Card)` tuple internally — so only the wire mapping changed, per the brief.
+- Part 1 (`LiveRules`/`LiveHazards`) is built independently from `context.LiveRulesAndHazards` and was
+  not touched by this diff; it still delivers every live register card in full and unconditionally.
+  An id in `constraints` is therefore a genuine complete reference — nothing the caller can no longer
+  reach.
+- `ConstraintsRuleDescription` (`WorkingContext.cs:121-123`) — "the live rule and hazard cards whose
+  scope covers the top item: every repository-scoped one, plus any change-scoped rule belonging to the
+  top item's own change" — describes the *selection rule*, not the wire shape. It reads correctly
+  whether the field carries ids or bodies, and is untouched in this diff. Confirmed accurate.
+- `DescribeOverageDriver`'s `briefLength` (`CommandDispatcher.cs:4098-4103`) dropped the
+  `topItem.BindingConstraints.Sum(...)` term. This is correct, not just harmless: `registerLength` is
+  computed independently from `context.LiveRulesAndHazards` (unchanged), so the same repository-scoped
+  rule/hazard cards are still counted there in full — dropping the term from `briefLength` removes a
+  double-count rather than removing a driver's true weight. No other driver is misattributed as a
+  result: the register/brief/thread-structural three-way comparison is otherwise unchanged.
+
+### S4 — top item carries blocked-ness and halted-ness
+
+- `WorkingContextAssembler.Build` calls `CardStore.FindBlockingOpenProductOwnerQuestion(cardsRoot,
+  top.Card)` (`WorkingContext.cs:208`) — the exact predicate `DerivedStateAssembler.Build` already
+  calls for `state`'s `BlockedCards`. One derivation, two readers, as S4 demanded. No second predicate
+  was written.
+- Only `WorkingContextTopItem`/`ContextTopItemResult` gained fields. `ContextQueueEntryResult` in
+  `ContextResult.cs` has no diff — confirmed by inspection and by the full file diff, which shows no
+  hunk touching that type. Queue entries are exactly as they were.
+- Part-4 justification: `specs/working-context/spec.md:16-18` names part 3 as "the top queue item in
+  full: its body, `base`, referenced tasks, constraints, unresolved threads … and the previous round's
+  verdict", with part 4 as "nothing else." `BlockedBy` is `BlockCardFields.BlockedBy` verbatim — a
+  field already on the card that *is* the top item, on the same footing as `Base` and
+  `ReferencedTasks`, which the response already expands. `Halted`/`HaltedByQuestionId`/Title are a pure
+  function of that same field plus the live record — no additional card enters the response that part
+  1 doesn't already carry (the halting question, if any, is a repository-scoped question card; nothing
+  in this diff adds a new register category to part 1, and the question itself is not echoed into the
+  response body beyond id/title). I accept this: it describes properties *of* the one card part 3
+  already expands, not a fourth source of cards or a fourth response section. This holds up against
+  the supervisor's own framing ("part 4 bounds how many parts the response has, not what 'in full'
+  means inside part 3").
+- `HaltedByQuestionId`/`HaltedByQuestionTitle` are non-`required` nullable and `CliJsonContext` sets
+  `DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull` (`CliJsonContext.cs:14`), so an
+  unhalted top item omits both keys entirely — matches the new tests' `TryGetProperty(...) == false`
+  assertions and the existing `Approve`d envelope convention.
+- The two new tests (`TopItem_BlockedByOpenProductOwnerQuestion_ReportsHalted_AndAgreesWithState`,
+  `TopItem_BlockedByNonProductOwnerQuestion_ReportsBlocked_ButNotHalted_AndAgreesWithState`) each write
+  one card into one `TempGitRepo`, then call both `Context(repo, "worker")` and the new `State(repo)`
+  helper against that *same* repo and assert the `halted`/`haltedByQuestionId` fields agree. That is a
+  genuine two-read-path exercise against one record, not two independently constructed fixtures
+  asserted to match by coincidence — this is exactly the regression S2 showed is otherwise possible.
+
+### Verified independently
+
+- `make gates` on the real working tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (979 passed, 0 failed, 0
+  skipped — the reported 977→979 delta confirmed), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+  Quoted from the actual run, not the worker's report.
+- `WorkingContextCorpusTests.cs` — **zero diff**. The worker's post does not claim this file changed;
+  nothing here needed reverting, and I found no leftover scaffolding, weakened assertion, or changed
+  fixture in it. (Flagging this because my brief asked me to check that file for reverted scaffolding —
+  there is none to find; it was never touched by this block.)
+- The corpus figure (6,975 → 5,877 of 8,100) is self-reported, not asserted by any test (the corpus
+  test only asserts `characterCount <= characterCeiling`), so I could not re-derive the exact number
+  without modifying code — which the auditor boundary correctly refuses, on a throwaway copy or
+  otherwise, and I stopped rather than route around it. What I did verify: `MeasureEmittedLength`'s
+  path (real `CliEnvelope`-wrapped JSON via the source-generated serializer) is unchanged by this diff,
+  so the figure is produced by the same true-wire-length mechanism block B used, applied to a payload
+  that this diff shrinks (S3) and grows (S4). The reported direction (net smaller, since the corpus
+  fixture's live register is one rule/one hazard and its top item has no `blocked_by`) is consistent
+  with the diff's shape. I did not independently reproduce the number.
+- Source-generated JSON: `IReadOnlyList<string>`/`bool`/`string?` are types already emitted elsewhere
+  in `ContextResult.cs` (e.g. `ReferencedTasks`); no reflection, no new `JsonSerializable` type
+  needed, `TreatWarningsAsErrors` on, build clean — confirmed by the green `BUILD_EXIT:0` above.
+- No pre-existing assertion in `CommandDispatcherContextTests.cs` was relaxed — the one existing
+  assertion touched (`constraintIds`) was updated to match the new shape (`entry.GetString()` instead
+  of `entry.GetProperty("id").GetString()`), which is a required update, not a weakening: it still
+  pins the same two ids in the same order.
+
+### Notes (non-blocking)
+
+- The corpus-figure self-report is fine to carry as-is in the DEVLOG for now, but if a future block
+  ever needs that number load-bearing (e.g. gating on headroom), it should become an assertion in
+  `WorkingContextCorpusTests.cs` rather than staying a number typed into a post.
+- Minor: `HaltedByQuestionId`/`HaltedByQuestionTitle` are `public string? ... { get; init; }` without
+  `required`, while `BlockedBy`/`Halted` are `required`. That's the right shape (they're genuinely
+  optional), just noting the asymmetry reads intentionally to a future editor rather than as an
+  oversight — worth a one-line comment if anyone touches this file next, not worth a round on its own.
+
+S1 and S2 are untouched, as briefed, and remain open on the two `❓ @architect` posts in the supervisor's
+review above.
+
 ## NEXT
 
 **§10 is open and in flight.** Base `3e85b98`. Two of its six blocks have landed; **block A (10.1–10.3)

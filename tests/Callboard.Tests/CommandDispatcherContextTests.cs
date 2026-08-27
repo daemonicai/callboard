@@ -88,10 +88,17 @@ public sealed class CommandDispatcherContextTests
         // item, and the response states the binding rule alongside them.
         Assert.False(string.IsNullOrWhiteSpace(topItem.GetProperty("constraintsRule").GetString()));
         var constraintIds = topItem.GetProperty("constraints").EnumerateArray()
-            .Select(entry => entry.GetProperty("id").GetString())
+            .Select(entry => entry.GetString())
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(["H-0001", "R-0001"], constraintIds);
+
+        // §10 remediation S4 — the top item, unblocked here, reports neither blocked-ness nor
+        // halted-ness.
+        Assert.Empty(topItem.GetProperty("blockedBy").EnumerateArray());
+        Assert.False(topItem.GetProperty("halted").GetBoolean());
+        Assert.False(topItem.TryGetProperty("haltedByQuestionId", out _));
+        Assert.False(topItem.TryGetProperty("haltedByQuestionTitle", out _));
     }
 
     [Fact]
@@ -105,6 +112,48 @@ public sealed class CommandDispatcherContextTests
         Assert.False(result.TryGetProperty("topItem", out _));
     }
 
+    // §10 remediation S4: a top item blocked by an open Product Owner question reports halted —
+    // and context and state agree on the same record (the divergence the supervisor caught).
+    [Fact]
+    public void TopItem_BlockedByOpenProductOwnerQuestion_ReportsHalted_AndAgreesWithState()
+    {
+        using var repo = new TempGitRepo();
+        WriteQuestion(repo, "Q-0001", CardOwner.ProductOwner, "open");
+        var (_, blockId) = WriteBlockedBlock(repo, "b-halted", "B-0002", CardOwner.Worker, "briefed", FixedNow, ["Q-0001"]);
+
+        var topItem = Context(repo, "worker").GetProperty("topItem");
+        Assert.Equal(blockId, topItem.GetProperty("id").GetString());
+        Assert.Equal(["Q-0001"], topItem.GetProperty("blockedBy").EnumerateArray().Select(e => e.GetString()).ToArray());
+        Assert.True(topItem.GetProperty("halted").GetBoolean());
+        Assert.Equal("Q-0001", topItem.GetProperty("haltedByQuestionId").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(topItem.GetProperty("haltedByQuestionTitle").GetString()));
+
+        var blockedCard = State(repo).GetProperty("blockedCards").EnumerateArray().Single(e => e.GetProperty("id").GetString() == blockId);
+        Assert.True(blockedCard.GetProperty("halted").GetBoolean());
+        Assert.Equal(
+            topItem.GetProperty("haltedByQuestionId").GetString(),
+            blockedCard.GetProperty("haltedByQuestionId").GetString());
+    }
+
+    // A top item blocked only by another role's question is blocked but not halted — and again
+    // context and state must agree.
+    [Fact]
+    public void TopItem_BlockedByNonProductOwnerQuestion_ReportsBlocked_ButNotHalted_AndAgreesWithState()
+    {
+        using var repo = new TempGitRepo();
+        WriteQuestion(repo, "Q-0002", CardOwner.Architect, "open");
+        var (_, blockId) = WriteBlockedBlock(repo, "b-blocked", "B-0003", CardOwner.Worker, "briefed", FixedNow, ["Q-0002"]);
+
+        var topItem = Context(repo, "worker").GetProperty("topItem");
+        Assert.Equal(["Q-0002"], topItem.GetProperty("blockedBy").EnumerateArray().Select(e => e.GetString()).ToArray());
+        Assert.False(topItem.GetProperty("halted").GetBoolean());
+        Assert.False(topItem.TryGetProperty("haltedByQuestionId", out _));
+        Assert.False(topItem.TryGetProperty("haltedByQuestionTitle", out _));
+
+        var blockedCard = State(repo).GetProperty("blockedCards").EnumerateArray().Single(e => e.GetProperty("id").GetString() == blockId);
+        Assert.False(blockedCard.GetProperty("halted").GetBoolean());
+    }
+
     private static (string Path, string Id) WriteBlock(TempGitRepo repo, string fileStem, string id, CardOwner owner, string status, DateTimeOffset updated)
     {
         var path = Path.Combine(repo.ChangesDirectory, fileStem + ".md");
@@ -112,6 +161,25 @@ public sealed class CommandDispatcherContextTests
         var card = new CardFile(frontmatter, "Body.", [], []);
         WriteCard(path, card);
         return (path, id);
+    }
+
+    private static (string Path, string Id) WriteBlockedBlock(
+        TempGitRepo repo, string fileStem, string id, CardOwner owner, string status, DateTimeOffset updated, IReadOnlyList<string> blockedBy)
+    {
+        var path = Path.Combine(repo.ChangesDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(id, CardKind.Block, "A block card", status, owner, CardScope.Change, "S-0001", FixedNow, updated);
+        var blockFields = new BlockCardFields(null, null, [], null, blockedBy, []);
+        var card = new CardFile(frontmatter, "Body.", [], [], BlockFields: blockFields);
+        WriteCard(path, card);
+        return (path, id);
+    }
+
+    private static void WriteQuestion(TempGitRepo repo, string id, CardOwner owner, string status)
+    {
+        var path = Path.Combine(repo.RegisterDirectory, id.ToLowerInvariant() + ".md");
+        var frontmatter = new CardFrontmatter(id, CardKind.Question, "A question", status, owner, CardScope.Repository, string.Empty, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        WriteCard(path, card);
     }
 
     private static void WriteRule(TempGitRepo repo, string fileStem, string id, string status) =>
@@ -136,6 +204,17 @@ public sealed class CommandDispatcherContextTests
         var output = new StringWriter();
         var exitCode = CommandDispatcher.Run(
             ["context", "--role", role], output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        return doc.RootElement.GetProperty("result").Clone();
+    }
+
+    private static JsonElement State(TempGitRepo repo)
+    {
+        var output = new StringWriter();
+        var exitCode = CommandDispatcher.Run(
+            ["state"], output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());

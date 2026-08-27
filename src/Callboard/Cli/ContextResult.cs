@@ -165,7 +165,12 @@ internal sealed class ContextQueueEntryResult
 /// field, empty elsewhere" convention <see cref="Cards.BlockCardFields"/> itself follows.
 /// <see cref="Constraints"/> is not kind-restricted — it is a view of part 1 (<see cref="
 /// ContextResult.LiveRules"/>/<see cref="ContextResult.LiveHazards"/>), applicable to any top item
-/// kind (Product Owner ruling, §10 block A review).</summary>
+/// kind (Product Owner ruling, §10 block A review). <see cref="BlockedBy"/>/<see cref="Halted"/>/
+/// <see cref="HaltedByQuestionId"/>/<see cref="HaltedByQuestionTitle"/> are the top item's own
+/// blocked- and halted-ness (§10 remediation S4: "blocked-ness and halted-ness are properties of
+/// the top item, which part 3 exists to deliver in full" — not a fourth part, since part 4 bounds
+/// how many parts the response has, not what "in full" means inside part 3). Only the top item
+/// carries these; <see cref="ContextQueueEntryResult"/> is deliberately untouched.</summary>
 internal sealed class ContextTopItemResult
 {
     [JsonPropertyName("id")]
@@ -202,14 +207,16 @@ internal sealed class ContextTopItemResult
     [JsonPropertyName("constraintsRule")]
     public required string ConstraintsRule { get; init; }
 
-    /// <summary>"Constraints" (Product Owner ruling, §10 block A review): the live rule/hazard
-    /// cards whose scope covers this item — not <see cref="Cards.BlockCardFields.BlockedBy"/>,
-    /// which is untouched on the model and does not appear here under any name. A card-scoped
-    /// subset of part 1 (<see cref="ContextResult.LiveRules"/>/<see cref="ContextResult.
-    /// LiveHazards"/>), reusing the same <see cref="ContextRegisterCardResult"/> shape since these
-    /// are literally register cards, not a new representation of them.</summary>
+    /// <summary>"Constraints" (Product Owner ruling, §10 block A review): the ids of the live
+    /// rule/hazard cards whose scope covers this item — not <see cref="Cards.BlockCardFields.
+    /// BlockedBy"/>, which is carried separately as <see cref="BlockedBy"/>. Ids only, not the
+    /// card bodies (§10 remediation S3): part 1 (<see cref="ContextResult.LiveRules"/>/
+    /// <see cref="ContextResult.LiveHazards"/>) already delivers every one of these cards in full
+    /// and unconditionally, so an id is a complete reference and the caller already holds the
+    /// body — carrying the body again here billed every repository-scoped rule and hazard twice
+    /// against the character budget.</summary>
     [JsonPropertyName("constraints")]
-    public required IReadOnlyList<ContextRegisterCardResult> Constraints { get; init; }
+    public required IReadOnlyList<string> Constraints { get; init; }
 
     [JsonPropertyName("unresolvedThreadsAddressedToCaller")]
     public required IReadOnlyList<ContextThreadResult> UnresolvedThreadsAddressedToCaller { get; init; }
@@ -219,6 +226,28 @@ internal sealed class ContextTopItemResult
     /// <c>PreviousRoundVerdict</c> states the reading this follows.</summary>
     [JsonPropertyName("previousRoundVerdict")]
     public ContextVerdictResult? PreviousRoundVerdict { get; init; }
+
+    /// <summary><see cref="Cards.BlockCardFields.BlockedBy"/> verbatim — empty for a non-block
+    /// kind and for a block with no entry (§10 remediation S4).</summary>
+    [JsonPropertyName("blockedBy")]
+    public required IReadOnlyList<string> BlockedBy { get; init; }
+
+    /// <summary><see langword="true"/> exactly when one of <see cref="BlockedBy"/> resolves to a
+    /// live, Product-Owner-owned, open question — the same predicate <c>state</c>'s
+    /// <c>DerivedStateBlockedCard.Halted</c> is computed from, so the two commands cannot drift on
+    /// the same record (§10 remediation S4).</summary>
+    [JsonPropertyName("halted")]
+    public required bool Halted { get; init; }
+
+    /// <summary>The halting question's id, or <see langword="null"/> when <see cref="Halted"/> is
+    /// <see langword="false"/>.</summary>
+    [JsonPropertyName("haltedByQuestionId")]
+    public string? HaltedByQuestionId { get; init; }
+
+    /// <summary>The halting question's title, or <see langword="null"/> when <see cref="Halted"/>
+    /// is <see langword="false"/>.</summary>
+    [JsonPropertyName("haltedByQuestionTitle")]
+    public string? HaltedByQuestionTitle { get; init; }
 }
 
 /// <summary>One unresolved thread addressed to the role that requested this context — the

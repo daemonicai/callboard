@@ -4104,8 +4104,7 @@ internal static class CommandDispatcher
             ? 0
             : topItem.Card.Body.Length
                 + (topItem.Card.BlockFields.Base?.Length ?? 0)
-                + topItem.Card.BlockFields.Tasks.Sum(static task => task.Length)
-                + topItem.BindingConstraints.Sum(static constraint => constraint.Card.Frontmatter.Title.Length + constraint.Card.Body.Length);
+                + topItem.Card.BlockFields.Tasks.Sum(static task => task.Length);
 
         var addressedThreadCount = topItem?.UnresolvedThreadIdsAddressedToCaller.Count ?? 0;
         var threadStructuralLength = addressedThreadCount * ApproximateStructuralCharsPerThread;
@@ -4248,9 +4247,13 @@ internal static class CommandDispatcher
             Base = card.BlockFields.Base,
             ReferencedTasks = [.. card.BlockFields.Tasks],
             ConstraintsRule = WorkingContextAssembler.ConstraintsRuleDescription,
-            Constraints = [.. topItem.BindingConstraints.Select(ToContextRegisterCardResult)],
+            Constraints = [.. topItem.BindingConstraints.Select(static constraint => constraint.Card.Frontmatter.Id)],
             UnresolvedThreadsAddressedToCaller = [.. topItem.UnresolvedThreadIdsAddressedToCaller.Select(threadId => ToContextThreadResult(card, threadId, omittedSet))],
             PreviousRoundVerdict = verdict,
+            BlockedBy = topItem.BlockedByIds,
+            Halted = topItem.Halted,
+            HaltedByQuestionId = topItem.HaltedByQuestionId,
+            HaltedByQuestionTitle = topItem.HaltedByQuestionTitle,
         };
     }
 

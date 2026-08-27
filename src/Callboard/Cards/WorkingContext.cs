@@ -39,13 +39,32 @@ internal sealed record WorkingContextQueueEntry(string FilePath, CardFile Card, 
 /// 1 or earlier, or no claim was certified that round. See <see cref="
 /// WorkingContextAssembler.Build"/>'s own doc comment for the reading this follows.</param>
 /// <param name="PreviousRoundLimits"><see cref="PreviousRoundClaims"/>'s sibling for limits.</param>
+/// <param name="BlockedByIds"><see cref="BlockCardFields.BlockedBy"/> verbatim — what blocks the
+/// top item, id-only (§10 remediation S4: blocked-ness is a property of the top item, and part 3
+/// exists to deliver the top item in full). Empty for a non-block kind and for a block with no
+/// entry, the same "kind-specific field, empty elsewhere" convention every other reader of
+/// <see cref="BlockCardFields"/> already follows.</param>
+/// <param name="Halted"><see langword="true"/> exactly when <see cref="CardStore.
+/// FindBlockingOpenProductOwnerQuestion"/> resolves one of <paramref name="BlockedByIds"/> to a
+/// live, Product-Owner-owned, open question — the same predicate <c>state</c>'s own
+/// <see cref="DerivedStateBlockedCard.Halted"/> is computed from (§10 remediation S4: "reuse block
+/// C's derivation ... or context and state will drift"), read here rather than re-derived a second
+/// way.</param>
+/// <param name="HaltedByQuestionId">The halting question's id, or <see langword="null"/> when
+/// <paramref name="Halted"/> is <see langword="false"/>.</param>
+/// <param name="HaltedByQuestionTitle">The halting question's title, or <see langword="null"/> when
+/// <paramref name="Halted"/> is <see langword="false"/>.</param>
 internal sealed record WorkingContextTopItem(
     string FilePath,
     CardFile Card,
     IReadOnlyList<string> UnresolvedThreadIdsAddressedToCaller,
     IReadOnlyList<(string FilePath, CardFile Card)> BindingConstraints,
     IReadOnlyList<CardApprovalClaim> PreviousRoundClaims,
-    IReadOnlyList<CardApprovalLimit> PreviousRoundLimits);
+    IReadOnlyList<CardApprovalLimit> PreviousRoundLimits,
+    IReadOnlyList<string> BlockedByIds,
+    bool Halted,
+    string? HaltedByQuestionId,
+    string? HaltedByQuestionTitle);
 
 /// <summary>
 /// A role's complete working context (working-context: "given a role, the system SHALL return that
@@ -185,7 +204,11 @@ internal static class WorkingContextAssembler
             var threadIds = CardCommentRouting.LiveThreadIdsAddressedTo(top.Card.Comments, role);
             var constraints = BindingConstraints(liveRegister, top.ChangeName);
             var (claims, limits) = PreviousRoundVerdict(top.Card);
-            topItem = new WorkingContextTopItem(top.FilePath, top.Card, threadIds, constraints, claims, limits);
+            var blockedByIds = top.Card.BlockFields.BlockedBy;
+            var haltingQuestion = CardStore.FindBlockingOpenProductOwnerQuestion(cardsRoot, top.Card);
+            topItem = new WorkingContextTopItem(
+                top.FilePath, top.Card, threadIds, constraints, claims, limits,
+                [.. blockedByIds], haltingQuestion is not null, haltingQuestion?.QuestionId, haltingQuestion?.Title);
         }
 
         return new WorkingContext(
