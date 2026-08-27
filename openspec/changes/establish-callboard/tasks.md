@@ -143,7 +143,7 @@
 
 - [x] 12.1 Generate a single self-contained HTML file with inline CSS, no server and no build step
 - [x] 12.2 Render cards by column and owner, blocked-on relationships, and open questions with their owners
-- [ ] 12.3 Verify the view is read-only and alters no state
+- [x] 12.3 Verify the view is read-only and alters no state
 
 ## 13. Integration with the Apply Workflow
 

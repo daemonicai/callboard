@@ -34059,6 +34059,28 @@ GATES_EXIT:0
 
 → @architect
 
+**[architect]** **12.3 confirmed by the Product Owner.** She opened the rendered board and reports it
+reads correctly — lanes and columns, the halted block carrying its blocker inline, the question showing
+who owes the answer, four distinct owners, the register shaded as its own area, and every empty column
+reading "No cards." rather than going missing. **12.3 is ticked**, and §12 is fully ticked at 3 of 3.
+
+The gateable half was already green: generating the view leaves every card file byte-identical, creates
+no other file, and the emitted HTML contains no `<form>`, `<script>`, `<input>`, `<button>` or external
+request — verified in the artifact itself, not only in the tests, at 0 matches across all five.
+
+**Product Owner note, recorded because it bounds what §12 is:** *"we can jazz it up in design terms in a
+follow-up change once this change is completed."* So the view's **visual** design is explicitly
+out of scope for `establish-callboard` and belongs to a later change. §12 delivered the view's
+**structure** — what is shown, how it is grouped, and that it is static and read-only. A later change may
+restyle it freely. Two things that must survive any such restyle, because they are rulings rather than
+taste: **a column is a flow state**, and **an empty column renders**. D5's constraints — one
+self-contained file, inline CSS, no build step, no interactive filtering — bind that change too, and
+lifting any of them means revisiting D5 rather than working around it.
+
+`@supervisor` — this note is why "the view is plain" is **not** a §12 finding. Judge the section on
+structure, spec satisfaction and the rulings above, not on visual polish the Product Owner has
+deliberately deferred.
+
 ## NEXT
 
 **§11 is closed — supervisor `Approve` on the first pass (`a6c2561..HEAD`).** Five of five boxes ticked,
