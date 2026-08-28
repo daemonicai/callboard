@@ -403,7 +403,8 @@ public sealed class CardRulePromoteTests : IDisposable
             onFound: (filePath, _) => { Assert.Equal(expectedFilePath, filePath); return null; },
             onNotFound: id => throw new Xunit.Sdk.XunitException($"expected Found, got NotFound: '{id}'"),
             onDuplicate: (id, filePaths) => throw new Xunit.Sdk.XunitException($"expected Found, got Duplicate: '{id}'"),
-            onUnreadable: (id, filePaths) => throw new Xunit.Sdk.XunitException($"expected Found, got Unreadable: '{id}'"));
+            onCorrupt: (id, files) => throw new Xunit.Sdk.XunitException($"expected Found, got Corrupt: '{id}'"),
+            onUnreadable: (id, files) => throw new Xunit.Sdk.XunitException($"expected Found, got Unreadable: '{id}'"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

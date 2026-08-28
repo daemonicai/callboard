@@ -124,6 +124,50 @@ internal static class CardFileParser
         "by", "rule", "remedy", "timestamp",
     };
 
+    /// <summary>
+    /// Best-effort recovery of a declared <c>id</c> from a file <see cref="Parse"/> has already
+    /// refused (§13.6) — evidence about a claim, never a second route to the record (D3: the
+    /// record is the file, and a file <see cref="Parse"/> rejected is not the record). Reads only
+    /// the leading frontmatter fence — the first line through the next line that is exactly
+    /// <see cref="CardFileFormat.FrontmatterFence"/> — the same span <see cref="Parse"/> itself
+    /// would trust as frontmatter. A body line that happens to read <c>id: blk-0007</c> is never
+    /// consulted, because it is never inside that span: this walks lines in file order and returns
+    /// as soon as it meets the closing fence, so a second, later "id:" line anywhere past it — in
+    /// the body, or inside a comment block — cannot influence the result. If the fence itself is
+    /// not intact (no opening line, or no closing line before end of file) there is nothing safe to
+    /// recover, and this returns <see langword="null"/> rather than guessing from unbounded text —
+    /// the same class of defect §11 named: attributing meaning to text a caller/file author
+    /// controls without first validating the structure that bounds it.
+    /// </summary>
+    internal static string? TryRecoverDeclaredId(string rawText)
+    {
+        var normalized = rawText.EndsWith('\n') ? rawText[..^1] : rawText;
+        var lines = normalized.Split(LineSplitSeparators, StringSplitOptions.None);
+
+        if (lines.Length == 0 || !string.Equals(lines[0], CardFileFormat.FrontmatterFence, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        string? recoveredId = null;
+        var cursor = 1;
+        while (cursor < lines.Length && !string.Equals(lines[cursor], CardFileFormat.FrontmatterFence, StringComparison.Ordinal))
+        {
+            var line = lines[cursor];
+            var separatorIndex = line.IndexOf(": ", StringComparison.Ordinal);
+            if (separatorIndex >= 0 && string.Equals(line[..separatorIndex], "id", StringComparison.Ordinal))
+            {
+                recoveredId = CardFileFormat.UnescapeFrontmatterValue(line[(separatorIndex + 2)..]);
+            }
+
+            cursor++;
+        }
+
+        // cursor reached lines.Length without meeting the closing fence: the fence itself is
+        // broken, so whatever "id:"-shaped line was seen along the way is not trustworthy either.
+        return cursor < lines.Length ? recoveredId : null;
+    }
+
     internal static CardFileParseResult Parse(string rawText)
     {
         // CardFileWriter.Serialize always terminates its output with exactly one trailing '\n'

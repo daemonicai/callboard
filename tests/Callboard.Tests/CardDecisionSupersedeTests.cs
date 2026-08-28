@@ -82,7 +82,8 @@ public sealed class CardDecisionSupersedeTests : IDisposable
             },
             onNotFound: id => throw new Xunit.Sdk.XunitException($"expected Found, got NotFound: '{id}' — a superseded decision must remain retrievable by id"),
             onDuplicate: (id, filePaths) => throw new Xunit.Sdk.XunitException($"expected Found, got Duplicate: '{id}'"),
-            onUnreadable: (id, filePaths) => throw new Xunit.Sdk.XunitException($"expected Found, got Unreadable: '{id}'"));
+            onCorrupt: (id, files) => throw new Xunit.Sdk.XunitException($"expected Found, got Corrupt: '{id}'"),
+            onUnreadable: (id, files) => throw new Xunit.Sdk.XunitException($"expected Found, got Unreadable: '{id}'"));
     }
 
     [Fact]

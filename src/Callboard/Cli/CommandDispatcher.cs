@@ -1770,10 +1770,11 @@ internal static class CommandDispatcher
                 "duplicate-nit-id",
                 $"'--id' names id '{duplicateId}', but {filePaths.Count} card files claim a nit by it " +
                 $"({string.Join(", ", filePaths)}); refusing to guess which one is the target."),
-            onUnreadable: (unreadableId, filePaths) => new CommandOutcome.Refusal(
+            onUnreadable: (unreadableId, files) => new CommandOutcome.Refusal(
                 "nit-id-unresolvable",
-                $"'--id' names id '{unreadableId}', but {filePaths.Count} card file(s) elsewhere in the record " +
-                $"could not be read, so its presence cannot be confirmed or ruled out: {string.Join(", ", filePaths)}."));
+                $"'--id' names id '{unreadableId}', but {files.Count} card file(s) elsewhere in the record " +
+                $"could not be read, so its presence cannot be confirmed or ruled out: {DescribeUnreadable(files)}. " +
+                "Repair or remove the listed file(s) by hand before this id can be confirmed absent."));
         if (resolutionRefusal is not null)
         {
             return resolutionRefusal;
@@ -4068,16 +4069,20 @@ internal static class CommandDispatcher
     ///
     /// <para>
     /// <b>Refusal codes, one per resolver case (Architect ruling: spec-named refusals get their own
-    /// code).</b> All three failure shapes the resolver itself can report get distinct codes:
+    /// code).</b> All four failure shapes the resolver itself can report get distinct codes:
     /// <c>card-id-not-found</c> ("no card carries this id" — a different fact from the existing
     /// <c>card-not-found</c>, which means "no file at this path"), <c>duplicate-card-id</c> (shared
     /// with <see cref="Cards.FindingDegradationEvaluator"/>'s own duplicate-resolution refusal in
     /// <see cref="RunFindingStatus"/> — the same underlying fact, "more than one file claims this
-    /// id", earns the same code rather than two spellings of it), and <c>card-id-unresolvable</c>
-    /// (§6 remediation B3, re-applied: some file elsewhere in the record could not be read, so the
-    /// id's absence cannot be confirmed). A resolved id naming a card that is not
-    /// <paramref name="expectedKind"/> reuses the existing <c>wrong-card-kind</c> code via
-    /// <see cref="WrongCardKind"/> — that is exactly what it already means.
+    /// id", earns the same code rather than two spellings of it), <c>card-corrupt</c> (§13.6: a
+    /// file that could not be parsed declares this exact id in its own leading frontmatter fence —
+    /// reuses the code the write-path outcome unions already mint for "the tool read the record and
+    /// the record is definitively bad", rather than minting a second spelling of it), and
+    /// <c>card-id-unresolvable</c> (§6 remediation B3, re-applied: some file elsewhere in the record
+    /// could not be read and does not declare this id either, so its absence cannot be confirmed).
+    /// A resolved id naming a card that is not <paramref name="expectedKind"/> reuses the existing
+    /// <c>wrong-card-kind</c> code via <see cref="WrongCardKind"/> — that is exactly what it
+    /// already means.
     /// </para>
     /// </summary>
     private static (CommandOutcome? Refusal, string? FilePath, CardFile? Card) ResolveCardReference(
@@ -4098,11 +4103,18 @@ internal static class CommandDispatcher
                     $"{flagLabel} names id '{duplicateId}', but {filePaths.Count} card files claim it ({string.Join(", ", filePaths)}); " +
                     "refusing to guess which one is the target."),
                 null, null),
-            onUnreadable: (unreadableId, filePaths) => (
+            onCorrupt: (corruptId, claimants) => (
+                new CommandOutcome.Refusal(
+                    "card-corrupt",
+                    $"{flagLabel} names id '{corruptId}'; {claimants.Count} file(s) declaring that id could not be parsed " +
+                    $"and cannot be trusted as the target: {DescribeUnreadable(claimants)}."),
+                null, null),
+            onUnreadable: (unreadableId, files) => (
                 new CommandOutcome.Refusal(
                     "card-id-unresolvable",
-                    $"{flagLabel} names id '{unreadableId}', but {filePaths.Count} card file(s) elsewhere in the record could not " +
-                    $"be read, so its presence cannot be confirmed or ruled out: {string.Join(", ", filePaths)}."),
+                    $"{flagLabel} names id '{unreadableId}', but {files.Count} card file(s) elsewhere in the record could not " +
+                    $"be read, so its presence cannot be confirmed or ruled out: {DescribeUnreadable(files)}. " +
+                    "Repair or remove the listed file(s) by hand before this id can be confirmed absent."),
                 null, null));
 
     /// <summary>
@@ -4110,7 +4122,7 @@ internal static class CommandDispatcher
     /// verbs (§9 remediation, round two — S4): an addressed thread lives on any card kind
     /// (card-model: comments are a top-level sequence on every <c>CardFile</c>), so <c>--id</c>
     /// resolution here never filters on <see cref="CardKind"/> the way every kind-specific verb's
-    /// own resolution does. Same three refusal codes, same reasoning, minus the kind check.
+    /// own resolution does. Same four refusal codes, same reasoning, minus the kind check.
     /// </summary>
     private static (CommandOutcome? Refusal, string? FilePath) ResolveAnyCardReference(string repoRoot, string id, string flagLabel)
     {
@@ -4123,7 +4135,7 @@ internal static class CommandDispatcher
     /// <see cref="CardFile"/> itself — added for <c>card show</c> (§11 block B), which needs the
     /// card it resolved to build its response and must not read the record a second time (or take
     /// a lock, ADR-0004) to get it. <see cref="ResolveAnyCardReference"/> is kept as a thin wrapper
-    /// over this rather than duplicated, so the three refusal codes and their wording stay in
+    /// over this rather than duplicated, so the four refusal codes and their wording stay in
     /// exactly one place.
     /// </summary>
     private static (CommandOutcome? Refusal, string? FilePath, CardFile? Card) ResolveAnyCardReferenceWithCard(string repoRoot, string id, string flagLabel) =>
@@ -4140,12 +4152,28 @@ internal static class CommandDispatcher
                     $"{flagLabel} names id '{duplicateId}', but {filePaths.Count} card files claim it ({string.Join(", ", filePaths)}); " +
                     "refusing to guess which one is the target."),
                 null, null),
-            onUnreadable: (unreadableId, filePaths) => (
+            onCorrupt: (corruptId, claimants) => (
+                new CommandOutcome.Refusal(
+                    "card-corrupt",
+                    $"{flagLabel} names id '{corruptId}'; {claimants.Count} file(s) declaring that id could not be parsed " +
+                    $"and cannot be trusted as the target: {DescribeUnreadable(claimants)}."),
+                null, null),
+            onUnreadable: (unreadableId, files) => (
                 new CommandOutcome.Refusal(
                     "card-id-unresolvable",
-                    $"{flagLabel} names id '{unreadableId}', but {filePaths.Count} card file(s) elsewhere in the record could not " +
-                    $"be read, so its presence cannot be confirmed or ruled out: {string.Join(", ", filePaths)}."),
+                    $"{flagLabel} names id '{unreadableId}', but {files.Count} card file(s) elsewhere in the record could not " +
+                    $"be read, so its presence cannot be confirmed or ruled out: {DescribeUnreadable(files)}. " +
+                    "Repair or remove the listed file(s) by hand before this id can be confirmed absent."),
                 null, null));
+
+    /// <summary>
+    /// Renders <see cref="UnreadableCard"/>s into the <c>path (reason)</c> list every §13.6 refusal
+    /// message shares, so <see cref="ResolveCardReference"/> and <see cref="
+    /// ResolveAnyCardReferenceWithCard"/> report the same two facts — which file, and why — in the
+    /// same shape rather than each inventing its own join.
+    /// </summary>
+    private static string DescribeUnreadable(IReadOnlyList<UnreadableCard> files) =>
+        string.Join("; ", files.Select(static file => $"{file.FilePath} ({file.Reason})"));
 
     /// <summary>
     /// <c>context --role &lt;role&gt;</c> (§10 block A, working-context: "given a role, the system

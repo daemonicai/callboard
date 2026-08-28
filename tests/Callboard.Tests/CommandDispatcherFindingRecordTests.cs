@@ -444,6 +444,44 @@ public sealed class CommandDispatcherFindingRecordTests
         Assert.False(File.Exists(findingPath));
     }
 
+    // §13.6, reviewer finding on 13.6's own item-7 count: `finding record --section` reaches the
+    // new `card-corrupt` arm too, through `ValidateSection` -> `ResolveCardReference` -- the same
+    // resolver every other `--id`-addressed verb uses. The file claiming the requested section id
+    // is sitting right there, unparseable, so the honest refusal is `card-corrupt`, not
+    // `card-id-unresolvable` -- the two name different remedies (open the file vs. hunt for a typo).
+    [Fact]
+    public void SectionIdDoesNotResolve_ButACorruptFileDeclaresIt_Refuses_WithCardCorrupt_NamingFileAndReason()
+    {
+        using var repo = new TempGitRepo();
+        Directory.CreateDirectory(repo.CardsDirectory);
+        var corruptPath = Path.Combine(repo.CardsDirectory, "s-corrupt.md");
+        var frontmatter = new CardFrontmatter(
+            "S-9999", CardKind.Section, "A corrupt section", "not-a-real-status", CardOwner.Architect,
+            CardScope.Change, string.Empty, FixedNow, FixedNow);
+        File.WriteAllText(corruptPath, CardFileWriter.Serialize(new CardFile(frontmatter, "Body.", [], [])));
+
+        var findingPath = Path.Combine(repo.CardsDirectory, "f-0019.md");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "finding", "record", findingPath,
+                "--role", "worker", "--title", "Clean pass", "--section", "S-9999", "--change", ChangeName,
+                "--blind-spot", "none",
+            ],
+            output, repo.Path, "Recorded body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("card-corrupt", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString()!;
+        Assert.Contains("S-9999", message, StringComparison.Ordinal);
+        Assert.Contains(corruptPath, message, StringComparison.Ordinal);
+        Assert.Contains("unrecognised status: 'not-a-real-status'", message, StringComparison.Ordinal);
+        Assert.False(File.Exists(findingPath));
+    }
+
     // The id resolves, but to a card that is not a `section` at all — reuses the existing
     // `wrong-card-kind` code, exactly what it already means.
     [Fact]

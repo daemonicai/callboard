@@ -515,6 +515,32 @@ public sealed class CommandDispatcherNitTests
         Assert.Equal("nit-id-not-found", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
+    // §13.6 — a nit id never resolves through recovery the way a card id can (a nit's id lives on a
+    // comment, not in the leading frontmatter fence NitResolver would need to scan): a file
+    // elsewhere that could not be parsed always degrades to nit-id-unresolvable, never a
+    // "nit-corrupt" the resolver has no honest way to mint. Asserted on the reason and the path.
+    [Fact]
+    public void NitDisposition_UnknownNitId_ButAFileElsewhereCouldNotBeRead_Refuses_WithNitIdUnresolvable_NamingReason()
+    {
+        using var repo = new TempGitRepo();
+        WriteInitialBlockCard(repo.Path, "b-0009", "B-0009", BlockFlowState.InReview);
+        var corruptPath = System.IO.Path.Combine(repo.ChangeDirectory, "b-corrupt.md");
+        File.WriteAllText(corruptPath, "not a card at all, no frontmatter fence", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["nit", "disposition", "--id", "nit-does-not-exist", "--role", "architect", "--disposition", "fix-before-land", "--change", ChangeName],
+            output, repo, "reason");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("nit-id-unresolvable", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString()!;
+        Assert.Contains(corruptPath, message, StringComparison.Ordinal);
+        Assert.Contains("missing opening frontmatter delimiter", message, StringComparison.Ordinal);
+    }
+
     // review-certification: "Undispositioned nits block the verdict" — approve is one of the
     // transitions that leaves in-review, and block A's own path must now refuse it.
     [Fact]

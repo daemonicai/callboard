@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text;
 
 namespace Callboard.Cards;
 
@@ -28,16 +29,32 @@ namespace Callboard.Cards;
 /// </para>
 ///
 /// <para>
+/// <b>A parsed match decides first, and unconditionally (§13.6).</b> <see cref="
+/// CardIdentityResolution.Found"/>/<see cref="CardIdentityResolution.Duplicate"/> are decided from
+/// files that parsed cleanly before any unparseable file is even consulted for a recovered id — a
+/// parsed file's frontmatter is the record, while an id scraped from a file <see cref="
+/// CardFileParser.Parse"/> already refused is evidence about a claim, not a second record. Only
+/// once no parsed file carries the id does an unparseable file's own declared id become
+/// significant, and even then only to distinguish <see cref="CardIdentityResolution.Corrupt"/>
+/// (the file claiming the id is sitting right there, unparseable — the remedy is "open it") from
+/// <see cref="CardIdentityResolution.Unreadable"/> (nothing found or claimed the id, but the walk
+/// could not rule it out — the remedy is "repair what could not be read"). Getting this backwards
+/// — trusting a corrupt file's claim over a parsed file's — would let a stale or hand-duplicated id
+/// in a broken file shadow the card that actually owns it.
+/// </para>
+///
+/// <para>
 /// <b>Zero matches is not the same as zero candidates (§6 remediation B3, re-applied here).</b> If
 /// no file's frontmatter carries the requested id but at least one file under a searched directory
 /// could not be read at all, that id might live in the unreadable file — this answers
-/// <see cref="CardIdentityResolution.Unreadable"/>, not <see cref="CardIdentityResolution.NotFound"/>.
-/// A caller must not equate "could not confirm" with "confirmed absent". This check applies only
-/// when no match was actually found: once one file's frontmatter is confirmed to carry the
-/// requested id, a read failure elsewhere in the record does not retract that answer — ids are
-/// unique by construction (<see cref="CardIdentityAllocator"/>), and manufacturing a second,
-/// unproven "maybe this is a duplicate too" case out of an unrelated read failure would be
-/// paranoia this method has no evidence for, not fail-closed discipline.
+/// <see cref="CardIdentityResolution.Corrupt"/> or <see cref="CardIdentityResolution.Unreadable"/>,
+/// not <see cref="CardIdentityResolution.NotFound"/>. A caller must not equate "could not confirm"
+/// with "confirmed absent". This check applies only when no match was actually found: once one
+/// file's frontmatter is confirmed to carry the requested id, a read failure elsewhere in the
+/// record does not retract that answer — ids are unique by construction (<see cref="
+/// CardIdentityAllocator"/>), and manufacturing a second, unproven "maybe this is a duplicate too"
+/// case out of an unrelated read failure would be paranoia this method has no evidence for, not
+/// fail-closed discipline.
 /// </para>
 /// </summary>
 internal static class CardIdentityResolver
@@ -45,7 +62,8 @@ internal static class CardIdentityResolver
     internal static CardIdentityResolution Resolve(string cardsRoot, string id)
     {
         var matches = new List<(string FilePath, CardFile Card)>();
-        var unreadable = new List<string>();
+        var unreadable = new List<UnreadableCard>();
+        var claimants = new List<UnreadableCard>();
 
         foreach (var directory in CardLayout.ResolveRecordDirectories(cardsRoot))
         {
@@ -58,11 +76,21 @@ internal static class CardIdentityResolver
             {
                 var card = result.Match<CardFile?>(
                     onSuccess: static success => success.Card,
-                    onFailure: static _ => null);
+                    onFailure: failure =>
+                    {
+                        unreadable.Add(new UnreadableCard(filePath, failure.Reason));
+
+                        var declaredId = TryRecoverDeclaredId(filePath);
+                        if (declaredId is not null && string.Equals(declaredId, id, StringComparison.Ordinal))
+                        {
+                            claimants.Add(new UnreadableCard(filePath, failure.Reason));
+                        }
+
+                        return null;
+                    });
 
                 if (card is null)
                 {
-                    unreadable.Add(filePath);
                     continue;
                 }
 
@@ -84,12 +112,40 @@ internal static class CardIdentityResolver
             return CardIdentityResolution.Found(matches[0].FilePath, matches[0].Card);
         }
 
+        if (claimants.Count > 0)
+        {
+            return CardIdentityResolution.Corrupt(id, UnreadableCards.Ordered(claimants));
+        }
+
         if (unreadable.Count > 0)
         {
-            unreadable.Sort(StringComparer.Ordinal);
-            return CardIdentityResolution.Unreadable(id, unreadable);
+            return CardIdentityResolution.Unreadable(id, UnreadableCards.Ordered(unreadable));
         }
 
         return CardIdentityResolution.NotFound(id);
+    }
+
+    /// <summary>
+    /// Re-reads <paramref name="filePath"/>'s raw bytes for best-effort id recovery (§13.6) — a
+    /// second read of a file <see cref="CardStore.ReadAllCards"/> already read and could not parse,
+    /// because <see cref="CardFileParseResult.Failure"/> carries only <see cref="
+    /// CardFileParseResult.Failure.Reason"/> and not the text itself. Same encoding as <see cref="
+    /// CardStore.ReadCard"/>. A file that cannot even be re-read (deleted or permission-denied
+    /// between the two reads) yields no recovered id rather than a second failure to report — the
+    /// original <see cref="CardFileParseResult.Failure.Reason"/> already covers that file.
+    /// </summary>
+    private static string? TryRecoverDeclaredId(string filePath)
+    {
+        string rawText;
+        try
+        {
+            rawText = File.ReadAllText(filePath, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        return CardFileParser.TryRecoverDeclaredId(rawText);
     }
 }

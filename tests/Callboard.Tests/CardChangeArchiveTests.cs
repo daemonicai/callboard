@@ -454,7 +454,8 @@ public sealed class CardChangeArchiveTests : IDisposable
             onFound: static (filePath, _) => filePath,
             onNotFound: static id => throw new Xunit.Sdk.XunitException($"expected Found, got NotFound: '{id}'"),
             onDuplicate: static (id, paths) => throw new Xunit.Sdk.XunitException($"expected Found, got Duplicate('{id}'): {string.Join(", ", paths)}"),
-            onUnreadable: static (id, paths) => throw new Xunit.Sdk.XunitException($"expected Found, got Unreadable('{id}'): {string.Join(", ", paths)}"));
+            onCorrupt: static (id, files) => throw new Xunit.Sdk.XunitException($"expected Found, got Corrupt('{id}'): {string.Join(", ", files)}"),
+            onUnreadable: static (id, files) => throw new Xunit.Sdk.XunitException($"expected Found, got Unreadable('{id}'): {string.Join(", ", files)}"));
 
     private static CardLock AssertAcquired(CardLockResult result) =>
         result.Match(

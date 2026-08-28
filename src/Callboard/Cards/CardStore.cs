@@ -1720,9 +1720,13 @@ internal static class CardStore
                         RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.BlockerUnresolvable>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
                             new CardBlockedByOutcome.BlockerUnresolvable(duplicateId, $"is claimed by {filePaths.Count} card files ({string.Join(", ", filePaths)}), so which one is meant cannot be decided"),
                             static reason => new CardBlockedByOutcome.ToolFailure(reason)),
-                    onUnreadable: (unreadableId, filePaths) =>
+                    onCorrupt: (corruptId, claimants) =>
                         RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.BlockerUnresolvable>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
-                            new CardBlockedByOutcome.BlockerUnresolvable(unreadableId, $"cannot be confirmed or ruled out — {filePaths.Count} card file(s) elsewhere in the record could not be read ({string.Join(", ", filePaths)})"),
+                            new CardBlockedByOutcome.BlockerUnresolvable(corruptId, $"is declared by {claimants.Count} file(s) that could not be parsed and cannot be trusted as the target ({string.Join(", ", claimants.Select(static claimant => $"{claimant.FilePath}: {claimant.Reason}"))})"),
+                            static reason => new CardBlockedByOutcome.ToolFailure(reason)),
+                    onUnreadable: (unreadableId, files) =>
+                        RefuseAndRecord<CardBlockedByOutcome, CardBlockedByOutcome.BlockerUnresolvable>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                            new CardBlockedByOutcome.BlockerUnresolvable(unreadableId, $"cannot be confirmed or ruled out — {files.Count} card file(s) elsewhere in the record could not be read ({string.Join(", ", files.Select(static file => file.FilePath))})"),
                             static reason => new CardBlockedByOutcome.ToolFailure(reason))));
 
     /// <summary>
@@ -2098,10 +2102,14 @@ internal static class CardStore
     {
         foreach (var id in card.BlockFields.BlockedBy)
         {
+            // onCorrupt below mirrors onUnreadable's existing null (§13.7 is the fail-open at this
+            // exact site, out of §13.6's scope — this arm preserves current behaviour rather than
+            // widening or narrowing it).
             var resolvedQuestion = CardIdentityResolver.Resolve(cardsRoot, id).Match<CardFile?>(
                 onFound: static (_, found) => found,
                 onNotFound: static _ => null,
                 onDuplicate: static (_, _) => null,
+                onCorrupt: static (_, _) => null,
                 onUnreadable: static (_, _) => null);
 
             if (resolvedQuestion is not { } questionCard || !IsQuestionCard(questionCard) || questionCard.Frontmatter.Owner != CardOwner.ProductOwner)

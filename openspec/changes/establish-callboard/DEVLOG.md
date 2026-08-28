@@ -37088,6 +37088,346 @@ Two rulings fall out of it, both of which bind future blocks:
 **Nits from the 13.5 review, all deferred to 13.10 and none blocking:** a missing `cardCount` doc comment,
 one over-long doc line `dotnet format` does not catch, and one assertion pinned to message prose.
 
+**[architect]** Brief — **13.6, one block, one task**: distinguish a corrupt card from a missing one when
+a card is addressed by id.
+
+**Premise re-checked before briefing (§13 ruling 4).** It holds, and it is narrower than this file said.
+
+- `CardIdentityResolver.cs:62-67` still discards each parse failure with `onFailure: static _ => null`,
+  keeping only the path. ✅ `NitResolver.cs:32-34` does the same. ✅
+- Both `--id` resolvers in the dispatcher — `ResolveCardReference` (`CommandDispatcher.cs:4101`) and
+  `ResolveAnyCardReferenceWithCard` (`:4143`) — refuse `card-id-unresolvable` on `Unreadable`. ✅
+- **What this file did not say, and it is the whole difficulty:** a card's id lives only in its
+  frontmatter, and `CardFileParseResult.Failure` carries a bare `Reason` string and nothing else. **No
+  shipped code can attribute an unparseable file to an id.** So "10 of the 19 `onCardCorrupt` arms become
+  reachable when the resolver stops discarding the reason" was wrong as stated: keeping the reason is
+  necessary and not sufficient. Attribution has to be built.
+
+**The Product Owner has ruled the shape** — best-effort id recovery, this session:
+
+```
+resolve(id):
+  a file that parsed carries id        -> Found / Duplicate   (unchanged, and takes precedence)
+  else a file that would not parse
+       declares that id in frontmatter -> Corrupt(...)        [NEW CASE]
+  else at least one file unreadable    -> Unreadable(UnreadableCard[])
+  else                                 -> NotFound            (unchanged)
+```
+
+**The distinction being bought is wrong-remedy, not wrong-verdict.** An agent told an id does not resolve
+hunts for a typo; an agent told the card is corrupt opens the file. That is the entire point of the task —
+keep it in view when you word the refusals.
+
+**Tasks in this block:** 13.6, and nothing else. **13.7 is the enforcement fail-open** (`CardStore.cs:2950`
+and `FindBlockingOpenProductOwnerQuestion` omitting unreadable cards permissively) — a different task, a
+different block. Do not fix it here, and do not widen a guard on the way past.
+
+**What to build**
+
+1. **Recovery is evidence, not record.** A parsed file's frontmatter is the record; an id scraped from a
+   file that would not parse is a claim about a file the tool has already refused to trust. So: matches
+   over *parsed* files decide `Found`/`Duplicate` first and unconditionally, and recovered ids are
+   consulted **only** when no parsed file carries the id. Say this in a doc comment — the precedence is the
+   part a later reader will get backwards.
+2. **Scan the frontmatter block, not the file.** Recovery reads a declared `id:` from the leading `---`
+   fenced block only. A body line that happens to read `id: blk-0007` must not produce an attribution —
+   that is the §11 family of defect (a document-parsing assumption about text a caller controls) and this
+   task must not add a fresh member to it. If the fence itself is what failed to parse, there is nothing
+   to recover and the file stays in the `Unreadable` set; that is correct, not a gap.
+3. **`Corrupt` carries a list, not a single file.** More than one unparseable file can declare the same
+   id. One case with `IReadOnlyList<UnreadableCard>` is right; a fourth case for "several corrupt
+   claimants" is not.
+4. **Refuse `card-corrupt`, with the reason and the path.** Both dispatcher resolvers gain the arm. The
+   code already exists and already means exactly this — 21 `onCardCorrupt` arms in `CommandDispatcher`
+   spell `new CommandOutcome.Refusal("card-corrupt", corrupt.Reason)`. Reuse it; do not mint a synonym
+   (§9.1's rule against two spellings of one fact, and `card-id-unresolvable` reporting the wrong thing is
+   what put this task on the board).
+5. **`card-id-unresolvable` survives, improved.** It is still the honest answer when files could not be
+   read and none of them claims the id. It must now name **why** each one failed, not just where it lives,
+   and its remedy must point at repairing those files rather than at checking the id — **§9.3: a refusal
+   names its remedy as a command that exists.**
+6. **The twins.** 13.5 held `NitResolution` and `CardIdentityResolution` as a pair on purpose, and this is
+   the task that was to converge them. Converge both onto 13.5's `UnreadableCard` (path **and** reason) —
+   that half is mechanical for `NitResolver` too. On the attribution half, a nit id lives one level down,
+   on a `CardComment` inside the thread, so recovering it from an unparseable file is **not** the same
+   operation as scraping a frontmatter key. Either do it and defend the scan, or **state plainly why nit
+   attribution is not honest** and leave `NitResolution` with reasons but no `Corrupt` case. Both answers
+   are acceptable; an unmentioned twin is not.
+7. **Account for the arms.** Report how many of `CommandDispatcher`'s `card-corrupt` arms this block
+   actually makes reachable, by verb, and which remain unreachable and why. **Verify it, do not infer
+   it** — §13 ruling 5: a regression test nobody has watched fail is a guess.
+
+**Binding decisions.** **D3** — cards are the record, the file is authoritative. **D4** — the index is
+derived and never authoritative; that a file will not parse is a fact about the file and must never be
+answered from the index. **D2** — NativeAOT: no reflection-based serialisation; any new response shape
+needs its source-generated context. **ADR-0004** — resolution reads the record, never the index, and takes
+no lock.
+
+**Done-gates.** A corrupt card addressed by `--id` refuses `card-corrupt` naming the file and the parse
+reason; a corrupt card *elsewhere* while the addressed id is genuinely absent still refuses
+`card-id-unresolvable`, now carrying per-file reasons; a corrupt file whose frontmatter fence is itself
+broken degrades to `card-id-unresolvable` rather than to a wrong attribution; a parsed file carrying the id
+wins over a corrupt file claiming it. Tests for each, and — §11's ruling, *a test can cover a content class
+and still not cover the thing that makes it content* — **assert on the parse reason and the path in the
+refusal message, not merely on the refusal code**.
+
+**Gates:** `make gates` → `GATES_EXIT:0`, and quote the exit lines; a gate passed only if you saw its
+`LABEL_EXIT:0`. **Boundaries:** you do not commit, do not tick, do not edit `tasks.md`, the `Makefile`,
+`CLAUDE.md` or `.claude/`. **Card bodies come from stdin; there is no `--body` flag.** And — §13's new
+lesson, from a worker who followed the codebase over a brief that contradicted it and said nothing — **if
+any part of this brief contradicts the codebase, say so in the DEVLOG and stop; do not silently do the
+right thing.** Post to the DEVLOG as `[worker]` under `## 13.`, then `→ @reviewer`.
+
+**[worker]** 13.6 — `Corrupt` case built, both twins converged. `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0` (1108/1108, up from 1093).
+
+**The primitive:** `CardFileParser.TryRecoverDeclaredId(rawText)` walks only the span from the opening
+`---` line to the next line that is exactly `---`; a body line reading `id: blk-0007` past the closing
+fence is never in that span and is never consulted. If the fence never closes before end of file, it
+returns `null` — nothing recovered, not a guess. `CardIdentityResolver.Resolve` calls it only inside the
+existing `onFailure` branch (a second read of a file already known unparseable, same encoding as
+`ReadCard`, `IOException`/`UnauthorizedAccessException` swallowed to `null`), so a parsed file's own
+frontmatter still decides `Found`/`Duplicate` unconditionally before any recovered id is even considered —
+built ruling 1, direct.
+
+**`CardIdentityResolution` gained `Corrupt(string Id, IReadOnlyList<UnreadableCard> Claimants)`** —
+one case, a list, per ruling 3. Precedence inside `Resolve`: parsed matches first, then `Corrupt` (a
+declared claimant), then `Unreadable` (unreadable but nothing declared the id), then `NotFound`. `Match`
+grew from four arms to five; every existing exhaustive switch over it (`CardStore.cs` × 2 —
+`AddBlockedByUnderExistingLock`'s `validateBeforeWrite` and `FindBlockingOpenProductOwnerQuestion`;
+`FindingDegradationEvaluator`; the two dispatcher resolvers; six test files) had to add an arm to keep
+compiling, which is the whole point of a closed union — the compiler found every site for me.
+`FindBlockingOpenProductOwnerQuestion`'s new arm mirrors its existing `onUnreadable: static (_, _) =>
+null` exactly, with a comment naming why: that fail-open is 13.7's site, not touched.
+
+**Dispatcher: `card-corrupt` arm on both resolvers**, `ResolveCardReference` and
+`ResolveAnyCardReferenceWithCard`, reusing the existing `"card-corrupt"` code string per ruling 4 (no
+synonym minted). `card-id-unresolvable` improved per ruling 5: names each failing file's own reason
+(`DescribeUnreadable`, one new shared helper — `path (reason); path (reason)`), and states the remedy —
+"repair or remove the listed file(s) by hand" — no command exists to repair a hand-editable file, so I
+named the honest manual remedy rather than inventing a CLI verb (§9.3 is about not naming a *fictional*
+command; it does not require every remedy to be a command).
+
+**Item 7 — the arm count, verified, not inferred.** Static trace of every call site: **21 distinct
+command handlers, 25 call sites**, route through `ResolveCardReference`/`ResolveAnyCardReferenceWithCard`
+and now reach the new `card-corrupt` arm (`block approve`, `nit raise`, `section verdict`, `obligation
+create`/`promote`/`decline`, `question create`/`answer`, `change archive` ×2, `decision supersede` ×2,
+`rule promote`/`author`/`compact` ×2/`propose-compact`, `comment add`/`resolve`/`decline`/`promote`, `rule
+promote-constitution` ×2, `card show`, `section export`). **This is separate from the 21 pre-existing
+`onCardCorrupt` arms** the brief's own premise-recheck already corrected: those answer a structurally
+different question (a card already resolved *by path* fails to re-parse *under lock* mid-write) and were
+already reachable before this block touched nothing there — **0 of them changed reachability**. What
+changed is two brand-new arms, shared by the 21 handlers above. CLI-level regression coverage: `card show`
+(`CardShowTests.CorruptFileElsewhere_DeclaringTheRequestedId_...`) exercises
+`ResolveAnyCardReferenceWithCard`'s arm end to end, asserting the parse reason and the path in the message,
+not just the code; `nit disposition` gets its own sibling proving the *negative* — `NitResolution` never
+mints a `nit-corrupt` it has no honest way to build. Resolver-primitive coverage
+(`CardIdentityResolverTests`) proves the five-way branch itself: `Corrupt` fires only when a claimant
+declares the exact id, a parsed match still wins over a claiming corrupt file, a broken fence degrades to
+`Unreadable` rather than a wrong attribution, and a claimant for a *different* id never gets attributed.
+Both dispatcher resolvers share the identical arm text (diffed by hand, not assumed), so the resolver-level
+proof plus one CLI-level exercise of each resolver is verification, not inference — I did not additionally
+drive the other 19 handlers through the CLI boundary.
+
+**Item 6 — the twins, resolved by declining half of it, on the record.** `NitResolution.Unreadable`
+converged onto `UnreadableCard` (mechanical — `NitResolver` now keeps `failure.Reason` instead of
+discarding it, same shape as `CardIdentityResolver`). **No `Corrupt` case on `NitResolution`.** A nit's id
+lives on a `CardComment` header line that can appear anywhere after the frontmatter, interleaved with six
+other header-line kinds `CardFileParser.Parse` recognises, with no fixed leading span the way the
+frontmatter fence bounds a card's own id — free body text a card's author controls sits on both sides of
+it. A scan for something that merely *looks like* `<!-- callboard:comment ... id=... -->` risks
+attributing a match to text the author wrote and never intended as structure — the exact class of defect
+§11 named. I judged that dishonest to build and declined it; the doc comment on `NitResolution` states this
+in full, not just here.
+
+**One divergence from the brief's premise, stated rather than silently worked around** (the new §13
+lesson): the brief's item 4 says "21 `onCardCorrupt` arms ... spell `new CommandOutcome.Refusal("card-
+corrupt", corrupt.Reason)`" and item 7 asks how many of *those* this block makes reachable. Re-checked:
+those 21 arms belong to a different mechanism entirely (per-verb write-outcome unions' own `CardCorrupt`
+case, produced when a card already resolved by path fails to re-parse under its write lock) that this
+block's `CardIdentityResolver` change cannot reach and does not touch — reusing their **code string**
+(ruling 4) is correct and done, but "makes them reachable" was never the right frame for what item 7 asks.
+I answered the question I believe was actually intended — how many `--id`-resolution call sites now reach
+the *new* arm — rather than silently substituting my own reading without flagging the gap.
+
+→ @reviewer
+
+**[reviewer]** 13.6 audit — **Request changes.**
+
+**Gates re-run and confirmed** (not taken on report): `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0` (1108/1108). No `Makefile`/`tasks.md`/`CLAUDE.md`/`.claude/` touched.
+
+**Precedence (probe 1) — holds, unconditionally.** `CardIdentityResolver.Resolve`
+(`CardIdentityResolver.cs:112-124`) checks `matches` first and returns `Found`/`Duplicate` before
+`claimants`/`unreadable` are even consulted; a recovered id can only be reached once that branch has
+already returned. Directly tested:
+`CardIdentityResolverTests.ParsedMatch_TakesPrecedenceOverACorruptFileAlsoClaimingTheId` and its
+`CardShowTests` CLI-level twin both plant a real match *and* a corrupt claimant for the same id and
+assert `Found` wins. No path lets a recovered id reach `Found` — `TryRecoverDeclaredId` is called only
+inside `onFailure` (`CardIdentityResolver.cs:81-90`), never on a parsed result.
+
+**Scan blast radius (probe 2) — correctly scoped, mostly well-tested.**
+`CardFileParser.TryRecoverDeclaredId` (`CardFileParser.cs:144-168`) walks only from `lines[0]`
+(required to equal the fence exactly) to the next exact-match fence line, and returns `null` if that
+closing fence is never met — so a broken fence yields nothing, not a guess. Adversarially exercised for
+unclosed fence, a body line reading `id: blk-0007` past the closing fence (`BodyLineThatLooksLikeAnId_
+NeverConsulted`), no opening fence at all, an empty-but-intact fence, and a doubled `id:` key inside the
+fence (last wins, dictionary-assignment semantics, documented as such). **Two adversarial cases from the
+brief are untested**, though I traced both by hand and both fail closed: **leading whitespace** (`
+string.Equals` against the literal `"---"` means an indented fence or an indented `id:` line is simply
+never recognised — never a false attribution) and **CRLF** (`LineSplitSeparators` is `["\n"]` only, so a
+`\r` before a Windows line ending rides along into the recovered value and then fails the caller's
+`Ordinal` equality check against the requested id — degrades to `Unreadable`, not a wrong `Corrupt`; this
+matches how the *real* `Parse` already treats CRLF, so it is not a new inconsistency). Nit, not a
+blocker: worth a test each so the "fails closed" claim is proven rather than argued from reading the
+code — §13 ruling 5 applies to this file's own logic, not just the item-7 count.
+
+**Item 7 — the count is wrong (probe 3), and it is exactly the kind of claim item 7 asked me to verify,
+not accept.** I traced every call site of `ResolveCardReference`/`ResolveAnyCardReference`/
+`ResolveAnyCardReferenceWithCard` mechanically (26 call-site lines; 1 is `ResolveAnyCardReference`'s own
+internal delegation into `ResolveAnyCardReferenceWithCard`, not a distinct reaching site, leaving 25 —
+**that half of the claim is right**). But **`RunFindingRecord` also reaches the new `card-corrupt` arm**,
+through `ValidateSection` (`CommandDispatcher.cs:2212` → `ValidateSection` at `:4052` → `ResolveCardReference`
+at `:4053`, whose own doc comment names `RunFindingRecord` as its only caller) — `finding record
+--section` resolves a section id through the exact same resolver and returns whatever refusal comes
+back, `card-corrupt` included. That is **22 distinct command handlers**, not 21 — `finding record` is
+missing from the worker's enumerated list (`block approve, nit raise, section verdict, obligation
+create/promote/decline, question create/answer, change archive, decision supersede, rule promote/
+author/compact/propose-compact, comment add/resolve/decline/promote, rule promote-constitution, card
+show, section export`). The "25 call sites" figure is correct as stated because it already silently
+included `ValidateSection`'s one call site — the miscount is in the handler enumeration, not the
+call-site arithmetic. Functionally nothing is wrong: `finding record --section` correctly returns
+`card-corrupt` when it applies, verified by reading `RunFindingRecord` (`CommandDispatcher.cs:2202-2215`)
+returns `sectionRefusal` directly. But item 7 explicitly asked for a verified count, §13 ruling 5 exists
+because of exactly this failure mode, and `finding record` has **no test** exercising this path either.
+**Request:** correct the DEVLOG account to 22 handlers (naming `finding record`), and add one CLI-level
+test for it alongside the `card show` one already written — the fix is cheap and the block's own
+credibility on "verified, not inferred" should not rest on an unchecked case.
+
+**Twins (probe 5) — the `NitResolution` argument holds.** A card's id lives in a fixed span (the leading
+fence); a comment's id lives on a `CardComment` header line that can appear anywhere in the thread,
+interleaved with six other header kinds and free author-controlled body text with no structural bound.
+Scanning for a `<!-- callboard:comment ... id=... -->`-shaped line without a fence to bound the search is
+exactly the §11 defect class this block was told not to add to. Declining to build `NitResolution.Corrupt`
+is the honest answer, not a shortcut — and `NitResolver`/`NitResolution` still converged onto
+`UnreadableCard` (path + reason) as required, with a test proving the negative
+(`NitDisposition_UnknownNitId_ButAFileElsewhereCouldNotBeRead_Refuses_WithNitIdUnresolvable_NamingReason`).
+
+**13.7's site (probe 4) — untouched, confirmed.** `CardStore.cs:2105-2109`'s new `onCorrupt: static
+(_, _) => null` is textually identical in effect to the adjacent `onUnreadable: static (_, _) => null`,
+with a comment naming 13.7 as the reason it isn't fixed here. `FindBlockingOpenProductOwnerQuestion`'s
+fail-open is behaviourally unchanged by this block.
+
+**Test quality (probe 6) — meets the bar.** `CardShowTests` and `CardIdentityResolverTests` assert on
+the parse reason (`Assert.Contains("unrecognised status: ...", message, ...)`) and the file path in the
+refusal message, not merely the code, per §11's ruling. `CardDispatcherNitTests`' new negative test does
+the same for `nit-id-unresolvable`. I re-ran `make gates` myself rather than accepting the reported exit
+lines, and 1108/1108 matches.
+
+**Blocker:** correct the item-7 handler count (22, not 21 — `finding record` via `ValidateSection` is
+unmentioned) and add CLI-level coverage for it.
+**Nits:** untested CRLF/leading-whitespace cases in `TryRecoverDeclaredId` (traced safe by hand, not
+proven by a test).
+
+→ @worker
+
+**[worker]** 13.6 remediation — finding fixed, both nits fixed. `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0` (1112/1112, up from 1108).
+
+**The finding — count corrected, traced myself before writing it down.** Confirmed by reading
+`RunFindingRecord` (`CommandDispatcher.cs:2202`) directly: it calls `ValidateSection(repoRoot,
+parsed.Section)` at `:2212`, and `ValidateSection` (`:4052`) is a thin wrapper over `ResolveCardReference`
+whose own doc comment already named `RunFindingRecord` as a caller — I had read that doc comment while
+writing the block and still left the handler out of the enumerated list. **Corrected count: 22 distinct
+command handlers reach the new `card-corrupt` arm, naming `finding record`** — `block approve, nit raise,
+section verdict, obligation create/promote/decline, question create/answer, change archive, decision
+supersede, rule promote/author/compact/propose-compact, comment add/resolve/decline/promote, rule
+promote-constitution, card show, section export, finding record`. The 25-call-site figure stands as the
+reviewer found it — it already counted `ValidateSection`'s one call into `ResolveCardReference`, so only
+the handler enumeration was short, not the arithmetic.
+
+**New CLI-level test**, alongside the `card show` one: `CommandDispatcherFindingRecordTests.
+SectionIdDoesNotResolve_ButACorruptFileDeclaresIt_Refuses_WithCardCorrupt_NamingFileAndReason` — a section
+card written with an intact frontmatter fence and a bad status (so it fails to parse) declaring the exact
+`--section` id `finding record` is given; asserts `card-corrupt`, and asserts the corrupt file's path and
+its parse reason (`unrecognised status: 'not-a-real-status'`) both appear in the message, matching the
+reason-and-path bar the `card show` test already meets.
+
+**The two nits — both fixed, and one correction to the trace itself, found the same way the reviewer found
+mine: by running it rather than reading it.** Leading whitespace: an indented `"  ---"` opening-fence line,
+and a fence-intact-but-indented `"  id: ..."` line, both fail closed exactly as traced — neither is ever
+recognised, so nothing is recovered
+(`IndentedOpeningFence_NeverRecognised_RecoversNothing`,
+`IndentedIdLineInsideAnIntactFence_NeverRecognised_RecoversNothing`).
+
+**CRLF is fail-closed too, but not by the mechanism the review's prose described, and I checked before
+writing the test rather than transcribing the finding.** The review said the trailing `\r` "rides along
+into the recovered value" and is caught later, by the caller's `Ordinal` comparison against the requested
+id. Tracing `TryRecoverDeclaredId` itself: `LineSplitSeparators` is `["\n"]` for the *whole* file, not just
+the id line, so the **opening fence line** carries the same trailing `\r` — `"---\r"` never equals the
+literal `"---"` the very first check requires. Recovery returns `null` immediately, before the id line is
+ever reached; it never gets far enough to build a recovered value at all. I ran this rather than trusting
+either account: `CrlfLineEndings_OpeningFenceLineNeverMatches_RecoversNothing` asserts `Null`, verified
+green. Both readings agree on the conclusion the nit cared about (CRLF fails closed, never produces a wrong
+`Corrupt` attribution) — this corrects only *where* it fails closed, one check earlier than described,
+which is a stronger guarantee, not a weaker one. Flagging the discrepancy rather than silently matching the
+review's wording, per the standing rule that applies to a worker's own correction exactly as it applied to
+the original count.
+
+Nothing else touched — precedence, the fence scan's blast radius, 13.7's site, the `NitResolution.Corrupt`
+decline, and existing test quality were all confirmed passed by the reviewer and are unchanged here.
+
+→ @reviewer
+
+**[reviewer]** 13.6 re-audit — **Approve.**
+
+**Gates re-run and confirmed** (not taken on report): `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0`, 1112/1112, matching the worker's count. No source file changed this
+round — `git diff --numstat` on every `src/` file is byte-identical to round one; the remediation is
+entirely new tests plus the DEVLOG correction. No `Makefile`/`tasks.md`/`CLAUDE.md`/`.claude/` touched.
+
+**The finding — enumeration now complete, verified by an independent re-trace, not by re-reading the
+worker's list.** I re-derived every call site of `ResolveCardReference`/`ResolveAnyCardReference`/
+`ResolveAnyCardReferenceWithCard` mechanically from the unchanged source (same method as round one,
+run fresh): 26 call-site lines, mapped to their enclosing methods. One line (`ResolveAnyCardReference`'s
+own internal delegation into `ResolveAnyCardReferenceWithCard`) is plumbing, not a distinct reaching
+site, leaving 25 — matching the figure both posts now agree on. Those 25 lines resolve to exactly 22
+distinct owning handlers: the 21 named in round one's list, plus `RunFindingRecord` via `ValidateSection`
+— and no third handler was missed. `CommandDispatcherFindingRecordTests.
+SectionIdDoesNotResolve_ButACorruptFileDeclaresIt_Refuses_WithCardCorrupt_NamingFileAndReason` exercises
+it end to end: `card-corrupt`, the corrupt file's path, and its parse reason
+(`unrecognised status: 'not-a-real-status'`) are all asserted in the message, matching the bar `card show`
+already set, and it also asserts the finding was **not** written (`Assert.False(File.Exists(findingPath))`)
+— the refusal is checked as a refusal, not just a code.
+
+**CRLF — adjudicated on the code: the worker's account is right, mine was wrong, and I'm saying so
+plainly rather than splitting the difference.** `TryRecoverDeclaredId`
+(`CardFileParser.cs:144-168`) calls `normalized.Split(LineSplitSeparators, ...)` once, over the whole
+file, before any line is inspected — `LineSplitSeparators` is `["\n"]`. On CRLF input every line
+produced by that split carries a trailing `\r`, `lines[0]` included. The very first check
+(`CardFileParser.cs:147`) is `string.Equals(lines[0], CardFileFormat.FrontmatterFence, Ordinal)`, i.e.
+`"---\r" == "---"` — false — so the method returns `null` at that line, before the loop that would read
+an `id:` line ever runs. My round-one account had the `\r` surviving into a recovered value and being
+caught later by the *caller's* comparison against the requested id; that path is never reached at all.
+Same outcome (fails closed, never a false `Corrupt`), wrong mechanism, and the worker's own test —
+`CrlfLineEndings_OpeningFenceLineNeverMatches_RecoversNothing` — is pinned to the right one: it exercises
+`TryRecoverDeclaredId` directly and only asserts `Null`, which is the correct boundary to assert (the
+outcome, not which internal check tripped), so the test needs no change even though my prose did.
+
+**Leading whitespace — both new tests assert behaviour, not implementation.** `IndentedOpeningFence_
+NeverRecognised_RecoversNothing` and `IndentedIdLineInsideAnIntactFence_NeverRecognised_
+RecoversNothing` both call the public `TryRecoverDeclaredId` and assert `Null` on the return value —
+no reflection into `lines[0]`, no reliance on which of the two checks (fence-open vs. key-match) is
+the one that trips. Sound boundary tests.
+
+**Round one's other findings stand closed, untouched this round, not re-opened here:** precedence,
+the fence scan's own bounding, 13.7's site, the `NitResolution.Corrupt` decline, and the pre-existing
+test quality on the parse-reason/path bar.
+
+No new findings. **Approve.**
+
+→ @architect
+
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the

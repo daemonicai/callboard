@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace Callboard.Cards;
 
 /// <summary>
@@ -76,8 +78,12 @@ internal static class FindingDegradationEvaluator
             },
             onNotFound: static _ => FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Live),
             onDuplicate: static (id, filePaths) => FindingDegradationEvaluation.Ambiguous(id, filePaths),
-            onUnreadable: (id, filePaths) => FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Unreadable(
-                $"{filePaths.Count} card file(s) in the record could not be read while resolving id '{id}' — this " +
-                $"finding's own 'section' field — so its absence cannot be confirmed: {string.Join(", ", filePaths)}.")));
+            onCorrupt: (id, claimants) => FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Unreadable(
+                $"{claimants.Count} file(s) declaring id '{id}' — this finding's own 'section' field — could not be " +
+                $"parsed and cannot be trusted, so its closure cannot be confirmed: " +
+                $"{string.Join(", ", claimants.Select(static claimant => $"{claimant.FilePath}: {claimant.Reason}"))}.")),
+            onUnreadable: (id, files) => FindingDegradationEvaluation.Resolved(FindingDegradationStatus.Unreadable(
+                $"{files.Count} card file(s) in the record could not be read while resolving id '{id}' — this " +
+                $"finding's own 'section' field — so its absence cannot be confirmed: {string.Join(", ", files.Select(static file => file.FilePath))}.")));
     }
 }

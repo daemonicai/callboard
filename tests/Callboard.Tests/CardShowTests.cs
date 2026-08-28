@@ -141,6 +141,80 @@ public sealed class CardShowTests
         Assert.Equal("card-id-unresolvable", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
     }
 
+    // §13.6 — the file claiming the requested id is sitting right there, unparseable: the resolver
+    // must say "corrupt", not "unresolvable", because the two name different remedies (open the
+    // file vs. hunt for a typo). Asserted on the parse reason and the path, not merely the code —
+    // §11's ruling that a test can cover a content class and still not cover what makes it content.
+    [Fact]
+    public void CorruptFileElsewhere_DeclaringTheRequestedId_Refuses_WithCardCorruptCode_NamingFileAndReason()
+    {
+        using var repo = new TempGitRepo();
+        var corruptPath = WriteCorruptBlock(repo, "b-corrupt", "B-0001", "S-0001");
+        var output = new StringWriter();
+
+        var exitCode = CommandDispatcher.Run(
+            ["card", "show", "B-0001"], output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("card-corrupt", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString()!;
+        Assert.Contains("B-0001", message, StringComparison.Ordinal);
+        Assert.Contains(corruptPath, message, StringComparison.Ordinal);
+        Assert.Contains($"unrecognised status: '{CorruptStatus}'", message, StringComparison.Ordinal);
+    }
+
+    // The negative half of the case above: a corrupt file elsewhere that does NOT declare the
+    // requested id must not be attributed to it — the resolver has no evidence it is the target,
+    // so this stays the honest "cannot confirm or rule out" answer, not a wrong-remedy "corrupt".
+    [Fact]
+    public void CorruptFileElsewhere_DeclaringADifferentId_StillRefuses_WithCardIdUnresolvableCode()
+    {
+        using var repo = new TempGitRepo();
+        WriteCorruptBlock(repo, "b-corrupt", "B-9999", "S-0001");
+        var output = new StringWriter();
+
+        var exitCode = CommandDispatcher.Run(
+            ["card", "show", "B-0001"], output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("card-id-unresolvable", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // A file with no intact frontmatter fence at all has nothing to recover an id from — it must
+    // degrade to card-id-unresolvable, never a wrong attribution manufactured from body text.
+    [Fact]
+    public void FileWithNoFrontmatterFenceAtAll_NeverAttributed_StaysCardIdUnresolvable()
+    {
+        using var repo = new TempGitRepo();
+        File.WriteAllText(Path.Combine(repo.ChangesDirectory, "no-fence.md"), "id: B-0001\nnot a real card file");
+        var output = new StringWriter();
+
+        var exitCode = CommandDispatcher.Run(
+            ["card", "show", "B-0001"], output, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        Assert.Equal("card-id-unresolvable", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+    }
+
+    // A parsed match wins over a corrupt file also claiming the same id — recovery is evidence,
+    // never a second record. Getting this backwards would let a stale corrupt duplicate shadow the
+    // card that actually owns the id.
+    [Fact]
+    public void ParsedMatch_TakesPrecedenceOverACorruptFileAlsoClaimingTheId()
+    {
+        using var repo = new TempGitRepo();
+        WriteBlock(repo, "b-real", "B-0001", CardOwner.Worker, "briefed", "S-0001");
+        WriteCorruptBlock(repo, "b-corrupt", "B-0001", "S-0001");
+
+        var result = Show(repo, "B-0001");
+
+        Assert.Equal("B-0001", result.GetProperty("id").GetString());
+    }
+
     // record-retrieval: "This material SHALL be retrievable and quotable, and SHALL NOT appear on
     // any default read path" — the retrieval half, exercised against every group CardFile carries.
     [Fact]
@@ -403,6 +477,21 @@ public sealed class CardShowTests
         var frontmatter = new CardFrontmatter(id, CardKind.Block, "A block card", status, owner, CardScope.Change, section, Earlier, FixedNow);
         var card = new CardFile(frontmatter, "Body.", [], []);
         WriteCard(path, card);
+    }
+
+    private const string CorruptStatus = "not-a-real-status";
+
+    // A file whose leading frontmatter fence is intact — so §13.6 recovery can read its declared
+    // 'id' — but whose status the parser's own vocabulary check rejects (§12 block A), so the file
+    // as a whole still fails to parse. This is the specific corruption class §13.6 is about: the id
+    // is genuinely there to recover, and the rest of the file genuinely is not readable.
+    private static string WriteCorruptBlock(TempGitRepo repo, string fileStem, string id, string section)
+    {
+        var path = Path.Combine(repo.ChangesDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(id, CardKind.Block, "A corrupt block", CorruptStatus, CardOwner.Worker, CardScope.Change, section, Earlier, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        WriteCard(path, card);
+        return path;
     }
 
     private static void WriteCard(string path, CardFile card) =>

@@ -18,7 +18,7 @@ internal static class NitResolver
     internal static NitResolution Resolve(string cardsRoot, string nitId)
     {
         var matches = new List<(string FilePath, CardFile Card, CardComment Comment)>();
-        var unreadable = new List<string>();
+        var unreadable = new List<UnreadableCard>();
 
         foreach (var directory in CardLayout.ResolveRecordDirectories(cardsRoot))
         {
@@ -31,11 +31,14 @@ internal static class NitResolver
             {
                 var card = result.Match<CardFile?>(
                     onSuccess: static success => success.Card,
-                    onFailure: static _ => null);
+                    onFailure: failure =>
+                    {
+                        unreadable.Add(new UnreadableCard(filePath, failure.Reason));
+                        return null;
+                    });
 
                 if (card is null)
                 {
-                    unreadable.Add(filePath);
                     continue;
                 }
 
@@ -67,8 +70,7 @@ internal static class NitResolver
 
         if (unreadable.Count > 0)
         {
-            unreadable.Sort(StringComparer.Ordinal);
-            return NitResolution.Unreadable(nitId, unreadable);
+            return NitResolution.Unreadable(nitId, UnreadableCards.Ordered(unreadable));
         }
 
         return NitResolution.NotFound(nitId);
