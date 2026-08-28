@@ -37091,7 +37091,7 @@ one over-long doc line `dotnet format` does not catch, and one assertion pinned 
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the
-section is not closed and must not be treated as closed.** Seven blocks have landed; **five tasks remain**
+section is not closed and must not be treated as closed.** Six blocks have landed; **five tasks remain**
 — §13 was renumbered to 13.9 after 13.4 landed, so the section is longer than it was this morning without
 being further from done.
 
@@ -37100,10 +37100,15 @@ being further from done.
 `a32f481` — the Product Owner's spec amendment (§13's base is deliberately the commit *before* it, so the
 supervisor audits the amendment alongside what was built to it) · `e2bea69` **13.1** `block create` ·
 `d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test fix,
-carved from this file rather than from a task, ticking nothing · `b267f75` **13.4** the hook boundary.
+carved from this file rather than from a task, ticking nothing · `c60d553` **13.4** the hook boundary ·
+`ffa2c2d` **13.5** one `unreadable` shape across every read.
 
-Suite **1049 → 1082** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch).
-**Five remediation rounds spent** — 13.1, 13.3, and **three on 13.4**, all reviewer-raised and all real.
+Two commits here are **not** blocks and tick nothing: `b3c35cb` and `0de96bc`, the two task-breakdown
+amendments that took the section from 13.7 to 13.10.
+
+Suite **1049 → 1093** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
+committed — a `make` target for it is unbuilt and would be new scope). **Five remediation rounds spent**
+— 13.1, 13.3, and **three on 13.4**, all reviewer-raised and all real. **13.5 approved first pass.**
 
 ### The resume point
 
