@@ -39990,7 +39990,7 @@ not smuggled into an escaping block.
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the
-section is not closed and must not be treated as closed.** Eight blocks have landed; **three tasks remain**
+section is not closed and must not be treated as closed.** Nine blocks and three remediation blocks have landed; **two tasks remain**
 — §13 was renumbered to 13.9 after 13.4 landed, so the section is longer than it was this morning without
 being further from done.
 
@@ -40001,23 +40001,36 @@ supervisor audits the amendment alongside what was built to it) · `e2bea69` **1
 `d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test fix,
 carved from this file rather than from a task, ticking nothing · `c60d553` **13.4** the hook boundary ·
 `ffa2c2d` **13.5** one `unreadable` shape across every read · `d484003` **13.6** a corrupt card told apart
-from a missing one when addressed by id · `c7069a5` **13.7** the enforcement fail-open closed.
+from a missing one when addressed by id · `c7069a5` **13.7** the enforcement fail-open closed · `a028e27` **13.8** the loop proceeds when the tool
+cannot run (**Product Owner confirmed, 12 checks / 0 failures**).
 
-Two commits here are **not** blocks and tick nothing: `b3c35cb` and `0de96bc`, the two task-breakdown
-amendments that took the section from 13.7 to 13.10.
+**Five commits here are not blocks and tick nothing.** Two task-breakdown amendments (`b3c35cb`,
+`0de96bc`) took the section from 13.7 to 13.10. **Three are remediation blocks, all provoked by the
+Product Owner's own run of 13.8's recipe** — `96a676b` (blank lines and `key:` no longer corrupt a
+hand-edited card) and `3eacc1f` (edge whitespace escaped, closing the silent-truncation case), plus the
+DEVLOG closes. A remediation block gets no `N.M` numbers and ticks nothing.
 
-Suite **1049 → 1117** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
-committed — a `make` target for it is unbuilt and would be new scope). **Seven remediation rounds spent**
-— 13.1, 13.3, **three on 13.4**, **one on 13.6** and **one on 13.7**, all reviewer-raised and all real.
-**13.5 approved first pass.**
+Suite **1049 → 1168** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
+committed — a `make` target for it is unbuilt and would be new scope). **Thirteen remediation rounds spent** — 13.1, 13.3, **three on 13.4**, one each on 13.6 and 13.7,
+**three on 13.8** (two of them the recipe diverging from the run that produced its evidence), and
+**three on the escape fix**. All real. **13.5 approved first pass.**
 
 ### The resume point
 
-**13.8 — verify the record stays readable and the loop proceeds unenforced when the tool cannot run.**
-Then 13.9, 13.10. **13.8 and 13.9 both end at the Product Owner** — implement and self-test as far as
-automation reaches, then hand her a copy-pasteable recipe and **wait for her confirmation before
-ticking**. **The section has been renumbered twice** — the two `[architect]` posts
-above carry both mappings, and any "13.5"/"13.6"/"13.7" written *before* them means the older numbering.
+**13.9 — verify a card's status, owner, scope and history are determinable from the file alone.** Then
+13.10, then the section review. **The section has been renumbered twice** — the two `[architect]` posts
+carry both mappings, and any "13.5"/"13.6"/"13.7" written *before* them means the older numbering.
+
+**13.9 is the read half only — the Product Owner ruled that explicitly.** It verifies what a reader can
+*determine* from the file, not what a writer may safely *author*. The authoring half was raised and
+deliberately not folded in; its one live defect was fixed separately in `3eacc1f`, and 13.9's
+done-condition stays bounded because "safe to author" has no natural boundary. **13.9 ends at the Product
+Owner** — implement and self-test as far as automation reaches, then hand her an exact, copy-pasteable
+recipe and **wait for her confirmation before ticking**.
+
+**Before briefing 13.9, read the 13.8 close post and the escape close post.** Between them they carry the
+three rulings that would otherwise be rediscovered the hard way, and 13.8's recipe is the worked example
+of every way this kind of task goes wrong.
 
 **One task, one block, at most.** A block groups whole tasks and never subdivides one; a task that will
 not fit a block is a finding about `tasks.md`, to be put to the Product Owner. That produced the first
@@ -40039,17 +40052,14 @@ renumbering; the reviewer's A3 produced the second.
   refusal on the write paths and a report on the reads. `BlockingQuestionResolution` gives the
   *undetermined* state a name it did not have. The remediation was in `BoardViewRenderer`, a consumer the
   block never edited.
-- **13.8 and 13.9 are human-in-the-loop verification** — the record staying readable when the tool cannot
-  run, and a card's state being determinable from the file alone. Both are **downstream of 13.5, 13.6 and
-  13.7**: 13.8's sentence is very nearly 13.7's subject, and verifying it against a tool that fails open on
-  an unreadable guard would be verifying the wrong property and calling it green. CLAUDE.md §4:
-  implement and self-test as
-  far as automation reaches, then hand the Product Owner an exact, copy-pasteable recipe and **wait for
-  her confirmation before ticking**. **13.4 is now the worked example, and it sharpened the rule:** the
-  half no agent could verify was that the boundary *does not* constrain the Architect, because the hook is
-  wired per-agent and is invisible from every context able to test it automatically. **Ask what the
-  automation is structurally unable to see, and put that in the recipe.** §12 ruling 5 still binds — a
-  recipe can satisfy the paperwork and not the task.
+- **13.8 landed (`a028e27`) and is confirmed.** Its lesson is the one to carry into 13.9: **the recipe is
+  the deliverable, not the tests.** Three reviewer rounds passed a recipe that had never been run whole in
+  the form she would receive — twice because the text was edited after its evidence was captured. She then
+  found two defects none of them could see. Write 13.9's recipe by *running* it, last, in one continuous
+  session, and paste only that run's output.
+- **13.9 is human-in-the-loop verification**, read half only (above). Ask what the automation is
+  structurally unable to see — **and now also ask what the agents had to change in order to test at all**,
+  because 13.8 proved a workaround can conceal the very defect it routes around.
 - **13.10 documents the agent-facing command surface**, which now includes three verbs that did not exist
   this morning. Write it last, after 13.6–13.9. **It grew in 13.4** and now also owes: `CLAUDE.md`'s
   **Boundaries** paragraph, which under-describes the guard against the guard's own standard that the
@@ -40133,6 +40143,16 @@ arms are unreachable** because of this, **`block approve --id` included**, and t
    claim but never reproduce it. 13.7's reviewer said exactly that instead of implying it had run the
    revert. **The reviewer's prompt should require that distinction — verified versus taken on report — and
    the worker's should say the discipline is unauditable and therefore its own.**
+10. **New, from §13's escape remediation — an auditor CAN check a watched-red claim, and item 9 was too
+   pessimistic.** The reviewer reconstructed the **pre-fix implementation in an isolated scratch harness**
+   and ran the suite against it, proving a test named as a regression guard passed under the old code. The
+   boundary forbids *editing source*; it does not forbid *rebuilding the old behaviour elsewhere*. **Put
+   this technique in the reviewer definition** — it closes a gap §13.7 recorded as unclosable.
+11. **New, from the same block — the two-verdict vocabulary held, but "Approve + nits" reappeared in
+   substance.** A reviewer approved while raising three nits, one of which was a test that could not
+   detect the defect it was named for. The verdict values were right; the shape was the deleted third
+   verdict wearing them. **The definition should say what a nit inside an Approve obliges** — I sent them
+   back and they were all real.
 
 ---
 
