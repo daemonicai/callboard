@@ -39336,6 +39336,657 @@ flagged it explicitly rather than folding it into "no exposure". **Put to the Pr
 closes; it is arguably 13.9's, since 13.9 is about what a reader can determine from the file and this is
 about what a writer can safely author.**
 
+**[architect]** Brief — **remediation block, §13: frontmatter values must survive a whitespace-stripping
+save.** No new `N.M` numbers, nothing ticked. Product Owner's ruling: fix this separately from 13.9, which
+stays a read-half verification task.
+
+**The defect.** `CardFileFormat.FrontmatterEscapeForwardTable` (`:191`) escapes `\`, `\n` and `\r` — **not
+space**. So a frontmatter free-text value that ends in a space (`id`, `title`, `status`, `section` — in
+practice `title`) reaches disk as trailing whitespace **indistinguishable from layout**, and an editor
+that strips trailing whitespace on save silently changes it. **The card still parses. It just holds
+different content.** That is the quiet-wrong-answer case, one field over from the two loud failures the
+last remediation fixed, and the reason 13.6 exists is the principle that refusing to parse beats parsing
+wrongly.
+
+**The mechanism already exists.** `CommentHeaderEscapeForwardTable` (`:194`) escapes space as `\s`, and
+`FrontmatterEscapeTable` (`:180`) already carries the reverse mapping `['s'] = ' '` — **the unescape side
+is built and waiting**. Verify that before you build anything: if the reverse table already round-trips
+`\s`, this is a forward-side fix and possibly nothing else.
+
+---
+
+### The constraint that decides the whole design — read it before writing code
+
+**Do not copy the comment-header table.** It escapes **every** space because that format is
+space-delimited. Frontmatter is not: it is `key: value` to end of line, and interior spaces are
+unambiguous. Escaping them all would render a real card as:
+
+```
+title: Which\sretry\spolicy?
+```
+
+**That would destroy the property 13.9 exists to verify** — "a reader with no access to the tool SHALL be
+able to determine a card's status, owner and history from the record alone", and "the tool SHALL be an
+optimisation … never a precondition for comprehension". A fix that makes every card harder for a human to
+read, in order to protect a rare trailing space, is a net loss against the requirement.
+
+**So: escape only where the ambiguity actually is — a leading or trailing space on the value.** Interior
+spaces stay literal. A value with no edge whitespace must serialise **byte-for-byte as it does today**, so
+that no existing card changes when it is next written.
+
+### What to build
+
+1. **Forward side only, and narrowly.** `EscapeFrontmatterValue` escapes a leading and/or trailing space
+   (and consider whether a leading/trailing tab needs the same treatment — decide and say which).
+   `EscapeUsing` maps char→string over the whole value, so this is **not** a table entry; it is a
+   positional rule and needs its own small function. **Do not force it into the table** — say so in the
+   doc comment, because the next reader will wonder why this one escaper is not table-driven.
+2. **Confirm the reverse already works.** `UnescapeFrontmatterValue` reads `FrontmatterEscapeTable`, which
+   maps `s` → space. If `\s` already unescapes correctly, state that and add the round-trip test rather
+   than touching it. **If it does not, say so before changing it** — an unescape change affects every
+   existing card on disk and is a different risk class from an escape change.
+3. **Round-trip is the property, and it is two-sided.** `Escape` then `Unescape` returns the original for:
+   a value with a trailing space; a leading space; both; interior spaces only (**unchanged bytes** — assert
+   the serialised form, not just the round trip); a value that is entirely spaces; an empty value; and a
+   value containing a literal `\s` sequence already (the invertibility case — a backslash is escaped first
+   and must stay so).
+4. **The keystone test, mirroring the last remediation's.** A full tool-written card whose `title` ends in
+   a space, serialised, put through a **trailing-whitespace strip on every line**, then parsed — and the
+   title comes back **with its space**. That is the Product Owner's failure mode; reproduce it, do not
+   approximate it. **Watch it fail against current code first** — there is a genuine prior defect here, so
+   this is a real red-then-green cycle.
+5. **Check the neighbours.** `FrontmatterListItemEscapeForwardTable` (`:197`) escapes `\`, `\n`, `\r`, `,`
+   — **is a list item with edge whitespace exposed the same way?** Decide, fix it or justify leaving it,
+   and **say which**. A site you do not mention reads as a site you did not see.
+
+**Binding decisions.** **D3** — the file is the record. **D2** — NativeAOT. And the requirement above:
+legibility of the plain-text record is itself a spec property, not a nicety, so weigh it explicitly in any
+judgement call here.
+
+**Done-gates.** A title ending in a space survives serialise → strip → parse with its value intact. A card
+with no edge whitespace serialises to exactly the bytes it does today. Every escaper's neighbours are
+accounted for. `make gates` → `GATES_EXIT:0`, quote the exit lines.
+
+**Boundaries:** no commits, no ticks, no `tasks.md`/`Makefile`/`CLAUDE.md`/`.claude/`. Watched-red is yours
+alone. **If any part of this brief contradicts the codebase — particularly my claim that the reverse table
+already handles `\s` — say so in the DEVLOG and stop.** Post as `[worker]` under `## 13.`, then
+`→ @reviewer`.
+
+**[worker]** Stopping on the §13 frontmatter-escaping brief, per its own instruction: **the reverse-table
+claim is wrong, and I have not built anything.**
+
+**What I checked.** `CardFileFormat.cs:176-177`:
+
+```
+private static readonly IReadOnlyDictionary<char, char> FrontmatterEscapeTable =
+    new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r' };
+```
+
+No `['s'] = ' '` entry. That mapping exists two lines down, at `:179-180`, on a **different table**:
+
+```
+private static readonly IReadOnlyDictionary<char, char> CommentHeaderEscapeTable =
+    new Dictionary<char, char> { ['s'] = ' ' };
+```
+
+`UnescapeFrontmatterValue` (`:211`) reduces to `UnescapeUsing(value, FrontmatterEscapeTable)` — the first
+table, without `'s'`. `UnescapeCommentHeaderValue` (`:233`) reduces to `UnescapeUsing(value,
+CommentHeaderEscapeTable)` — the second, separate table used for the comment-header format, not
+frontmatter. The brief's `:180` citation lands inside the comment-header table's declaration, not the
+frontmatter one; the two tables sit two lines apart and the claim conflated them.
+
+**Why this isn't cosmetic.** If I'd built only the forward-side fix the brief specified — teach
+`EscapeFrontmatterValue` to emit `\s` for an edge space — `UnescapeUsing` would hit a backslash followed by
+`s`, find no `'s'` key in `FrontmatterEscapeTable`, and fall through to appending the backslash and the `s`
+literally. The value would round-trip to `...foo\s` instead of `...foo `: not the original loud failure,
+not a silent truncation either, but a **new** quiet-wrong output — the escape marker itself leaking into
+the field as text. That is a worse outcome than today's bug, and it's exactly the failure mode 13.6/13.9
+exist to keep out.
+
+**Per the brief's boundary ("say so and stop"): stopping here.** I have not touched
+`CardFileFormat.cs`, added a positional escape function, or written any test. No commits, no ticks, tree
+unchanged from `HEAD`.
+
+**For @architect to decide, not me:** the fix is still forward-side-plus-narrow as scoped, but it now also
+needs `FrontmatterEscapeTable` to gain `['s'] = ' '` (or an equivalent positional unescape) — an unescape
+change, which the brief itself flagged as "a different risk class" and reserved for your call. Two things
+worth weighing before re-briefing:
+
+- Is `'s'` safe to add to `FrontmatterEscapeTable` today? A literal backslash-then-`s` in a frontmatter
+  value has never been possible to write (nothing escapes a bare `s`), so no existing card can contain
+  that byte sequence *unless* it already contains a literal `\s` some other way — and a literal backslash
+  is escaped to `\\` first by the existing forward path, so `\s` on disk today could only come from a
+  hand-edited file, not a tool-written one. Worth stating explicitly in whatever brief follows.
+- `FrontmatterListItemEscapeForwardTable` (`:197`) has the same open question the original brief asked me
+  to account for — I haven't decided it, since it's downstream of the same table-pairing mistake.
+
+Nothing built, nothing to hand to @reviewer yet.
+
+**[architect]** Brief — **corrected. The worker was right to stop and my premise was false.**
+
+**What I got wrong.** I claimed `FrontmatterEscapeTable` already maps `s` → space, making this a
+forward-side fix. It does not: `CardFileFormat.cs:176-177` is `{ ['n'] = '\n', ['r'] = '\r' }`. The
+`['s'] = ' '` I cited belongs to **`CommentHeaderEscapeTable`** two lines below (`:179-180`), which backs
+`UnescapeCommentHeaderValue` — a different function on a different format. I read the line out of
+context, and the brief built a scope on it.
+
+**The stop was correct and is the point.** Had the forward side shipped alone, an escaped `\s` would have
+had no reverse mapping and would have leaked into the parsed value literally — **a new quiet-wrong-output
+defect, worse than the one being fixed**, in a block whose entire subject is quiet wrong output. This is
+the second time in §13 a worker has corrected my brief rather than following it (13.6's item 7 was the
+first), and both times the brief was the defect. **A brief is not evidence.**
+
+---
+
+### Corrected scope: both sides, and a behaviour change on existing data
+
+1. **Forward** — `EscapeFrontmatterValue` escapes a **leading and/or trailing** space as `\s`. The
+   original constraint stands and is the most important line in this brief: **interior spaces stay
+   literal.** `CommentHeaderEscapeForwardTable` escapes every space because that format is
+   space-delimited; frontmatter is `key: value` to end of line and is not. `title: Which\sretry\spolicy?`
+   would destroy the plain-text legibility the record-retrieval requirement demands. A value with **no
+   edge whitespace must serialise byte-for-byte as it does today** — assert that on the serialised form,
+   not merely on a round trip.
+2. **Reverse** — `FrontmatterEscapeTable` gains `['s'] = ' '`. **This changes how cards already on disk
+   are read**, and you must handle that consciously rather than incidentally:
+   - A **tool-written** card is unaffected: the forward escaper escapes `\` → `\\` first, so a title
+     `match \s+` is stored `match \\s+` and unescapes correctly before and after this change.
+     **Verify that claim with a test rather than trusting my reasoning — I have already been wrong once
+     in this brief.**
+   - A **hand-written** card containing a bare `\s` changes meaning: literal `\s` today, a space
+     afterwards. **Architect's call, made deliberately and recorded:** trailing-space truncation happens
+     *passively*, when an editor saves a file nobody meant to change; a bare `\s` in a card title requires
+     someone to type it on purpose. The passive, near-universal failure outweighs the deliberate, rare
+     one. Put this in the doc comment so the trade is legible to whoever finds it next.
+3. **`UnescapeUsing` already handles `\\` generically** (`:438-446`) and falls through on unknown escape
+   letters, so no change is needed there. Confirm rather than assume.
+4. **`FrontmatterListItemEscapeForwardTable` (`:197`)** — now actually evaluate it, since it was skipped
+   as downstream of the false premise. Does a list item with edge whitespace have the same exposure? Fix
+   it or justify leaving it, and **say which**.
+
+### Tests
+
+- Round trip both ways for: trailing space; leading space; both; interior spaces only (**unchanged
+  bytes**); a value that is entirely spaces; empty; and a value already containing a literal backslash
+  (invertibility).
+- **The keystone**, mirroring the last remediation's: a full tool-written card whose `title` ends in a
+  space → serialise → **strip trailing whitespace on every line** → parse → **the title still has its
+  space**. Reproduce the Product Owner's failure mode; do not approximate it.
+- **The regression guard for the reverse-table change**: a tool-written card whose title legitimately
+  contains `\s` as literal text, round-tripped, unchanged.
+- **Watch each fail against current code first.** There is a genuine prior defect, so this is a real
+  red-then-green cycle.
+
+**Binding decisions.** **D3** — the file is the record. **D2** — NativeAOT. And the legibility of the
+plain-text record is a **spec property**, not a nicety: weigh it explicitly in any judgement call.
+
+**Done-gates.** A title ending in a space survives serialise → strip → parse intact. A card with no edge
+whitespace serialises to today's exact bytes. A literal `\s` in a tool-written value round-trips. The list
+escaper is accounted for. `make gates` → `GATES_EXIT:0`, quote the exit lines.
+
+**Boundaries:** no commits, no ticks, no `tasks.md`/`Makefile`/`CLAUDE.md`/`.claude/`. **And again: if any
+part of this brief contradicts the codebase, say so and stop.** That instruction has now paid twice.
+
+**[worker]** Built the corrected brief. Confirmed the reverse-table reasoning (checked, not trusted) and
+implemented both sides.
+
+**Forward (`CardFileFormat.EscapeFrontmatterValue`).** Splits into the existing backslash/`\n`/`\r`
+table escape, then a new positional-only step (`EscapeEdgeSpaces`, not table-driven — deliberately, per
+the doc comment, since `EscapeUsing` has no notion of position): a leading and/or trailing space on the
+*already-escaped* value becomes `\s`. Checked against the escaped value's edges, not the raw input's, so
+a value whose original edge char was a backslash (now doubled, no longer at the true edge) is judged by
+what actually lands on disk. Interior spaces are never touched — a value with no edge whitespace
+serialises to today's exact bytes (asserted directly, not just via round-trip).
+
+**Reverse (`FrontmatterEscapeTable`).** Gained `['s'] = ' '`, with the trade recorded in its doc comment:
+a bare `\s` in a hand-written card now reads as a space where it read as literal text before. Deliberate,
+per your ruling — passive near-universal failure (silent trailing-whitespace-on-save) outweighs active
+rare one (typing a bare `\s` on purpose).
+
+**Verified your claim rather than trusting it.** Tool-written values containing a literal `\s` are
+unaffected: the backslash is doubled by the forward escaper before the space table is reached, so
+`match \s+` serialises to `match \\s+` and reads back unchanged — added as
+`RegressionGuard_ToolWrittenValueContainingLiteralBackslashS_RoundTripsUnchanged`, asserting the exact
+serialised bytes as well as the round trip, not just the round trip.
+
+**`UnescapeUsing` (`:438-446`)** — confirmed, not assumed: it already falls through on any backslash
+followed by a character absent from the table, so no change was needed there.
+
+**`FrontmatterListItemEscapeForwardTable` (`:197`) — evaluated and left unescaped, justified in its own
+doc comment.** The exposure exists in principle (a joined list's own first/last character sits at the
+same true line edge, since `JoinFrontmatterList`'s output bypasses `EscapeFrontmatterValue`'s edge
+handling entirely) — but every list-valued field (`tasks`, `blocked_by`, `gate_results`,
+`extent_fingerprint`, `earned_from`, `absorbs`) holds generated identifier-shaped tokens, never
+hand-typed prose an editor could trim. No field here is `title`'s analogue, so the risk this
+remediation exists for isn't reachable through this table.
+
+**Tests** — `CardFileFormatFrontmatterEdgeSpaceTests.cs` (18 tests): round trip both ways for
+trailing/leading/both-edges/interior-only/all-spaces/single-space/empty/pre-existing-`\s` values;
+exact-bytes assertions for the edge-escape and the interior-unchanged case; the single-space and
+leading-backslash-before-trailing-space edge cases named in the reasoning above; the regression guard;
+and the keystone — a full tool-written card whose title ends in a space, serialised, every line stripped
+of trailing whitespace, parsed, title intact. **Watched red first**: temporarily replaced
+`CardFileFormat.cs` with its last-committed contents (a plain file copy, not a history-editing command),
+ran the new suite, got 7 failures including the keystone reproducing the Product Owner's exact failure
+mode byte-for-byte, restored the fix, reran — 18/18 green.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (1152/1152 total tests).
+
+No commits, no ticks, `tasks.md`/`Makefile`/`CLAUDE.md`/`.claude/` untouched.
+
+→ @reviewer
+
+**[reviewer]** Audit of the §13 remediation block — frontmatter edge-space escaping. **Verdict: Request
+changes.** One blocker: the list-escaper justification is false for at least one field.
+
+**Gates, re-run independently, not taken on the report:** `make test` → `TEST_EXIT:0`, 1152/1152.
+`make build` → `BUILD_EXIT:0`, 0 warnings. `make format` → `FORMAT_EXIT:0`. `git status --porcelain`
+confirms the diff is exactly `CardFileFormat.cs`, this DEVLOG, and the new test file —
+`tasks.md`/`Makefile`/`CLAUDE.md`/`.claude/` untouched, matching the report.
+
+**Blocker — `FrontmatterListItemEscapeForwardTable.cs:210-224`'s doc comment claims "every list-valued
+field … holds generated identifier-shaped tokens, never hand-typed prose an editor could trim," and
+enumerates six: `tasks`, `blocked_by`, `gate_results`, `extent_fingerprint`, `earned_from`, `absorbs`.
+It omits a seventh: `extent_value` under `FindingExtent.Explicit`.** `CommandParser.cs:1569` builds it
+straight from a human-typed CLI flag — `FindingExtent.Explicit(extentExplicitRaw.Split(','))`, where
+`extentExplicitRaw` is `--extent-explicit`'s raw string, split on `,` with no trimming. `FindingExtent.cs`'s
+own doc comment names the contents as "paths, line ranges **or symbols**" — free text a person types
+on a command line, not a generated token. `CardFileWriter.cs:211` writes it via `JoinFrontmatterList`
+(`onExplicit: static items => ("explicit", CardFileFormat.JoinFrontmatterList(items))`), which uses
+the very table this remediation left unescaped. `BlockCardFields.IsValidListItem` (`:210`,
+`!string.IsNullOrWhiteSpace(item)`) only rejects empty/whitespace-only items — `" src/Foo.cs"` or
+`"src/Bar.cs "` passes validation untouched. So `--extent-explicit " src/Foo.cs,src/Bar.cs "` (a
+plausible shell-quoting/copy-paste accident, exactly the kind of typo this whole remediation exists to
+protect against) puts a leading space on the first item and a trailing space on the last, and the last
+item's trailing space lands at the true end of the `extent_value:` line — the identical exposure
+`title` had before this fix, on a field this diff's own doc comment says can't occur. This isn't a
+theoretical edge of the "six generated fields" argument; it's a field the argument never accounted for
+at all. Fix the doc comment's premise (it's checking a false universal, not six true ones) and then
+either close the gap for `extent_value` — table-driven edge escaping doesn't fit `EscapeFrontmatterListItem`
+cleanly since edge position is a property of the *whole joined line*, not of one item, so this likely
+wants the same `EscapeEdgeSpaces`-after-join treatment `EscapeFrontmatterValue` just got, applied to
+`JoinFrontmatterList`'s output for this field specifically — or get an explicit Architect ruling that
+the residual risk on `extent_value` is accepted, recorded as such, the way the reverse-table trade is
+recorded now.
+
+**Everything else checked clean — no other findings:**
+
+- **Byte stability (probe 1).** `Escape_InteriorSpacesOnly_SerialisesToExactlyTodaysBytes` and
+  `RegressionGuard_...`'s first assert both pin the *serialised* string directly (not round-trip-only),
+  covering interior spaces and an existing backslash. Traced `EscapeEdgeSpaces`: it's a no-op whenever
+  neither the first nor last character of the already-table-escaped value is a space, so a value
+  containing `\n`/`\r` escapes with no edge whitespace is provably byte-stable by construction even
+  though no test names that combination explicitly — a nit, not a gap.
+- **Interior spaces stay literal (probe 2).** Hand-traced `EscapeEdgeSpaces` for `""`, `" "`,
+  two-character inputs, and an all-spaces value — the length-1 special case and the
+  leading/trailing/middle split are both correct; only the true first/last character of the
+  already-escaped value can ever become `\s`, confirmed against `Escape_ValueAllSpaces_...` (`"   "` →
+  `"\s \s"`, middle space untouched) and `Escape_SingleSpaceValue_...`.
+- **Reverse-table change on existing cards (probe 3).** Manually re-derived
+  `RegressionGuard_ToolWrittenValueContainingLiteralBackslashS_RoundTripsUnchanged`
+  (`"match \s+"` → `"match \\s+"` → back) against `EscapeUsing`/`UnescapeUsing` character-by-character:
+  the doubled backslash is always consumed as its own pair before the following `s` is ever looked at,
+  so the new `['s'] = ' '` entry genuinely can't fire on a tool-escaped backslash, at an edge or not —
+  position doesn't change which characters `UnescapeUsing` consumes as a pair, so a dedicated
+  edge-position variant of this test would exercise the same code path, not a different one. Real
+  verification, not restated assumption.
+- **Invertibility under composition (probe 4).** Traced `Escape_LeadingBackslashBeforeATrailingSpace_
+  DoublesTheBackslashFirst` (`"\ "` → `"\\\s"` → back) by hand against both functions in sequence — the
+  edge check runs against the post-`EscapeUsing` value, so a literal trailing backslash is already
+  doubled and no longer the true edge character by the time `EscapeEdgeSpaces` looks, exactly as
+  claimed. `"\s"` (bare, two-char) round-trips: forward doubles the backslash to `\\s` (not at a
+  space edge, untouched further), reverse consumes the doubled pair first, leaving `s` literal.
+  Composition is safe for every adversarial shape named.
+- **Watched-red method (probe 6).** Recomputed by hand which of the 18 tests can distinguish
+  old-code behaviour from new: the 8 `EscapeThenUnescape_RoundTrips` theory rows hold trivially even
+  under the old, unescaped code (round-trip is an identity property regardless of what the escaper
+  does), so they can't have gone red. The 7 that can and do: `Escape_TrailingSpace_...`,
+  `Escape_LeadingSpace_...`, `Escape_BothEdges_...`, `Escape_SingleSpaceValue_...`,
+  `Escape_ValueAllSpaces_...`, `Escape_LeadingBackslashBeforeATrailingSpace_...`, and the keystone —
+  each asserts a specific escaped string or parsed value that old code can't produce. The keystone
+  fails under old code specifically because the title line's genuine trailing space survives
+  unescaped to disk, gets `TrimEnd`'d by the test's strip step, and reads back short — the exact
+  failure mode named in the brief, not a different one. **7 is the right number and the keystone fails
+  for the right reason.**
+
+**Nit.** No test asserts serialised-byte stability for a value that mixes an existing `\n`/`\r` escape
+with *no* edge whitespace (only the interior-space and interior-backslash cases are asserted directly).
+The property holds by construction (see probe 1 above), so not blocking — worth a line if the block gets
+touched again.
+
+→ @worker
+
+**[worker]** Fixed the blocker. `FrontmatterListItemEscapeForwardTable`/`FrontmatterListItemEscapeTable`
+now escape edge whitespace exactly like the scalar tables, and `extent_value` under
+`FindingExtent.Explicit` is accounted for by name.
+
+**Escaper.** `EscapeFrontmatterListItem` now composes the existing table escape with the same
+`EscapeEdgeSpaces` the scalar fix already uses, applied verbatim — no new positional logic, since the
+edge check operates on the fully-escaped string regardless of which caller it came from.
+`FrontmatterListItemEscapeTable` gained `['s'] = ' '`, same trade as the scalar table, recorded in its
+own doc comment.
+
+**Doc comment corrected, not deleted.** `FrontmatterListItemEscapeForwardTable`'s comment now enumerates
+all seven fields by name and states which are generated (`tasks`, `blocked_by`, `gate_results`,
+`extent_fingerprint`, `earned_from`, `absorbs`) and which is hand-typed (`extent_value` under
+`FindingExtent.Explicit`, fed by `--extent-explicit`, split on `,` with no trimming at
+`CommandParser.cs:1569`) — including the untrimmed-split route being *more* reachable than an editor's
+save, as you traced.
+
+**Composition across the seam**, all three cases you named:
+- an item ending in a backslash immediately before the `,` join — the backslash is doubled before the
+  join ever sees it, so `SplitFrontmatterList`'s boundary scan treats the doubled pair as protected, not
+  the comma after it;
+- an item that is exactly the literal text `\s` (not our escape marker) — backslash doubles first, so it
+  serialises as `\\s` and is never misread as an edge-space escape;
+- an item with an escaped comma directly adjacent to an edge space (`"path,name "` → `path\,name\s`) —
+  two distinct escape pairs back to back, each consumed on its own by the reverse scan.
+
+**Tests** — extended `CardFileFormatFrontmatterEdgeSpaceTests.cs` (16 new, 34 total): the same round-trip
+theory over list items directly, exact-bytes assertions for edge-escape and interior-unchanged, the
+three composition cases above, a keystone mirroring the scalar one exactly (a tool-written finding whose
+*last* extent item ends in a space — the true line edge — serialised, every line stripped of trailing
+whitespace, parsed, item intact), and a direct reproduction of the CLI's untrimmed `Split(',')` feeding
+`FindingExtent.Explicit` to confirm the more-reachable route round-trips too.
+
+**Watched red first.** Temporarily reverted just the two list-item-escaping edits (table entry and the
+`EscapeEdgeSpaces` composition — file-copy/`Edit`, not a history-editing command; the scalar fix and
+everything else stayed in place), reran the new-and-changed tests: 4 failed, including the corrected
+keystone, matching exactly what the fix closes. Restored, reran — 34/34 green, then the full suite.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (1168/1168 total tests).
+
+Everything the reviewer already closed (byte stability, interior-space literalness, the reverse-table
+trade, watched-red count, the keystone reasoning) is untouched — this round only touched the two spots
+named above plus the doc comment and the new tests.
+
+No commits, no ticks, `tasks.md`/`Makefile`/`CLAUDE.md`/`.claude/` untouched.
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the §13 remediation's list-item half. **Verdict: Approve.** Blocker from round
+one is genuinely closed; one nit found on this pass.
+
+**Gates, re-run independently:** `make test` → `TEST_EXIT:0`, 1168/1168. `make build` → `BUILD_EXIT:0`, 0
+warnings. `make format` → `FORMAT_EXIT:0`. `git status --porcelain` / `--numstat`: exactly
+`CardFileFormat.cs`, this DEVLOG, and the test file — `tasks.md`/`Makefile`/`CLAUDE.md`/`.claude/`
+untouched, matching the report.
+
+**Probe 1 — enumeration re-derived from the code, not from the fix's own list.** Grepped every call site
+of `JoinFrontmatterList`/`SplitFrontmatterList` across `CardFileWriter.cs` and `CardFileParser.cs`
+independently: `tasks` (`:66`/`:861`), `blocked_by` (`:85`/`:870`), `gate_results` (`:75`/`:1352`),
+`extent_fingerprint` (`:245`/`:1264`), `earned_from`/`absorbs` (`:319,324`/`:1116,1124`), and
+`extent_value` under `explicit` (`:211`/`:1183`). Seven, matching the corrected doc comment exactly — no
+eighth.
+
+**Probe 2 — composition across the comma seam.** Hand-traced all three named cases against
+`EscapeUsing`→`EscapeEdgeSpaces`→join and split→`UnescapeUsing`: a trailing backslash is always doubled
+before the join sees it, so the boundary scan's "backslash consumes the next char as a pair" rule
+protects the doubled pair, not a literal comma after it; a literal `\s` item doubles its backslash the
+same way, so it's never misread as the edge-space marker; `\,` and `\s` back to back are two independent
+pairs, each consumed on its own — confirmed against
+`EscapeListItem_EscapedCommaAdjacentToAnEdgeSpace_ComposesCorrectly`'s exact-byte assertion
+(`"path\,name\s"`), not just its round trip. **Single-space item**: `BlockCardFields.IsValidListItem`
+(`:210`, `!string.IsNullOrWhiteSpace(item)`) rejects it, and `FindingExtent.Explicit`'s validating
+accessor calls the same check — so a bare-space item can never reach `FrontmatterListItemEscapeForwardTable`
+through any real construction path. `EscapeThenUnescapeListItem_RoundTrips`'s `InlineData(" ")` still
+round-trips at the pure-function level, which is correct but exercises a value domain validation would
+already have refused — established, not assumed.
+
+**Probe 3 — byte stability.** `EscapeListItem_InteriorSpacesOnly_...` pins the serialised form directly.
+Checked what the fix actually touches: `EscapeFrontmatterListItem` now applies `EscapeEdgeSpaces` to
+**every item independently before the join**, not just the first/last item of the whole comma-joined
+line — broader than the doc comment's "the list value's own leading/trailing character sits at the true
+line edge" framing implies, since a middle item's own edge (not the physical line's edge) is protected
+too. Not a defect — it costs nothing for generated fields, which never carry item-edge whitespace, and
+it's strictly safer for `extent_value` — but the comment undersells what the code protects. **Nit**, not
+blocking. No existing `tasks`/`blocked_by`/`gate_results` card shifts: task numbers, card ids, and gate
+labels never carry edge whitespace in their generated form.
+
+**Probe 4 — reverse-table trade on list items.** Same shape as the scalar side: a bare `\s` a hand-written
+list item happened to contain now reads as a space. Checked the vocabularies rather than assuming:
+task/card-id/gate-label/hash formats never contain a literal backslash, so a generated token can never
+collide with the new `['s'] = ' '` entry — the trade is live only for `extent_value`, exactly as
+documented.
+
+**Probe 5 — the CLI reproduction test, checked against pre-fix behaviour myself.** Reproduced the
+pre-fix list-item escaper in an isolated scratch harness (old forward/reverse tables, no
+`EscapeEdgeSpaces`) and ran `RegressionRoute_CommandParserExtentExplicitSplitWithNoTrimming_
+ProducesALeadingSpaceOnItsOwn`'s exact scenario — `"a.cs, b.cs".Split(',')` through join/split with the
+**old** tables: **it round-trips correctly, unchanged.** The pre-fix code never touched interior/edge
+spaces at all, and this test applies no trailing-whitespace-strip step, so nothing in it depends on the
+fix under test — under the reverted code it would pass, not fail. Confirmed against the worker's own
+count: reconstructing which of the 16 new tests can distinguish old from new code by hand gives exactly
+four — `EscapeListItem_TrailingSpace_EmitsBackslashS`, `EscapeListItem_LeadingSpace_EmitsBackslashS`,
+`EscapeListItem_EscapedCommaAdjacentToAnEdgeSpace_ComposesCorrectly` (its exact-byte assertion),
+and the corrected keystone — and `RegressionRoute_...` is not and could not be a fifth. **This is a
+nit, not a blocker**: the real defect this test's name claims to reproduce (a leading space reaching
+`extent_value` through the CLI's untrimmed split, with no hand-edit involved) is genuinely proven
+elsewhere — `EscapeListItem_LeadingSpace_EmitsBackslashS` pins the exact escaped bytes for precisely that
+shape, and the keystone proves the trailing case survives an editor's strip. `RegressionRoute_...` adds a
+faithful reproduction of the CLI's `.Split(',')` call (verified identical to `CommandParser.cs:1569`,
+no `StringSplitOptions`) feeding the real `FindingExtent.Explicit`/`CardFileWriter`/`CardFileParser`
+path, which has standalone value as an integration check — it just isn't the regression test its name
+and comment claim to be, since it was never red.
+
+**Probe 6 — watched-red count.** 4 is right, reconstructed independently above from the same reasoning as
+probe 5, not from trusting the report. The keystone fails under the reverted list-item fix specifically
+because the *last* extent item's trailing space is the true edge of the `extent_value:` physical line,
+survives to disk unescaped, and is stripped by the test's `TrimEnd` step — the exact failure mode named
+in the brief, on the field this remediation exists for.
+
+**Nits:**
+1. `RegressionRoute_CommandParserExtentExplicitSplitWithNoTrimming_ProducesALeadingSpaceOnItsOwn`'s
+   comment claims it demonstrates a route that "needs no editor and no hand-edit" to fail — true of the
+   *risk*, but the test itself never fails before this fix (probe 5). Retitle or add the missing
+   `TrimEnd`-strip step so the name matches what it proves, or reword the comment to describe it as an
+   integration check rather than a regression reproduction.
+2. `FrontmatterListItemEscapeForwardTable`'s doc comment (`CardFileFormat.cs:210-224`) frames the
+   exposure as sitting only "at the true line edge," but `EscapeEdgeSpaces` is applied per item before
+   the join, so every item's own edges are protected, not only the first/last of the whole line (probe
+   3) — worth a line acknowledging the broader scope, since it's a feature not a bug.
+3. `gate_results`' label is a raw CLI positional argument (`CommandParser.cs:438`,
+   `GateResult.IsValidLabel` permits edge whitespace, rejecting only whitespace-only/`=`/`,`) — hand-typed
+   the same way `extent_value` is, just far less likely to carry accidental edge whitespace since it is
+   not comma-split. The doc comment calls it unconditionally "generated," which slightly overclaims; no
+   functional consequence, since the fix is applied uniformly to every list-valued field regardless of
+   this classification.
+
+→ @architect
+
+**[worker]** All three nits addressed.
+
+**1. `RegressionRoute_...` renamed, not given a strip step.** Checked first: a leading space produced
+by the CLI's untrimmed split sits right after the comma that starts its item — never at the joined
+value's true trailing line edge — so a per-line `TrimEnd` strip cannot touch it either way, before or
+after the fix. Giving it a strip step would not have made it fail pre-fix; it would just have been a
+no-op assertion dressed up as one. Renamed to
+`CommandParserExtentExplicitSplitWithNoTrimming_ProducesALeadingSpaceItem_ThatRoundTripsThroughTheRecord`,
+doc comment now says plainly what it checks (the CLI's own split path round-trips through the record)
+and that it is not this block's regression guard (the `EscapeListItem_LeadingSpace_EmitsBackslashS` unit
+test and the trailing-space keystone are). **Watched it against pre-fix code as instructed**: reverted
+just `EscapeFrontmatterListItem`'s edge-space step, ran the renamed test alone — passed, as reasoned,
+confirming it never depended on the fix. Restored.
+
+**2. Re-derived generated-versus-hand-typed for all seven fields from the code, not just `gate_results`.**
+Traced each to its CLI parsing site: `tasks` (`--task`, `CommandParser.ParseBlockCreate`), `blocked_by`
+(a positional card id, `ParseBlockedByMutation`), `gate_results`' label (a positional argument,
+`ParseBlockGate`), `earned_from`/`absorbs` (`--earned-from`/`--absorbs`, all three call sites, split via
+`CardFileFormat.SplitFrontmatterList` itself), `extent_value` (`--extent-explicit`, plain untrimmed
+`Split(',')`) — **every one of the seven is a hand-typed CLI-argument string; "generated vs hand-typed"
+was the wrong split from the start**, not just wrong on `gate_results`. Rewrote
+`FrontmatterListItemEscapeForwardTable`'s doc comment around what actually distinguishes them: whether
+anything about the field's own convention suggests legitimate content could carry edge whitespace. Six
+are narrow identifier/token shapes with no such suggestion; `extent_value` is the one field documented
+to hold open-ended content, and — new finding, not previously stated anywhere — `extent_fingerprint`'s
+`RelativePath` component is **not independently generated**: `FindingExtentFingerprint.ComputeForFiles`
+carries the corresponding `extent_value` item over verbatim, so it inherits that same exposure through
+the identical string, and only its `ContentHash` half is genuinely tool-computed. Eight fields checked,
+not seven — `extent_fingerprint` turned out to be a hybrid the original two-bucket framing couldn't have
+stated correctly regardless of which bucket `gate_results` landed in.
+
+**3. `EscapeFrontmatterListItem`'s doc comment corrected.** It now says what the code does: edge-space
+escaping applies to **every item**, independent of position, not only the first/last item's true line
+edge — `JoinFrontmatterList` calls the escaper once per item with no positional awareness of its own.
+Stated why that's the right shape anyway: a space right after a separating comma is exactly as easy to
+introduce by accident and exactly as ambiguous to read as one at the physical line's end, so there is no
+narrower rule worth having.
+
+No functional change this round — table contents, `EscapeFrontmatterListItem`'s composition, and every
+test assertion are unchanged; only the doc comments and the one test's name/comment moved.
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0` (1168/1168 — same count as last
+round, since no test was added or removed, only renamed).
+
+No commits, no ticks, `tasks.md`/`Makefile`/`CLAUDE.md`/`.claude/` untouched.
+
+→ @reviewer
+
+**[reviewer]** Short re-audit, scoped to the accuracy of this round's new claims only — the
+escaping itself stays approved and untouched. **Verdict: Approve.**
+
+**Gates, re-run independently:** `make build` → `BUILD_EXIT:0`, 0 warnings. `make test` →
+`TEST_EXIT:0`, 1168/1168 (unchanged, as reported — no test added or removed, one renamed). `make
+format` → `FORMAT_EXIT:0`. `git status --porcelain` / `--numstat`: `CardFileFormat.cs`, this DEVLOG,
+and the test file only — `tasks.md`/`Makefile`/`CLAUDE.md`/`.claude/` untouched.
+
+**1. The all-seven-hand-typed claim, checked against the code, not against the comment.** Traced each
+site directly: `tasks` — `CommandParser.cs:234`, `["--task"] = value => tasks.Add(value)`, stored
+verbatim, no trim. `blocked_by` — `CommandParser.cs:485-517` (`ParseBlockedByMutation`), one
+positional `blockingCardId` per invocation, validated only by `BlockCardFields.IsValidListItem`
+(empty/whitespace-only rejected, nothing else), stored verbatim. `gate_results`' label — confirmed
+already in round one (`CommandParser.cs:438`, positional, `GateResult.IsValidLabel` permits edge
+whitespace). `earned_from`/`absorbs` — `CommandParser.cs:965` (`change archive`),
+`:1747`/`:1836`/`:1911` (`rule author`/`rule compact`/`rule propose-compact`): all three split the raw
+CLI value with `CardFileFormat.SplitFrontmatterList` itself, confirmed by reading each call site, not
+assumed from the comment's say-so. `extent_value` — confirmed already, `CommandParser.cs:1569`,
+plain `Split(',')`. **All seven do trace to a hand-typed CLI-argument string; there is no eighth
+bucket and no field left ungenerated-by-a-human.** The comment's corrected framing — the real split
+is whether a field's own convention admits legitimate edge whitespace, not generated-vs-hand-typed —
+holds up against the code.
+
+**2. `extent_fingerprint`'s `RelativePath` — traced, true with one overclaim.** `FindingExtentFingerprint
+.ComputeForFiles` (`FindingExtentFingerprint.cs:105-116`) calls `FilePathFor` on each `extent_value`
+item first (`:94-103`): everything before the first `:` or `#`, or the whole item when neither
+appears. **The comment says "carried over verbatim" — that's exactly true only when the item has no
+`:`/`#` qualifier.** `FindingExtent`'s own doc comment names "line ranges or symbols"
+(`src/Foo.cs:10-20`) as legitimate content, not a hypothetical, so this isn't an edge case the
+comment can ignore. Practically: a **leading** edge space on an `extent_value` item propagates into
+`RelativePath` unconditionally — `FilePathFor` never trims, so whatever precedes the boundary
+(including a leading space) survives intact regardless of whether a qualifier follows — which is the
+shape this whole remediation is actually about (the CLI's untrimmed comma-split). A **trailing** edge
+space propagates only when the item has no qualifier at all; with one, the true trailing edge sits
+past the boundary and is excluded from `RelativePath` entirely. So the claim "shares that field's
+exposure exactly" is right for the leading case and overstated for the trailing case on a qualified
+item. **Nit, not blocking**: no functional gap either way — `EscapeFrontmatterListItem` protects every
+`extent_fingerprint` item the same way regardless of whether it happens to be a true substring or the
+full string, so the fix's coverage doesn't depend on this word being exact. Worth tightening
+"verbatim" to "up to any `:`/`#` qualifier" so the next reader of this comment doesn't inherit the
+overclaim.
+
+**3. The test rename — reasoning and name both check out.** A `TrimEnd` only strips from the true end
+of a physical line; a **leading** space on any item — first, middle, or last — is never at that
+position while non-whitespace content follows it on the same line, so no strip step could have made
+`"a.cs, b.cs"`'s produced leading space fail before this fix, regardless of where in the list that
+item sits. Reasoning is correct, and distinct from the **trailing**-space keystone case (`"b.cs "`),
+which the block still covers separately. Read the renamed test
+(`CommandParserExtentExplicitSplitWithNoTrimming_ProducesALeadingSpaceItem_ThatRoundTripsThroughTheRecord`,
+`CardFileFormatFrontmatterEdgeSpaceTests.cs:271-294`): the name now says exactly what the body asserts
+(the CLI's own `Split(',')` produces `[" b.cs"]`'s leading space, and the finding record round-trips
+it), and the doc comment explicitly disclaims being this block's regression guard, pointing to the
+unit test and keystone that are. Accurate.
+
+**4. The per-item doc comment — matches the code.** `EscapeFrontmatterListItem`'s comment
+(`CardFileFormat.cs:436-455`) now states plainly that `EscapeEdgeSpaces` runs once per item with no
+positional awareness, so a middle item's own edges are escaped the same as the first/last item's —
+this is what I flagged as a round-one nit (the code protects more than "true line edge" implied), and
+the comment now says exactly that, with the stated rationale (a space after a comma is exactly as easy
+to introduce and exactly as ambiguous as one at the physical line's end). Matches
+`EscapeEdgeSpaces`'s actual behaviour — confirmed again by re-reading the implementation, not by
+trusting the description.
+
+Nothing else re-opened — the escaping itself, byte stability, composition across the comma seam, the
+reverse-table trade, and the watched-red count all stay closed from the prior two rounds.
+
+→ @architect
+
+**[architect]** **Escape remediation landed.** Reviewer **Request changes → Approve → Approve** (the last a
+narrow verification pass on the corrections themselves). Gates green at my end, suite **1134 → 1168**.
+Ticks nothing — no `N.M` numbers, per the workflow.
+
+**What shipped.** A frontmatter value's or list item's **leading and trailing** space escapes as `\s`;
+interior spaces stay literal, so a card still reads `title: Which retry policy?` and not
+`title: Which\sretry\spolicy?`. Both reverse tables gained `['s'] = ' '`. A value with no edge whitespace
+serialises to **exactly today's bytes**, asserted on the serialised form. This closes the third and last
+member of the family the 13.8 close post names: **the record changing under a human without telling
+anyone.**
+
+**One deliberate behaviour change on data already on disk.** A **bare** `\s` in a hand-written card now
+reads as a space where it was literal. Tool-written cards are unaffected — the forward escaper escapes
+`\` → `\\` first, verified by test, not by my reasoning. The trade, recorded: **trailing-space truncation
+happens passively, when an editor saves a file nobody meant to change; a bare `\s` in a title has to be
+typed on purpose.** Passive and near-universal outweighs deliberate and rare.
+
+---
+
+### The finding of this block, and it is not about whitespace
+
+**Five stated enumerations in this remediation were wrong, and each survived because someone read it
+instead of re-deriving it.**
+
+1. **My brief** claimed `FrontmatterEscapeTable` already mapped `s` → space. It does not — that is
+   `CommentHeaderEscapeTable`, two lines below, backing a different function on a different format. **The
+   worker verified and stopped without building.** Had it complied, an escaped `\s` would have had no
+   reverse mapping and leaked into parsed values literally: **a new quiet-wrong-output defect, in the
+   block whose subject is quiet wrong output** — and it would have passed a round-trip test written to my
+   stated scope.
+2. **The worker's list-escaper justification** — "every list-valued field holds generated identifier
+   tokens" — omitted `extent_value`, which is free text from `--extent-explicit`. The reviewer disproved
+   it by tracing the CLI path, not by arguing with it.
+3. **The corrected enumeration** still mislabelled `gate_results` as generated.
+4. **A test named as a regression guard could not detect the defect.** The reviewer rebuilt the pre-fix
+   escaper in a scratch harness and ran it: green under the old code. §13 ruling 5 in miniature — *a
+   regression test nobody has watched fail is a guess* — with the guess wearing the guard's name.
+5. **The generated-vs-hand-typed distinction itself was false.** Re-deriving all seven fields dissolved
+   it: **all seven** trace to a hand-typed CLI argument. What actually separates them is whether a field's
+   convention admits legitimate edge whitespace.
+
+**The ruling.** §13 already says *verify the premise, then brief*, and *a brief is not evidence*. This
+block sharpens both into something checkable:
+
+> **An enumeration or a regression claim is worth exactly what the independent re-derivation behind it is
+> worth. Reviewing one by inspection launders it.** Every one of these five was caught by re-deriving from
+> the code, or by rebuilding the old implementation and running the test against it — never by a closer
+> read. **The corollary for auditors: re-derive from the source, not from the finding that prompted the
+> correction**, or you confirm your own earlier work.
+
+**A method worth keeping, from the reviewer:** to test whether a regression test was genuine, it
+**reconstructed the pre-fix implementation in an isolated harness** and ran the suite against it. The
+auditor boundary forbids editing source (§13.7's noted limit), and this routes around the limit without
+breaking the rule.
+
+**And one from the worker, on refusing to manufacture evidence:** told to make the misnamed test fail
+pre-fix or rename it, it traced why no strip step *could* have made it fail — a leading space from the
+CLI's untrimmed split sits after a comma, never at a physical line's trailing edge — and renamed it
+instead, calling the alternative theatre. **A test made to fail by a step invented to make it fail proves
+nothing.**
+
+### Owed — a wording correction I am recording rather than spending a seventh round on
+
+`EscapeFrontmatterListItem`'s doc comment says `extent_fingerprint`'s `RelativePath` inherits its
+`extent_value` item "verbatim". **Imprecise:** `FilePathFor` truncates at the first `:` or `#`, so a
+*leading* edge space always propagates, while a *trailing* one survives only when the item carries no
+line-range or symbol qualifier. **No functional consequence** — the fix protects every item uniformly
+either way, which the reviewer verified. Correct the word when that file is next touched.
+
+### Still with the Product Owner
+
+**Whether `--extent-explicit` should trim around its commas.** The CLI splits on `,` with no trimming, so
+`--extent-explicit "a.cs, b.cs"` yields an item with a leading space before any editor is involved. This
+block makes that round-trip **faithfully**, which is right either way; whether it should be *accepted* is
+a different question with its own trade, since a path could in principle begin with a space. Deliberately
+not smuggled into an escaping block.
+
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the

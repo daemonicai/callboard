@@ -173,8 +173,22 @@ internal static class CardFileFormat
         line.StartsWith(RefusalLinePrefix, StringComparison.Ordinal)
             && line.EndsWith(RefusalLineSuffix, StringComparison.Ordinal);
 
+    /// <summary>
+    /// §13 remediation: gained <c>['s'] = ' '</c> so <see cref="UnescapeFrontmatterValue"/> reverses
+    /// the leading/trailing-space escaping <see cref="EscapeFrontmatterValue"/> now emits (see
+    /// <see cref="EscapeEdgeSpaces"/>). This is a deliberate reading of every card already on disk:
+    /// a bare <c>\s</c> a hand-written card happened to contain read as literal text before this
+    /// change and reads as a space now. The trade was made on purpose (Architect ruling, §13) — the
+    /// failure this closes is passive and near-universal (an editor's trailing-whitespace-on-save
+    /// silently truncating a title, indistinguishable from layout on disk and never reported), while
+    /// the failure this risks is active and rare (nobody types a bare backslash-s into a card title
+    /// by accident). A tool-written card is unaffected either way: <see cref="EscapeFrontmatterValue"/>
+    /// escapes a literal backslash to <c>\\</c> before this table ever sees it, so a value that
+    /// already contains literal <c>\s</c> text round-trips through <c>\\s</c> on disk regardless of
+    /// this entry.
+    /// </summary>
     private static readonly IReadOnlyDictionary<char, char> FrontmatterEscapeTable =
-        new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r' };
+        new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r', ['s'] = ' ' };
 
     private static readonly IReadOnlyDictionary<char, char> CommentHeaderEscapeTable =
         new Dictionary<char, char> { ['s'] = ' ' };
@@ -194,6 +208,54 @@ internal static class CardFileFormat
     private static readonly IReadOnlyDictionary<char, string> CommentHeaderEscapeForwardTable =
         new Dictionary<char, string> { ['\\'] = "\\\\", [' '] = "\\s" };
 
+    /// <summary>
+    /// §13 remediation, corrected twice after review: this table's edge characters are exposed the
+    /// same way <see cref="FrontmatterEscapeForwardTable"/>'s were, and every one of this block's
+    /// enumerations of the affected fields has so far been wrong on at least one member — check the
+    /// tracing below against the code, do not extend it from memory.
+    ///
+    /// <b>Every one of the seven items below is a hand-typed CLI-argument string</b> — there is no
+    /// field here whose content the tool invents unprompted, so "generated versus hand-typed" (this
+    /// comment's first, incorrect framing) is not the split that actually distinguishes them. What
+    /// differs is whether anything about the field suggests legitimate content could carry edge
+    /// whitespace:
+    /// <list type="bullet">
+    /// <item><description><c>tasks</c> (<see cref="BlockCardFields"/>) — one <c>--task &lt;reference&gt;</c>
+    /// flag per item (<c>CommandParser.ParseBlockCreate</c>), stored verbatim, no trimming. Conventionally a
+    /// task reference (e.g. <c>13.5</c>) — nothing about its use suggests free text.</description></item>
+    /// <item><description><c>blocked_by</c> (<see cref="BlockCardFields"/>) — one positional card id per
+    /// invocation (<c>CommandParser.ParseBlockedByMutation</c>), stored verbatim. Conventionally a card
+    /// id.</description></item>
+    /// <item><description><c>gate_results</c> (<see cref="BlockCardFields"/>) — each item is
+    /// <c>{label}={exitCode}={round}</c>; <c>label</c> is a positional CLI argument
+    /// (<c>CommandParser.ParseBlockGate</c>), rejected only if empty/whitespace-only or containing
+    /// <c>=</c>/<c>,</c> — not trimmed. Conventionally a fixed gate name (<c>build</c>, <c>test</c>);
+    /// <c>exitCode</c>/<c>round</c> are integers with no whitespace of their own.</description></item>
+    /// <item><description><c>earned_from</c>/<c>absorbs</c> (register/rule CLI fields) — a comma list from
+    /// one <c>--earned-from</c>/<c>--absorbs</c> flag, split with <see cref="SplitFrontmatterList"/> itself
+    /// — the CLI already expects the caller to use this escaping convention on typed input. Conventionally
+    /// finding/rule ids.</description></item>
+    /// <item><description><b><c>extent_value</c> under <see cref="FindingExtent.Explicit"/> — the one field
+    /// documented to hold open-ended content.</b> Built from <c>--extent-explicit</c>
+    /// (<see cref="Callboard.Cli.CommandParser"/>), split with a plain, escaping-unaware
+    /// <c>string.Split(',')</c> and <b>not trimmed</b>, holding — per <see cref="FindingExtent"/>'s own doc
+    /// comment — "paths, line ranges or symbols". <see cref="BlockCardFields.IsValidListItem"/> rejects only
+    /// an empty or whitespace-only item, so an item with edge whitespace validates and reaches this table.
+    /// The untrimmed split manufactures a leading space on any non-first item on its own —
+    /// <c>--extent-explicit "a.cs, b.cs"</c> is an entirely natural thing to type and produces one with no
+    /// editor or hand-edit involved at all.</description></item>
+    /// <item><description><c>extent_fingerprint</c> (<see cref="FindingCardFields"/>) — each item is
+    /// <c>{RelativePath}={ContentHash-or-"absent"}</c> (<c>FindingExtentFingerprint.ComputeForFiles</c>).
+    /// <b>Not independently generated</b>: <c>RelativePath</c> is the corresponding <c>extent_value</c> item
+    /// carried over verbatim (only an <see cref="FindingExtent.Explicit"/> extent produces any fingerprint
+    /// items at all), so it inherits <c>extent_value</c>'s exact exposure through the same string, not a
+    /// separate one; only <c>ContentHash</c> is tool-computed, from hashing the file the path
+    /// names.</description></item>
+    /// </list>
+    /// The fix applies uniformly regardless — see <see cref="EscapeFrontmatterListItem"/> — so this split
+    /// changes nothing about the code, only what a reader should expect to find hand-edited in a real
+    /// card.
+    /// </summary>
     private static readonly IReadOnlyDictionary<char, string> FrontmatterListItemEscapeForwardTable =
         new Dictionary<char, string> { ['\\'] = "\\\\", ['\n'] = "\\n", ['\r'] = "\\r", [','] = "\\," };
 
@@ -204,8 +266,53 @@ internal static class CardFileFormat
     /// based — a literal newline in a value would otherwise split it across lines and the next
     /// read would hit "malformed frontmatter line" on the fragment. A backslash is escaped first
     /// so the scheme stays invertible regardless of what the value already contains.
+    ///
+    /// §13 remediation: a leading and/or trailing space is then escaped as <c>\s</c>
+    /// (<see cref="EscapeEdgeSpaces"/>) — on disk that whitespace is indistinguishable from layout,
+    /// so an editor that strips trailing whitespace on save silently truncates it, and the card
+    /// still parses afterwards holding a different value. Interior spaces are never escaped: unlike
+    /// <see cref="CommentHeaderEscapeForwardTable"/>'s space-delimited format, frontmatter is
+    /// <c>key: value</c> to end of line, so an interior space is never ambiguous, and escaping it
+    /// anyway (<c>title: Which\sretry\spolicy?</c>) would cost the plain-text legibility the record
+    /// is required to keep for a reader with no access to the tool. A value with no edge whitespace
+    /// still serialises to exactly the bytes it always has.
     /// </summary>
-    internal static string EscapeFrontmatterValue(string value) => EscapeUsing(value, FrontmatterEscapeForwardTable);
+    internal static string EscapeFrontmatterValue(string value) =>
+        EscapeEdgeSpaces(EscapeUsing(value, FrontmatterEscapeForwardTable));
+
+    /// <summary>
+    /// Escapes a leading and/or trailing space in an already backslash/newline/CR-escaped
+    /// frontmatter value as <c>\s</c>. Not table-driven like the escapers above — <see cref="EscapeUsing"/>
+    /// substitutes by character alone, with no notion of position, and this rule is positional: the
+    /// same space is content in the middle of a value and layout-ambiguous at its edge. Checked
+    /// against the already-escaped value's own edges (not the raw input's) so a value whose
+    /// original edge character was a backslash — now doubled and no longer at the true edge — is
+    /// judged by what actually ends up on disk.
+    /// </summary>
+    private static string EscapeEdgeSpaces(string value)
+    {
+        if (value.Length == 0)
+        {
+            return value;
+        }
+
+        if (value.Length == 1)
+        {
+            return value[0] == ' ' ? "\\s" : value;
+        }
+
+        var leading = value[0] == ' ';
+        var trailing = value[^1] == ' ';
+        if (!leading && !trailing)
+        {
+            return value;
+        }
+
+        var start = leading ? 1 : 0;
+        var length = value.Length - start - (trailing ? 1 : 0);
+        var middle = value.Substring(start, length);
+        return (leading ? "\\s" : string.Empty) + middle + (trailing ? "\\s" : string.Empty);
+    }
 
     /// <summary>Reverses <see cref="EscapeFrontmatterValue"/>.</summary>
     internal static string UnescapeFrontmatterValue(string value) => UnescapeUsing(value, FrontmatterEscapeTable);
@@ -321,17 +428,45 @@ internal static class CardFileFormat
         return items;
     }
 
+    /// <summary>
+    /// §13 remediation: gained <c>['s'] = ' '</c>, the same deliberate trade
+    /// <see cref="FrontmatterEscapeTable"/>'s doc comment records — a bare <c>\s</c> a
+    /// hand-written list item happened to contain now reads as a space where it read as literal
+    /// text before. The field this matters for is <c>extent_value</c> under
+    /// <see cref="FindingExtent.Explicit"/> — open-ended free text ("paths, line ranges or
+    /// symbols") — and, through the same string, <c>extent_fingerprint</c>'s inherited
+    /// <c>RelativePath</c> component. See <see cref="FrontmatterListItemEscapeForwardTable"/>'s doc
+    /// comment for the full field-by-field accounting; every other list-valued field's own
+    /// convention gives no reason to expect a hand-written value here in the first place.
+    /// </summary>
     private static readonly IReadOnlyDictionary<char, char> FrontmatterListItemEscapeTable =
-        new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r', [','] = ',' };
+        new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r', [','] = ',', ['s'] = ' ' };
 
     /// <summary>
     /// Escapes one item of a comma-joined list-valued frontmatter field (§5's <c>tasks</c> and
-    /// <c>blocked_by</c>): the same backslash/newline/carriage-return escaping
-    /// <see cref="EscapeFrontmatterValue"/> applies to a scalar value, plus the list separator
-    /// itself, so an item containing a literal comma cannot be misread as two items. A backslash
-    /// is escaped first, same invertibility discipline as every other escaper here.
+    /// <c>blocked_by</c>, among others enumerated on <see cref="FrontmatterListItemEscapeForwardTable"/>):
+    /// the same backslash/newline/carriage-return escaping <see cref="EscapeFrontmatterValue"/>
+    /// applies to a scalar value, plus the list separator itself, so an item containing a literal
+    /// comma cannot be misread as two items. A backslash is escaped first, same invertibility
+    /// discipline as every other escaper here.
+    ///
+    /// §13 remediation: then the same leading/trailing-space escaping <see cref="EscapeFrontmatterValue"/>
+    /// applies (<see cref="EscapeEdgeSpaces"/>, shared with it verbatim) — but applied to <b>every
+    /// item</b>, not only the first/last: <see cref="JoinFrontmatterList"/> calls this once per item
+    /// with no positional awareness of its own, so an item's own leading/trailing space is escaped
+    /// the same way whether that item sits at the joined value's true line edge or in the middle,
+    /// next to a separating comma on both sides. That is deliberately broader than the true-line-edge
+    /// case alone: a space immediately after a comma is exactly as easy to introduce by accident
+    /// (<see cref="FrontmatterListItemEscapeForwardTable"/>'s doc comment — typing a comma-separated
+    /// list with a space after the comma) and exactly as ambiguous to a reader as one at the line's
+    /// actual end, so there is no narrower rule worth having here. Composition with the list
+    /// separator stays invertible: <see cref="SplitFrontmatterList"/>'s boundary scan treats any
+    /// backslash followed by another character as one protected pair regardless of which letter
+    /// follows, so a <c>\,</c> and a <c>\s</c> sitting next to each other in the same item are each
+    /// consumed as their own pair and neither can be misread as, or swallow, the other.
     /// </summary>
-    internal static string EscapeFrontmatterListItem(string value) => EscapeUsing(value, FrontmatterListItemEscapeForwardTable);
+    internal static string EscapeFrontmatterListItem(string value) =>
+        EscapeEdgeSpaces(EscapeUsing(value, FrontmatterListItemEscapeForwardTable));
 
     /// <summary>Reverses <see cref="EscapeFrontmatterListItem"/>.</summary>
     internal static string UnescapeFrontmatterListItem(string value) => UnescapeUsing(value, FrontmatterListItemEscapeTable);
