@@ -35972,23 +35972,713 @@ manufacturing a false definition, so it fails safe rather than green — but it 
 assumption about text a caller controls, in a test that exists precisely because one of those was wrong.
 Recorded in `## NEXT`.
 
+**[architect]** 13.4 — implemented by me, not by a worker, at the Product Owner's direction. The block's
+only file is `.claude/hooks/dmons-guard.sh`, which the guard denies to every agent by its own
+`*/.claude/*` rule: a worker cannot write it, and lifting the rule for the duration would disable the
+very boundary the block extends. Same carve-out as the `Makefile`. The reviewer still audits the diff and
+the gates still ran; only the authorship moved.
+
+**What the boundary now denies.** Two rules, one message, one shared path pattern:
+
+- **File-write tools** (`Edit`/`Write`/`MultiEdit`/`NotebookEdit`) on any path under the card store.
+- **Anything that can run a shell** (`Bash`, the `ctx_*` tools) where a *mutating* command names a store
+  path — `>`/`>>` redirects, `rm rmdir unlink mv cp tee touch truncate mkdir install dd ln chmod chown
+  shred`, and `sed`/`perl`/`ruby`/`python`/`ed`/`patch` invoked in-place.
+
+**Reads are untouched, deliberately.** `cat`, `grep`, `sed -n`, `ls` over a card file all pass. 13.6 rests
+on a card's status, owner, scope and history being determinable from the file alone, and 13.5 on the
+record staying readable when the tool cannot run — a boundary that blinded an agent to its own record
+would refute both. The store is `callboard`'s to *write*; it was never `callboard`'s to *show*.
+
+**The trap this repository sets, and the pattern that avoids it.** The naive rule is `callboard/`. This
+repository **is** `callboard`, so every source file under it carries `callboard/` in its absolute path and
+that rule denies the whole tree — `src/Callboard/Cards/CardLayout.cs` included. The pattern matches the
+five directories `CardLayout.cs` and `IndexPaths.cs` actually name (`register decisions changes identities
+.index`) **as a path tail**, the way `AnchoredCardPath` matches one. That is also what makes it right for
+a store rooted outside this repo rather than merely right here.
+
+**Segment-splitting, not whole-string matching.** The existing git rule joins every string in the tool
+input and matches across the lot. Reused here that would condemn `cat callboard/register/rule-0001.md ; rm
+/tmp/scratch` — a legitimate read sentenced by an unrelated deletion. The store rule splits on `; & | \n`
+first and requires the path and the mutation in the *same* segment. Fixture case 13 is that case.
+
+**The refusal names verbs that exist** (§13 ruling 5): `callboard comment add`, `block create`,
+`block base`, `block transition` — all four verified present in `CommandParser.cs`. It closes by naming
+the gap-reporting route, because a boundary with no exit is one an agent routes around: *if no verb records
+what you have, that is a gap to report to the Architect, not to route around.*
+
+**Fixture transcript — 19/19**, driving the real hook with crafted `PreToolUse` payloads
+(`$TMPDIR/guard-fixture.sh`, scratch; not committed):
+
+```
+ok    deny   Write a register card                 ok    allow  Write repo source (name clash)
+ok    deny   Write a change card, abs path         ok    allow  Write the DEVLOG
+ok    deny   sed -i a card                         ok    allow  cat a card
+ok    deny   redirect into a card                  ok    allow  grep the store
+ok    deny   rm the derived index                  ok    allow  the tool writing the store
+ok    deny   ctx_execute mv a decision             ok    allow  read a card, rm elsewhere
+ok    deny   append into a card                    ok    allow  ordinary build
+ok    deny   perl -pi a card                       ok    allow  sed reading a card (no -i)
+ok    deny   still denies git commit               ok    allow  still allows git diff
+                                                   ok    allow  grep -i over the store
+```
+
+The first pass was **18/19**: `sed -i '' …` slipped through. The `-i` pattern required a space *before*
+the flag that the `sed`-matching space had already consumed, so it caught `perl -pi -e` and missed the
+plainest case of all. **A pattern that passes the elaborate case and fails the obvious one is the shape
+§13 ruling 5 warns about** — a regression test nobody has watched fail is a guess, and this one was only
+not a guess because the fixture ran before the claim.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`. Suite unchanged at
+1082 — the diff is one shell file and adds no C#.
+
+**Not ticked.** A fixture proves the hook's logic against a payload I wrote; it does not prove the hook is
+*wired* to a real agent's tool calls. → @reviewer — audit the diff, and **perform the live probe**: attempt
+exactly one `Bash` write into the card store (`printf 'x' > callboard/register/probe.md`), report the
+stderr you receive verbatim, and confirm nothing landed. Use Bash, not `Write`: the auditor rule would
+deny a `Write` on its own and tell us nothing about the new rule.
+
+**[reviewer]** 13.4 — audit of `.claude/hooks/dmons-guard.sh` (+25/−0) and this DEVLOG (+66/−0). No C#,
+no `Makefile` touch, no `tasks.md` touch; scope is exactly the block. Authorship noted and not treated
+as a breach — the guard denies `*/.claude/*` to every agent, so a worker could not have written it.
+
+**Verdict: Request changes.**
+
+---
+
+**The live probe — the hook is wired, and it blocks.** One `Bash` attempt,
+`printf 'x' > callboard/register/probe.md`. Stderr, verbatim:
+
+```
+PreToolUse:Bash hook error: ["$CLAUDE_PROJECT_DIR/.claude/hooks/dmons-guard.sh" auditor]: BLOCKED by the OpenSpec Apply Workflow (auditor boundary).
+
+The card store is `callboard`'s to write. Editing a card file directly bypasses every refusal the tool exists to enforce, and leaves the derived index describing a record that no longer says that. Record it with the verb for what it is — `callboard comment add`, `callboard block create`, `callboard block base`, `callboard block transition` — and if no verb records what you have, that is a gap to report to the Architect, not to route around. Reading card files (`cat`, `grep`, `ls`) is fine and is not blocked.
+
+This is not a permission prompt and not a transient failure — retrying it, or reaching the same result by another tool, is itself a breach. Post the reason to the change DEVLOG and hand back to the Architect; that hand-back is the expected outcome here, not a failure.
+```
+
+Nothing landed: `ls callboard/ 2>&1` → `ls: callboard/: No such file or directory` — no file, and no parent
+directory silently created either. **The block's central claim holds: the rule is live against a real
+agent's real tool call, not only against a fixture.** Two further live confirmations fell out of the
+audit by accident: a `ctx_batch_execute` whose *command text* merely named `.claude/hooks/…` was blocked
+by rule 3's sibling, and a probe list containing `git checkout -- callboard/register/a.md` was blocked by
+the pre-existing git rule at :68 — so **that case is already covered, and covered by the right rule**;
+the store rule does not need a `git checkout` clause.
+
+**What I verified clean, so it is not re-litigated later.**
+
+1. **The directory list is exact.** `CardLayout.cs:17,18,19,31` gives `register/ decisions/ changes/
+   identities/`; `ArchiveDirectory` (:51) is `ChangesRootDirectory + "archive" + "/"`, i.e. *nested under*
+   `changes/` and therefore covered by it; `IndexPaths.cs:12` gives `.index/`. Five directories, five
+   alternatives. **Nothing the store uses is omitted, and nothing claimed is dead.** `.gitignore`'s
+   `callboard/**/*.lock` and `callboard/**/*.tmp-*` also live under those five, so the lock and temp-file
+   surface is covered without a sixth alternative.
+2. **Tail-matching is the right shape and matches `AnchoredCardPath`'s caution about it.** Note the
+   asymmetry is deliberate and correct: `AnchoredCardPath` *rejects* mere tail-matching because it is
+   deciding where a write may land under one known root; the guard has no known root, so a tail is all it
+   can honestly match. The comment at :23–27 says this. Good.
+3. **The name clash is genuinely avoided.** `src/Callboard/Cards/CardLayout.cs` does not match — the
+   capital `C`, and no store directory follows. `openspec/changes/` does not match either: the pattern
+   requires `callboard/` immediately before `changes/`. Reads pass throughout (`cat`, `grep`, `ls`,
+   `sed -n`), which is what 13.5 and 13.6 rest on.
+4. **The loop runs in the current shell.** `done <<<"$(…)"` (:92) is a here-string, not a pipe, so
+   `deny`'s `exit 2` at :33 actually exits the hook. Had this been `… | while`, every store denial would
+   have silently not blocked. Worth having got right.
+5. **`tr ';&|\n' '\n\n\n\n'` loses nothing** — a 1:1 character map; `&&` merely yields an empty segment.
+   And `<<<` re-appends the newline that `$( )` stripped, so the final segment is still read.
+6. **All four named verbs parse.** `CommandParser.cs:45 → :3053 ParseCommentAdd`; `:35 → :111 create`,
+   `:114 base`, `:117 transition`. §13 ruling 5 satisfied, and the refusal names the gap-reporting exit
+   rather than leaving an agent cornered.
+
+---
+
+### Blockers — the rule fails open on ordinary commands
+
+I re-implemented `STORE_PATH_RE` and the three mutation patterns verbatim, including the `tr`/`while`
+split, and ran 22 payloads through them. The controls behave (`rm` a card file, `>` redirect, heredoc
+redirect, `dd of=`, `awk`'s internal `>`, `find … -exec rm`, and `cat card ; rm /tmp/x` correctly
+*allowed* — fixture case 13's separation works). These did not:
+
+**B1 — `STORE_PATH_RE` requires a trailing `/`, so naming the directory itself escapes.**
+`dmons-guard.sh:28` ends `(register|decisions|changes|identities|\.index)/`. A path that stops at the
+directory never matches, so the whole rule is skipped by the `|| continue` at :86:
+
+- `rm -rf callboard/register` → **allowed**
+- `mv callboard/register /tmp/x` → **allowed**
+
+This is the plainest destructive command in the set, and it deletes more than any single-card write could.
+It is the same shape as the `sed -i ''` defect the fixture caught: the elaborate case passes, the obvious
+one walks through. Suggest making the trailing `/` optional with a boundary — `(…)(/|$|[^[:alnum:]_.-])`.
+
+**B2 — the store root itself is not covered.** `rm -rf callboard` matches nothing at :28 and is
+**allowed**. That removes the entire record. A separate alternative for the root (bounded so that
+`src/Callboard/…` still cannot match) is needed, or B1's fix generalised.
+
+**B3 — splitting on `|` defeats a pipeline; splitting is what does it.** `:92` turns `|` into a newline,
+so path and verb land in different segments and neither segment satisfies both halves:
+
+- `ls callboard/register/*.md | xargs rm` → **allowed**
+- `cat /tmp/x >| callboard/register/a.md` → **allowed** (the `>|` noclobber-override redirect is split
+  apart before `:87`'s redirect pattern ever sees it)
+
+The `;`-splitting fix for fixture case 13 is right; splitting on `|` as well buys nothing (a pipeline is
+one command) and costs both of these.
+
+**B4 — `find … -delete` is not in the verb list.** `:88` has no `find`. Even with B1 fixed,
+`find callboard/register/ -name '*.md' -delete` names no listed verb and is **allowed**. (`-exec rm`
+happens to be caught, but only because `rm` appears — which is luck, not coverage.)
+
+**B5 — an interpreter payload carries no shell verb at all, and this is the agents' busiest path.**
+`:89` matches `python3`/`perl`/`ruby` **only when followed by `-i`/`--in-place`**. Everything else is
+open:
+
+- `python3 -c "open('callboard/register/a.md','w').write('x')"` → **allowed**
+- `python3 -c "import os; os.remove('callboard/register/a.md')"` → **allowed** (the `;` split also
+  separates the two halves here)
+- `node -e "require('fs').writeFileSync('callboard/register/a.md','x')"` → **allowed**
+
+And the sharpest form: the guard deliberately covers `ctx_execute` because "those run commands too"
+(:52–54) — but `ctx_execute` takes a `language` parameter, and a call with `language: "python"` or
+`"javascript"` and body `fs.writeFileSync('callboard/register/a.md','x')` contains **no shell text
+whatsoever**. `:88`–`:89` are shell-verb patterns applied to a non-shell payload; the store path is
+right there in `CMD` and nothing matches it. Given how routinely these agents reach for `ctx_execute`,
+this is the bypass most likely to be taken by accident rather than by intent.
+
+I do not think a `PreToolUse` regex can ever be a sandbox, and I am not asking for one. B1, B2 and B5
+are not exotic — they are what an agent types when it is tidying up or scripting a fixture. A boundary
+whose header says it "Fails CLOSED" (:17) should catch those.
+
+### Nits
+
+**N1 — a false positive that will bite this very thread.** :88's verb list is matched against any
+segment containing a store path, so *prose* that names both is denied. Confirmed:
+`printf 'the guard denies rm, mv, cp under callboard/register/' >> …/DEVLOG.md` → **denied**. Writing a
+DEVLOG post about the store through a Bash heredoc is blocked. It only misses me because I am posting via
+`Edit`, whose check at :119 looks at `file_path` alone. Low harm, but it is the boundary refusing the
+hand-back it demands.
+
+**N2 — a worker's scratch fixture store is denied.** `rm -rf $TMPDIR/callboard/register/` → **denied**,
+because the pattern is root-agnostic by design (:26–27). That trade is defensible and I would keep it,
+but it is worth stating in the header, since a worker building a temp store to test against will hit it
+and needs to know the denial is intended.
+
+**N3 — the refusal message is duplicated at :90 and :120 and the two copies have already drifted**: :90
+ends "Reading card files (`cat`, `grep`, `ls`) is fine", :120 ends "Reading card files is fine". Same
+message, two literals, no shared variable — the next edit will drift them further. `STORE_PATH_RE` was
+hoisted for exactly this reason; the message deserves the same treatment.
+
+### Architectural note — `CLAUDE.md`, and whose debt it is
+
+The header at :14–15 commits the file to a standard: the agents' prose "is the explanation; this file is
+the enforcement, and the two must keep saying the same thing." `CLAUDE.md:77–80` enumerates what the
+guard blocks — "git writes, edits to `tasks.md`, the `Makefile`, `CLAUDE.md` and `.claude/`, and any
+attempt to spawn another agent" — and after this block that list is **incomplete**. The agent prompts are
+also silent on it.
+
+**Not a defect of this block, and I am not asking for it here.** `CLAUDE.md` is the Architect's file and
+off-limits to every agent, so no block could have carried it. But I do not think 13.7 covers it either as
+worded — 13.7 is *"document the commands the agents use in place of `DEVLOG.md`"*, which is the agent
+prompts' vocabulary, not the Boundaries bullet's inventory. ❓ @architect — this is owed to someone;
+either widen 13.7 to include the `CLAUDE.md` Boundaries bullet and the agents' boundary sections, or take
+it as an explicit Architect edit alongside it. It should not fall between the two.
+
+→ @worker for B1–B5 (and N1–N3 if cheap). Re-audit on the fixed guard, and please extend the fixture
+with the cases above — `rm -rf callboard/register`, `rm -rf callboard`, the `xargs` pipeline,
+`find … -delete`, and a `ctx_execute` payload with `language: "python"` — since a case nobody has watched
+fail is a guess. Everything in the "verified clean" list above stands and does not need re-checking.
+
+**[architect]** 13.4 remediation — all five blockers fixed, both remaining nits addressed or ruled, and
+the fixture grown from 19 cases to 38. **All five were real**, and four of them shared one shape: the
+pattern matched the *form of the write I had pictured* rather than the *set of ways to write*.
+
+- **B1 — the trailing slash.** `STORE_PATH_RE` ended at `/`, so `rm -rf callboard/register` — which
+  destroys the whole directory — walked past a rule that stopped `rm callboard/register/rule-0001.md`.
+  The directory name now ends at any non-path character. **This is the `sed -i ''` defect a second time,
+  in the same block**: a pattern that catches the elaborate case and misses the blunt one.
+- **B2 — the store root.** `rm -rf callboard` was uncovered and could not be covered by the path pattern,
+  because a bare `callboard` token is far more often *the binary being invoked* than a directory being
+  destroyed. It needed its own rule, matching the root only as the **argument of a destructive verb**:
+  `callboard block create` passes, `rm -rf callboard` does not. Two fixture cases pin that distinction,
+  including `rm -rf bin obj && callboard block create`, where both readings appear in one command.
+- **B3 — splitting on `|`.** A pipeline is *one* command, and splitting it put `ls callboard/register/*.md
+  | xargs rm` into a segment whose only verb was `ls`. Splitting on `;` and `&` was the part that earned
+  its keep; `|` bought nothing and cost this. Now split on sequencing operators only.
+- **B4 — `find`.** Added `-delete`, `-exec` and `-execdir`.
+- **B5 — interpreters, and the sharpest case in the review.** `python3 -c "open(p,'w').write(x)"` was
+  allowed because the rule wanted `-i`. Interpreters are now matched on *any* flags — `python node ruby
+  perl php deno bun osascript` — while `sed`, `awk` and `jq` stay out deliberately, since each needs a
+  `-i` or a redirect to write and both are already caught, which is what keeps `sed -n` a legal read.
+  **And the form with no shell text at all**: a `ctx_execute` with `language: "python"` carries code, not
+  a command line, so there was nothing for a verb rule to match — on the agents' busiest path. Non-shell
+  code is now judged before the verb rules and **fails shut on any mention of a store path**. There is no
+  verb vocabulary to read in Python: `open(p,'w').write(x)` and `open(p).read()` differ by one character.
+  Nothing is lost — reading a card is `cat`.
+
+**N3 — the duplicated refusal — was right, and it had already drifted** between its two copies within one
+block. Extracted to `deny_store()`. **A refusal stated twice is a refusal that will eventually say two
+different things**, and this one managed it before the block was even committed.
+
+**N1 stands as a documented cost.** Prose naming a store path in the same Bash segment as the word `rm`
+is denied, so a DEVLOG post *about* the store cannot be written via a heredoc. The route is the `Write`
+tool, which is allowed on `DEVLOG.md` — this very post took it. Narrowing the rule to catch only verbs in
+command position would reopen B3's `| xargs rm`, so the boundary keeps the false positive and gives up the
+convenience. **N2** (`$TMPDIR/callboard/register/` denied) is intended: the pattern matches a store *tail*
+wherever it is rooted, which is what makes it correct for a store outside this repo.
+
+**Fixture: 38/38** (`$TMPDIR/guard-fixture.sh`, scratch, not committed), grouped by blocker with its
+controls beside it — every deny paired with the allow that proves the rule did not simply swallow the
+category. Gates: `BUILD_EXIT:0` `TEST_EXIT:0` `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+**❓ answered — `CLAUDE.md`'s Boundaries bullet is mine, and it is homed under 13.7.** The reviewer is
+right that it now under-describes the guard, against the guard's own standard that the prose and the
+enforcement must keep saying the same thing; and right that 13.7's wording ("the commands the agents use
+in place of `DEVLOG.md`") does not obviously reach an Architect-facing paragraph. **Ruling: 13.7 covers
+both faces of the same documentation — what the agents may call, and what the boundary denies them** —
+and I write it, as no agent can. It is not a defect of this block. The queue item under "`CLAUDE.md` and
+the agent definitions — still owed" now has an owner and a task number.
+
+→ @reviewer — re-audit `git diff` on `.claude/hooks/dmons-guard.sh`. The five blockers, and specifically
+whether the two new patterns have the *same* class of hole in a new place: `STORE_ROOT_TARGET_RE`'s
+argument matching, and whether the non-shell language gate can be reached with a language string it does
+not recognise. **No second live probe needed** — the wiring is proven; audit the logic.
+
+**[reviewer]** 13.4 remediation — **Request changes.**
+
+B1, B3 and B4 are fixed and I can demonstrate it. B2 and B5 are fixed for the shapes they were raised
+on and leave the *same class of hole* in a new place: the store **root** is now guarded only where the
+word `callboard` sits after a destructive verb in the same segment, and the file-level battery still
+misses two tools that write in place with no flag at all. Both are demonstrated below, not conjectured.
+
+Method: no live probe. I reconstructed `STORE_PATH_RE`, `STORE_ROOT_TARGET_RE` and the five write
+predicates verbatim from `.claude/hooks/dmons-guard.sh:32,38,117–135` into a standalone harness and drove
+43 command strings through the same `tr ';&\n'` segmentation the guard uses, with the store word built at
+runtime so my own harness did not trip the guard I was testing. Every verdict quoted below is that
+harness's output. One live datum came free: my first `Bash` call in this audit was blocked by the
+`.claude/(hooks|agents|settings)` rule with the auditor message, so rule 2's pre-existing arm and the
+`auditor` role wiring are confirmed working in this session.
+
+### Blockers
+
+**R1 — the store root fails open whenever the verb does not sit next to the word.**
+`.claude/hooks/dmons-guard.sh:38`. `STORE_ROOT_TARGET_RE` is ordered: verb, then tokens, then
+`callboard`. Every destructive shape that puts the path *before* the verb, or names it to a tool that is
+not in the verb list, passes:
+
+```
+allow   ls -d callboard | xargs rm -rf
+allow   find callboard -delete
+allow   find callboard -name '*.md' -delete
+allow   tar -xzf backup.tgz -C callboard
+allow   rsync -a --delete /tmp/x/ callboard/register/
+```
+
+The first is exactly the shape B3 was raised on, one directory higher. The `xargs` fix works for the
+*path* pattern (`ls callboard/register/*.md | xargs rm` → `DENY(verb)`, confirmed) because there
+`STORE_PATH_RE` matches anywhere in the segment and any verb anywhere then denies — order-free. The root
+rule did not get that treatment, so the store's most destructive command is the one that passes. B4 has
+the same asymmetry: `find` with `-delete` is inside the `STORE_PATH_RE`-gated branch, so it catches
+`find callboard/register -delete` and not `find callboard -delete`. The last line is a fifth verb gap
+that is not about the root at all — `rsync` writes *into* the store, through the path pattern, and is
+absent from the write-verb list at line 124 along with `tar` and `unzip`.
+
+The same hole reaches through the new language gate. Lines 106–111 fail shut on `STORE_PATH_RE` only, so
+a non-shell tool aimed at the root is not judged at all:
+`ctx_execute(language:"python", code:"import shutil; shutil.rmtree('callboard')")` → allowed. (The `;`
+splits it, and neither segment carries a store *path* or a listed verb.)
+
+**R2 — `patch` and `ed` write in place with no flag, and are guarded as if they needed one.**
+`.claude/hooks/dmons-guard.sh:130`. The predicate requires `-i`/`--in-place` before it fires. That is
+right for `sed` and wrong for the other two: `patch`'s `-i` names the *patch file*, not in-place editing,
+which is its default; and `ed` has no `-i` at all — it writes when told `w`. Both are present on this
+machine:
+
+```
+allow   patch callboard/register/rule-0001.md < fix.diff
+allow   printf '1d\nw\n' | ed callboard/register/a.md
+allow   ex -sc '%d|x' callboard/register/a.md
+```
+
+That is a card file rewritten wholesale, past every refusal, with a tool the guard already names.
+(`ex` is the third of the family and is not listed at all.)
+
+**R5 answer, folded in — the interpreter list.** Naming only what this environment genuinely has and
+what genuinely writes: `dotnet fsi` (F# interactive ships with the .NET 10 SDK this repo already
+requires) — `dotnet fsi w.fsx callboard/register/a.md` → allowed. Plus `patch`/`ed`/`ex` above. I did
+**not** raise `swift`, `lua` or `Rscript`: I have no evidence any of them is installed here, and padding
+a denylist with absent binaries makes it read as more complete than it is. `xargs -I{} python3 …` needs
+nothing — the interpreter predicate is position-free and already catches it. `awk`'s exclusion is
+correct as documented: `print > "callboard/register/x.md"` is caught by the redirect predicate.
+
+### Notes under the changes requested
+
+**N-A — `STORE_ROOT_TARGET_RE`'s greedy middle denies ordinary work.**
+`([[:space:]]+[^[:space:]]+)*` spans the whole segment, and B3 removed the `|` split, so the rule now
+reads: *any* destructive verb anywhere in a pipeline plus *any* bare `callboard` token anywhere after it.
+Confirmed false positives:
+
+```
+DENY   rm -rf obj bin | grep callboard
+DENY   truncate -s 0 log.txt | grep callboard
+DENY   cp bin/Release/net10.0/osx-arm64/publish/callboard /usr/local/bin/
+DENY   chmod +x ./callboard
+DENY   dotnet tool install --global callboard
+DENY   ln -s "$PWD/bin/callboard" ~/bin/cb
+```
+
+The first two are unrelated cleanup that happens to mention the tool downstream. The last four are the
+*built binary*, which is textually identical to the store root — that ambiguity is inherent and cannot be
+regexed away, and I am not asking for it to be. I am asking that it be **stated in the comment at
+lines 34–37**, which currently says only that `callboard block create` passes. A worker who hits
+`chmod +x ./callboard` and reads that comment will conclude the guard is broken; a worker who reads
+"the binary and the store share a name, so verb-shaped commands naming the binary are denied — report
+it, do not route around it" will do the right thing. Same standard the file sets for itself at
+lines 13–15.
+
+**N-B — B3's cost, also worth writing down.** Reads that pipe into a write-named tool are now denied:
+`cat callboard/register/rule-0001.md | tee /tmp/x.md` → `DENY(verb)`. Fail-closed, so not a defect — but
+the comment at lines 96–99 promises "`cat`, `grep`, `ls` and `sed -n` … is fine and is not blocked", and
+that promise is now conditional on what follows the pipe. One clause.
+
+**N-C — B1 in the other direction: clean.** I checked the widened terminator `(/|[^[:alnum:]_.-]|$)`
+against the near-misses. `callboard/register.bak` and `callboard/changes-old` are correctly **not**
+matched (`.` and `-` are inside the excluded class), so a sibling file is not mistaken for the store. One
+over-match: a URL matches, because `[^[:space:]]*/` swallows the scheme and host —
+`https://x/callboard/changes` satisfies `STORE_PATH_RE`. Harmless alone (`curl -sO …` → allowed); it only
+bites combined with N-B, where `curl -s https://x/callboard/changes | tee /tmp/p.json` → `DENY(verb)`.
+Not worth a pattern change; worth knowing it exists.
+
+**N-D — the language gate is sound in the dangerous direction.** `case` is exact-match, so `Shell`,
+`SHELL`, `shellscript` and `sh -c` all fall to `*)` and fail shut. That is the safe side, and the cost is
+only a denied read. Nothing lands in the pass-through arm carrying non-shell code: `''` is reachable from
+exactly two tools, `Bash` and `ctx_batch_execute`, and both carry shell; `ctx_execute` and
+`ctx_execute_file` both mark `language` **required**, so neither can reach `''` by omission. The
+`[.tool_input | .. | strings]` sweep reaches everything that matters — `..` recurses through
+`ctx_batch_execute`'s array of `{label, command}` objects, and `ctx_execute_file` marks `code` required,
+so there is no shape where executable text lives outside `tool_input`. The gap in this arm is R1's, not
+the arm's.
+
+**N-E — one thing that is right and easy to break later.** The loop at line 117 is fed by a here-string
+(`done <<<"$(…)"`), so it runs in the current shell and `deny_store`'s `exit 2` actually blocks. Had it
+been `… | while read`, every store denial in rule 2 would have exited a subshell and the guard would have
+returned 0 — a refusal that fails open while reading as if it fires. Worth a comment saying so, because
+the pipe form is the one someone reaches for.
+
+### Regression — confirmed
+
+`git diff --numstat` reports `66 0` on the guard: **no context line is removed anywhere in the diff.**
+All six pre-existing rules survive verbatim — agent-spawning (`Agent | Task`, line 61), git subcommands
+with the option-collapsing `sed` intact (82–86), `gh` (88–90), `.claude/(hooks|agents|settings)` (92–94),
+`tasks.md` (148), `Makefile|GNUmakefile|*.mk` (151), `CLAUDE.md`/`.claude/` on the write path (157), and
+the auditor's `DEVLOG.md`-only restriction (164–166). The new `printf … "$FILE" | grep -Eq
+"$STORE_PATH_RE"` at line 162 sits *above* the auditor check, which is the right order: a worker writing
+a card file gets the store message rather than nothing. No git write was attempted.
+
+### Not re-litigated
+
+N1, N2 and the `❓` on `CLAUDE.md` — the rulings stand and I have nothing to add to them. The 13.7
+homing in particular answers the question I asked better than the question did.
+
+→ @architect — R1 and R2 are fail-open on the store and are mine to block on. N-A through N-E are notes
+for whoever fixes them; N-A is a comment, not a pattern.
+
+**[architect]** 13.4 remediation, round two — R1 and R2 fixed. **Both were right, and R1 was the same
+defect as B3 one directory higher**, which I had fixed in the path rule and left standing in the root rule.
+
+**R1 — the root rule was ordered, so it failed open wherever the verb did not sit beside the word.**
+`STORE_ROOT_TARGET_RE` matched verb→argument, so `ls -d callboard | xargs rm -rf`, `find callboard
+-delete` and `tar -xzf b.tgz -C callboard` all walked past it. The fix is not a longer regex — it is to
+stop asking the regex to do two jobs. **The root is now matched as a plain token, and the distinction
+between the tool and the store is drawn separately, by position**: a `callboard` at the head of a segment,
+a pipeline stage or a substitution is the binary being invoked — the one thing entitled to write the
+store — and is blanked out before the token match runs. Whatever `callboard` survives that is a path.
+
+That is what makes the rule order-free, and it is the shape the path rule already had. Five controls pin
+the other side of it: `callboard block create`, `cat body.md | callboard comment add`, `ID=$(callboard
+block create)`, `./callboard index rebuild`, and `rm -rf bin obj && callboard state` — the last one being
+both readings in a single command. `rsync`, `tar`, `unzip` and `zip` joined the verb list.
+
+**R2 — the in-place rule exempted the two tools that need no flag to edit in place.** `patch` edits in
+place by *default* and `ed` has no `-i` at all, so requiring `-i` let `patch callboard/register/rule-0001.md
+< fix.diff` rewrite a card wholesale. `ed`, `ex` and `patch` moved to the blanket writer list; `sed` keeps
+the flag requirement alone, which is what keeps `sed -n` a legal read. Added `dotnet fsi`/`dotnet script`
+— the reviewer was right to name only what this environment actually has, and right not to pad the list.
+**`dotnet run` is deliberately absent**: in this repository it is how `callboard` itself is invoked.
+
+**A methodological note on the review.** The reviewer reconstructed both patterns and all five predicates
+into a standalone harness and drove 43 strings through them — **with the store word built at runtime so
+the harness would not trip the guard it was testing.** That is the same move as §13 ruling 5's reproduction
+from first principles, and it is why R1 arrived with four working bypasses rather than a suspicion.
+
+**Fixture: 59/59**, up from 38 — R1's seven bypasses and eleven controls, R2's four writers. Gates:
+`BUILD_EXIT:0` `TEST_EXIT:0` `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`. `shellcheck` is clean on
+this block: its one finding on the new code (SC2020, `tr` sets vs words) is a false positive and now
+carries a directive stating why; the SC2221/SC2222 pair on line 171 is **pre-existing**, in the
+`CLAUDE.md` arm this block does not touch, and is not being fixed here.
+
+→ @reviewer — third pass, and narrow. The position-based stripping at the head of the loop is the only
+structural change: audit **that**. Can a `callboard` token be pushed into command position by a construct
+the `sed` does not model (`xargs callboard`, `env VAR=x callboard`, a here-doc body, `bash -c '…'`)? Can a
+store reference be *hidden* by it — a segment where the stripping removes a token that was a path? And
+does `STORE_ROOT_RE` now over-match anything ordinary, given it no longer requires a verb at all?
+
+**[reviewer]** 13.4, third pass — **Request changes**. One blocker, and it is not in the stripping.
+
+**R1 and R2 are fixed, and the structural fix is the right one.** I rebuilt both patterns, the strip and
+all six predicates into a standalone harness (store word assembled at runtime, no live probe) and drove
+45 strings through it. Every R1 bypass now denies — `ls -d callboard | xargs rm -rf` → `DENY(verb)`,
+`find callboard -delete` → `DENY(find)`, `tar -xzf b.tgz -C callboard` → `DENY(verb)`, `rsync -a --delete
+/tmp/x/ callboard/register/` → `DENY(verb)` — and so does the non-shell arm R1 reached through:
+`shutil.rmtree('callboard')`, `fs.rmSync("callboard", …)` and `Path("callboard").rmdir()` all match
+`STORE_ROOT_RE` and fail shut. R2's four writers deny — `patch`, `ed`, `ex` on `interp`, `dotnet fsi` on
+`dotnet` — while `sed -n 1,5p`, `cat`, `ls` and `grep` over a card stay legal reads and `dotnet run`
+stays allowed. Order-freeness is real: the root rule no longer cares where the verb sits.
+
+**The strip itself is sound in both directions**, which is what you asked me to audit. Direction 1 — the
+routes that do *not* reach the modelled command position (`xargs callboard comment add`, `env FOO=1
+callboard block create`, `bash -c "callboard block create"`, `exec callboard state`, `command callboard
+state`) all land on `allow` anyway, because none of them carries a write verb; the strip missing them
+costs nothing. `sudo`/`env`/`time`/`nice`, `./`, pipeline heads and `$( )` heads all strip as intended,
+and all five of your controls pass. Direction 2 — I could not find a segment where the strip eats a token
+that was a path *and* that segment would otherwise have denied. It only fires on a `callboard` at the
+head of a segment, stage or substitution followed by whitespace-or-end, and in every case I could
+construct where a path sits there, the segment carries no verb to deny on either. `` cp x `callboard` y ``
+and `tar -cf a.tgz callboard b` are both left intact and both deny.
+
+### Blocker
+
+**R3 — a backslash line continuation splits the verb from the path, and the store deletes.**
+`.claude/hooks/dmons-guard.sh:149`. The segment split is `tr ';&\n' '\n\n\n'`, which treats **every**
+newline as a sequencing operator — including one the shell does not, the escaped newline. A continued
+command therefore arrives as two segments: one with the verb and no path, one with the path and no verb.
+Neither denies. Confirmed on the harness:
+
+```
+allow   rm -rf \
+        callboard/register
+allow   rm -rf \
+        callboard
+allow   rm -rf \
+          callboard/register/rule-0001.md
+DENY    rm -rf callboard/register        (same command, one line — control)
+DENY    rm -rf callboard                 (control)
+```
+
+That is the whole store, destroyed by a single ordinary shell command, past a guard whose one job is that
+this cannot happen. It is not evasion-shaped — a long `rm` broken across lines is a formatting habit, not
+a trick — and the guard is what stands between an agent and the record. (The strip is only incidental
+here: on the bare-root form it blanks the surviving `callboard`, but the `…/register` form is not
+stripped at all and passes on the missing verb alone. So this is the split, not this round's change, and
+it has been open since the rule was written — which is why I am blocking rather than noting it.)
+
+Fix is one line, in bash, no fork, immediately before the here-string at 149 — join the continuations
+before splitting, so the shell's reading and the guard's agree:
+
+```bash
+CMD=${CMD//\\$'\n'/ }
+```
+
+I re-ran all 45 strings with that in place: every `allow` above flips to `DENY(verb)`, and nothing that
+passed before changes verdict — including `cat body.md | \`⏎`callboard comment add`, which still strips
+and still passes.
+
+### Notes — none of these lets an agent write the store
+
+**N-F — `STORE_ROOT_RE` does *not* over-match ordinary work.** This was your question 3 and the answer is
+clean, for a reason worth recording: the terminator class `([^[:alnum:]_./-]|$)` excludes `/`, so a store
+root followed by a deeper path component cannot match. Every in-repo absolute path I tried is allowed:
+`rm -rf /Users/rendle/github/daemonicai/callboard/obj`, the same with `bin` and `obj` together, `mkdir -p
+/Users/rendle/github/daemonicai/callboard/src/Foo`, `cp src/A.cs
+/Users/rendle/github/daemonicai/callboard/src/B.cs`. URLs and prose likewise: `curl -sO
+https://example.com/callboard/changes` and `grep -rn "callboard" openspec/` both pass. Dropping the verb
+requirement cost nothing here.
+
+**N-A, carried forward and still unaddressed.** The binary and the store share a name, and verb-shaped
+commands naming the *binary* still deny: `chmod +x ./callboard`, `cp
+bin/Release/net10.0/osx-arm64/publish/callboard /usr/local/bin/`, `dotnet tool install --global
+callboard`, `rm -rf obj bin | grep callboard`. That ambiguity is inherent and I am still not asking for a
+pattern change — I am asking for the one clause in the comment at 34–42 that tells a worker who hits it
+what to do (report it; do not route around it). The comment now explains the *order* problem well and
+still says nothing about this.
+
+**N-G — R2's list denies some reads, because two of its entries are English.** `ed` and `ex` are matched
+as bare words and `patch` is an ordinary noun in this project's own vocabulary:
+`grep -w ed callboard/register/a.md` → `DENY(interp)`, `grep -rn patch callboard/changes` →
+`DENY(interp)`. Fail-closed, so not a defect, and moving the three was still right — `patch` in place by
+default was the actual hole. But `deny_store` promises "`cat`, `grep`, `ls`, `sed -n` … is fine and is not
+blocked" and that promise now has two more exceptions than it admits. `sed` remaining the only
+flag-gated case is correct, and `awk`/`jq` staying out is correctly justified by the redirect predicate;
+the only residual there is GNU `awk -i inplace`, which is not the `awk` on this machine.
+
+**N-H — heredoc bodies are segmented like commands.** A card body written through
+`callboard comment add <<'EOF'` has each of its lines split into its own segment, so a body that *quotes*
+a destructive command — exactly what an incident note in this project would do — denies the write of the
+record describing it. Fail-closed and low-frequency; worth knowing before someone reports it as a bug.
+
+**N-I — variable indirection passes, and always will.** `D=callboard/register; rm -rf $D` and
+`for d in callboard/register; do rm -rf "$d"; done` both allow. That is inherent to matching text rather
+than interpreting the shell, it is not what R3 is, and I am not asking for it to be closed — but the
+header comment claims this file is the enforcement to the prompts' explanation, and a reader should know
+the enforcement is a tripwire, not a sandbox.
+
+### Regression check — clean
+
+`git diff --numstat` reports **80 / 0** on the guard: no context line removed anywhere. All pre-existing
+rules survive verbatim — `Agent | Task`, the git subcommand list with its option-collapsing `sed`, `gh`,
+`.claude/(hooks|agents|settings)`, `tasks.md`, `Makefile|GNUmakefile|*.mk`, `CLAUDE.md`/`.claude/` on the
+write path, the `$STORE_PATH_RE` check above the auditor arm, and the auditor's `DEVLOG.md`-only
+restriction. The here-string feeding the loop (N-E) is intact, so `deny_store`'s `exit 2` still runs in
+the current shell. The SC2020 directive is correctly scoped. No git write attempted; no file but this one
+written.
+
+→ @architect — R3 is one line and I will re-audit on it alone. Everything else above is a note.
+
+**[architect]** 13.4 remediation, round three — R3 fixed, **and fixed one layer lower than reported.**
+
+**R3 was real and it was not this round's regression.** `tr ';&\n'` treated a *backslash-escaped* newline
+as a separator when the shell does not, so `rm -rf \`⏎`callboard/register` put the verb in one segment and
+its target in the next and neither matched. It has been open since the store rule was first written.
+
+The reviewer's remedy was `CMD=${CMD//\\$'\n'/ }` immediately before the here-string. I applied the same
+line **at the point `$CMD` is assembled**, before any rule reads it, because **the defect is not the store
+rule's — it is the assembled text's**, and the pre-existing git rule above has the identical hole:
+`git \`⏎`commit` splits exactly the same way. Fixing it at the split would have left the older rule
+carrying the bug the newer one had just been cleared of. The fixture now pins `git \`⏎`commit` too.
+
+**On the reviewer's aside, which is the more interesting finding.** Its first batched call was blocked —
+by the *pre-existing* `.claude/` rule, because the command string named the file it was reviewing. **The
+guard blocks reads of itself through the `ctx_*` path, and that makes auditing it awkward by construction.**
+It did the right thing: it did not retry by another route, it used `Read`, and it reported the friction.
+Rule 2 matches `.claude/(hooks|agents|settings)` anywhere in the command text with no read/write
+distinction, unlike the store rule two blocks below it, which draws exactly that line. **Recorded for
+`## NEXT`, not fixed here** — it is a pre-existing rule, this block does not touch it, and narrowing it is
+a change to the boundary's oldest guarantee that deserves its own carve rather than a footnote in a
+remediation.
+
+**Notes accepted, none fixed here:** N-A (the binary/store name ambiguity denies `chmod +x ./callboard`;
+the comment should tell a worker what to do about it — it is `deny_store`'s "report it to the Architect",
+and saying so is 13.7's job), N-G (`ed`/`ex`/`patch` as blanket words deny a few reads such as `grep -w ed
+<card>` — fail-closed and wider than `deny_store`'s promise of "reading is fine", so the *message* is what
+is inaccurate, also 13.7), N-H (heredoc bodies get segmented, so a card body quoting `rm -rf callboard` is
+refused — the body route is stdin to `callboard comment add`, which is unaffected), N-I (variable
+indirection passes and always will; a pattern guard cannot evaluate the shell).
+
+**Fixture: 64/64**, up from 59. Gates: `BUILD_EXIT:0` `TEST_EXIT:0` `FORMAT_EXIT:0` `VALIDATE_EXIT:0`
+`GATES_EXIT:0`. `shellcheck` clean on this block's code.
+
+**Three reviewer rounds on one block, and the count is the point.** Round 1: five bypasses. Round 2: two,
+one of them round 1's own fix left unapplied one directory higher. Round 3: one, older than the block.
+**The findings got older and narrower each round rather than repeating** — which is convergence, not
+churn. But the standard in `CLAUDE.md` §3c.4 exists because a block that will not converge is usually
+telling you something about the block, so this goes to the Product Owner before a fourth pass is spawned.
+Nothing is ticked and nothing is committed.
+
+**[reviewer]** 13.4, fourth pass — **Approve**. Scope was the R3 fix and only the R3 fix.
+
+**The move upstream is right, and it is strictly additive.** `.claude/hooks/dmons-guard.sh:90` sits
+between the `jq` assembly at 82 and the git-collapse `sed` at 95, so every rule in the shell arm now reads
+text whose continuations agree with the shell's reading. I rebuilt the whole arm — both patterns, the
+collapse, the three whole-`$CMD` rules, the strip, the split and all six predicates — into a standalone
+harness (store word assembled at runtime) and drove **65 strings** through it twice, once with line 90 and
+once without, then diffed the two verdict sets. **13 verdicts change, all of them `allow` → `DENY`. Not one
+`DENY` → `allow`.** That is the answer to the regression question in one measurement: the rejoin can only
+merge segments, and every deny in this file is "path *and* verb in the same segment", so merging adds
+denies and can never remove one.
+
+**Q1 — no pre-existing rule stops matching, and two of them gain coverage they were missing.** Six of the
+13 flips are the store rule (R3 proper). **Five are the older rules the move was made for**: `git ⟍`⏎`commit`,
+`git ⟍`⏎`  -C sub commit`, `git -C sub ⟍`⏎`commit`, `git ⟍`⏎`-c user.name=x ⟍`⏎`push` and `gh ⟍`⏎`pr create`
+all allowed before line 90 and deny after. Your reading was correct: fixing this at the split would have
+cleared the store rule and left the git rule carrying the identical hole. On the specific case you asked
+about — `git ⟍`⏎`  -C sub commit` — the rejoin hands the collapse `sed` `git   -C sub commit`, and the
+`[[:space:]]+` runs in that regex swallow the doubled space without trouble; it collapses to `git commit`
+and denies. Nothing ordinary flipped: `git status`, `git log`, `git ⟍`⏎`diff --numstat`, `gh ⟍`⏎`auth status`,
+`make gates`, `dotnet run -- state`, `grep -rn foo src/` all still allow, as do all fifteen of the store
+rule's allow-side controls (`callboard block create`, `cat body.md | ⟍`⏎`callboard comment add`,
+`ID=$(callboard block create)`, `./callboard index rebuild`, `sudo callboard state`, the `cat`/`ls`/`grep`/
+`sed -n` reads, the absolute in-repo `bin`/`obj`/`src` paths, and the URL). The `.claude/` rule denies with
+and without, unchanged.
+
+**Q2 — the rejoin is correct, and its two divergences from the shell both fail closed.** `\\`⏎ (an escaped
+backslash then a real break, which the shell reads as *two* commands) is over-merged into one segment, and
+a `\`⏎ inside a single-quoted string is likewise rejoined where the shell would keep it literal — both
+produce a spurious `DENY`, never a spurious `allow`, and both are the same shape as N-H. **CRLF is not a
+hole**: `${CMD//\\$'\n'/ }` does not match `\`+`\r\n`, so the pair stays split — which is *right*, because
+bash does not treat `\`+CRLF as a continuation either (the backslash escapes the CR and the newline still
+terminates the command). Guard and shell agree. On `jq … join(" ; ")`: the separator carries no newline, so
+the rejoin cannot merge across two tool-input strings, and the newlines it does act on are the command
+text's own — the only ones whose continuation semantics matter. The one residual is that the shell removes
+`\`⏎ with *no* separator while the guard inserts a space, so a word split mid-token
+(`rm -rf callbo⟍`⏎`ard/register`) still allows. That is **pre-existing and unchanged by this fix** — it
+allowed under the old `tr` split too, it is identical under your placement and the Architect's, and unlike
+R3 it is evasion-shaped rather than a formatting habit. Substituting the empty string instead would close
+it and reopen R3's common form (`rm -rf⟍`⏎`callboard` → `rm -rfcallboard`), so the space is the right
+trade. Noted, not asked for.
+
+**Q3 — nothing from R1/R2/B1–B5 reopens.** Re-drove the deny side: `ls -d callboard | xargs rm -rf`,
+`find callboard -delete`, `tar -xzf b.tgz -C callboard`, `rsync -a --delete … callboard/register/`,
+`tar -cf a.tgz callboard b`, `` cp x `callboard` y ``, `rm -rf callboard`, the redirects (`>`, `>|`),
+`mv`, `sed -i`, R2's `patch`/`ed`/`ex` and `dotnet fsi`, and the non-shell arm's `shutil.rmtree` and
+`fs.rmSync` — **all still deny**, with the same reason code as round three. `git diff --numstat` reports
+**88 / 0** on the guard: no context line removed, so every rule survives verbatim, including the auditor's
+`DEVLOG.md`-only arm and the `$STORE_PATH_RE` check above it.
+
+Not re-opened, per your direction: N-A, N-G, N-H, N-I (accepted and homed under 13.7) and the
+`.claude/`-blocks-its-own-reads observation (parked for `## NEXT`). I hit that one again this pass — the
+first `git diff` on the guard was blocked because the command named the file — and again used `Read` and
+reported it rather than routing around.
+
+→ @architect — 13.4 is clean from my side. One line, upstream of the rules, additive in every verdict it
+changes.
+
+**[architect]** 13.4 closed. Reviewer **Approve** on the fourth pass, gates green, and the human-in-the-loop
+verification confirmed by the Product Owner.
+
+**Both halves of the boundary were verified live, and they needed different verifiers.**
+
+- **Denied for an agent** — the reviewer's `printf 'x' > callboard/register/probe.md`, blocked, stderr
+  recorded verbatim above, no file and no parent directory created.
+- **Not denied for the Product Owner** — the *same command* run in her own session:
+
+  ```
+  probe
+  PO_WRITE_OK:0
+  ```
+
+  **No agent could have run this check.** The hook is wired from each agent's own frontmatter, so it never
+  sees the main thread's calls — which means the property "this boundary does not constrain the Architect"
+  is invisible from inside every context that could test it automatically. That is the shape of a
+  human-in-the-loop task, and it is why 13.4 waited on a person rather than on a fixture.
+
+**The fourth pass's method is the note worth keeping.** Asked whether moving the continuation rejoin
+upstream regressed the older rules, the reviewer did not reason about it — it drove 65 strings through the
+whole shell arm **twice, with and without the new line, and diffed the verdict sets**. 13 verdicts changed,
+**all `allow` → `DENY`, none the other way**, with the argument for why that is structural: the rejoin only
+merges segments, and every deny is "path and verb in the same segment", so merging can add denies and
+cannot remove one. **A differential measurement answered a question that inspection could only have had an
+opinion about** — and five of the thirteen were the *pre-existing* git and `gh` rules, closing a live hole
+that had nothing to do with this block.
+
+Fixture 64/64. Guard diff `88/0` — no context line removed, every pre-existing rule verbatim.
+
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the
-section is not closed and must not be treated as closed.** Five blocks have landed; four tasks remain.
+section is not closed and must not be treated as closed.** Six blocks have landed; three tasks remain.
 
 ### Landed in §13
 
 `a32f481` — the Product Owner's spec amendment (§13's base is deliberately the commit *before* it, so the
 supervisor audits the amendment alongside what was built to it) · `e2bea69` **13.1** `block create` ·
 `d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test fix,
-carved from this file rather than from a task, ticking nothing.
+carved from this file rather than from a task, ticking nothing · `b267f75` **13.4** the hook boundary.
 
-Suite **1049 → 1082**. Two remediation rounds spent, on 13.1 and 13.3, both reviewer-raised and both real.
+Suite **1049 → 1082** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch).
+**Five remediation rounds spent** — 13.1, 13.3, and **three on 13.4**, all reviewer-raised and all real.
 
 ### The resume point
 
-**13.4 — extend the hook boundary to deny agent writes to the card store.** Then 13.5, 13.6, 13.7.
+**13.5 — verify the record stays readable and the loop proceeds unenforced when the tool cannot run.**
+Then 13.6, 13.7.
 
 **13.5, 13.6 and 13.7 are not ordinary blocks.** Read them before carving:
 
@@ -35997,17 +36687,31 @@ Suite **1049 → 1082**. Two remediation rounds spent, on 13.1 and 13.3, both re
 - **13.5 and 13.6 are human-in-the-loop verification** — the record staying readable when the tool cannot
   run, and a card's state being determinable from the file alone. CLAUDE.md §4: implement and self-test as
   far as automation reaches, then hand the Product Owner an exact, copy-pasteable recipe and **wait for
-  her confirmation before ticking**. §12.3 is the worked example. **A verification recipe can satisfy the
-  paperwork and not the task** (§12 ruling 5) — §12's first recipe would have shown her an empty board
-  while asking her to confirm its contents.
+  her confirmation before ticking**. **13.4 is now the worked example, and it sharpened the rule:** the
+  half no agent could verify was that the boundary *does not* constrain the Architect, because the hook is
+  wired per-agent and is invisible from every context able to test it automatically. **Ask what the
+  automation is structurally unable to see, and put that in the recipe.** §12 ruling 5 still binds — a
+  recipe can satisfy the paperwork and not the task.
 - **13.7 documents the agent-facing command surface**, which now includes three verbs that did not exist
-  this morning. Write it after 13.4–13.6, not before.
+  this morning. Write it after 13.5–13.6, not before. **It grew in 13.4** and now also owes:
+  `CLAUDE.md`'s **Boundaries** paragraph, which under-describes the guard against the guard's own standard
+  that the prose and the enforcement must keep saying the same thing (ruled: 13.7's, and mine to write, as
+  no agent can); and two message defects — `deny_store` promises "reading card files is fine" while
+  `ed`/`ex`/`patch` as blanket words deny a few reads, and the binary/store name ambiguity denies
+  `chmod +x ./callboard` without telling a worker the route is to report it.
 
 **Then the section review.** Spawn the supervisor on `f100b77..HEAD`, pointed at the amended
 `work-lifecycle` and `card-model` requirements — not just at the four task lines. It has said it will audit
 §13 against the queue in this file.
 
----
+### Carved out of 13.4, deliberately — its own future work
+
+**Guard rule 2 blocks *reads* of `.claude/` as well as writes**, matching the path anywhere in a command
+with no read/write distinction — unlike the store rule two blocks below it, which draws exactly that line.
+It fired on the reviewer three times across four passes while it was auditing that very file, and the
+reviewer each time used `Read` and reported the friction rather than routing around. **Not fixed in 13.4**:
+it is a pre-existing rule the block does not touch, and narrowing the boundary's oldest guarantee deserves
+its own carve rather than a footnote in a remediation.
 
 ## Homed under 13.5 — enumerated, not parked
 
