@@ -202,7 +202,8 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Applied, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
             onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected Applied, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"),
             onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected Applied, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"),
-            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Applied, got HandEnteredDerivedState: '{handEntered.Key}'"));
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Applied, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onBlockingQuestionUnreadable: static undetermined => throw new Xunit.Sdk.XunitException($"expected Applied, got BlockingQuestionUnreadable({undetermined.Files.Count} file(s))"));
 
     private static CardGateResultOutcome.Recorded AssertRecorded(CardGateResultOutcome outcome) =>
         outcome.Match(
@@ -248,7 +249,8 @@ public sealed class BlockLifecycleIntegrationTests : IDisposable
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Approved, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
             onUnresolvedThreadsAddressedToActor: static unresolved => throw new Xunit.Sdk.XunitException($"expected Approved, got UnresolvedThreadsAddressedToActor({string.Join(", ", unresolved.ThreadIds)})"),
             onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException($"expected Approved, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"),
-            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Approved, got HandEnteredDerivedState: '{handEntered.Key}'"));
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Approved, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onBlockingQuestionUnreadable: static undetermined => throw new Xunit.Sdk.XunitException($"expected Approved, got BlockingQuestionUnreadable({undetermined.Files.Count} file(s))"));
 
     private static CardSectionCloseOutcome.Closed AssertClosed(CardSectionCloseOutcome outcome) =>
         outcome.Match(
@@ -267,5 +269,6 @@ onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Closed, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Closed, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Closed, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
-            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Closed, got HandEnteredDerivedState: '{handEntered.Key}'"));
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Closed, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onBlockingQuestionUnreadable: static undetermined => throw new Xunit.Sdk.XunitException($"expected Closed, got BlockingQuestionUnreadable({undetermined.BlockId}, {undetermined.Files.Count} file(s))"));
 }

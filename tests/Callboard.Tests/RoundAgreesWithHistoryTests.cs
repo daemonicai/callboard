@@ -349,7 +349,9 @@ public sealed class RoundAgreesWithHistoryTests : IDisposable
             onBlockedByOpenProductOwnerQuestion: static blocked => throw new Xunit.Sdk.XunitException(
                 $"expected Applied, got BlockedByOpenProductOwnerQuestion({blocked.QuestionId})"),
             onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException(
-                $"expected Applied, got HandEnteredDerivedState: '{handEntered.Key}'"));
+                $"expected Applied, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onBlockingQuestionUnreadable: static undetermined => throw new Xunit.Sdk.XunitException(
+                $"expected Applied, got BlockingQuestionUnreadable({undetermined.Files.Count} file(s))"));
 
     private static CardNitDispositionOutcome.Dispositioned AssertDispositioned(CardNitDispositionOutcome outcome) =>
         outcome.Match(

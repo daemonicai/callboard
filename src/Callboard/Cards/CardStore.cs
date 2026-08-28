@@ -633,11 +633,18 @@ internal static class CardStore
                 // is the only one this generic applier itself resolves — because a back-edge returns
                 // the card to earlier work rather than advancing it past the blocker (Architect
                 // ruling, §9 block D DEVLOG post).
-                if (!BlockFlowTransitions.RoundIncrementingTransitionNames.Contains(transition.Name, StringComparer.Ordinal)
-                    && FindBlockingOpenProductOwnerQuestion(cardsRoot, card) is { } blockingQuestion)
+                if (!BlockFlowTransitions.RoundIncrementingTransitionNames.Contains(transition.Name, StringComparer.Ordinal))
                 {
-                    return RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp,
-                        new CardBlockTransitionOutcome.BlockedByOpenProductOwnerQuestion(blockingQuestion.QuestionId, blockingQuestion.Title));
+                    var blockingRefusal = FindBlockingOpenProductOwnerQuestion(cardsRoot, card).Match<CardBlockTransitionOutcome?>(
+                        onNone: static () => null,
+                        onBlocked: (questionId, questionTitle) => RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                            new CardBlockTransitionOutcome.BlockedByOpenProductOwnerQuestion(questionId, questionTitle)),
+                        onUndetermined: files => RefuseAndRecord(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                            new CardBlockTransitionOutcome.BlockingQuestionUnreadable(files)));
+                    if (blockingRefusal is not null)
+                    {
+                        return blockingRefusal;
+                    }
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -974,11 +981,17 @@ internal static class CardStore
                 // process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block D, 9.8).
                 // 'approve' is always a forward transition — there is no back-edge on this surface
                 // to exempt the way ApplyBlockTransitionUnderExistingLock exempts changes-requested.
-                if (FindBlockingOpenProductOwnerQuestion(cardsRoot, card) is { } blockingQuestion)
+                var approvalBlockingRefusal = FindBlockingOpenProductOwnerQuestion(cardsRoot, card).Match<CardApprovalOutcome?>(
+                    onNone: static () => null,
+                    onBlocked: (questionId, questionTitle) => RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.BlockedByOpenProductOwnerQuestion>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.BlockedByOpenProductOwnerQuestion(questionId, questionTitle),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason)),
+                    onUndetermined: files => RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.BlockingQuestionUnreadable>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                        new CardApprovalOutcome.BlockingQuestionUnreadable(files),
+                        static reason => new CardApprovalOutcome.ToolFailure(reason)));
+                if (approvalBlockingRefusal is not null)
                 {
-                    return RefuseAndRecord<CardApprovalOutcome, CardApprovalOutcome.BlockedByOpenProductOwnerQuestion>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
-                        new CardApprovalOutcome.BlockedByOpenProductOwnerQuestion(blockingQuestion.QuestionId, blockingQuestion.Title),
-                        static reason => new CardApprovalOutcome.ToolFailure(reason));
+                    return approvalBlockingRefusal;
                 }
 
                 var anchored = AnchoredCardPath.TryCreate(cardsRoot, filePath, card.Frontmatter.Scope, changeName, out var layoutFailure);
@@ -2082,50 +2095,79 @@ internal static class CardStore
     /// </para>
     ///
     /// <para>
-    /// <b>Resolution failures are conservative by omission, not by refusal (Architect ruling).</b>
-    /// A <c>blocked_by</c> id that does not resolve, resolves to more than one file, or cannot be
-    /// confirmed because some other file is unreadable is silently skipped by this check — none of
-    /// those is evidence of an <em>open Product Owner question</em>, which is the one fact this
-    /// guard exists to act on, and manufacturing a refusal out of an unrelated resolution problem
-    /// would conflate two different failures under one rule.
+    /// <b>Resolution failures fail shut, not by omission (§13.7, Product Owner task line — overrules
+    /// this method's own prior ruling).</b> The prior build treated a <c>blocked_by</c> id that does
+    /// not resolve cleanly — <see cref="CardIdentityResolution.Duplicate"/>, <see cref="
+    /// CardIdentityResolution.Corrupt"/> or <see cref="CardIdentityResolution.Unreadable"/> — as no
+    /// evidence of an open Product Owner question and silently skipped it, calling that
+    /// "conservative by omission". It was neither: omitting a possible blocker is permissive, and it
+    /// is exactly the failure "work cannot proceed past a stop-and-ask" exists to prevent — a card
+    /// could pass this guard while the question it names sits in a file the tool cannot read. §13.7
+    /// changes this to fail shut instead: any one of those three outcomes for any id makes the whole
+    /// determination <see cref="BlockingQuestionResolution.Undetermined"/>, which every write-path
+    /// caller must route to its own refusal (never collapse into <see cref="
+    /// BlockingQuestionResolution.None"/>). <see cref="CardIdentityResolution.NotFound"/> is the one
+    /// arm that still means "no blocker": a <c>blocked_by</c> id that names nothing is not a Product
+    /// Owner question, and that fact is genuinely known, not merely assumed.
     /// </para>
     ///
     /// <para>
-    /// <b>Internal, not private (§10 block C).</b> <see cref="DerivedStateAssembler"/> reuses this
-    /// exact method for <c>state</c>'s own halting determination (working-context: "a question
-    /// owned by the Product Owner ... SHALL halt the cards it blocks") — the same "which blocking
-    /// question halts this card" fact the write-path refusal above already computes, read rather
-    /// than re-derived a second way that could silently drift from this one.
+    /// <b>Internal, not private (§10 block C).</b> <see cref="DerivedStateAssembler"/> and <see
+    /// cref="WorkingContextAssembler"/> reuse this exact method for <c>state</c>'s and
+    /// <c>context</c>'s own halting determination (working-context: "a question owned by the
+    /// Product Owner ... SHALL halt the cards it blocks") — the same "which blocking question halts
+    /// this card" fact the write-path refusal above already computes, read rather than re-derived a
+    /// second way that could silently drift from this one. Unlike a write path, a read has no
+    /// process to protect by refusing (13.5's ruling stands): it folds <see cref="
+    /// BlockingQuestionResolution.Undetermined"/>'s files into its own <see cref="UnreadableCard"/>
+    /// reporting channel instead, and — because "not halted" would misreport a fact it could not
+    /// confirm — reports the card halted with no question id, rather than silently reporting it as
+    /// not halted (§10 ruling 2: a report that hides an enforcement gap is the same failure as an
+    /// enforcement gap).
     /// </para>
     /// </summary>
-    internal static (string QuestionId, string Title)? FindBlockingOpenProductOwnerQuestion(string cardsRoot, CardFile card)
+    internal static BlockingQuestionResolution FindBlockingOpenProductOwnerQuestion(string cardsRoot, CardFile card)
     {
+        var undetermined = new List<UnreadableCard>();
+
         foreach (var id in card.BlockFields.BlockedBy)
         {
-            // onCorrupt below mirrors onUnreadable's existing null (§13.7 is the fail-open at this
-            // exact site, out of §13.6's scope — this arm preserves current behaviour rather than
-            // widening or narrowing it).
-            var resolvedQuestion = CardIdentityResolver.Resolve(cardsRoot, id).Match<CardFile?>(
-                onFound: static (_, found) => found,
+            var blocker = CardIdentityResolver.Resolve(cardsRoot, id).Match<(string QuestionId, string Title)?>(
+                onFound: (_, found) =>
+                {
+                    if (!IsQuestionCard(found) || found.Frontmatter.Owner != CardOwner.ProductOwner || CardLifecycle.IsClosed(found))
+                    {
+                        return null;
+                    }
+
+                    return (found.Frontmatter.Id, found.Frontmatter.Title);
+                },
                 onNotFound: static _ => null,
-                onDuplicate: static (_, _) => null,
-                onCorrupt: static (_, _) => null,
-                onUnreadable: static (_, _) => null);
+                onDuplicate: (duplicateId, filePaths) =>
+                {
+                    undetermined.AddRange(filePaths.Select(path => new UnreadableCard(path, $"duplicate id '{duplicateId}': more than one file claims this id")));
+                    return null;
+                },
+                onCorrupt: (_, claimants) =>
+                {
+                    undetermined.AddRange(claimants);
+                    return null;
+                },
+                onUnreadable: (_, files) =>
+                {
+                    undetermined.AddRange(files);
+                    return null;
+                });
 
-            if (resolvedQuestion is not { } questionCard || !IsQuestionCard(questionCard) || questionCard.Frontmatter.Owner != CardOwner.ProductOwner)
+            if (blocker is { } found)
             {
-                continue;
+                return BlockingQuestionResolution.Blocked(found.QuestionId, found.Title);
             }
-
-            if (CardLifecycle.IsClosed(questionCard))
-            {
-                continue;
-            }
-
-            return (questionCard.Frontmatter.Id, questionCard.Frontmatter.Title);
         }
 
-        return null;
+        return undetermined.Count > 0
+            ? BlockingQuestionResolution.Undetermined(UnreadableCards.Ordered(undetermined))
+            : BlockingQuestionResolution.None();
     }
 
     /// <summary>
@@ -2942,10 +2984,17 @@ internal static class CardStore
                     // process-enforcement: "Section close settles its questions" (§9 block E, 9.5).
                     // Questions are CardScope.Repository-scoped and live outside this section's own
                     // directory, so this reads every live record directory the same way
-                    // RuleCitations.UncitedOpenRules already does — an unreadable card out there is
-                    // skipped, not refused (Architect ruling: "resolution failures are conservative
-                    // by omission", the same precedent FindBlockingOpenProductOwnerQuestion already
-                    // established for a question lookup outside a card's own directory).
+                    // RuleCitations.UncitedOpenRules already does. §13.7 (Product Owner task line)
+                    // overturns this scan's prior "an unreadable card out there is skipped, not
+                    // refused" disposition — the same "resolution failures are conservative by
+                    // omission" ruling FindBlockingOpenProductOwnerQuestion's own doc comment used
+                    // to cite, and the same misnomer: omitting a possible open question is
+                    // permissive, not conservative, and a section could close over exactly the
+                    // question this check exists to catch just because the file naming it would not
+                    // parse. Now fails shut, the same shape the obligations scan directly above
+                    // already used (§9 block E, unchanged by §13.7): an unreadable card anywhere in
+                    // the wider scan refuses the whole close via CardCorrupt rather than being
+                    // silently skipped.
                     foreach (var recordDirectory in CardLayout.ResolveLiveRecordDirectories(cardsRoot))
                     {
                         if (!Directory.Exists(recordDirectory))
@@ -2953,10 +3002,16 @@ internal static class CardStore
                             continue;
                         }
 
-                        foreach (var (_, questionParseResult) in ReadAllCards(recordDirectory))
+                        foreach (var (questionFilePath, questionParseResult) in ReadAllCards(recordDirectory))
                         {
-                            var questionCandidate = questionParseResult.Match<CardFile?>(onSuccess: static s => s.Card, onFailure: static _ => null);
-                            if (questionCandidate is null || !IsQuestionCard(questionCandidate)
+                            var questionCorruptReason = questionParseResult.Match<string?>(onSuccess: static _ => null, onFailure: static failure => failure.Reason);
+                            if (questionCorruptReason is not null)
+                            {
+                                return new CardSectionCloseOutcome.CardCorrupt(questionFilePath, questionCorruptReason);
+                            }
+
+                            var questionCandidate = questionParseResult.Match(onSuccess: static s => s.Card, onFailure: static _ => throw new InvalidOperationException("unreachable: questionCorruptReason above already returned on failure."));
+                            if (!IsQuestionCard(questionCandidate)
                                 || !string.Equals(questionCandidate.Frontmatter.Section, card.Frontmatter.Id, StringComparison.Ordinal))
                             {
                                 continue;
@@ -3239,12 +3294,19 @@ internal static class CardStore
         // when block D shipped it for the generic transitions and 'approve' (§9 block D DEVLOG
         // note) — an approved block blocked on an open Product Owner question could otherwise still
         // reach 'landed' by its section closing.
-        if (FindBlockingOpenProductOwnerQuestion(cardsRoot, blockCard) is { } blockingQuestion)
-        {
-            return RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion>(
+        var landingBlockingRefusal = FindBlockingOpenProductOwnerQuestion(cardsRoot, blockCard).Match<CardSectionCloseOutcome?>(
+            onNone: static () => null,
+            onBlocked: (questionId, questionTitle) => RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion>(
                 cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp,
-                new CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion(blockCard.Frontmatter.Id, blockFilePath, blockingQuestion.QuestionId, blockingQuestion.Title),
-                onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason));
+                new CardSectionCloseOutcome.BlockedByOpenProductOwnerQuestion(blockCard.Frontmatter.Id, blockFilePath, questionId, questionTitle),
+                onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason)),
+            onUndetermined: files => RefuseAndRecord<CardSectionCloseOutcome, CardSectionCloseOutcome.BlockingQuestionUnreadable>(
+                cardsRoot, blockCard, blockFilePath, changeName, actingRole, timestamp,
+                new CardSectionCloseOutcome.BlockingQuestionUnreadable(blockCard.Frontmatter.Id, blockFilePath, files),
+                onToolFailure: static reason => new CardSectionCloseOutcome.ToolFailure(reason)));
+        if (landingBlockingRefusal is not null)
+        {
+            return landingBlockingRefusal;
         }
 
         return null;

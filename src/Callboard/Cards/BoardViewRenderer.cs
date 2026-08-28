@@ -130,10 +130,23 @@ internal static class BoardViewRenderer
 
             if (blocked.Halted)
             {
-                html.Append("<div class=\"halted-by\">halted by open question ");
-                html.Append("<span class=\"card-id\">").Append(Escape(blocked.HaltedByQuestionId ?? string.Empty)).Append("</span> — ");
-                html.Append(Escape(blocked.HaltedByQuestionTitle ?? string.Empty));
-                html.Append("</div>\n");
+                // §13.7: Halted can now be true with HaltedByQuestionId null — the blocking
+                // question could not be confirmed at all (an unresolvable blocked_by id), not
+                // merely "a specific one was found". Rendering the two the same way (an empty id
+                // badge, a bare trailing dash) reads as a glitch, not as the fact it is — see the
+                // BoardViewTests.cs case naming this shape and the reviewer finding it answers.
+                if (blocked.HaltedByQuestionId is { } haltedByQuestionId)
+                {
+                    html.Append("<div class=\"halted-by\">halted by open question ");
+                    html.Append("<span class=\"card-id\">").Append(Escape(haltedByQuestionId)).Append("</span> — ");
+                    html.Append(Escape(blocked.HaltedByQuestionTitle ?? string.Empty));
+                    html.Append("</div>\n");
+                }
+                else
+                {
+                    html.Append("<div class=\"halted-by\">halted — the blocking question could not be confirmed because ");
+                    html.Append("one or more record files could not be read (see \"Unreadable cards\" below)</div>\n");
+                }
             }
         }
 

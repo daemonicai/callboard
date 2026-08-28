@@ -25,7 +25,22 @@ internal sealed record DerivedStateQuestion(string FilePath, CardFile Card, Card
 /// <see cref="HaltedByQuestionId"/>/<see cref="HaltedByQuestionTitle"/> name it. A card blocked
 /// only by non-Product-Owner questions (or by cards that are not questions at all) is blocked but
 /// not halted — <see cref="Halted"/> is <see langword="false"/>, keeping the two facts legible
-/// separately rather than collapsing "blocked" and "halted" into one signal.</summary>
+/// separately rather than collapsing "blocked" and "halted" into one signal.
+///
+/// <para>
+/// <b>§13.7: an undeterminable blocker also reports <see cref="Halted"/> true.</b> When <see
+/// cref="CardStore.FindBlockingOpenProductOwnerQuestion"/> answers <see cref="
+/// BlockingQuestionResolution.Undetermined"/> — at least one <c>blocked_by</c> id could not be
+/// resolved — <see cref="HaltedByQuestionId"/>/<see cref="HaltedByQuestionTitle"/> stay
+/// <see langword="null"/> (no specific question is confirmed), but <see cref="Halted"/> is
+/// <see langword="true"/> rather than <see langword="false"/>: this is a read, so 13.5's ruling
+/// still applies — it reports rather than refuses — but silently reporting <see langword="false"/>
+/// would assert a fact ("not halted") this walk could not confirm, the same failure named for
+/// <c>state</c>'s own read-half in §10 ruling 2. The offending file(s) are named in <see
+/// cref="DerivedState.Unreadable"/>, the one channel this reporting uses — not a second, parallel
+/// one.
+/// </para>
+/// </summary>
 internal sealed record DerivedStateBlockedCard(
     string FilePath,
     CardFile Card,
@@ -119,14 +134,21 @@ internal static class DerivedStateAssembler
 
                 if (CardStore.IsBlockCard(card) && card.BlockFields.BlockedBy.Length > 0)
                 {
-                    var haltingQuestion = CardStore.FindBlockingOpenProductOwnerQuestion(cardsRoot, card);
+                    var (halted, haltedByQuestionId, haltedByQuestionTitle) = CardStore.FindBlockingOpenProductOwnerQuestion(cardsRoot, card).Match(
+                        onNone: static () => (false, (string?)null, (string?)null),
+                        onBlocked: static (questionId, questionTitle) => (true, (string?)questionId, (string?)questionTitle),
+                        onUndetermined: files =>
+                        {
+                            unreadable.AddRange(files);
+                            return (true, (string?)null, (string?)null);
+                        });
                     blockedCards.Add(new DerivedStateBlockedCard(
                         filePath,
                         card,
                         [.. card.BlockFields.BlockedBy],
-                        Halted: haltingQuestion is not null,
-                        HaltedByQuestionId: haltingQuestion?.QuestionId,
-                        HaltedByQuestionTitle: haltingQuestion?.Title));
+                        Halted: halted,
+                        HaltedByQuestionId: haltedByQuestionId,
+                        HaltedByQuestionTitle: haltedByQuestionTitle));
                 }
             }
         }

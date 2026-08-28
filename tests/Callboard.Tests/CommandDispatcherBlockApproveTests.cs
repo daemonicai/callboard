@@ -399,6 +399,41 @@ public sealed class CommandDispatcherBlockApproveTests
         Assert.Equal(remedy, recorded.Remedy);
     }
 
+    // §13.7 (Product Owner task line): the blocked_by id names a file that declares that id in its
+    // own leading frontmatter fence but fails to parse (CardIdentityResolution.Corrupt) — whether
+    // that file is a live product-owner question cannot be confirmed, so approval fails shut rather
+    // than silently treating the unparseable file as no evidence of a blocker.
+    [Fact]
+    public void BlockApprove_BlockingQuestionCorruptFile_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        var corruptPath = WriteCorruptQuestion(repo.Path, "Q-0091");
+        var path = WriteInitialBlockCardBlockedBy(repo.Path, "b-0091", "B-0091", BlockFlowState.InReview, "Q-0091");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "approve", "--id", "B-0091", "--role", "reviewer", "--state", "commit-abc", "--claims", "claim one", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("blocking-question-unreadable", refusal.GetProperty("code").GetString());
+        Assert.Contains(corruptPath, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("in-review", read.Frontmatter.Status);
+        Assert.Empty(read.Claims);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Reviewer, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
     // §10 remediation, round two, S2: a deferred product-owner question halts approval exactly as
     // an open one does — deferring does not lift the halt (Product Owner ruling). Same shape as
     // the open-question test above, deferred rather than open.
@@ -540,6 +575,21 @@ public sealed class CommandDispatcherBlockApproveTests
             CardScope.Repository, string.Empty, FixedNow, FixedNow);
         var card = new CardFile(frontmatter, "Body.", [], []);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    // §13.7: a file whose own leading frontmatter fence declares id but whose status does not
+    // parse — CardIdentityResolution.Corrupt's own fixture (§13.6's WriteCorruptCard shape), reused
+    // here as FindBlockingOpenProductOwnerQuestion's Undetermined trigger.
+    private static string WriteCorruptQuestion(string repoRoot, string id)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, id.ToLowerInvariant() + ".md");
+        var frontmatter = new CardFrontmatter(
+            id, CardKind.Question, "Title", "not-a-real-status", CardOwner.ProductOwner, CardScope.Repository, string.Empty, FixedNow, FixedNow);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory) =>

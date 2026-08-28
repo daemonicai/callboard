@@ -67,7 +67,8 @@ internal abstract record CardSectionCloseOutcome
         Func<LayoutMismatch, TResult> onLayoutMismatch,
         Func<CardCorrupt, TResult> onCardCorrupt,
         Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable);
 
     /// <param name="Card">The section card as written, now carrying <c>status: closed</c> and its
     /// <c>closed_by</c>/<c>closed_at</c> fields.</param>
@@ -85,7 +86,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onClosed(this);
     }
 
@@ -100,7 +101,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onAlreadyClosed(this);
 
         public string RefusingRule => "work-lifecycle: closing a section records the acting role and the time exactly once";
@@ -118,7 +119,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onNotASectionCard(this);
 
         public string RefusingRule => "work-lifecycle: only a section card can be closed by this verb";
@@ -143,7 +144,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onBlockNotApproved(this);
 
         public string RefusingRule => "work-lifecycle: every block in a section must be approved before the section can close";
@@ -166,7 +167,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onBlockGateFailed(this);
 
         public string RefusingRule => "work-lifecycle: every gate a block carries must have passed before the section can close";
@@ -190,7 +191,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onBlockGateAbsent(this);
 
         public string RefusingRule => "work-lifecycle: every gate a block carries must have passed before the section can close";
@@ -219,7 +220,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onOpenObligations(this);
 
         public string RefusingRule => "process-enforcement: section close settles its obligations";
@@ -239,12 +240,15 @@ internal abstract record CardSectionCloseOutcome
     /// refuses and names the question"), the first found scanning the register — questions are
     /// <see cref="CardScope.Repository"/>-scoped and live outside the section's own directory, so
     /// this reads <see cref="CardLayout.ResolveLiveRecordDirectories"/> the same way <see
-    /// cref="RuleCitations.UncitedOpenRules"/> already does, and — unlike <see
-    /// cref="OpenObligations"/>'s own directory — an unreadable card anywhere in that wider scan is
-    /// silently skipped rather than refusing every section's close (the same "resolution failures
-    /// are conservative by omission" precedent <see cref="CardStore.
-    /// FindBlockingOpenProductOwnerQuestion"/> already established for a question lookup outside a
-    /// card's own directory). Refusal-shaped.</summary>
+    /// cref="RuleCitations.UncitedOpenRules"/> already does, and — since §13.7 (Product Owner task
+    /// line) — an unreadable card anywhere in that wider scan refuses the whole close via <see
+    /// cref="CardCorrupt"/>, the same disposition <see cref="OpenObligations"/>'s own directory scan
+    /// already used. This case's own doc comment previously cited a "resolution failures are
+    /// conservative by omission" precedent from <see cref="CardStore.
+    /// FindBlockingOpenProductOwnerQuestion"/> for why an unreadable card here was silently skipped;
+    /// §13.7 retired that precedent everywhere it applied — omitting a possible open question is
+    /// permissive, not conservative — so this scan now fails shut like every other in this method.
+    /// Refusal-shaped.</summary>
     internal sealed record OpenUndeferredQuestion(string SectionId, string QuestionId, string QuestionTitle) : CardSectionCloseOutcome, ICardRefusalReason
     {
         internal override TResult Match<TResult>(
@@ -253,7 +257,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onOpenUndeferredQuestion(this);
 
         public string RefusingRule => "process-enforcement: section close settles its questions";
@@ -293,7 +297,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onUnresolvedAddressedThread(this);
 
         public string RefusingRule => "process-enforcement: section close settles its addressed threads";
@@ -325,7 +329,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onBlockedByOpenProductOwnerQuestion(this);
 
         public string RefusingRule => "process-enforcement: work cannot proceed past a stop-and-ask";
@@ -344,7 +348,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onCardNotFound(this);
     }
 
@@ -360,7 +364,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onLayoutMismatch(this);
     }
 
@@ -380,7 +384,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onCardCorrupt(this);
     }
 
@@ -397,7 +401,7 @@ internal abstract record CardSectionCloseOutcome
     /// evidence of whichever was correct.</summary>
     internal sealed record RoundDisagreesWithHistory(string BlockFilePath, int StoredRound, int ExpectedRound) : CardSectionCloseOutcome, ICardRefusalReason
     {
-        internal override TResult Match<TResult>(Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard, Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent, Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion, Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        internal override TResult Match<TResult>(Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard, Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent, Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion, Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onRoundDisagreesWithHistory(this);
 
         public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
@@ -424,7 +428,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onHandEnteredDerivedState(this);
 
         public string RefusingRule => "working-context: no figure shall be hand-entered";
@@ -432,6 +436,37 @@ internal abstract record CardSectionCloseOutcome
         public string Remedy =>
             $"'{FilePath}' carries a hand-entered reserved derived-state field '{Key}' in its frontmatter; " +
             "remove it — this state is derived at request time, never stored, and is available from 'callboard state'.";
+    }
+
+    /// <summary>process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block E, 9.8's
+    /// carried arm), §13.7: same disposition as <see cref="CardBlockTransitionOutcome.
+    /// BlockingQuestionUnreadable"/> and <see cref="CardApprovalOutcome.BlockingQuestionUnreadable"/>
+    /// — "this block may not land" is a fact about the block, regardless of which verb discovered it
+    /// — but here the fact is that <paramref name="BlockId"/>'s own <c>blocked_by</c> could not be
+    /// resolved to a determinate answer rather than that it resolved to an open question. Card-
+    /// addressed against the <em>block</em>, same as <see cref="BlockedByOpenProductOwnerQuestion"/>.
+    /// Refusal-shaped.</summary>
+    /// <param name="Files">Every file that made at least one of the block's <c>blocked_by</c> ids
+    /// undeterminable — path and reason (<see cref="UnreadableCard"/>), the same carrier §13.5
+    /// built.</param>
+    internal sealed record BlockingQuestionUnreadable(string BlockId, string BlockFilePath, IReadOnlyList<UnreadableCard> Files) : CardSectionCloseOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(
+            Func<Closed, TResult> onClosed, Func<AlreadyClosed, TResult> onAlreadyClosed, Func<NotASectionCard, TResult> onNotASectionCard,
+            Func<BlockNotApproved, TResult> onBlockNotApproved, Func<BlockGateFailed, TResult> onBlockGateFailed, Func<BlockGateAbsent, TResult> onBlockGateAbsent,
+            Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
+            Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
+            Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
+            onBlockingQuestionUnreadable(this);
+
+        public string RefusingRule => "process-enforcement: work cannot proceed past a stop-and-ask";
+
+        public string Remedy =>
+            $"whether block '{BlockId}' is blocked by an open product-owner question could not be determined because " +
+            string.Join(", ", Files.Select(static f => $"'{f.FilePath}' ({f.Reason})")) +
+            " could not be resolved; fix the file(s) (or, for a duplicate id, remove every claimant but the " +
+            "intended one) and retry — 'callboard state' reports the same unresolved file(s) without writing.";
     }
 
     /// <summary>Enforcement itself is unavailable: a card's lock could not be acquired within its
@@ -446,7 +481,7 @@ internal abstract record CardSectionCloseOutcome
             Func<OpenObligations, TResult> onOpenObligations, Func<OpenUndeferredQuestion, TResult> onOpenUndeferredQuestion,
             Func<UnresolvedAddressedThread, TResult> onUnresolvedAddressedThread, Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion,
             Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
-        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onToolFailure(this);
     }
 }

@@ -1361,7 +1361,13 @@ internal static class CommandDispatcher
             onBlockedByOpenProductOwnerQuestion: blocked => new CommandOutcome.Refusal(
                 "blocked-by-open-product-owner-question",
                 $"'{filePath}' is blocked by open product-owner question '{blocked.QuestionId}' (\"{blocked.QuestionTitle}\") and cannot advance.",
-                blocked.RefusingRule, blocked.Remedy));
+                blocked.RefusingRule, blocked.Remedy),
+            onBlockingQuestionUnreadable: undetermined => new CommandOutcome.Refusal(
+                "blocking-question-unreadable",
+                $"'{filePath}' cannot advance: whether it is blocked by an open product-owner question could not be determined — " +
+                $"{undetermined.Files.Count} file(s) could not be resolved: " +
+                string.Join(", ", undetermined.Files.Select(static f => $"'{f.FilePath}' ({f.Reason})")) + ".",
+                undetermined.RefusingRule, undetermined.Remedy));
     }
 
     /// <summary>
@@ -1663,7 +1669,13 @@ internal static class CommandDispatcher
             onBlockedByOpenProductOwnerQuestion: blocked => new CommandOutcome.Refusal(
                 "blocked-by-open-product-owner-question",
                 $"'{resolved.FilePath}' is blocked by open product-owner question '{blocked.QuestionId}' (\"{blocked.QuestionTitle}\") and cannot be approved.",
-                blocked.RefusingRule, blocked.Remedy));
+                blocked.RefusingRule, blocked.Remedy),
+            onBlockingQuestionUnreadable: undetermined => new CommandOutcome.Refusal(
+                "blocking-question-unreadable",
+                $"'{resolved.FilePath}' cannot be approved: whether it is blocked by an open product-owner question could not be determined — " +
+                $"{undetermined.Files.Count} file(s) could not be resolved: " +
+                string.Join(", ", undetermined.Files.Select(static f => $"'{f.FilePath}' ({f.Reason})")) + ".",
+                undetermined.RefusingRule, undetermined.Remedy));
     }
 
     /// <summary>
@@ -2047,6 +2059,13 @@ internal static class CommandDispatcher
                 $"block '{blocked.BlockId}' ('{blocked.BlockFilePath}') is blocked by open question '{blocked.QuestionId}' " +
                 $"(\"{blocked.QuestionTitle}\"), owned by the product owner — it cannot land while this section closes.",
                 blocked.RefusingRule, blocked.Remedy),
+            onBlockingQuestionUnreadable: undetermined => new CommandOutcome.Refusal(
+                "blocking-question-unreadable",
+                $"block '{undetermined.BlockId}' ('{undetermined.BlockFilePath}') cannot land: whether it is blocked by an open " +
+                $"product-owner question could not be determined — {undetermined.Files.Count} file(s) could not be resolved: " +
+                string.Join(", ", undetermined.Files.Select(static f => $"'{f.FilePath}' ({f.Reason})")) +
+                " — this section cannot close while it does.",
+                undetermined.RefusingRule, undetermined.Remedy),
             onCardNotFound: notFound => new CommandOutcome.Refusal(
                 "card-not-found",
                 $"no card file exists at '{notFound.FilePath}' to close."),

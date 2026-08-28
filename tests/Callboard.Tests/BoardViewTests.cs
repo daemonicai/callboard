@@ -259,6 +259,37 @@ public sealed class BoardViewTests
         Assert.DoesNotContain("<section class=\"open-questions\">", html, StringComparison.Ordinal);
     }
 
+    // §13.7 (reviewer finding on the 13.7 remediation): Halted can now be true with
+    // HaltedByQuestionId null — the blocking question could not be confirmed at all, not merely
+    // "a specific one was found". Rendering that combination the same way as a resolved question
+    // produced an empty id badge and a bare trailing dash: a rendering glitch, not a statement of
+    // the actual fact. This asserts the honest wording appears on the card's own line, without a
+    // reader having to correlate it against the separate "Unreadable cards" section.
+    [Fact]
+    public void View_BlockedCard_BlockingQuestionUnreadable_SaysSoOnTheCardsOwnLine_NotAsAnEmptyBadge()
+    {
+        using var repo = new TempGitRepo();
+        WriteCorruptQuestion(repo, "q-0002.md", "Q-0002");
+        WriteSection(repo, "s-0002.md", "S-0002", "A section", CardOwner.Architect, "open");
+        WriteBlock(repo, "b-0002.md", "B-0002", "A blocked block", CardOwner.Worker, "S-0002", "briefed", blockedBy: ["Q-0002"]);
+
+        var outPath = Path.Combine(repo.Path, "board.html");
+        var exitCode = CommandDispatcher.Run(
+            ["view", "--out", outPath], new StringWriter(), TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.Path, clock: static () => FixedNow);
+
+        Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        var html = File.ReadAllText(outPath);
+
+        var cardIndex = html.IndexOf("B-0002", StringComparison.Ordinal);
+        var haltedByIndex = html.IndexOf("<div class=\"halted-by\">", StringComparison.Ordinal);
+        Assert.True(cardIndex >= 0 && haltedByIndex > cardIndex && haltedByIndex - cardIndex < 400);
+
+        // The line itself says the fact — not an empty id badge and a bare trailing dash.
+        Assert.Contains("could not be confirmed", html, StringComparison.Ordinal);
+        Assert.Contains("Unreadable cards", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<span class=\"card-id\"></span> —", html, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void View_OpenQuestion_ShowsWhoOwesTheAnswer_InlineOnTheCardInItsLane()
     {
@@ -456,6 +487,16 @@ public sealed class BoardViewTests
 
     private static void WriteCard(string path, CardFile card) =>
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+    // §13.7: a file whose own leading frontmatter fence declares id but whose status does not
+    // parse (CardIdentityResolution.Corrupt) — the fixture for the "blocking question could not be
+    // determined" shape (Halted true, HaltedByQuestionId null).
+    private static void WriteCorruptQuestion(TempGitRepo repo, string fileName, string id)
+    {
+        var path = Path.Combine(repo.RegisterDirectory, fileName);
+        var frontmatter = new CardFrontmatter(id, CardKind.Question, "Title", "not-a-real-status", CardOwner.ProductOwner, CardScope.Repository, string.Empty, Earlier, FixedNow);
+        WriteCard(path, new CardFile(frontmatter, "Question body.", [], []));
+    }
 
     private sealed class TempGitRepo : IDisposable
     {

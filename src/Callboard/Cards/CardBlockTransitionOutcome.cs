@@ -45,7 +45,8 @@ internal abstract record CardBlockTransitionOutcome
         Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState);
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState,
+        Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable);
 
     /// <param name="Card">The card as written: new status, updated <c>base</c>/<c>round</c>, and
     /// the appended <see cref="CardBlockTransitionEntry"/>.</param>
@@ -55,7 +56,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onApplied(this);
     }
 
@@ -72,7 +73,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onUndefinedTransition(this);
 
         public string RefusingRule => "work-lifecycle: block cards move through a defined flow";
@@ -89,7 +90,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onBaseNotRecorded(this);
 
         public string RefusingRule => "work-lifecycle: base SHALL be recorded before the block is briefed";
@@ -104,7 +105,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onBaseImmutable(this);
 
         public string RefusingRule => "work-lifecycle: base SHALL NOT change across remediation rounds";
@@ -122,7 +123,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onUndispositionedNits(this);
 
         public string RefusingRule => "review-certification: undispositioned nits block the verdict";
@@ -138,7 +139,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onNotABlockCard(this);
 
         public string RefusingRule => "work-lifecycle: block flow transitions apply only to a block card";
@@ -153,7 +154,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onCardNotFound(this);
     }
 
@@ -164,7 +165,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onLayoutMismatch(this);
     }
 
@@ -178,7 +179,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onCardCorrupt(this);
     }
 
@@ -193,7 +194,7 @@ internal abstract record CardBlockTransitionOutcome
     {
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onRoundDisagreesWithHistory(this);
 
         public string RefusingRule => "work-lifecycle: stored round agrees with the transition history";
@@ -217,7 +218,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onUnresolvedThreadsAddressedToActor(this);
 
         public string RefusingRule => "process-enforcement: a verdict cannot leave threads unanswered";
@@ -243,7 +244,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onBlockedByOpenProductOwnerQuestion(this);
 
         public string RefusingRule => "process-enforcement: work cannot proceed past a stop-and-ask";
@@ -265,7 +266,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onHandEnteredDerivedState(this);
 
         public string RefusingRule => "working-context: no figure shall be hand-entered";
@@ -273,6 +274,48 @@ internal abstract record CardBlockTransitionOutcome
         public string Remedy =>
             $"'{Key}' is a reserved derived-state field name; remove it from this card's frontmatter — " +
             "this state is derived at request time, never stored, and is available from 'callboard state'.";
+    }
+
+    /// <summary>process-enforcement: "Work cannot proceed past a stop-and-ask" (§9 block D, 9.8),
+    /// §13.7: at least one of the card's own <see cref="BlockCardFields.BlockedBy"/> ids could not be
+    /// resolved to a determinate answer — <see cref="CardIdentityResolver.Resolve"/> returned
+    /// <see cref="CardIdentityResolution.Duplicate"/>, <see cref="CardIdentityResolution.Corrupt"/> or
+    /// <see cref="CardIdentityResolution.Unreadable"/> for it, so <see cref="CardStore.
+    /// FindBlockingOpenProductOwnerQuestion"/> cannot say whether that id names a live, Product-Owner-
+    /// owned, open question. Distinct from <see cref="BlockedByOpenProductOwnerQuestion"/>: that case
+    /// asserts a blocker was found; this one asserts the opposite could not be confirmed either.
+    ///
+    /// <para>
+    /// <b>Overturns the "conservative by omission" ruling this site used to cite (§13.7, Product
+    /// Owner task line).</b> The prior build treated an unresolvable <c>blocked_by</c> id as no
+    /// evidence of an open question and let the transition proceed — permissive, not conservative:
+    /// omitting a possible blocker is exactly what lets a process violation through. §13.7 reverses
+    /// that for every write path; <see cref="Callboard.Cards.DerivedState"/> and <see cref="
+    /// Callboard.Cards.WorkingContext"/>'s own reads keep the old "report, don't refuse" shape (13.5's
+    /// ruling), because a read has no process to protect by refusing.
+    /// </para>
+    /// </summary>
+    /// <param name="Files">Every file that made at least one <c>blocked_by</c> id undeterminable —
+    /// path and reason together (<see cref="UnreadableCard"/>), the same carrier §13.5 built for a
+    /// read's own unparseable cards. A duplicate id contributes one entry per claimant file, with
+    /// <see cref="UnreadableCard.Reason"/> stating the duplication rather than a parser's own
+    /// message — that id parsed fine everywhere; what could not be resolved is which file is the
+    /// live one.</param>
+    internal sealed record BlockingQuestionUnreadable(IReadOnlyList<UnreadableCard> Files) : CardBlockTransitionOutcome, ICardRefusalReason
+    {
+        internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
+        Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
+        Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
+            onBlockingQuestionUnreadable(this);
+
+        public string RefusingRule => "process-enforcement: work cannot proceed past a stop-and-ask";
+
+        public string Remedy =>
+            "whether this card is blocked by an open product-owner question could not be determined because " +
+            string.Join(", ", Files.Select(static f => $"'{f.FilePath}' ({f.Reason})")) +
+            " could not be resolved; fix the file(s) (or, for a duplicate id, remove every claimant but the " +
+            "intended one) and retry — 'callboard state' reports the same unresolved file(s) without writing.";
     }
 
     /// <summary>Enforcement itself is unavailable: the card's lock could not be acquired within its
@@ -286,7 +329,7 @@ internal abstract record CardBlockTransitionOutcome
         internal override TResult Match<TResult>(Func<Applied, TResult> onApplied, Func<UndefinedTransition, TResult> onUndefinedTransition, Func<BaseNotRecorded, TResult> onBaseNotRecorded, Func<BaseImmutable, TResult> onBaseImmutable, Func<UndispositionedNits, TResult> onUndispositionedNits, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,
         Func<UnresolvedThreadsAddressedToActor, TResult> onUnresolvedThreadsAddressedToActor,
-        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
+        Func<BlockedByOpenProductOwnerQuestion, TResult> onBlockedByOpenProductOwnerQuestion, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState, Func<BlockingQuestionUnreadable, TResult> onBlockingQuestionUnreadable) =>
             onToolFailure(this);
     }
 }

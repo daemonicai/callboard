@@ -85,6 +85,40 @@ public sealed class CommandDispatcherBlockTransitionTests
         Assert.Equal(remedy, recorded.Remedy);
     }
 
+    // §13.7 (Product Owner task line): a blocked_by id that resolves ambiguously — two files claim
+    // it — cannot be confirmed as either an open product-owner question or not, so the transition
+    // fails shut rather than silently proceeding as the pre-13.7 build did.
+    [Fact]
+    public void BlockTransition_BlockingQuestionDuplicateId_Refuses_AndRecordsTheRefusal()
+    {
+        using var repo = new TempGitRepo();
+        WriteDuplicateQuestion(repo.Path, "Q-0090");
+        var path = WriteInitialBlockCardBlockedBy(repo.Path, "b-0090", "B-0090", BlockFlowState.Briefed, "Q-0090");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            ["block", "transition", path, "claim", "--role", "worker", "--change", ChangeName],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("blocking-question-unreadable", refusal.GetProperty("code").GetString());
+        Assert.Contains("Q-0090", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        var rule = refusal.GetProperty("rule").GetString();
+        var remedy = refusal.GetProperty("remedy").GetString();
+        Assert.NotNull(rule);
+        Assert.NotNull(remedy);
+
+        var read = AssertParseSuccess(CardStore.ReadCard(path));
+        Assert.Equal("briefed", read.Frontmatter.Status);
+        Assert.Empty(read.Transitions);
+        var recorded = Assert.Single(read.Refusals);
+        Assert.Equal(CardOwner.Worker, recorded.By);
+        Assert.Equal(rule, recorded.Rule);
+        Assert.Equal(remedy, recorded.Remedy);
+    }
+
     // §10 remediation, round two, S2: a deferred product-owner question halts advancement exactly
     // as an open one does — deferring does not lift the halt (Product Owner ruling). Same shape as
     // the open-question test above, deferred rather than open.
@@ -671,6 +705,23 @@ public sealed class CommandDispatcherBlockTransitionTests
             CardScope.Repository, string.Empty, FixedNow, FixedNow);
         var card = new CardFile(frontmatter, "Body.", [], []);
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    // §13.7: two register-scoped files both claiming id — CardIdentityResolution.Duplicate's own
+    // fixture, reused here as FindBlockingOpenProductOwnerQuestion's Undetermined trigger.
+    private static void WriteDuplicateQuestion(string repoRoot, string id)
+    {
+        var directory = Path.Combine(repoRoot, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(directory);
+        foreach (var suffix in new[] { "-a", "-b" })
+        {
+            var path = Path.Combine(directory, id.ToLowerInvariant() + suffix + ".md");
+            var frontmatter = new CardFrontmatter(
+                id, CardKind.Question, "Should we ship X?", QuestionStatus.Open.ToWireString(), CardOwner.ProductOwner,
+                CardScope.Repository, string.Empty, FixedNow, FixedNow);
+            var card = new CardFile(frontmatter, "Body.", [], []);
+            File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory) =>

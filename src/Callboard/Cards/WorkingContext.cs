@@ -44,16 +44,23 @@ internal sealed record WorkingContextQueueEntry(string FilePath, CardFile Card, 
 /// exists to deliver the top item in full). Empty for a non-block kind and for a block with no
 /// entry, the same "kind-specific field, empty elsewhere" convention every other reader of
 /// <see cref="BlockCardFields"/> already follows.</param>
-/// <param name="Halted"><see langword="true"/> exactly when <see cref="CardStore.
+/// <param name="Halted"><see langword="true"/> when <see cref="CardStore.
 /// FindBlockingOpenProductOwnerQuestion"/> resolves one of <paramref name="BlockedByIds"/> to a
 /// live, Product-Owner-owned, open question — the same predicate <c>state</c>'s own
 /// <see cref="DerivedStateBlockedCard.Halted"/> is computed from (§10 remediation S4: "reuse block
 /// C's derivation ... or context and state will drift"), read here rather than re-derived a second
-/// way.</param>
+/// way — <b>or</b> (§13.7) when that predicate cannot rule a blocker out because at least one
+/// <paramref name="BlockedByIds"/> entry could not be resolved; see <see cref="
+/// DerivedStateBlockedCard.Halted"/>'s own doc comment for why an undeterminable blocker still
+/// reports <see langword="true"/> here rather than <see langword="false"/>. The offending file(s)
+/// are named in <see cref="WorkingContext.Unreadable"/> in that case, not a field on this
+/// type.</param>
 /// <param name="HaltedByQuestionId">The halting question's id, or <see langword="null"/> when
-/// <paramref name="Halted"/> is <see langword="false"/>.</param>
-/// <param name="HaltedByQuestionTitle">The halting question's title, or <see langword="null"/> when
-/// <paramref name="Halted"/> is <see langword="false"/>.</param>
+/// <paramref name="Halted"/> is <see langword="false"/> — also <see langword="null"/> when
+/// <paramref name="Halted"/> is <see langword="true"/> but no specific question could be confirmed
+/// (§13.7's undeterminable case).</param>
+/// <param name="HaltedByQuestionTitle"><paramref name="HaltedByQuestionId"/>'s sibling for the
+/// title.</param>
 internal sealed record WorkingContextTopItem(
     string FilePath,
     CardFile Card,
@@ -215,10 +222,17 @@ internal static class WorkingContextAssembler
             var constraints = BindingConstraints(liveRegister, top.ChangeName);
             var (claims, limits) = PreviousRoundVerdict(top.Card);
             var blockedByIds = top.Card.BlockFields.BlockedBy;
-            var haltingQuestion = CardStore.FindBlockingOpenProductOwnerQuestion(cardsRoot, top.Card);
+            var (halted, haltedByQuestionId, haltedByQuestionTitle) = CardStore.FindBlockingOpenProductOwnerQuestion(cardsRoot, top.Card).Match(
+                onNone: static () => (false, (string?)null, (string?)null),
+                onBlocked: static (questionId, questionTitle) => (true, (string?)questionId, (string?)questionTitle),
+                onUndetermined: files =>
+                {
+                    unreadable.AddRange(files);
+                    return (true, (string?)null, (string?)null);
+                });
             topItem = new WorkingContextTopItem(
                 top.FilePath, top.Card, threadIds, constraints, claims, limits,
-                [.. blockedByIds], haltingQuestion is not null, haltingQuestion?.QuestionId, haltingQuestion?.Title);
+                [.. blockedByIds], halted, haltedByQuestionId, haltedByQuestionTitle);
         }
 
         return new WorkingContext(

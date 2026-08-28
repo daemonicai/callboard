@@ -231,7 +231,8 @@ public sealed class CardSectionCloseConcurrencyTests : IDisposable
                     onCardCorrupt: corrupt => throw new Xunit.Sdk.XunitException($"round {round}: unexpected CardCorrupt: {corrupt.Reason}"),
                     onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException($"round {round}: unexpected ToolFailure (looks like a deadlock or lost race): {toolFailure.Reason}"),
                     onRoundDisagreesWithHistory: disagreement => throw new Xunit.Sdk.XunitException($"round {round}: unexpected RoundDisagreesWithHistory (looks like a deadlock or lost race): (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
-                    onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"round {round}: unexpected HandEnteredDerivedState: '{handEntered.Key}'"));
+                    onHandEnteredDerivedState: handEntered => throw new Xunit.Sdk.XunitException($"round {round}: unexpected HandEnteredDerivedState: '{handEntered.Key}'"),
+                    onBlockingQuestionUnreadable: undetermined => throw new Xunit.Sdk.XunitException($"round {round}: unexpected BlockingQuestionUnreadable({undetermined.BlockId}, {undetermined.Files.Count} file(s))"));
 
                 Assert.Equal(blocksPerSection, closed.LandedBlocks.Count);
                 Assert.All(closed.LandedBlocks, block => Assert.Equal("landed", block.Frontmatter.Status));
@@ -299,7 +300,8 @@ onCardNotFound: static notFound => throw new Xunit.Sdk.XunitException($"expected
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Closed, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Closed, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Closed, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
-            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Closed, got HandEnteredDerivedState: '{handEntered.Key}'"));
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Closed, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onBlockingQuestionUnreadable: static undetermined => throw new Xunit.Sdk.XunitException($"expected Closed, got BlockingQuestionUnreadable({undetermined.BlockId}, {undetermined.Files.Count} file(s))"));
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
         result.Match<CardFile>(

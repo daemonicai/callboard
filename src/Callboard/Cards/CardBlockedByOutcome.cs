@@ -198,10 +198,19 @@ internal abstract record CardBlockedByOutcome
     ///
     /// <para>
     /// <b>Out of scope of this case: <see cref="CardStore.FindBlockingOpenProductOwnerQuestion"/>'s
-    /// read path.</b> That predicate still silently skips an unresolvable <c>blocked_by</c> id — see
-    /// its own doc comment for why a resolution failure is not evidence of an open Product Owner
-    /// question. This case only closes the write door: once an id is verified here, it can only go
-    /// missing afterwards through corruption, a different failure with a different remedy.
+    /// own check.</b> Since §13.7 (Product Owner task line) that predicate no longer silently skips
+    /// an unresolvable <c>blocked_by</c> id — it now fails shut via <see cref="
+    /// BlockingQuestionResolution.Undetermined"/>, routed by every write path that calls it to its
+    /// own <c>BlockingQuestionUnreadable</c> case (see <see cref="CardBlockTransitionOutcome.
+    /// BlockingQuestionUnreadable"/> and its siblings) — but this case still exists and still fires
+    /// first: it is checked at <em>add</em> time, before an id is ever written to the card's own
+    /// <see cref="BlockCardFields.BlockedBy"/>, while <see cref="CardStore.
+    /// FindBlockingOpenProductOwnerQuestion"/> is checked afterwards, on every subsequent transition
+    /// attempt, against whatever the field holds by then (including an id that resolved cleanly at
+    /// add time and later stopped, e.g. through corruption — this case cannot re-verify a
+    /// past write, only refuse a new one). This case only closes the write door: once an id is
+    /// verified here, it can only go missing afterwards through a change in the record, a different
+    /// failure with a different remedy, caught the next time this card is checked for a blocker.
     /// </para>
     /// </summary>
     internal sealed record BlockerUnresolvable(string BlockerId, string Reason) : CardBlockedByOutcome, ICardRefusalReason

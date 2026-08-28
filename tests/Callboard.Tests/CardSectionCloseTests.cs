@@ -557,6 +557,71 @@ public sealed class CardSectionCloseTests : IDisposable
         Assert.Equal(blocked.Remedy, recorded.Remedy);
     }
 
+    // §13.7 (Product Owner task line): the regression test for the section-close open-question
+    // scan's own fail-open door (CardStore.cs, formerly `onFailure: static _ => null` inside the
+    // register-wide scan for a live, undeferred question raised in this section). The block here
+    // carries no blocked_by at all, so ValidateBlockForLanding's own call to
+    // FindBlockingOpenProductOwnerQuestion has nothing to iterate and returns None — this test
+    // isolates the open-question scan itself, not the blocked_by guard CloseSection_
+    // AnApprovedBlockBlockingQuestionUnreadable_... above already covers. Before this scan's own
+    // fail-shut fix, an unreadable card anywhere in the wider live record was silently skipped, so
+    // a section could close over an open question this scan could not read to confirm was answered
+    // or deferred. If that door reopens, this test goes red by landing a successful close instead
+    // of refusing one.
+    [Fact]
+    public void CloseSection_AnUnreadableCardInTheWiderRegisterScan_RefusesAsCardCorrupt_NotSilentlySkipped()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0092", "S-0092");
+        var unreadablePath = WriteUnreadableQuestion("q-0092", declaredId: "Q-0092");
+        var blockPath = Path.Combine(_directory, "b-0092.md");
+        var blockFrontmatter = new CardFrontmatter(
+            "B-0092", CardKind.Block, "A block", "approved", CardOwner.Architect, CardScope.Change, "S-0092", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: null, BlockedBy: [], GateResults: []);
+        var blockCard = new CardFile(blockFrontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var corrupt = Assert.IsType<CardSectionCloseOutcome.CardCorrupt>(outcome);
+        Assert.Equal(unreadablePath, corrupt.FilePath);
+        Assert.Contains("'not-a-real-status'", corrupt.Reason, StringComparison.Ordinal);
+        Assert.Contains("'question'", corrupt.Reason, StringComparison.Ordinal);
+
+        // The close did not land — a corrupt-card refusal is not a partial write.
+        var read = AssertParseSuccess(CardStore.ReadCard(sectionPath));
+        Assert.Equal("open", read.Frontmatter.Status);
+        Assert.Null(read.SectionFields.ClosedBy);
+    }
+
+    // §13.7 (Product Owner task line): the approved block's blocked_by names an id no parsed file
+    // carries, but a file the walk could not read at all sits in the same wider scan — the resolver
+    // cannot rule that unreadable file out as the missing question, so section-driven landing fails
+    // shut rather than treating the unresolvable id as no blocker (the pre-13.7 disposition).
+    [Fact]
+    public void CloseSection_AnApprovedBlockBlockingQuestionUnreadable_Refuses_AndRecordsTheRefusal()
+    {
+        var sectionPath = WriteInitialSectionCard("s-0091", "S-0091");
+        var unreadablePath = WriteUnreadableQuestion("q-0091", declaredId: "Q-SOME-OTHER-ID");
+        var blockPath = Path.Combine(_directory, "b-0091.md");
+        var blockFrontmatter = new CardFrontmatter(
+            "B-0091", CardKind.Block, "A block", "approved", CardOwner.Architect, CardScope.Change, "S-0091", Created, Created);
+        var blockFields = new BlockCardFields(Base: "base-commit", ReviewedState: "reviewed-state", Tasks: ["5.1"], Round: null, BlockedBy: ["Q-0091"], GateResults: []);
+        var blockCard = new CardFile(blockFrontmatter, "Body.", [], [], [], blockFields, []);
+        File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var outcome = CardStore.CloseSection(_root, sectionPath, CardOwner.Architect, Created, TimeSpan.FromSeconds(5), ChangeName);
+
+        var undetermined = Assert.IsType<CardSectionCloseOutcome.BlockingQuestionUnreadable>(outcome);
+        Assert.Equal("B-0091", undetermined.BlockId);
+        var file = Assert.Single(undetermined.Files);
+        Assert.Equal(unreadablePath, file.FilePath);
+
+        var recorded = Assert.Single(AssertParseSuccess(CardStore.ReadCard(blockPath)).Refusals);
+        Assert.Equal(CardOwner.Architect, recorded.By);
+        Assert.Equal(undetermined.RefusingRule, recorded.Rule);
+        Assert.Equal(undetermined.Remedy, recorded.Remedy);
+    }
+
     // §10 remediation, round two, S2: a deferred product-owner question blocks section-driven
     // landing exactly as an open one does — deferring does not lift the halt (Product Owner
     // ruling). Same shape as the open-question test above, deferred rather than open.
@@ -713,6 +778,22 @@ public sealed class CardSectionCloseTests : IDisposable
         File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
+    // §13.7: a file that fails to parse and whose own leading frontmatter fence declares a
+    // different id from the one this fixture's caller looks up — CardIdentityResolution.
+    // Unreadable's own fixture (as opposed to Corrupt, whose file declares the looked-up id
+    // itself): "could not confirm" is the honest answer here, not "confirmed absent".
+    private string WriteUnreadableQuestion(string fileStem, string declaredId)
+    {
+        var registerDirectory = Path.Combine(_root, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(registerDirectory);
+        var path = Path.Combine(registerDirectory, fileStem + ".md");
+        var frontmatter = new CardFrontmatter(
+            declaredId, CardKind.Question, "Title", "not-a-real-status", CardOwner.ProductOwner, CardScope.Repository, string.Empty, Created, Created);
+        var card = new CardFile(frontmatter, "Body.", [], []);
+        File.WriteAllText(path, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
     private string WriteInitialSectionCard(string fileStem, string id)
     {
         var path = Path.Combine(_directory, fileStem + ".md");
@@ -785,7 +866,8 @@ public sealed class CardSectionCloseTests : IDisposable
             onCardCorrupt: static corrupt => throw new Xunit.Sdk.XunitException($"expected Closed, got CardCorrupt: {corrupt.Reason}"),
             onToolFailure: static toolFailure => throw new Xunit.Sdk.XunitException($"expected Closed, got ToolFailure: {toolFailure.Reason}"),
             onRoundDisagreesWithHistory: static disagreement => throw new Xunit.Sdk.XunitException($"expected Closed, got RoundDisagreesWithHistory: (stored {disagreement.StoredRound}, expected {disagreement.ExpectedRound})"),
-            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Closed, got HandEnteredDerivedState: '{handEntered.Key}'"));
+            onHandEnteredDerivedState: static handEntered => throw new Xunit.Sdk.XunitException($"expected Closed, got HandEnteredDerivedState: '{handEntered.Key}'"),
+            onBlockingQuestionUnreadable: static undetermined => throw new Xunit.Sdk.XunitException($"expected Closed, got BlockingQuestionUnreadable({undetermined.BlockId}, {undetermined.Files.Count} file(s))"));
 
     private static CardLock AssertAcquired(CardLockResult result) =>
         result.Match(
