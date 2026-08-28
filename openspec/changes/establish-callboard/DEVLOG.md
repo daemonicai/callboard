@@ -37040,10 +37040,58 @@ Strictly within 13.5; nothing reaches into another section; `CardIdentityResolve
 
 Nothing here needs a fix before this block lands. → @architect.
 
+**[architect]** 13.5 landed — `ffa2c2d`. Reviewer **Approve** on the first pass, `GATES_EXIT:0`, suite
+**1082 → 1093**, box ticked.
+
+**The review's method is the part worth keeping.** It did not accept the worker's accounting of the twenty
+`onFailure: static _ => null` sites — it **re-swept independently** and got the same residual set, then
+read all five `CardStore` write-path exemptions to confirm each re-matches for its reason and refuses with
+`CardCorrupt(path, reason)` two lines later. And on `view` it checked that the two walks are **the same
+walk** (both enumerate `ResolveLiveRecordDirectories`, both read via `ReadAllCards`, `BoardView.cs:133`
+returns `state.Unreadable` verbatim) rather than accepting "consumes, does not compute" as a claim.
+**Verifying an exemption is harder than verifying an inclusion, and it is where a coverage claim actually
+fails.** It also resolved the soft number in the worker's own report: the 3 of 11 tests that survive
+stubbing out `Reason` are the fail-shut case and two empty-set rows that never read it — legitimately
+about something else, not weak tests.
+
+---
+
+**New task 13.7, by the Product Owner's decision, and the section now runs to 13.10.**
+
+| was | is |
+| --- | --- |
+| — | **13.7** fail shut wherever an unreadable card would otherwise permit what it should block |
+| 13.7 *verify readable / loop unenforced* | **13.8** (unchanged wording) |
+| 13.8 *determinable from the file alone* | **13.9** (unchanged wording) |
+| 13.9 *document the agent surface* | **13.10** (unchanged wording) |
+
+**Why this is a task and not a note.** It is the reviewer's **A3**: `CardStore.cs:2950` and
+`FindBlockingOpenProductOwnerQuestion` omit unreadable cards **in the permissive direction**, and after
+13.5 nothing reports it either.
+
+**13.5 and 13.7 are different kinds of fail-open and must not be confused.** 13.5 was **fidelity** — the
+tool answered confidently and was wrong, but nothing was wrongly permitted (§12 ruling 3). **A3 is
+enforcement**: if a blocking Product Owner question will not parse, **it stops blocking**, and a corrupt
+file silently becomes permission to proceed. That is the incumbent's failure mode — a process violation
+that can only be recorded after the fact — in the tool built to refuse it. **A fidelity fail-open makes
+the tool a bad witness; an enforcement fail-open makes it an accomplice.**
+
+Two rulings fall out of it, both of which bind future blocks:
+
+1. **When a card cannot be read, ask what its absence permits.** A reader that omits it answers a question
+   *incompletely*; a **guard** that omits it answers *permissively*. The same discarded parse failure is a
+   fidelity defect in one and an enforcement defect in the other, and only the second is a hazard.
+2. **13.7 must be built before 13.8 verifies it.** 13.8's sentence is "the loop proceeds unenforced when
+   the tool cannot run" — which is very nearly A3's subject, and verifying it against a tool that fails
+   open on an unreadable guard would be verifying the wrong property and calling it green.
+
+**Nits from the 13.5 review, all deferred to 13.10 and none blocking:** a missing `cardCount` doc comment,
+one over-long doc line `dotnet format` does not catch, and one assertion pinned to message prose.
+
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the
-section is not closed and must not be treated as closed.** Six blocks have landed; **five tasks remain**
+section is not closed and must not be treated as closed.** Seven blocks have landed; **five tasks remain**
 — §13 was renumbered to 13.9 after 13.4 landed, so the section is longer than it was this morning without
 being further from done.
 
@@ -37059,26 +37107,29 @@ Suite **1049 → 1082** (13.4 added no C#; its cover is a 64-case shell fixture 
 
 ### The resume point
 
-**13.5 — report the cards a read could not parse, as one `unreadable` shape across every read.**
-Then 13.6, 13.7, 13.8, 13.9. **The section was renumbered** — see the `[architect]` post above for the
-mapping, and read every "13.6"/"13.7" written *before* it as the old numbering.
+**13.6 — distinguish a corrupt card from a missing one when a card is addressed by id.**
+Then 13.7, 13.8, 13.9, 13.10. **The section has been renumbered twice** — the two `[architect]` posts
+above carry both mappings, and any "13.5"/"13.6"/"13.7" written *before* them means the older numbering.
 
 **One task, one block, at most.** A block groups whole tasks and never subdivides one; a task that will
-not fit a block is a finding about `tasks.md`, to be put to the Product Owner. That is what produced this
-renumbering, and it is why 13.5's inherited queue became 13.5 **and** 13.6 rather than two blocks.
+not fit a block is a finding about `tasks.md`, to be put to the Product Owner. That produced the first
+renumbering; the reviewer's A3 produced the second.
 
-**None of 13.5–13.9 is an ordinary block.** Read them before briefing:
+**None of 13.6–13.10 is an ordinary block.** Read them before briefing:
 
-- **13.5 is the four silent droppers** — enumerated under "Homed under 13.5 and 13.6" below. The task
-  wording settles the design question that was open: a read **reports** what it could not parse rather
-  than refusing, in **one** shape across `state`, `context`, `view` and both exports. `view` must consume
-  `DerivedState`'s result rather than grow a sixth ad-hoc variant.
-- **13.6 is `card-id-unresolvable`** — also enumerated below. The resolver already carries `Unreadable`
-  distinct from `NotFound` and merely discards the reason; 10 of the 19 `onCardCorrupt` arms become
-  reachable when it stops.
-- **13.7 and 13.8 are human-in-the-loop verification** — the record staying readable when the tool cannot
-  run, and a card's state being determinable from the file alone. Both are **downstream of 13.5 and 13.6**:
-  neither can be verified honestly while the readers still discard what they cannot parse. CLAUDE.md §4:
+- **13.6 is `card-id-unresolvable`** — enumerated under "Homed under 13.5 and 13.6" below. The resolver
+  already carries `Unreadable` distinct from `NotFound` and merely discards the reason; 10 of the 19
+  `onCardCorrupt` arms become reachable when it stops. **It also owes `NitResolution` and
+  `CardIdentityResolution`** — 13.5 held them as a pair deliberately, because converging one twin means
+  making it carry the parse reason, which is this task's work. 13.6 converges both, or states why neither.
+- **13.7 is the enforcement fail-open** — `CardStore.cs:2950` and `FindBlockingOpenProductOwnerQuestion`
+  omit unreadable cards **permissively**. Distinct in kind from 13.5, which was fidelity: a fidelity
+  fail-open makes the tool a bad witness, an enforcement fail-open makes it an accomplice. **Ask, for every
+  site, what the card's absence permits.**
+- **13.8 and 13.9 are human-in-the-loop verification** — the record staying readable when the tool cannot
+  run, and a card's state being determinable from the file alone. Both are **downstream of 13.5, 13.6 and
+  13.7**: 13.8's sentence is very nearly 13.7's subject, and verifying it against a tool that fails open on
+  an unreadable guard would be verifying the wrong property and calling it green. CLAUDE.md §4:
   implement and self-test as
   far as automation reaches, then hand the Product Owner an exact, copy-pasteable recipe and **wait for
   her confirmation before ticking**. **13.4 is now the worked example, and it sharpened the rule:** the
@@ -37086,13 +37137,14 @@ renumbering, and it is why 13.5's inherited queue became 13.5 **and** 13.6 rathe
   wired per-agent and is invisible from every context able to test it automatically. **Ask what the
   automation is structurally unable to see, and put that in the recipe.** §12 ruling 5 still binds — a
   recipe can satisfy the paperwork and not the task.
-- **13.9 documents the agent-facing command surface**, which now includes three verbs that did not exist
-  this morning. Write it last, after 13.5–13.8. **It grew in 13.4** and now also owes:
-  `CLAUDE.md`'s **Boundaries** paragraph, which under-describes the guard against the guard's own standard
-  that the prose and the enforcement must keep saying the same thing (ruled: 13.7's, and mine to write, as
-  no agent can, and renumbered from 13.7); and two message defects — `deny_store` promises "reading card files is fine" while
-  `ed`/`ex`/`patch` as blanket words deny a few reads, and the binary/store name ambiguity denies
-  `chmod +x ./callboard` without telling a worker the route is to report it.
+- **13.10 documents the agent-facing command surface**, which now includes three verbs that did not exist
+  this morning. Write it last, after 13.6–13.9. **It grew in 13.4** and now also owes: `CLAUDE.md`'s
+  **Boundaries** paragraph, which under-describes the guard against the guard's own standard that the
+  prose and the enforcement must keep saying the same thing (ruled mine to write, as no agent can); two
+  message defects — `deny_store` promises "reading card files is fine" while `ed`/`ex`/`patch` as blanket
+  words deny a few reads, and the binary/store name ambiguity denies `chmod +x ./callboard` without
+  telling a worker the route is to report it; and **13.5's three nits** — a missing `cardCount` doc
+  comment, an over-long doc line `dotnet format` does not catch, and an assertion pinned to message prose.
 
 **Then the section review.** Spawn the supervisor on `f100b77..HEAD`, pointed at the amended
 `work-lifecycle` and `card-model` requirements — not just at the four task lines. It has said it will audit

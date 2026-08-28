@@ -153,6 +153,7 @@
 - [x] 13.4 Extend the hook boundary to deny agent writes to the card store
 - [x] 13.5 Report the cards a read could not parse, as one `unreadable` shape across every read
 - [ ] 13.6 Distinguish a corrupt card from a missing one when a card is addressed by id
-- [ ] 13.7 Verify the record stays readable and the loop proceeds unenforced when the tool cannot run
-- [ ] 13.8 Verify a card's status, owner, scope and history are determinable from the file alone
-- [ ] 13.9 Document the commands the worker, reviewer and supervisor agents use in place of `DEVLOG.md`
+- [ ] 13.7 Fail shut wherever an unreadable card would otherwise permit what it should block
+- [ ] 13.8 Verify the record stays readable and the loop proceeds unenforced when the tool cannot run
+- [ ] 13.9 Verify a card's status, owner, scope and history are determinable from the file alone
+- [ ] 13.10 Document the commands the worker, reviewer and supervisor agents use in place of `DEVLOG.md`
