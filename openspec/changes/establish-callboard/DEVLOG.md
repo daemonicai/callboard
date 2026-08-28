@@ -37803,10 +37803,55 @@ Ran `make gates` myself: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0
 No blockers, no nits, no new architectural notes beyond the one already parked in `## NEXT` from round
 one (the `Match`-forcing-consumer observation) — nothing to add to it here.
 
+**[architect]** 13.7 landed — `c7069a5`. Reviewer **Request changes**, then **Approve**. `GATES_EXIT:0`
+re-run at my end (`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`), suite **1112 → 1117**. 13.7
+ticked; nothing else.
+
+**What the block actually turned on, and it was not the guard.**
+
+1. **A three-state fact was being carried in a two-state shape.** `FindBlockingOpenProductOwnerQuestion`
+   returned `(QuestionId, Title)?`: *blocked* or *not blocked*. The third state — **I cannot tell** — had
+   nowhere to live, so it was silently spelled *not blocked*, which is the permissive answer. The fix is
+   not a new check; it is `BlockingQuestionResolution` giving the third state a name. **Where a fail-open
+   survives review, look first at whether the return type can express the failure at all.**
+2. **The same fact is a refusal on one path and a report on the other.** Three write callers refuse;
+   `state` and `context` report and still return. A naive "fail shut everywhere" would have made a read
+   refuse, which is 13.5's ruling broken — *a read reports rather than refuses, because refusing lets one
+   corrupt card halt every query* — and it would have shipped as a fix. **The read/write line is where
+   this family of task is dangerous, and it is not visible from the site being fixed.**
+3. **The blocker was in a consumer the sweep could not see.** Making `Halted=true` with a null question id
+   reachable for the first time made `BoardViewRenderer` — untouched by the block, and correct before it —
+   render a real state as an empty badge and a bare dash. **A block that makes a previously-impossible
+   combination reachable owes a sweep of every consumer of that shape, not only of the sites it edits.**
+   §11's lesson generalises again: the failure was not in the code that changed.
+
+**Two smaller things worth the record.**
+
+- **The overturned ruling was protected by its own wording.** "Resolution failures are conservative by
+  omission" made a permissive default sound like caution. Omitting a blocker is *permissive*; nothing
+  about it is conservative. The phrase is retired along with the behaviour, and every citation now says
+  13.7 changed it. **A ruling that reads as prudence is the hardest kind to re-examine.**
+- **The empty-badge defect was disclosed elsewhere on the page and still counted as a defect.** The
+  unreadable files were listed in the view's own "Unreadable cards" section, so the *information* was
+  present. It was not present **where the reader was looking**. Correlating two sections of a page to
+  learn why a badge is empty is not disclosure.
+
+**A limit on §13 ruling 5, found by exercising it.** The auditors cannot execute a revert — the boundary
+blocks a reviewer from editing source, correctly — so a *watched-red* claim can be hand-traced by a
+reviewer but never reproduced. This round's reviewer said so plainly instead of implying it had run the
+revert, which is the right behaviour and worth naming as such. **The evidence standard has a hole no
+auditor can close: watched-red is the worker's discipline alone.** That is a rule for `CLAUDE.md`, not a
+finding against this block — carried below.
+
+**Not touched, deliberately.** A dangling `blocked-by` id that resolves to nothing still passes the guard
+(`onNotFound` → *no blocking question*, which is correct: an id naming nothing is not a Product Owner
+question). Whether a dangling `blocked-by` is itself a defect is a separate question and was explicitly
+out of this block's scope.
+
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the
-section is not closed and must not be treated as closed.** Seven blocks have landed; **four tasks remain**
+section is not closed and must not be treated as closed.** Eight blocks have landed; **three tasks remain**
 — §13 was renumbered to 13.9 after 13.4 landed, so the section is longer than it was this morning without
 being further from done.
 
@@ -37817,27 +37862,29 @@ supervisor audits the amendment alongside what was built to it) · `e2bea69` **1
 `d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test fix,
 carved from this file rather than from a task, ticking nothing · `c60d553` **13.4** the hook boundary ·
 `ffa2c2d` **13.5** one `unreadable` shape across every read · `d484003` **13.6** a corrupt card told apart
-from a missing one when addressed by id.
+from a missing one when addressed by id · `c7069a5` **13.7** the enforcement fail-open closed.
 
 Two commits here are **not** blocks and tick nothing: `b3c35cb` and `0de96bc`, the two task-breakdown
 amendments that took the section from 13.7 to 13.10.
 
-Suite **1049 → 1112** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
-committed — a `make` target for it is unbuilt and would be new scope). **Six remediation rounds spent**
-— 13.1, 13.3, **three on 13.4**, and **one on 13.6**, all reviewer-raised and all real. **13.5 approved first
-pass.**
+Suite **1049 → 1117** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
+committed — a `make` target for it is unbuilt and would be new scope). **Seven remediation rounds spent**
+— 13.1, 13.3, **three on 13.4**, **one on 13.6** and **one on 13.7**, all reviewer-raised and all real.
+**13.5 approved first pass.**
 
 ### The resume point
 
-**13.7 — fail shut wherever an unreadable card would otherwise permit what it should block.**
-Then 13.8, 13.9, 13.10. **The section has been renumbered twice** — the two `[architect]` posts
+**13.8 — verify the record stays readable and the loop proceeds unenforced when the tool cannot run.**
+Then 13.9, 13.10. **13.8 and 13.9 both end at the Product Owner** — implement and self-test as far as
+automation reaches, then hand her a copy-pasteable recipe and **wait for her confirmation before
+ticking**. **The section has been renumbered twice** — the two `[architect]` posts
 above carry both mappings, and any "13.5"/"13.6"/"13.7" written *before* them means the older numbering.
 
 **One task, one block, at most.** A block groups whole tasks and never subdivides one; a task that will
 not fit a block is a finding about `tasks.md`, to be put to the Product Owner. That produced the first
 renumbering; the reviewer's A3 produced the second.
 
-**None of 13.7–13.10 is an ordinary block.** Read them before briefing:
+**None of 13.8–13.10 is an ordinary block.** Read them before briefing:
 
 - **13.6 landed (`d484003`).** Its queue entry's premise was wrong in a way worth keeping: keeping the parse
   reason was necessary and *not sufficient*, because `CardFileParseResult.Failure` carries no id, so
@@ -37847,10 +37894,12 @@ renumbering; the reviewer's A3 produced the second.
   *new* `card-corrupt` arm on the two `--id` resolvers, 22 handlers across 25 call sites. `NitResolution`
   converged on `UnreadableCard` and deliberately took **no** `Corrupt` case: a nit id has no structurally
   bounded span the way the fence bounds a card id.
-- **13.7 is the enforcement fail-open** — `CardStore.cs:2950` and `FindBlockingOpenProductOwnerQuestion`
-  omit unreadable cards **permissively**. Distinct in kind from 13.5, which was fidelity: a fidelity
-  fail-open makes the tool a bad witness, an enforcement fail-open makes it an accomplice. **Ask, for every
-  site, what the card's absence permits.**
+- **13.7 landed (`c7069a5`).** The queue's site `CardStore.cs:2950` was a `Directory.Exists` continue; the
+  dropper was `:2958`, and the fail-shut obligations scan forty lines above it was the model. What the
+  queue did not say at all: **the guard has five callers and two are reads**, so the fix had to be a
+  refusal on the write paths and a report on the reads. `BlockingQuestionResolution` gives the
+  *undetermined* state a name it did not have. The remediation was in `BoardViewRenderer`, a consumer the
+  block never edited.
 - **13.8 and 13.9 are human-in-the-loop verification** — the record staying readable when the tool cannot
   run, and a card's state being determinable from the file alone. Both are **downstream of 13.5, 13.6 and
   13.7**: 13.8's sentence is very nearly 13.7's subject, and verifying it against a tool that fails open on
@@ -37936,6 +37985,15 @@ arms are unreachable** because of this, **`block approve --id` included**, and t
    exist; bodies come from stdin) and did not raise it. **The substance was right and the silence was
    wrong** — a brief that contradicts the codebase is a defect in the brief, and the Architect cannot fix
    what the worker does not report.
+   **Answered by 13.6**, in both directions: the worker corrected my brief's item 7, then corrected the
+   reviewer's stated CRLF mechanism by running it rather than transcribing it. The behaviour the entry
+   asks for is now the worked example; what is still owed is writing it into the agent definitions.
+9. **New, from §13.7 — watched-red is the worker's discipline alone, and the definitions should say so.**
+   §13 ruling 5 requires a regression test be watched to fail. The auditors **cannot** execute a revert —
+   the boundary blocks a reviewer from editing source, correctly — so an auditor can hand-trace such a
+   claim but never reproduce it. 13.7's reviewer said exactly that instead of implying it had run the
+   revert. **The reviewer's prompt should require that distinction — verified versus taken on report — and
+   the worker's should say the discipline is unauditable and therefore its own.**
 
 ---
 
