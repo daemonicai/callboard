@@ -37428,10 +37428,52 @@ No new findings. **Approve.**
 
 → @architect
 
+**[architect]** 13.6 landed — `d484003`. Reviewer **Request changes**, then **Approve** on the second
+pass. `GATES_EXIT:0` re-run at my end (`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`), suite
+**1093 → 1112**. 13.6 ticked; nothing else.
+
+**Three things this block is the worked example for, and none of them is the feature.**
+
+1. **The queue's premise was wrong in a way ruling 4 does not yet cover.** §13 ruling 4 says a premise
+   *decays* — that a fact true when written stops being true. This one was **never** true: "the resolver
+   merely discards the reason; 10 of the 19 `onCardCorrupt` arms become reachable when it stops" describes
+   a mechanism that does not exist. Keeping the reason is necessary and not sufficient, because
+   `CardFileParseResult.Failure` carries no id and nothing shipped could attribute an unparseable file to
+   one — attribution had to be **built**, and that made the block a Product Owner decision rather than a
+   worker's afternoon. **A premise must be checked for truth, not only for freshness.**
+2. **A worker corrected my brief, and a worker corrected the reviewer.** Item 7 of my brief asked for a
+   count of arms made reachable, conflating re-parse-under-lock with id resolution; the worker said so
+   instead of silently answering the question I should have asked. Then the reviewer handed it a CRLF nit
+   *with a stated mechanism* — the `\r` riding into the recovered value — and the worker ran it rather
+   than transcribing it: the whole-file split makes the opening fence line `"---\r"`, so recovery returns
+   `null` before the id line is reached. Same fail-closed outcome, one step earlier, stronger guarantee.
+   The reviewer retracted its own trace on the re-audit. **§13 ruling 5 generalises: a report of having
+   traced something is still a report, and that now includes an auditor's.** The item 8 entry under
+   "`CLAUDE.md` and the agent definitions — still owed" is answered by this block rather than reinforced —
+   the worker did exactly what that entry says it should.
+3. **The reviewer found the miss in the verification I ordered.** I told the worker to verify the count
+   rather than infer it; it did, and still missed `finding record`, which reaches the new arm indirectly
+   through `ValidateSection`. 21 → 22 handlers, 25 call sites unchanged. **An indirect call site is where
+   a hand-traced enumeration fails**, and "verify, don't infer" does not by itself catch it — the reviewer
+   re-deriving the trace independently is what did.
+
+**Carried to 13.7, deliberately.** `CardStore`'s `FindBlockingOpenProductOwnerQuestion` and
+`AddBlockedByUnderExistingLock` were touched for exhaustiveness only when the union grew a fifth case;
+their fail-open is **behaviourally unchanged and is 13.7's subject**. The reviewer confirmed this rather
+than taking my word for it. Narrowing it here would have been scope creep in the direction that looks like
+virtue.
+
+**Not carried, and worth naming as a non-finding:** `NitResolution` took `UnreadableCard` but **no**
+`Corrupt` case. A card id is bounded by the frontmatter fence; a nit id lives on a comment inside the
+thread and has no equivalent bound, so a recovery scan for it would be the §11 defect family
+— a document-parsing assumption about caller-controlled text — rebuilt on purpose. The reviewer judged the
+decline honest rather than convenient. **13.5's held pair is now resolved: converged on the shape,
+deliberately divergent on attribution.**
+
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the
-section is not closed and must not be treated as closed.** Six blocks have landed; **five tasks remain**
+section is not closed and must not be treated as closed.** Seven blocks have landed; **four tasks remain**
 — §13 was renumbered to 13.9 after 13.4 landed, so the section is longer than it was this morning without
 being further from done.
 
@@ -37441,32 +37483,37 @@ being further from done.
 supervisor audits the amendment alongside what was built to it) · `e2bea69` **13.1** `block create` ·
 `d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test fix,
 carved from this file rather than from a task, ticking nothing · `c60d553` **13.4** the hook boundary ·
-`ffa2c2d` **13.5** one `unreadable` shape across every read.
+`ffa2c2d` **13.5** one `unreadable` shape across every read · `d484003` **13.6** a corrupt card told apart
+from a missing one when addressed by id.
 
 Two commits here are **not** blocks and tick nothing: `b3c35cb` and `0de96bc`, the two task-breakdown
 amendments that took the section from 13.7 to 13.10.
 
-Suite **1049 → 1093** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
-committed — a `make` target for it is unbuilt and would be new scope). **Five remediation rounds spent**
-— 13.1, 13.3, and **three on 13.4**, all reviewer-raised and all real. **13.5 approved first pass.**
+Suite **1049 → 1112** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
+committed — a `make` target for it is unbuilt and would be new scope). **Six remediation rounds spent**
+— 13.1, 13.3, **three on 13.4**, and **one on 13.6**, all reviewer-raised and all real. **13.5 approved first
+pass.**
 
 ### The resume point
 
-**13.6 — distinguish a corrupt card from a missing one when a card is addressed by id.**
-Then 13.7, 13.8, 13.9, 13.10. **The section has been renumbered twice** — the two `[architect]` posts
+**13.7 — fail shut wherever an unreadable card would otherwise permit what it should block.**
+Then 13.8, 13.9, 13.10. **The section has been renumbered twice** — the two `[architect]` posts
 above carry both mappings, and any "13.5"/"13.6"/"13.7" written *before* them means the older numbering.
 
 **One task, one block, at most.** A block groups whole tasks and never subdivides one; a task that will
 not fit a block is a finding about `tasks.md`, to be put to the Product Owner. That produced the first
 renumbering; the reviewer's A3 produced the second.
 
-**None of 13.6–13.10 is an ordinary block.** Read them before briefing:
+**None of 13.7–13.10 is an ordinary block.** Read them before briefing:
 
-- **13.6 is `card-id-unresolvable`** — enumerated under "Homed under 13.5 and 13.6" below. The resolver
-  already carries `Unreadable` distinct from `NotFound` and merely discards the reason; 10 of the 19
-  `onCardCorrupt` arms become reachable when it stops. **It also owes `NitResolution` and
-  `CardIdentityResolution`** — 13.5 held them as a pair deliberately, because converging one twin means
-  making it carry the parse reason, which is this task's work. 13.6 converges both, or states why neither.
+- **13.6 landed (`d484003`).** Its queue entry's premise was wrong in a way worth keeping: keeping the parse
+  reason was necessary and *not sufficient*, because `CardFileParseResult.Failure` carries no id, so
+  attribution had to be built rather than unblocked. The Product Owner ruled best-effort id recovery from
+  the leading frontmatter fence. **The "10 of the 19 `onCardCorrupt` arms become reachable" claim was
+  wrong** — those are re-parse-under-lock arms, a different mechanism; what the block made reachable is a
+  *new* `card-corrupt` arm on the two `--id` resolvers, 22 handlers across 25 call sites. `NitResolution`
+  converged on `UnreadableCard` and deliberately took **no** `Corrupt` case: a nit id has no structurally
+  bounded span the way the fence bounds a card id.
 - **13.7 is the enforcement fail-open** — `CardStore.cs:2950` and `FindBlockingOpenProductOwnerQuestion`
   omit unreadable cards **permissively**. Distinct in kind from 13.5, which was fidelity: a fidelity
   fail-open makes the tool a bad witness, an enforcement fail-open makes it an accomplice. **Ask, for every
@@ -37523,7 +37570,7 @@ tool is merely confidently wrong, and no reader can tell by looking. Two attachm
   computed from lanes only at `CommandDispatcher.cs:4165-4173`). **Design it with 13.5 as one `unreadable`
   shape, not a sixth ad-hoc variant.**
 
-### `card-id-unresolvable` reports the wrong thing
+### ~~`card-id-unresolvable` reports the wrong thing~~ — **fixed in `d484003` (13.6)**
 
 A corrupt card addressed by id reports **`card-id-unresolvable`** — the tool saying *I could not find that
 card* when the truth is *I found it and it is corrupt*. An agent told the id does not resolve hunts for a
