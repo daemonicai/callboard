@@ -36660,10 +36660,47 @@ that had nothing to do with this block.
 
 Fixture 64/64. Guard diff `88/0` — no context line removed, every pre-existing rule verbatim.
 
+**[architect]** §13's task breakdown amended by the Product Owner: **13.5 is split into three tasks, and
+the section now runs to 13.9.** Recorded here because every reference to "13.6" and "13.7" above this post
+means the *old* numbering.
+
+| was | is |
+| --- | --- |
+| 13.5 *verify readable / loop unenforced* | **13.5** report the cards a read could not parse, as one `unreadable` shape across every read |
+| — | **13.6** distinguish a corrupt card from a missing one when a card is addressed by id |
+| — | **13.7** verify the record stays readable and the loop proceeds unenforced when the tool cannot run |
+| 13.6 *determinable from the file alone* | **13.8** (unchanged wording) |
+| 13.7 *document the agent surface* | **13.9** (unchanged wording) |
+
+**Why, and it is a ruling about the workflow rather than about this section.** I proposed carving old-13.5
+into three *blocks*, because the queue homed under it is three unrelated designs plus a verification. The
+Product Owner refused the shape: **"i don't think a single task should be carved into multiple blocks"**,
+and then **"it might be better to split 13.5 into multiple tasks, rather than do three or four different
+things in one task."**
+
+**A block groups whole tasks; it never subdivides one.** The block is what gets one brief, one reviewer
+audit, one gate run and one commit — and the *task* is what gets ticked. Splitting a task across blocks
+produces commits that tick nothing and a tick that answers to no single reviewed deliverable. So when a
+task is too big for one block, **that is a finding about the task breakdown, not a licence to carve
+around it** — the fix goes in `tasks.md`, and it is the Product Owner's call. The one block that
+legitimately ticks nothing stays the post-supervisor remediation block, which gets no new `N.M` numbers.
+
+**This also settles a question I had queued as a design call.** Old-13.5's homed queue asked what a read
+should do with a card it cannot parse — report alongside the result, or refuse the read entirely. **The
+approved task wording answers it: *report*.** One `unreadable` shape naming each file and why it failed,
+carried by `state`, `context`, `view` and both exports, so a caller gets an answer and knows what it
+excludes. Refusing the whole read would have had one corrupt card halt every query — enforcing a stoppage
+no spec asks for, and contradicting what is now 13.7's own sentence.
+
+**Unchanged:** §13's base stays `f100b77`; the supervisor's range is still `f100b77..HEAD`. Nothing ticked
+was disturbed — 13.1–13.4 are landed and every renumbered task was open.
+
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the
-section is not closed and must not be treated as closed.** Six blocks have landed; three tasks remain.
+section is not closed and must not be treated as closed.** Six blocks have landed; **five tasks remain**
+— §13 was renumbered to 13.9 after 13.4 landed, so the section is longer than it was this morning without
+being further from done.
 
 ### Landed in §13
 
@@ -36677,26 +36714,38 @@ Suite **1049 → 1082** (13.4 added no C#; its cover is a 64-case shell fixture 
 
 ### The resume point
 
-**13.5 — verify the record stays readable and the loop proceeds unenforced when the tool cannot run.**
-Then 13.6, 13.7.
+**13.5 — report the cards a read could not parse, as one `unreadable` shape across every read.**
+Then 13.6, 13.7, 13.8, 13.9. **The section was renumbered** — see the `[architect]` post above for the
+mapping, and read every "13.6"/"13.7" written *before* it as the old numbering.
 
-**13.5, 13.6 and 13.7 are not ordinary blocks.** Read them before carving:
+**One task, one block, at most.** A block groups whole tasks and never subdivides one; a task that will
+not fit a block is a finding about `tasks.md`, to be put to the Product Owner. That is what produced this
+renumbering, and it is why 13.5's inherited queue became 13.5 **and** 13.6 rather than two blocks.
 
-- **13.5 owes the inherited queue below**, not just its own sentence — the four silent droppers and
-  `card-id-unresolvable`. Both are enumerated under "Homed under 13.5".
-- **13.5 and 13.6 are human-in-the-loop verification** — the record staying readable when the tool cannot
-  run, and a card's state being determinable from the file alone. CLAUDE.md §4: implement and self-test as
+**None of 13.5–13.9 is an ordinary block.** Read them before briefing:
+
+- **13.5 is the four silent droppers** — enumerated under "Homed under 13.5 and 13.6" below. The task
+  wording settles the design question that was open: a read **reports** what it could not parse rather
+  than refusing, in **one** shape across `state`, `context`, `view` and both exports. `view` must consume
+  `DerivedState`'s result rather than grow a sixth ad-hoc variant.
+- **13.6 is `card-id-unresolvable`** — also enumerated below. The resolver already carries `Unreadable`
+  distinct from `NotFound` and merely discards the reason; 10 of the 19 `onCardCorrupt` arms become
+  reachable when it stops.
+- **13.7 and 13.8 are human-in-the-loop verification** — the record staying readable when the tool cannot
+  run, and a card's state being determinable from the file alone. Both are **downstream of 13.5 and 13.6**:
+  neither can be verified honestly while the readers still discard what they cannot parse. CLAUDE.md §4:
+  implement and self-test as
   far as automation reaches, then hand the Product Owner an exact, copy-pasteable recipe and **wait for
   her confirmation before ticking**. **13.4 is now the worked example, and it sharpened the rule:** the
   half no agent could verify was that the boundary *does not* constrain the Architect, because the hook is
   wired per-agent and is invisible from every context able to test it automatically. **Ask what the
   automation is structurally unable to see, and put that in the recipe.** §12 ruling 5 still binds — a
   recipe can satisfy the paperwork and not the task.
-- **13.7 documents the agent-facing command surface**, which now includes three verbs that did not exist
-  this morning. Write it after 13.5–13.6, not before. **It grew in 13.4** and now also owes:
+- **13.9 documents the agent-facing command surface**, which now includes three verbs that did not exist
+  this morning. Write it last, after 13.5–13.8. **It grew in 13.4** and now also owes:
   `CLAUDE.md`'s **Boundaries** paragraph, which under-describes the guard against the guard's own standard
   that the prose and the enforcement must keep saying the same thing (ruled: 13.7's, and mine to write, as
-  no agent can); and two message defects — `deny_store` promises "reading card files is fine" while
+  no agent can, and renumbered from 13.7); and two message defects — `deny_store` promises "reading card files is fine" while
   `ed`/`ex`/`patch` as blanket words deny a few reads, and the binary/store name ambiguity denies
   `chmod +x ./callboard` without telling a worker the route is to report it.
 
@@ -36713,7 +36762,7 @@ reviewer each time used `Read` and reported the friction rather than routing aro
 it is a pre-existing rule the block does not touch, and narrowing the boundary's oldest guarantee deserves
 its own carve rather than a footnote in a remediation.
 
-## Homed under 13.5 — enumerated, not parked
+## Homed under 13.5 and 13.6 — enumerated, not parked
 
 ### The four silent droppers
 
