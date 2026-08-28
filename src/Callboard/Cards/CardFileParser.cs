@@ -149,6 +149,11 @@ internal static class CardFileParser
             return null;
         }
 
+        // §13.8 remediation: checked for the same blank-line exposure Parse had. This loop never
+        // fails on a line it doesn't recognise — it only ever looks for the closing fence or an
+        // "id: " line — so a blank line here just falls through both checks and is silently
+        // skipped by cursor++ below, exactly like every other non-"id:" frontmatter line. No fix
+        // needed; recorded so a reader checking the sibling method doesn't have to re-derive it.
         string? recoveredId = null;
         var cursor = 1;
         while (cursor < lines.Length && !string.Equals(lines[cursor], CardFileFormat.FrontmatterFence, StringComparison.Ordinal))
@@ -198,20 +203,48 @@ internal static class CardFileParser
 
             var line = lines[cursor];
 
+            // §13.8 remediation, round two: skip a blank line here too, same reasoning and same
+            // remedy as the appended-region loop below — an editor that leaves one behind (a
+            // blank line between frontmatter fields) means nothing, so it's dropped rather than
+            // failed. The writer is unchanged; this is read-side only.
+            if (line.Length == 0)
+            {
+                cursor++;
+                continue;
+            }
+
             if (string.Equals(line, CardFileFormat.FrontmatterFence, StringComparison.Ordinal))
             {
                 cursor++;
                 break;
             }
 
+            string key;
+            string value;
             var separatorIndex = line.IndexOf(": ", StringComparison.Ordinal);
-            if (separatorIndex < 0)
+            if (separatorIndex >= 0)
+            {
+                key = line[..separatorIndex];
+                value = line[(separatorIndex + 2)..];
+            }
+            else if (line[^1] == ':')
+            {
+                // §13.8 remediation, round two: CardFileWriter always emits "key: value" — for an
+                // empty-valued field (e.g. `section` on a repository-scoped card) that's "key: "
+                // with a trailing space. An editor that strips trailing whitespace on save turns
+                // that into "key:" with nothing after the colon, and a save that changes nothing
+                // else would otherwise corrupt the card. Tolerated as that key with an empty
+                // value — the same value "key: " already parses to. A line with no colon at all
+                // still fails below, and so does "key:something" with no space and a non-empty
+                // tail: only a colon as the line's very last character is accepted this way.
+                key = line[..^1];
+                value = string.Empty;
+            }
+            else
             {
                 return Failure($"malformed frontmatter line: '{line}'");
             }
 
-            var key = line[..separatorIndex];
-            var value = line[(separatorIndex + 2)..];
             fields[key] = value;
             orderedFields.Add((key, value));
 
@@ -416,6 +449,22 @@ internal static class CardFileParser
         while (cursor < lines.Length)
         {
             var headerLine = lines[cursor];
+
+            // §13.8 remediation: skip a blank line here — between two blocks, or trailing at
+            // EOF. An editor that guarantees a final newline turns the file's own trailing '\n'
+            // into an empty line once Parse's normalization above strips one of them, and a
+            // blank line separating blocks by eye is indistinguishable from one inside a comment
+            // body. Neither means anything, so it is dropped rather than failed. This is the
+            // only place that happens: a blank line inside a comment body (the loop just below,
+            // and CardFileFormat.UnescapeContentLine) is still content and is preserved
+            // unchanged, and the pre-append body loop above is untouched. The next tool write
+            // re-emits the file without the stray blanks (CardFileWriter is unchanged) — that
+            // normalization is deliberate, not drift.
+            if (headerLine.Length == 0)
+            {
+                cursor++;
+                continue;
+            }
 
             if (CardFileFormat.IsHandoverLine(headerLine))
             {
