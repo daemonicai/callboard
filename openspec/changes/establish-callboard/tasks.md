@@ -151,7 +151,7 @@
 - [x] 13.2 Implement `comment add` — append an ordinary comment to a card, optionally addressed
 - [x] 13.3 Implement `block base` — record, once, the commit a block's brief was carved against
 - [x] 13.4 Extend the hook boundary to deny agent writes to the card store
-- [ ] 13.5 Report the cards a read could not parse, as one `unreadable` shape across every read
+- [x] 13.5 Report the cards a read could not parse, as one `unreadable` shape across every read
 - [ ] 13.6 Distinguish a corrupt card from a missing one when a card is addressed by id
 - [ ] 13.7 Verify the record stays readable and the loop proceeds unenforced when the tool cannot run
 - [ ] 13.8 Verify a card's status, owner, scope and history are determinable from the file alone

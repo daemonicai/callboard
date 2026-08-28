@@ -36695,6 +36695,351 @@ no spec asks for, and contradicting what is now 13.7's own sentence.
 **Unchanged:** §13's base stays `f100b77`; the supervisor's range is still `f100b77..HEAD`. Nothing ticked
 was disturbed — 13.1–13.4 are landed and every renumbered task was open.
 
+**[architect]** Brief — **13.5, one block, one task**: report the cards a read could not parse, as one
+`unreadable` shape across every read.
+
+**Premise re-checked before briefing (§13 ruling 4), and it had decayed — by being incomplete.**
+
+- The four named droppers are all still live at the named lines: **`DerivedState.cs:86`**,
+  **`WorkingContext.cs:144`**, **`RecordExportAssembler.cs:59,90,109,126`**. ✅
+- **`RuleCitations.cs:69,154,207` drops the same way and was never enumerated.** Three more sites.
+- **There are already five distinct `unreadable` representations** in the tree — `NitResolution`,
+  `CardIdentityResolution`, `ChangeArchiveOutcome`, `FindingDegradationStatus`, and `BoardView`'s own.
+  `NitResolver.cs:34` and `CardIdentityAllocator.cs:245` each drop the parse failure into a *local*
+  `unreadable` list. So the supervisor's instruction — **one shape, not a sixth ad-hoc variant** — is not
+  a greenfield design. It is a convergence.
+
+**The spec guarantees containment, not disclosure.** `record-retrieval` → *Concurrent work does not
+corrupt the record* → scenario **Damage is contained**: "**WHEN** one card's record is corrupted /
+**THEN** every other card remains readable and usable". That is the requirement this block serves, and it
+is silent on *telling the caller*. **Do not go hunting for a scenario that specifies the response shape —
+there isn't one.** The obligation to report comes from the task line, ruled by the Product Owner: a read
+**reports** what it could not parse rather than refusing, because refusing would let one corrupt card
+halt every query.
+
+**Tasks in this block:** 13.5, and nothing else. 13.6 (`card-id-unresolvable`) is a separate task and a
+separate block — **`CardIdentityResolver.cs:61` is 13.6's site, not yours.** Do not fix it here.
+
+**What to build**
+
+1. **One `unreadable` shape.** A per-file record of *which file* and *why it would not parse* — the parse
+   failure already carries the reason and every site currently throws it away with `onFailure: static _
+   => null`. Name it once and use it everywhere.
+2. **Carry it through every read that can hit an unparseable card:** `state` (`DerivedState.cs:86`),
+   `context` (`WorkingContext.cs:144`), both exports (`RecordExportAssembler.cs`, four sites), and
+   `RuleCitations.cs` (three sites). **`view` must consume `DerivedStateAssembler.Build`'s result**
+   (`BoardView.cs:123` already calls it) rather than growing a parallel set — and `ViewResult` today
+   reports `cardCount` and nothing about what it could not read (`ViewResult.cs:16-20`, count computed
+   from lanes at `CommandDispatcher.cs:4165-4173`).
+3. **Reconcile, don't accumulate.** For each of the five existing representations, either move it onto
+   the new shape or **state in your DEVLOG post why it is legitimately different**. `NitResolution` and
+   `CardIdentityResolution` are the two I'd expect to converge; `CardIdentityAllocator.cs:245` is
+   deliberately different and I do not expect you to touch it — 13.1 made that scan distinguish *gone*
+   from *unreadable* on purpose (a vanished file bears no identity; a file that exists and will not parse
+   fails shut), and its comment says so.
+4. **Enumerate rather than trust this list.** The queue's four became nine once I swept for the pattern.
+   Sweep `onFailure: static _ => null` yourself — there are 19 in the tree — and for every site you do
+   **not** bring into the shape, say which and why. **A site you did not mention reads as a site you did
+   not see.** Several are inside `CardStore` write paths (re-reads during a transition) and are very
+   likely legitimately different; say so rather than leaving them unaccounted.
+
+**Binding decisions.** D3 (cards are the record; the file is authoritative), **D4 (the index is derived,
+never authoritative — an unreadable card is a fact about the file, and must not be answered from the
+index)**, D2 (NativeAOT: no reflection-based serialisation; the response shape needs its source-generated
+context like every other).
+
+**Done-gates.** Every read that can encounter an unparseable card reports it; the shape is one type, not
+several; `view` consumes `DerivedState`'s result; every unswept `onFailure: static _ => null` site is
+accounted for in your post. Tests: a corrupt card in the store, per read path, asserting both that the
+readable cards still come back **and** that the unreadable one is named with its reason — the §11 ruling
+applies, *a test can cover a content class and still not cover the thing that makes it content*, so
+assert on the **reason**, not merely on a non-empty list.
+
+**Gates:** `make gates` → `GATES_EXIT:0`, and quote the exit lines. **Boundaries:** you do not commit, do
+not tick, do not edit `tasks.md`, the `Makefile`, `CLAUDE.md` or `.claude/`. **Card bodies come from
+stdin; there is no `--body` flag** — and if any part of this brief contradicts the codebase, **say so and
+stop**: that is a defect in my brief, and 13.4's §13 note is that a worker following the code over the
+brief in silence is the failure, not the reverse.
+**[worker]** 13.5 — one `unreadable` shape, carried by every read. `BUILD_EXIT:0 TEST_EXIT:0
+FORMAT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, suite **1082 → 1093**.
+
+**The shape.** `Cards/UnreadableCard.cs` — `UnreadableCard(string FilePath, string Reason)`, plus
+`UnreadableCards.CardOrRecordUnreadable(...)` (the exact replacement for `onFailure: static _ => null`:
+same call shape, failure carried out instead of dropped) and `UnreadableCards.Ordered(...)` (ordinal by
+path, one entry per file). On the wire it is `Cli/UnreadableCardResult.cs` — `{filePath, reason}`, one
+`unreadable` array on every affected response, always present, empty when the record parsed. No new
+serialisation machinery: nested in already-registered result types, so D2's source-generated context
+covers it with no reflection.
+
+**Carried by:** `state`, `context`, `view`, `section export`, `change export`, `rule review`, and —
+**not in the brief, argued below** — `section status`. `view` consumes `DerivedStateAssembler.Build`'s
+set verbatim rather than growing a parallel one; `BoardViewAssembler`'s own walk now deliberately drops
+its parse failures, with a comment saying that the set it reports is `DerivedState`'s.
+
+**`context` and "nothing else".** I put `unreadable` on `ContextResult` beside `budget`, not inside the
+four parts. The precedent is `budget` itself: working-context's "nothing else" bounds the *parts*, and a
+statement about what this response could not include is the same family as "it SHALL state explicitly
+that it has truncated and what". It is measured by the budget loop like every other field, because the
+measurement is of the real emitted line.
+
+**A brief item that did not survive contact — `rule propose-compact`.** I wired it, then the test
+refused: with any unreadable file in the record, `CardIdentityAllocator` **fails shut** minting the
+proposal card's id (§13 ruling 3), so the verb never completes over an incomplete record and the field
+could never have been non-empty. I removed it and kept the discovery as a test that asserts the
+fail-shut path, plus a comment at the discarding call site. `RuleCitations.CountCitations` still returns
+its unreadable set — the reachable consumer is `UncitedOpenRules`, and through it `rule review`.
+
+**One site added to the brief's list: `CardStore.FindAgeingAddressedThreads` (`CardStore.cs:3106`),
+`section status`.** It is a read command that walks the section's directory and drops an unparseable
+block card silently — its own doc comment said so. An unparseable block may carry an ageing thread the
+response therefore cannot list, so the omission is now stated. Same class as the four named droppers;
+excluding it because it was not on the list would have been arbitrary.
+
+**Every `onFailure: static _ => null` site, all 20, accounted for.**
+
+*Brought onto the shape (9 + 1):* `DerivedState.cs:86`, `WorkingContext.cs:144`,
+`RecordExportAssembler.cs:59,90,109,126`, `RuleCitations.cs:69,154,207`, and `CardStore.cs:3106`.
+
+*Left as they are, and why:*
+
+- **`CardStore.cs:2475, 2871, 4580, 4588, 5136`** — not droppers at all. Each is a named-target re-read
+  on a **write** path that immediately re-matches the same result for its reason and refuses with
+  `CardCorrupt(path, reason)`. `_ => null` is idiom there, not loss: which file and why are already
+  reported. A write refuses; a read reports.
+- **`CardStore.cs:2950`** (section-close question scan) and **`CardStore.cs:2105`**
+  (`FindBlockingOpenProductOwnerQuestion`, via the resolver) — deliberate conservative omission,
+  documented in place, on write-path guards whose refusal shapes are settled. Reporting through them
+  would mean adding a field to outcome unions that exist to refuse.
+- **`CardIdentityResolver.cs:61`** — **13.6's**, untouched.
+- **`CardIdentityAllocator.cs:245`** — deliberately different (13.1), untouched.
+- **`IndexPopulator.cs:59`** is not this idiom and already reports `(FilePath, Reason)` — see the
+  reconciliation below.
+- **`tests/.../CardStoreCorruptionTests.cs:151`** — test-local.
+
+**Reconciling the five existing representations, per the supervisor's standing instruction.**
+
+- **`BoardViewUnreadableEntry` — deleted**, replaced by `UnreadableCard` everywhere including the
+  renderer. It was already exactly this shape; it is now the shape.
+- **`NitResolution.Unreadable` and `CardIdentityResolution.Unreadable` — held, as a pair, for 13.6.**
+  ❓ @architect — this is the one place I have not done what your brief expected, so it is a decision to
+  overrule rather than a silence. Both are **id-resolution refusal** shapes ("no readable file carries
+  this id, and one file I could not read might"), not a read's report of what it excluded from a result.
+  Converging them means making them carry the reason — which **is** 13.6's task, and 13.6's brief
+  reserves `CardIdentityResolver.cs:61`. Converging only the twin would leave two types whose own doc
+  comments say they are the same four-case shape reporting differently for one section. `UnreadableCard`
+  is designed to drop into both, so 13.6 can take them together. If you would rather I take
+  `NitResolution` now, say so and I will.
+- **`ChangeArchiveOutcome.CardsUnreadable`** — a **write** guard: `change archive` refuses to move a
+  directory it could not fully read. Legitimately different (the assembler's own doc comment already
+  draws this line), and converging it would change a refusal's payload, not a read's report.
+- **`FindingDegradationStatus.Unreadable(reason)`** — a *status of one addressed finding's closure
+  confirmability*, derived from the resolver, carrying prose rather than a file set. Different question,
+  different answer shape.
+- **`IndexPopulationResult.Failures`** — already `(FilePath, Reason)` and the nearest prior art, but it
+  carries **every** reason a card was excluded from the index, duplicate-identity exclusions included.
+  Renaming it `UnreadableCard` would mislabel half its entries. Left alone.
+
+**Tests — `tests/Callboard.Tests/UnreadableCardReportingTests.cs`, 11 cases, one per read path.** Each
+asserts both halves: the readable cards still come back, **and** the corrupt one is named with its
+reason. Two corruption classes are used (out-of-vocabulary `status:`, and a file with no frontmatter),
+and the no-frontmatter case asserts it does **not** report the status text — so a constant reason cannot
+pass. §13 ruling 5: I watched them fail. With `Reason` replaced by the literal `"corrupt"`, **8 of the
+11 fail**; the three that still pass are the fail-shut case and the two empty-set cases, which do not
+assert a reason. `rule review`'s case also asserts the corrupt file is reported **once**, not once per
+walk — its citation counting re-reads the record per candidate rule.
+
+Existing tests touched only where a signature changed (`RuleCitationsTests`, `RecordExportTests`,
+`CardSectionCloseTests` destructure the new tuples). No behaviour rewritten.
+
+→ @reviewer — the places I would look hardest: (1) the `NitResolution`/`CardIdentityResolution` hold
+above, which is a deliberate departure from the brief; (2) `BoardViewAssembler`'s remaining
+`onFailure: _ => null` — it is the one surviving instance of the audited idiom and rests on the claim
+that its walk and `DerivedStateAssembler`'s cover the same directories; (3) whether `unreadable` on
+`ContextResult` is a fifth part in disguise; (4) `section status`, which I added to the block's scope.
+
+**[architect]** ❓ answered — **hold `NitResolution` and `CardIdentityResolution` as a pair for 13.6.**
+The worker's reading is better than my brief's, and I am overruling my own expectation, not conceding one.
+
+My brief said I'd expect those two to converge onto the new shape. **They are not reader shapes; they are
+id-resolution *refusal* shapes**, and converging them means making them carry the *reason* a card would not
+parse — which is precisely 13.6's task, and whose site (`CardIdentityResolver.cs:61`) my own brief reserved
+for 13.6. Converging one twin now would fork two types whose doc comments say they are the same shape, so
+the block would have to un-fork them a task later. **A convergence that has to be undone by the next task
+is not a convergence.**
+
+Recorded as an obligation on 13.6, not a note: **13.6 converges both, or states why neither.**
+
+**Two more rulings on this block's report, both accepted:**
+
+1. **`rule propose-compact` cannot report an unreadable card, and the test that proved it is the finding.**
+   The worker wired the field, the test refused, and it removed the field and kept the discovery as a test
+   of the fail-shut path. That is right: `CardIdentityAllocator` fails shut on any unreadable file (§13
+   ruling 3 — *confirming a negative across a live tree must distinguish gone from unreadable*), so the
+   verb refuses **before** a count could be incomplete. **A read that cannot proceed past an unreadable
+   card has nothing to disclose about it** — the disclosure obligation applies to reads that answer
+   anyway. Worth stating plainly, because it bounds 13.5's scope in a way the task line does not.
+2. **`CardStore.FindAgeingAddressedThreads` (`CardStore.cs:3106`) → `section status` was a tenth site**,
+   found by the sweep I asked for and absent from both the queue and my brief. **The enumeration has now
+   decayed twice in one section, in the same direction both times**: the queue said four, I swept and found
+   nine, the worker swept and found ten. §13 ruling 4 says a queue item's premise decays and must be
+   re-checked at briefing time; this block adds the sharper form — **an enumeration in a queue is a floor,
+   never a set, and the sweep belongs in the block rather than in the brief.**
+
+→ @reviewer.
+
+**[reviewer]** 13.5 — **Approve.**
+
+Scope audited: the uncommitted diff — 19 tracked files (+363/−95) plus `src/Callboard/Cards/UnreadableCard.cs`,
+`src/Callboard/Cli/UnreadableCardResult.cs` and `tests/Callboard.Tests/UnreadableCardReportingTests.cs`. No
+blockers. Gates re-run independently: `BUILD_EXIT:0` (0 warnings) `TEST_EXIT:0` (1093 total, 0 failed, 0
+skipped) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0` — the worker's quoted codes and the 1082 → 1093
+count both hold. No `Makefile`, `tasks.md`, `CLAUDE.md` or `.claude/` in the diff.
+
+**1. It is one shape, and the split is the right one.** `UnreadableCard(FilePath, Reason)`
+(`Cards/UnreadableCard.cs:32`) is the domain record; `UnreadableCardResult`
+(`Cli/UnreadableCardResult.cs:22`) is its wire form with `[JsonPropertyName]` and one projection
+(`UnreadableCardResult.From`, `:36`). That is the same Cards→Cli boundary every other result type in the
+tree already draws, not a sixth variant — the second type adds no field, no case and no second spelling, and
+`From` is the only place the mapping lives. All seven responses carry it as a **`required`** property
+(`ChangeExportResult`, `ContextResult`, `RuleReviewResult`, `SectionExportResult`, `SectionStatusResult`,
+`StateResult`, `ViewResult`), so the field is always present and an empty array is a statement rather than an
+absence — and `AWholeRecordThatParses_ReportsAnEmptyUnreadableSet_NotAMissingField` pins exactly that.
+`BoardViewUnreadableEntry` is gone from the tree with no leftover reference but the historical note in
+`UnreadableCard.cs:9`.
+
+**D2 holds.** `UnreadableCardResult` is reached only as a nested property of types already carrying
+`[JsonSerializable]` in `CliJsonContext` (lines 30, 49, 50, 51, 53, 54, 55), so the source generator covers
+it; no reflection-based `JsonSerializer` overload is introduced anywhere in the diff. `make build` at
+`TreatWarningsAsErrors` with 0 warnings is the corroboration.
+
+**2. The accounting is right — I re-swept rather than took it.** My own sweep of `onFailure: ... => null`
+over `src` and `tests` finds, post-change: `CardStore.cs:2475, 2871, 2950, 4585, 4593, 5141`;
+`CardIdentityResolver.cs:61`; `CardIdentityAllocator.cs:245`; `NitResolver.cs:34`; `BoardView.cs:90`; and
+`tests/.../CardStoreCorruptionTests.cs:151`. Every one is accounted for in the worker's post (the
+`4580/4588/5136` it quotes are pre-diff numbers; the file gained 5 net lines above them). Nothing unnamed.
+
+**The largest exemption checks out — I read all five.** Each write-path re-read immediately re-matches the
+same result for its reason and refuses:
+
+| site | refusal |
+| --- | --- |
+| `CardStore.cs:2475` | `CardSectionVerdictOutcome.CardCorrupt(recurringPath, reason)` (`:2481`) |
+| `CardStore.cs:2871` | `CardSectionCloseOutcome.CardCorrupt(candidatePath, reason)` (`:2877`) |
+| `CardStore.cs:4585` | `CardDecisionSupersedeOutcome.CardCorrupt(supersedingFilePath, reason)` (`:4589`) |
+| `CardStore.cs:4593` | `CardDecisionSupersedeOutcome.CardCorrupt(supersededFilePath, reason)` (`:4597`) |
+| `CardStore.cs:5141` | `CardRuleCompactOutcome.CardCorrupt(filePath, reason)` (`:5145`) |
+
+In every case the `_ => null` is a two-step idiom, not a drop: the file and the reason are both already
+reported, by a refusal rather than by a report. "A write refuses; a read reports" is an accurate description
+of what the code does, and none of the five was losing anything. Correctly left alone.
+
+`CardStore.cs:2950` and `FindBlockingOpenProductOwnerQuestion` are write-path guards whose conservative
+omission is documented in place and settled by prior ruling — see architectural note A3 below, which is not
+a finding against this block.
+
+**The tenth site was a real find.** `CardStore.FindAgeingAddressedThreads` (`CardStore.cs:3106`) walks the
+section directory and dropped an unparseable block card whose ageing thread the response therefore could not
+list. Bringing it on is the same class as the nine, and excluding it because it was off the list would have
+been arbitrary. Adding `section status` to the block was right.
+
+**3. `view` consumes `DerivedState`'s set; it does not compute one.** I checked the two walks are actually the
+same walk and not merely asserted to be: `BoardViewAssembler.Build` (`BoardView.cs:77-99`) and
+`DerivedStateAssembler.Build` (`DerivedState.cs:76-96`) both enumerate
+`CardLayout.ResolveLiveRecordDirectories(cardsRoot)`, both skip a non-existent directory, and both read each
+via `CardStore.ReadAllCards(directory)` — identical enumeration, identical per-file read. `BoardView.cs:133`
+returns `state.Unreadable` verbatim, `CommandDispatcher.cs:4428` projects that, and the assembler's remaining
+`onFailure: static _ => null` (`BoardView.cs:90`) carries a comment saying precisely why it drops. The one
+surviving instance of the audited idiom is the correct one.
+
+**`cardCount` is no longer the fail-open one field along.** `CommandDispatcher.cs:4417-4419` still sums cards
+from lanes, so an unreadable card is not in it — the test pins this (`cardCount == 1` with one corrupt file
+in a two-card record). That was fail-open when the response said nothing else; it is not now, because the
+same response names every file the count excludes and the rendered document lists them too
+(`BoardViewRenderer.AppendUnreadable`, asserted at `UnreadableCardReportingTests.cs:109-110`). A caller can
+reconstruct the record's true size. See nit N1 on the doc comment.
+
+**4. D4 holds.** Every producer of the set — `DerivedState`, `WorkingContext`, `RecordExportAssembler`,
+`RuleCitations`, `CardStore.FindAgeingAddressedThreads` — reads card *files* via `CardStore.ReadAllCards`.
+Grepping the five for any index or SQLite reference returns nothing but `text.IndexOf` at
+`RuleCitations.cs:102`. A stale index cannot influence the set in either direction, because the set is never
+asked of it. `UnreadableCard.cs:23-28` states the reason it could not be, and states it correctly: the index
+holds what parsed, so a card missing from it is indistinguishable there from a card never written.
+
+**5. The tests assert the reason, not the presence.** `AssertSingleUnreadable`
+(`UnreadableCardReportingTests.cs:246-256`) returns the reason *for the caller to assert on* and every one of
+the eight reporting cases then does — `unrecognised status: 'not-a-real-status'`, and in three cases the
+kind-qualified tail (`for kind 'obligation'`, `for kind 'block'`). The sharpest of them is
+`State_AFileWithNoFrontmatter_ReportsThatFailureNotTheStatusFailure` (`:59-73`): it asserts the reason
+contains `frontmatter` **and** `DoesNotContain("unrecognised status")`, so a constant label — or a reason
+copied from the wrong failure class — fails. That is the §11 ruling satisfied rather than cited.
+
+**On the 8-of-11: the 3 are legitimately about something else, not weak.** They are
+`RuleProposeCompact_...FailsShutRatherThanReportingAnIncompleteCount` and the two `[Theory]` rows of
+`AWholeRecordThatParses_ReportsAnEmptyUnreadableSet_NotAMissingField`. Neither theory row *has* a reason to
+assert — the whole point is that the array is empty and present — and the fail-shut case asserts on a refusal
+message, not on the field. Replacing `Reason` with a literal cannot fail a test that never reads `Reason`.
+The mutation's blast radius is exactly the eight cases that read the field, which is what a clean mutation
+result looks like.
+
+**6. The `rule propose-compact` finding, and its test.** The test does pin the fail-shut path rather than
+merely a refusal: it asserts `ToolFailureExitCode`, `ok == false`, and — the part that matters — that the
+message contains **both** `could not be read` and `o-0005.md`, the specific corrupt file it planted
+(`:200-206`). A refusal for some other reason (a bad `--absorbs`, a discharged rule, a missing proposal path)
+would not name that file. It is the allocator's own two facts, reported as a refusal rather than a report,
+which is the argument the removal rests on. Removing the field was right, and the ruling that a read which
+cannot proceed past an unreadable card has nothing to disclose about it is the correct bound. The discard at
+`CommandDispatcher.cs:3707-3713` carries that reasoning at the site.
+
+**7. Ordinary review.** No `_` catch-all added over a closed union; no refusal changed; no exception used as
+a refusal. No file handle, lock or SQLite connection introduced — the block adds no write path and no lock at
+all. `UnreadableCards.Ordered` (`UnreadableCard.cs:66`) dedupes by path before sorting ordinally, which is
+what makes `rule review` (`CommandDispatcher.cs:4675`, two sets concatenated) and
+`RecordExportAssembler.CardsForChange` (three walks of the same change directory) report a corrupt file once
+rather than once per pass — asserted for `rule review` at `:170-176`. `unreadable` on `ContextResult` is
+**not** a fifth part in disguise: it sits beside `budget` at `CommandDispatcher.cs:4866`, inside the probe
+`FinalizeBudget` measures, so it is counted in the real emitted length; and the budget loop drops only
+narrative comment bodies, so the disclosure can never itself be truncated away. That is the right direction —
+a budget that could drop the statement of what was omitted would be the §13.5 obligation failing open at the
+last step. Records are `sealed`, file-scoped namespaces, no `!` added without cause, no TODOs, no dead code.
+Strictly within 13.5; nothing reaches into another section; `CardIdentityResolver.cs:61`,
+`CardIdentityAllocator.cs:245` and the `NitResolution`/`CardIdentityResolution` pair are untouched as ruled.
+
+**Nits** (none blocking):
+
+- **N1 — `Cli/ViewResult.cs:19-20`.** `cardCount` has no doc comment, and it is now the one field on that
+  response whose basis a caller has to infer. `unreadable`'s comment says what it is; `cardCount`'s says
+  nothing about excluding those files. One line — "cards placed in lanes; the files in `unreadable` are not
+  among them" — closes the gap the brief was pointing at. Same applies, more weakly, to `cardCount` on
+  `SectionExportResult`/`ChangeExportResult`.
+- **N2 — `Cli/ViewResult.cs:22-25`.** The `Unreadable` doc comment has one ~150-character unwrapped line
+  ("The same set the rendered document itself lists…") against a file and a codebase that wrap at ~100.
+  `dotnet format` does not police XML doc prose, so `FORMAT_EXIT:0` is not evidence here.
+- **N3 — `UnreadableCardReportingTests.cs:205-206`.** The fail-shut case asserts on `refusal.message` prose
+  only. It is specific enough to pin the path (it names the planted file), but asserting `refusal.code`
+  alongside would make it robust to a message rewording that changes no behaviour.
+
+**Architectural notes** (for `## NEXT` / the supervisor, not for this block):
+
+- **A1 — the overage message has a new driver.** `DescribeOverageDriver` (`CommandDispatcher.cs:4762`) names
+  the register, the brief, or the addressed threads' structural overhead as the cause of a `context` overage.
+  `unreadable` is now a further contributor to the measured length and is not a candidate. A record with many
+  corrupt files could drive the overage and be told the register needs reducing. The §10 block B nit this
+  function exists to answer — "a message that always blames the register misnames its own cause" — has grown
+  a new instance.
+- **A2 — `view` walks the record twice.** `BoardViewAssembler.Build` walks for lanes and
+  `DerivedStateAssembler.Build` walks again for the unreadable set, neither under a lock. A file corrupted
+  between the two walks makes `cardCount` and `unreadable` describe two different instants. Sharing one set
+  is strictly better than growing two, so this is the right call for 13.5; the seam is worth naming.
+- **A3 — the conservative-by-omission guards.** `CardStore.cs:2950` and
+  `FindBlockingOpenProductOwnerQuestion` skip an unreadable card when scanning *outside* a card's own
+  directory for a blocking question. That omission fails in the permissive direction — an unreadable card
+  that carried a blocking question lets a close proceed — and neither the write's refusal shape nor now any
+  read reports it. It is documented, prior-ruled, and correctly out of 13.5's scope; I raise it because
+  §13.7's "the loop proceeds unenforced when the tool cannot run" is adjacent, and because the enumeration in
+  this section has now decayed twice.
+
+Nothing here needs a fix before this block lands. → @architect.
+
 ## NEXT
 
 **§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the

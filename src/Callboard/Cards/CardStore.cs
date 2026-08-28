@@ -3093,17 +3093,22 @@ internal static class CardStore
     /// each. Read-only — no lock is taken, matching <see cref="FindBlockingOpenProductOwnerQuestion"/>'s
     /// own precedent for a read that decides nothing load-bearing on its own. An unreadable sibling
     /// card is skipped rather than refusing the read (this is a status surface, not a gate — an
-    /// unrelated corrupt file must not make every other block's status unreadable). The section
+    /// unrelated corrupt file must not make every other block's status unreadable), and returned
+    /// alongside the threads as an <see cref="UnreadableCard"/> (§13.5) — skipped, but never
+    /// silently: a status that could not read one of the section's own block cards may be missing
+    /// an ageing thread that card carries, and the caller can now see that. The section
     /// card itself is never swept: it carries no round, so nothing on it can ever age by this
     /// definition (<see cref="CardCommentRouting.AgeingAddressedThreadIds"/>'s own doc comment).
     /// </para>
     /// </summary>
-    internal static IReadOnlyList<AgeingThread> FindAgeingAddressedThreads(string sectionDirectory, string sectionId)
+    internal static (IReadOnlyList<AgeingThread> Threads, IReadOnlyList<UnreadableCard> Unreadable) FindAgeingAddressedThreads(
+        string sectionDirectory, string sectionId)
     {
         var ageingThreads = new List<AgeingThread>();
+        var unreadable = new List<UnreadableCard>();
         foreach (var (blockFilePath, parseResult) in ReadAllCards(sectionDirectory))
         {
-            var blockCard = parseResult.Match<CardFile?>(onSuccess: static s => s.Card, onFailure: static _ => null);
+            var blockCard = parseResult.CardOrRecordUnreadable(blockFilePath, unreadable);
             if (blockCard is null || !IsBlockCard(blockCard) || !string.Equals(blockCard.Frontmatter.Section, sectionId, StringComparison.Ordinal))
             {
                 continue;
@@ -3118,7 +3123,7 @@ internal static class CardStore
             }
         }
 
-        return ageingThreads;
+        return (ageingThreads, UnreadableCards.Ordered(unreadable));
     }
 
     /// <summary>

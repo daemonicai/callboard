@@ -12,6 +12,14 @@ namespace Callboard.Cards;
 /// repository").
 ///
 /// <para>
+/// <b>Skipped is not silent (§13.5).</b> Both methods return the cards they gathered
+/// <em>and</em> every file they could not parse, as <see cref="UnreadableCard"/> — the shape every
+/// other read reports through. An export that quietly omitted a corrupt card rendered a document
+/// that reads as the whole section when it is not; the omission is now stated in the same
+/// response that reports the card count.
+/// </para>
+///
+/// <para>
 /// <b>A card whose own file cannot be parsed is skipped, not refused
 /// (record-retrieval: "Damage to any single card SHALL NOT compromise any other card").</b> Neither
 /// method below fails a whole export because one sibling file in the searched directories is
@@ -42,10 +50,12 @@ internal static class RecordExportAssembler
     /// it, a block or finding scoped to it), not merely the cards physically filed under the same
     /// change directory.
     /// </summary>
-    internal static IReadOnlyList<(string FilePath, CardFile Card)> CardsForSection(string cardsRoot, CardFile sectionCard)
+    internal static (IReadOnlyList<(string FilePath, CardFile Card)> Cards, IReadOnlyList<UnreadableCard> Unreadable) CardsForSection(
+        string cardsRoot, CardFile sectionCard)
     {
         var sectionId = sectionCard.Frontmatter.Id;
         var results = new List<(string FilePath, CardFile Card)>();
+        var unreadable = new List<UnreadableCard>();
 
         foreach (var directory in CardLayout.ResolveRecordDirectories(cardsRoot))
         {
@@ -56,7 +66,7 @@ internal static class RecordExportAssembler
 
             foreach (var (filePath, parseResult) in CardStore.ReadAllCards(directory))
             {
-                var card = parseResult.Match<CardFile?>(onSuccess: static success => success.Card, onFailure: static _ => null);
+                var card = parseResult.CardOrRecordUnreadable(filePath, unreadable);
                 if (card is null)
                 {
                     continue;
@@ -70,7 +80,7 @@ internal static class RecordExportAssembler
             }
         }
 
-        return SortReadingOrder(results);
+        return (SortReadingOrder(results), UnreadableCards.Ordered(unreadable));
     }
 
     /// <summary>
@@ -82,12 +92,14 @@ internal static class RecordExportAssembler
     /// created before it was tied to a section still belongs to the change and must not be silently
     /// dropped from a whole-change export.
     /// </summary>
-    internal static IReadOnlyList<(string FilePath, CardFile Card)> CardsForChange(string cardsRoot, string changeDirectory)
+    internal static (IReadOnlyList<(string FilePath, CardFile Card)> Cards, IReadOnlyList<UnreadableCard> Unreadable) CardsForChange(
+        string cardsRoot, string changeDirectory)
     {
+        var unreadable = new List<UnreadableCard>();
         var sectionIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (_, parseResult) in CardStore.ReadAllCards(changeDirectory))
+        foreach (var (sectionScanPath, parseResult) in CardStore.ReadAllCards(changeDirectory))
         {
-            var card = parseResult.Match<CardFile?>(onSuccess: static success => success.Card, onFailure: static _ => null);
+            var card = parseResult.CardOrRecordUnreadable(sectionScanPath, unreadable);
             if (card is not null && CardStore.IsSectionCard(card))
             {
                 sectionIds.Add(card.Frontmatter.Id);
@@ -106,7 +118,7 @@ internal static class RecordExportAssembler
 
             foreach (var (filePath, parseResult) in CardStore.ReadAllCards(directory))
             {
-                var card = parseResult.Match<CardFile?>(onSuccess: static success => success.Card, onFailure: static _ => null);
+                var card = parseResult.CardOrRecordUnreadable(filePath, unreadable);
                 if (card is null)
                 {
                     continue;
@@ -123,14 +135,14 @@ internal static class RecordExportAssembler
 
         foreach (var (filePath, parseResult) in CardStore.ReadAllCards(changeDirectory))
         {
-            var card = parseResult.Match<CardFile?>(onSuccess: static success => success.Card, onFailure: static _ => null);
+            var card = parseResult.CardOrRecordUnreadable(filePath, unreadable);
             if (card is not null && card.Frontmatter.Section.Length == 0 && seenPaths.Add(filePath))
             {
                 results.Add((filePath, card));
             }
         }
 
-        return SortReadingOrder(results);
+        return (SortReadingOrder(results), UnreadableCards.Ordered(unreadable));
     }
 
     private static IReadOnlyList<(string FilePath, CardFile Card)> SortReadingOrder(List<(string FilePath, CardFile Card)> cards)

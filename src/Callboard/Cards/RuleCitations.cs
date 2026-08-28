@@ -31,12 +31,14 @@ namespace Callboard.Cards;
 /// </para>
 ///
 /// <para>
-/// <b>Best-effort over an unreadable file.</b> A card elsewhere in the record that fails to parse is
-/// skipped rather than failing the whole count — the same disposition <see cref="
-/// CardIdentityResolver"/> gives a read failure it cannot otherwise explain, except that a citation
-/// count has no refusal shape to report through in the first place: it is consumed by <c>rule
-/// propose-compact</c> (7.9) as one field among several in a response that always succeeds once its
-/// own checks pass, not as something that can itself refuse.
+/// <b>Best-effort over an unreadable file — and it says so (§13.5).</b> A card elsewhere in the
+/// record that fails to parse is skipped rather than failing the whole count, and is returned
+/// alongside it as an <see cref="UnreadableCard"/>. That matters more here than anywhere else a
+/// read reports one: a citation count is the evidence <c>rule review</c> queues a rule for
+/// retirement on, and a rule whose only citation lives in the one file that would not parse counts
+/// zero. The count still stands (it is a trigger for a human review, never an automatic
+/// retirement), but the caller can now see that it was taken over an incomplete record instead of
+/// reading a bare <c>0</c> as "nothing cites this".
 /// </para>
 /// </summary>
 internal static class RuleCitations
@@ -46,9 +48,11 @@ internal static class RuleCitations
     /// names <paramref name="ruleId"/> at least once. <paramref name="ruleFilePath"/> — the rule's
     /// own card — is never counted as a citation of itself.
     /// </summary>
-    internal static int CountCitations(string cardsRoot, string ruleId, string ruleFilePath)
+    internal static (int CitingCards, IReadOnlyList<UnreadableCard> Unreadable) CountCitations(
+        string cardsRoot, string ruleId, string ruleFilePath)
     {
         var citingCards = 0;
+        var unreadable = new List<UnreadableCard>();
 
         foreach (var directory in CardLayout.ResolveRecordDirectories(cardsRoot))
         {
@@ -64,9 +68,7 @@ internal static class RuleCitations
                     continue;
                 }
 
-                var card = result.Match<CardFile?>(
-                    onSuccess: static success => success.Card,
-                    onFailure: static _ => null);
+                var card = result.CardOrRecordUnreadable(filePath, unreadable);
 
                 if (card is null)
                 {
@@ -80,7 +82,7 @@ internal static class RuleCitations
             }
         }
 
-        return citingCards;
+        return (citingCards, UnreadableCards.Ordered(unreadable));
     }
 
     private static bool NamesRuleId(CardFile card, string ruleId)
@@ -136,9 +138,10 @@ internal static class RuleCitations
     /// whether that is too many — <see cref="CeilingPassed"/>'s <c>liveRuleCount</c> parameter is
     /// this figure, stated against a caller-supplied ceiling by <c>rule review</c> (§10 block E).
     /// </summary>
-    internal static int CountLiveOpenRules(string cardsRoot)
+    internal static (int Count, IReadOnlyList<UnreadableCard> Unreadable) CountLiveOpenRules(string cardsRoot)
     {
         var count = 0;
+        var unreadable = new List<UnreadableCard>();
 
         foreach (var directory in CardLayout.ResolveLiveRecordDirectories(cardsRoot))
         {
@@ -147,11 +150,9 @@ internal static class RuleCitations
                 continue;
             }
 
-            foreach (var (_, result) in CardStore.ReadAllCards(directory))
+            foreach (var (filePath, result) in CardStore.ReadAllCards(directory))
             {
-                var card = result.Match<CardFile?>(
-                    onSuccess: static success => success.Card,
-                    onFailure: static _ => null);
+                var card = result.CardOrRecordUnreadable(filePath, unreadable);
 
                 if (card is null || !CardStore.IsRuleCard(card))
                 {
@@ -170,7 +171,7 @@ internal static class RuleCitations
             }
         }
 
-        return count;
+        return (count, UnreadableCards.Ordered(unreadable));
     }
 
     /// <summary>
@@ -189,9 +190,11 @@ internal static class RuleCitations
     /// names rules still standing <em>and still live</em>. Nothing in this method discharges,
     /// hides, or otherwise touches any card it names — it only names them.
     /// </summary>
-    internal static IReadOnlyList<(string FilePath, CardFile Card)> UncitedOpenRules(string cardsRoot)
+    internal static (IReadOnlyList<(string FilePath, CardFile Card)> Rules, IReadOnlyList<UnreadableCard> Unreadable) UncitedOpenRules(
+        string cardsRoot)
     {
         var uncited = new List<(string FilePath, CardFile Card)>();
+        var unreadable = new List<UnreadableCard>();
 
         foreach (var directory in CardLayout.ResolveLiveRecordDirectories(cardsRoot))
         {
@@ -202,9 +205,7 @@ internal static class RuleCitations
 
             foreach (var (filePath, result) in CardStore.ReadAllCards(directory))
             {
-                var card = result.Match<CardFile?>(
-                    onSuccess: static success => success.Card,
-                    onFailure: static _ => null);
+                var card = result.CardOrRecordUnreadable(filePath, unreadable);
 
                 if (card is null || !CardStore.IsRuleCard(card))
                 {
@@ -221,13 +222,15 @@ internal static class RuleCitations
                     continue;
                 }
 
-                if (CountCitations(cardsRoot, card.Frontmatter.Id, filePath) == 0)
+                var (citingCards, citationUnreadable) = CountCitations(cardsRoot, card.Frontmatter.Id, filePath);
+                unreadable.AddRange(citationUnreadable);
+                if (citingCards == 0)
                 {
                     uncited.Add((filePath, card));
                 }
             }
         }
 
-        return uncited;
+        return (uncited, UnreadableCards.Ordered(unreadable));
     }
 }

@@ -47,6 +47,20 @@ internal sealed class ContextResult : ICommandResult
     [JsonPropertyName("budget")]
     public required ContextBudgetResult Budget { get; init; }
 
+    /// <summary>Every card file assembling this context walked and could not parse, with the
+    /// parser's own reason (§13.5) — empty when the whole live record parsed. <b>Not a fifth
+    /// part.</b> Working-context's "and nothing else" bounds the parts of the working context
+    /// itself; this, like <see cref="Budget"/> beside it, is a statement <em>about</em> this
+    /// response — what it could not include — of exactly the kind that requirement already
+    /// demands of truncation ("it SHALL state explicitly that it has truncated and what"). A
+    /// register card or a queue candidate living in an unparseable file is missing from the parts
+    /// above; saying so is what keeps part 1's "complete current set" an honest claim rather than
+    /// a claim about whichever files happened to parse. Reported, never refused: one corrupt card
+    /// must not deny every role its whole context (record-retrieval, "Damage is
+    /// contained").</summary>
+    [JsonPropertyName("unreadable")]
+    public required IReadOnlyList<UnreadableCardResult> Unreadable { get; init; }
+
     public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CliJsonContext.Default.ContextResult);
 }
 

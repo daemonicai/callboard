@@ -74,7 +74,7 @@ internal static class BoardViewRenderer
     /// own <see cref="CardFileParseResult.Failure.Reason"/>, so a reader knows exactly which file
     /// is missing from every lane below and why, rather than the board silently reading as
     /// complete.</summary>
-    private static void AppendUnreadable(StringBuilder html, IReadOnlyList<BoardViewUnreadableEntry> unreadable)
+    private static void AppendUnreadable(StringBuilder html, IReadOnlyList<UnreadableCard> unreadable)
     {
         html.Append("<section class=\"unreadable\">\n<h2>Unreadable cards</h2>\n");
         html.Append("<p>").Append(unreadable.Count).Append(unreadable.Count == 1 ? " card file could not be read and is omitted from every lane below:" : " card files could not be read and are omitted from every lane below:").Append("</p>\n<ul>\n");

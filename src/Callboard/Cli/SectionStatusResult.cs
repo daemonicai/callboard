@@ -53,6 +53,16 @@ internal sealed class SectionStatusResult : ICommandResult
     [JsonPropertyName("ageingThreads")]
     public required IReadOnlyList<AgeingThreadResult> AgeingThreads { get; init; }
 
+    /// <summary>Every card file the <see cref="AgeingThreads"/> scan walked and could not parse,
+    /// with the parser's own reason (§13.5) — empty when every card in the section's directory
+    /// parsed. This is the one field on this response that can be non-empty at all: the section
+    /// card itself is read by path and a parse failure there is not a success at all. An
+    /// unparseable block card may carry an ageing thread this response therefore does not list,
+    /// which is exactly why the omission is stated rather than left to be inferred from an empty
+    /// list.</summary>
+    [JsonPropertyName("unreadable")]
+    public required IReadOnlyList<UnreadableCardResult> Unreadable { get; init; }
+
     public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CliJsonContext.Default.SectionStatusResult);
 }
 

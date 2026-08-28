@@ -40,12 +40,18 @@ internal sealed record DerivedStateBlockedCard(
 /// every blocked card with what blocks it"). Every field here is computed fresh by <see
 /// cref="DerivedStateAssembler.Build"/> on each call — nothing on this type, or on any type it is
 /// built from, is ever persisted.</summary>
+/// <param name="Unreadable">Every card file this walk found and could not parse (§13.5) — named
+/// with the parser's own reason rather than dropped, so a caller can tell a summary computed over
+/// the whole record from one computed over the part of it that happened to parse. Reported, never
+/// refused (record-retrieval, "Damage is contained": one corrupt card must not halt every
+/// query).</param>
 internal sealed record DerivedState(
     IReadOnlyList<DerivedStateOpenSection> OpenSections,
     IReadOnlyList<TasksMdCompletion> TaskCompletion,
     IReadOnlyList<DerivedStateObligation> LiveObligations,
     IReadOnlyList<DerivedStateQuestion> OpenQuestions,
-    IReadOnlyList<DerivedStateBlockedCard> BlockedCards);
+    IReadOnlyList<DerivedStateBlockedCard> BlockedCards,
+    IReadOnlyList<UnreadableCard> Unreadable);
 
 /// <summary>
 /// Assembles <see cref="DerivedState"/> for <c>callboard state</c> (§10 block C). Not role-scoped —
@@ -64,6 +70,7 @@ internal static class DerivedStateAssembler
         var obligations = new List<DerivedStateObligation>();
         var questions = new List<DerivedStateQuestion>();
         var blockedCards = new List<DerivedStateBlockedCard>();
+        var unreadable = new List<UnreadableCard>();
         var changeNames = new SortedSet<string>(StringComparer.Ordinal);
 
         foreach (var directory in CardLayout.ResolveLiveRecordDirectories(cardsRoot))
@@ -81,9 +88,7 @@ internal static class DerivedStateAssembler
 
             foreach (var (filePath, result) in CardStore.ReadAllCards(directory))
             {
-                var card = result.Match<CardFile?>(
-                    onSuccess: static success => success.Card,
-                    onFailure: static _ => null);
+                var card = result.CardOrRecordUnreadable(filePath, unreadable);
 
                 if (card is null || CardLifecycle.IsClosed(card))
                 {
@@ -133,6 +138,7 @@ internal static class DerivedStateAssembler
 
         var taskCompletion = changeNames.Select(name => TasksMdParser.CountCompletion(cardsRoot, name)).ToList();
 
-        return new DerivedState(openSections, taskCompletion, obligations, questions, blockedCards);
+        return new DerivedState(
+            openSections, taskCompletion, obligations, questions, blockedCards, UnreadableCards.Ordered(unreadable));
     }
 }

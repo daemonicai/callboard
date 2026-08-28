@@ -2161,7 +2161,7 @@ internal static class CommandDispatcher
                 // directory — no lock, matching FindBlockingOpenProductOwnerQuestion's own
                 // precedent for a read that decides nothing load-bearing.
                 var sectionDirectory = Path.GetDirectoryName(filePath)!;
-                var ageingThreads = CardStore.FindAgeingAddressedThreads(sectionDirectory, card.Frontmatter.Id);
+                var (ageingThreads, unreadable) = CardStore.FindAgeingAddressedThreads(sectionDirectory, card.Frontmatter.Id);
 
                 return new CommandOutcome.Success(new SectionStatusResult
                 {
@@ -2178,6 +2178,7 @@ internal static class CommandDispatcher
                         ThreadId = ageing.ThreadId,
                         AddressedTo = ageing.AddressedTo.ToWireString(),
                     })],
+                    Unreadable = UnreadableCardResult.From(unreadable),
                 });
             },
             onFailure: failure => throw new InvalidOperationException(
@@ -3703,7 +3704,14 @@ internal static class CommandDispatcher
             }
 
             backingFilePaths.Add(resolved.FilePath!);
-            citationCounts.Add(RuleCitations.CountCitations(repoRoot, card.Frontmatter.Id, resolved.FilePath!));
+            // The unreadable half of this count is deliberately discarded here, and this is the
+            // one caller of a §13.5 read that reports nothing: `rule propose-compact` writes a
+            // proposal card, and CardIdentityAllocator fails shut when any file in the record
+            // cannot be read (§13 ruling 3), so this verb refuses outright long before it could
+            // report an incomplete count. A count reported by this response was therefore always
+            // taken over a fully readable record.
+            var (citingCards, _) = RuleCitations.CountCitations(repoRoot, card.Frontmatter.Id, resolved.FilePath!);
+            citationCounts.Add(citingCards);
         }
 
         var proposalFilePath = ResolveFilePath(parsed.WorkingDirectory, parsed.ProposalFilePath);
@@ -4234,6 +4242,7 @@ internal static class CommandDispatcher
                 HaltedByQuestionId = entry.HaltedByQuestionId,
                 HaltedByQuestionTitle = entry.HaltedByQuestionTitle,
             })],
+            Unreadable = UnreadableCardResult.From(state.Unreadable),
         });
     }
 
@@ -4312,7 +4321,7 @@ internal static class CommandDispatcher
         }
 
         var outputPath = Path.GetFullPath(Path.Combine(repoRoot, parsed.OutputPath));
-        var cardsInReadingOrder = RecordExportAssembler.CardsForSection(repoRoot, sectionCard);
+        var (cardsInReadingOrder, unreadable) = RecordExportAssembler.CardsForSection(repoRoot, sectionCard);
         var document = RecordExportRenderer.Render(
             $"Section export: {sectionCard.Frontmatter.Id} — {sectionCard.Frontmatter.Title}", cardsInReadingOrder);
 
@@ -4323,6 +4332,7 @@ internal static class CommandDispatcher
                 Title = sectionCard.Frontmatter.Title,
                 OutputPath = outputPath,
                 CardCount = cardsInReadingOrder.Count,
+                Unreadable = UnreadableCardResult.From(unreadable),
             }),
             onTargetExists: () => new CommandOutcome.Refusal(
                 "export-target-exists",
@@ -4367,7 +4377,7 @@ internal static class CommandDispatcher
         }
 
         var outputPath = Path.GetFullPath(Path.Combine(repoRoot, parsed.OutputPath));
-        var cardsInReadingOrder = RecordExportAssembler.CardsForChange(repoRoot, changeDirectory);
+        var (cardsInReadingOrder, unreadable) = RecordExportAssembler.CardsForChange(repoRoot, changeDirectory);
         var document = RecordExportRenderer.Render($"Change export: {parsed.ChangeName}", cardsInReadingOrder);
 
         return RecordExportWriter.WriteAtomically(outputPath, document, parsed.Force).Match<CommandOutcome>(
@@ -4376,6 +4386,7 @@ internal static class CommandDispatcher
                 ChangeName = parsed.ChangeName,
                 OutputPath = outputPath,
                 CardCount = cardsInReadingOrder.Count,
+                Unreadable = UnreadableCardResult.From(unreadable),
             }),
             onTargetExists: () => new CommandOutcome.Refusal(
                 "export-target-exists",
@@ -4412,6 +4423,9 @@ internal static class CommandDispatcher
             {
                 OutputPath = outputPath,
                 CardCount = cardCount,
+                // BoardView.Unreadable is DerivedState's own set (§13.5) — `view` reports exactly
+                // what `state` would for the same record, never a second walk's answer.
+                Unreadable = UnreadableCardResult.From(view.Unreadable),
             }),
             onTargetExists: () => new CommandOutcome.Refusal(
                 "export-target-exists",
@@ -4640,8 +4654,8 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var liveRuleCount = RuleCitations.CountLiveOpenRules(repoRoot);
-        var uncited = RuleCitations.UncitedOpenRules(repoRoot);
+        var (liveRuleCount, countUnreadable) = RuleCitations.CountLiveOpenRules(repoRoot);
+        var (uncited, queueUnreadable) = RuleCitations.UncitedOpenRules(repoRoot);
 
         return new CommandOutcome.Success(new RuleReviewResult
         {
@@ -4655,6 +4669,10 @@ internal static class CommandDispatcher
                 FilePath = entry.FilePath,
                 Title = entry.Card.Frontmatter.Title,
             })],
+            // Both reads walk the record, and the queue's own walk re-reads it once per candidate
+            // rule; UnreadableCards.Ordered collapses the two sets to one entry per file, so a
+            // caller is told which files could not be read, not how many times each was tried.
+            Unreadable = UnreadableCardResult.From(UnreadableCards.Ordered(countUnreadable.Concat(queueUnreadable))),
         });
     }
 
@@ -4845,6 +4863,7 @@ internal static class CommandDispatcher
                 ExceededCeiling = exceededCeiling,
                 OverageStatement = overageStatement,
             },
+            Unreadable = UnreadableCardResult.From(context.Unreadable),
         };
 
     private static ContextRegisterCardResult ToContextRegisterCardResult((string FilePath, CardFile Card) entry) => new()

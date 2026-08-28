@@ -35,6 +35,14 @@ internal sealed class RuleReviewResult : ICommandResult
     [JsonPropertyName("uncitedOpenRules")]
     public required IReadOnlyList<RuleReviewUncitedRuleResult> UncitedOpenRules { get; init; }
 
+    /// <summary>Every card file this read walked and could not parse, with the parser's own
+    /// reason (§13.5) — empty when the whole record parsed. Reported, never refused: a rule whose only citation
+    /// lives in a file that would not parse counts zero here, and this is how a caller can tell
+    /// that from a rule nothing cites (record-retrieval, "Damage is
+    /// contained").</summary>
+    [JsonPropertyName("unreadable")]
+    public required IReadOnlyList<UnreadableCardResult> Unreadable { get; init; }
+
     public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CliJsonContext.Default.RuleReviewResult);
 }
 

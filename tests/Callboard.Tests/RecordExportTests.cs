@@ -378,7 +378,7 @@ public sealed class RecordExportTests
         WriteBlockAt(repo, "m-block.md", "B-0002", "S-0001", Middle);
         WriteBlockAt(repo, "a-block.md", "B-0003", "S-0001", Middle);
 
-        var ordered = RecordExportAssembler.CardsForSection(repo.Path, sectionCard);
+        var (ordered, _) = RecordExportAssembler.CardsForSection(repo.Path, sectionCard);
 
         Assert.Equal(
             ["S-0001", "B-0001", "B-0002", "B-0003"],

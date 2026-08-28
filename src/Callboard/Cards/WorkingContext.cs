@@ -88,10 +88,17 @@ internal sealed record WorkingContextTopItem(
 /// <param name="TopItem"><see cref="Queue"/>'s first element, expanded to the detail part 3
 /// requires, or <see langword="null"/> when the queue is empty — there is no "top" of an empty
 /// queue.</param>
+/// <param name="Unreadable">Every card file this walk found and could not parse (§13.5), named
+/// with the parser's own reason. Not a fifth part of the response: like the character budget it is
+/// a statement <em>about</em> the response — what the walk could not include — of exactly the kind
+/// working-context already requires when narrative is dropped ("it SHALL state explicitly that it
+/// has truncated and what"). A corrupt card is reported, never refused (record-retrieval, "Damage
+/// is contained").</param>
 internal sealed record WorkingContext(
     IReadOnlyList<(string FilePath, CardFile Card)> LiveRulesAndHazards,
     IReadOnlyList<WorkingContextQueueEntry> Queue,
-    WorkingContextTopItem? TopItem);
+    WorkingContextTopItem? TopItem,
+    IReadOnlyList<UnreadableCard> Unreadable);
 
 /// <summary>
 /// Assembles <see cref="WorkingContext"/> for a role (working-context, §10 block A). Reads the
@@ -127,6 +134,7 @@ internal static class WorkingContextAssembler
         var liveRegister = new List<(string FilePath, CardFile Card, string? ChangeName)>();
         var owned = new List<(string FilePath, CardFile Card, string? ChangeName)>();
         var addressedOnly = new List<(string FilePath, CardFile Card, string? ChangeName, DateTimeOffset OldestAddressedComment)>();
+        var unreadable = new List<UnreadableCard>();
 
         foreach (var directory in CardLayout.ResolveLiveRecordDirectories(cardsRoot))
         {
@@ -139,9 +147,7 @@ internal static class WorkingContextAssembler
 
             foreach (var (filePath, result) in CardStore.ReadAllCards(directory))
             {
-                var card = result.Match<CardFile?>(
-                    onSuccess: static success => success.Card,
-                    onFailure: static _ => null);
+                var card = result.CardOrRecordUnreadable(filePath, unreadable);
 
                 if (card is null)
                 {
@@ -218,7 +224,8 @@ internal static class WorkingContextAssembler
         return new WorkingContext(
             [.. liveRegister.Select(static entry => (entry.FilePath, entry.Card))],
             queue,
-            topItem);
+            topItem,
+            UnreadableCards.Ordered(unreadable));
     }
 
     /// <summary>

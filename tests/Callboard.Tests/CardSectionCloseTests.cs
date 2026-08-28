@@ -649,7 +649,7 @@ public sealed class CardSectionCloseTests : IDisposable
         var blockCard = new CardFile(blockFrontmatter, "Body.", [comment], [], [], blockFields, [changesRequested]);
         File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var ageing = Assert.Single(CardStore.FindAgeingAddressedThreads(_directory, "S-0025"));
+        var ageing = Assert.Single(CardStore.FindAgeingAddressedThreads(_directory, "S-0025").Threads);
 
         Assert.Equal("B-0015", ageing.CardId);
         Assert.Equal(blockPath, ageing.CardFilePath);
@@ -669,7 +669,7 @@ public sealed class CardSectionCloseTests : IDisposable
         var blockCard = new CardFile(blockFrontmatter, "Body.", [comment], [], [], blockFields, []);
         File.WriteAllText(blockPath, CardFileWriter.Serialize(blockCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        Assert.Empty(CardStore.FindAgeingAddressedThreads(_directory, "S-0026"));
+        Assert.Empty(CardStore.FindAgeingAddressedThreads(_directory, "S-0026").Threads);
     }
 
     private void WriteQuestionCard(string fileStem, string id, string sectionId, QuestionStatus status)

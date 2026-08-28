@@ -46,7 +46,7 @@ public sealed class RuleCitationsTests : IDisposable
     {
         WriteRepositoryRule("r-0001", "R-0001", "A standalone rule.");
 
-        var count = RuleCitations.CountCitations(_root, "R-0001", Path.Combine(_registerDirectory, "r-0001.md"));
+        var (count, _) = RuleCitations.CountCitations(_root, "R-0001", Path.Combine(_registerDirectory, "r-0001.md"));
 
         Assert.Equal(0, count);
     }
@@ -57,7 +57,7 @@ public sealed class RuleCitationsTests : IDisposable
         var targetPath = WriteRepositoryRule("r-0002", "R-0002", "The target rule.");
         WriteRepositoryRule("r-0003", "R-0003", "This leans on R-0002 directly.");
 
-        var count = RuleCitations.CountCitations(_root, "R-0002", targetPath);
+        var (count, _) = RuleCitations.CountCitations(_root, "R-0002", targetPath);
 
         Assert.Equal(1, count);
     }
@@ -75,7 +75,7 @@ public sealed class RuleCitationsTests : IDisposable
         var card = new CardFile(frontmatter, "No mention in the body.", [comment], [], RegisterFields: RegisterCardFields.Empty);
         File.WriteAllText(citingPath, CardFileWriter.Serialize(card), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var count = RuleCitations.CountCitations(_root, "R-0004", targetPath);
+        var (count, _) = RuleCitations.CountCitations(_root, "R-0004", targetPath);
 
         Assert.Equal(1, count);
     }
@@ -88,7 +88,7 @@ public sealed class RuleCitationsTests : IDisposable
         var targetPath = WriteRepositoryRule("r-0006", "R-0006", "The target rule.");
         WriteRepositoryRule("r-0007", "R-0007", "R-0006 said it, R-0006 repeated it, and R-0006 said it a third time.");
 
-        var count = RuleCitations.CountCitations(_root, "R-0006", targetPath);
+        var (count, _) = RuleCitations.CountCitations(_root, "R-0006", targetPath);
 
         Assert.Equal(1, count);
     }
@@ -102,7 +102,7 @@ public sealed class RuleCitationsTests : IDisposable
         WriteRepositoryRule("r-0009", "R-0009", "First reference to R-0008.");
         WriteRepositoryRule("r-0010", "R-0010", "Second reference to R-0008.");
 
-        var count = RuleCitations.CountCitations(_root, "R-0008", targetPath);
+        var (count, _) = RuleCitations.CountCitations(_root, "R-0008", targetPath);
 
         Assert.Equal(2, count);
     }
@@ -115,7 +115,7 @@ public sealed class RuleCitationsTests : IDisposable
         var targetPath = WriteRepositoryRule("r-0011", "R-0011", "The target rule.");
         WriteRepositoryRule("r-0012", "R-0012", "This mentions only the longer, different id R-00110.");
 
-        var count = RuleCitations.CountCitations(_root, "R-0011", targetPath);
+        var (count, _) = RuleCitations.CountCitations(_root, "R-0011", targetPath);
 
         Assert.Equal(0, count);
     }
@@ -138,7 +138,7 @@ public sealed class RuleCitationsTests : IDisposable
             CardFileWriter.Serialize(archivedCard),
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var count = RuleCitations.CountCitations(_root, "R-0013", targetPath);
+        var (count, _) = RuleCitations.CountCitations(_root, "R-0013", targetPath);
 
         Assert.Equal(1, count);
     }
@@ -166,7 +166,7 @@ public sealed class RuleCitationsTests : IDisposable
         var dischargedPath = Path.Combine(_registerDirectory, "r-0023.md");
         WriteRuleCardAt(dischargedPath, "R-0023", CardScope.Repository, RegisterLifecycleState.Discharged, "Body.");
 
-        var count = RuleCitations.CountLiveOpenRules(_root);
+        var (count, _) = RuleCitations.CountLiveOpenRules(_root);
 
         Assert.Equal(2, count);
     }
@@ -183,7 +183,7 @@ public sealed class RuleCitationsTests : IDisposable
         Directory.CreateDirectory(archivedDirectory);
         WriteRuleCardAt(Path.Combine(archivedDirectory, "r-0025.md"), "R-0025", CardScope.Change, RegisterLifecycleState.Open, "Body.");
 
-        var count = RuleCitations.CountLiveOpenRules(_root);
+        var (count, _) = RuleCitations.CountLiveOpenRules(_root);
 
         Assert.Equal(1, count);
     }
@@ -197,7 +197,7 @@ public sealed class RuleCitationsTests : IDisposable
         var dischargedPath = Path.Combine(_registerDirectory, "r-0017.md");
         WriteRuleCardAt(dischargedPath, "R-0017", CardScope.Repository, RegisterLifecycleState.Discharged, "Never mentioned, but discharged.");
 
-        var uncited = RuleCitations.UncitedOpenRules(_root);
+        var (uncited, _) = RuleCitations.UncitedOpenRules(_root);
 
         var uncitedPaths = uncited.Select(static entry => entry.FilePath).ToList();
         Assert.Contains(uncitedPath, uncitedPaths);
@@ -218,7 +218,7 @@ public sealed class RuleCitationsTests : IDisposable
         var archivedRulePath = Path.Combine(archivedDirectory, "r-0019.md");
         WriteRuleCardAt(archivedRulePath, "R-0019", CardScope.Change, RegisterLifecycleState.Open, "Never promoted, archived open.");
 
-        var uncited = RuleCitations.UncitedOpenRules(_root);
+        var (uncited, _) = RuleCitations.UncitedOpenRules(_root);
 
         Assert.DoesNotContain(archivedRulePath, uncited.Select(static entry => entry.FilePath));
     }
@@ -234,7 +234,7 @@ public sealed class RuleCitationsTests : IDisposable
             _root, CardLayout.ArchiveDirectory.Replace('/', Path.DirectorySeparatorChar), "2026-01-01-old-change");
         Directory.CreateDirectory(archivedDirectory);
 
-        var uncited = RuleCitations.UncitedOpenRules(_root);
+        var (uncited, _) = RuleCitations.UncitedOpenRules(_root);
 
         Assert.Contains(promotedPath, uncited.Select(static entry => entry.FilePath));
     }

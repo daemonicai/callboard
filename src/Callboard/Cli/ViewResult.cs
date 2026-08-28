@@ -18,5 +18,12 @@ internal sealed class ViewResult : ICommandResult
     [JsonPropertyName("cardCount")]
     public required int CardCount { get; init; }
 
+    /// <summary>Every card file this read walked and could not parse, with the parser's own
+    /// reason (§13.5) — empty when the whole record parsed. The same set the rendered document itself lists, so the JSON caller and the human reading the board are told the same thing. Reported, never refused: one corrupt
+    /// card narrows this answer, it does not halt the query (record-retrieval, "Damage is
+    /// contained").</summary>
+    [JsonPropertyName("unreadable")]
+    public required IReadOnlyList<UnreadableCardResult> Unreadable { get; init; }
+
     public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CliJsonContext.Default.ViewResult);
 }
