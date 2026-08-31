@@ -370,13 +370,13 @@ public sealed class CardSectionVerdictTests : IDisposable
     }
 
     /// <summary>
-
-    /// <summary>
     /// The gap the reviewer flagged as missing (§5 block E remediation) — the same hazard block D's
     /// <c>gate_results</c> byte-identical round-trip test closed: a hand-authored card carrying a
-    /// verdict line with awkward raw values (an escaped backslash and an escaped space in
-    /// <c>range-from</c>, an unrecognised extra field) round-trips byte-identically through
-    /// parse → write, asserted on the file's bytes, not the parsed object.
+    /// verdict block with awkward raw values (an escaped backslash in <c>range-from</c>, an
+    /// unrecognised extra field) round-trips byte-identically through parse → write, asserted on
+    /// the file's bytes, not the parsed object. §14.2 dropped the escaped-space convention this
+    /// test used to exercise — <c>range-from</c> now sits on its own <c>key: value</c> line, so an
+    /// interior space is never ambiguous and is never escaped; only the backslash still is.
     /// </summary>
     [Fact]
     public void HandAuthoredCard_WithAnAwkwardVerdictLine_RoundTripsByteIdentically()
@@ -395,7 +395,14 @@ public sealed class CardSectionVerdictTests : IDisposable
             "base: e055e5b\n" +
             "---\n" +
             "Body text.\n" +
-            "<!-- callboard:verdict by=supervisor verdict=request-changes range-from=odd\\\\path\\swith\\sspaces range-to=a52cd7a timestamp=2026-08-22T10:00:00.0000000+00:00 future-field=kept -->\n";
+            "<!-- callboard:verdict\n" +
+            "by: supervisor\n" +
+            "verdict: request-changes\n" +
+            "range-from: odd\\\\path with spaces\n" +
+            "range-to: a52cd7a\n" +
+            "timestamp: 2026-08-22T10:00:00.0000000+00:00\n" +
+            "future-field: kept\n" +
+            "-->\n";
 
         var parsed = AssertParseSuccess(CardFileParser.Parse(raw));
 

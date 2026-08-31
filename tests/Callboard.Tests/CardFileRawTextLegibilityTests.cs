@@ -22,34 +22,27 @@ public sealed class CardFileRawTextLegibilityTests
     private static readonly DateTimeOffset T5 = new(2026, 8, 19, 13, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset T6 = new(2026, 8, 19, 14, 0, 0, TimeSpan.Zero);
 
-    // ---- Re-derivation record ------------------------------------------------------------
+    // ---- Re-derivation record (§14.1-14.3) ------------------------------------------------
     //
-    // CardFileFormat declares seven marker-line prefix/suffix pairs (grep for "LinePrefix" in
-    // that file): HandoverLinePrefix, TransitionLinePrefix, VerdictLinePrefix,
-    // AuthorisationLinePrefix, ClaimLinePrefix, LimitLinePrefix, RefusalLinePrefix. CardFileParser's
-    // own continuation/lookahead conditions (both the "what ends a header run" scan and the
-    // "what interrupts a comment body" scan) test exactly these seven predicates and no others.
-    // That is seven — the same count the brief states. Comments are the eighth append-only
-    // sequence and carry their own header (CommentHeaderPrefix/Suffix) rather than one of the
-    // seven marker shapes; BuildComment (CardFileParser.cs) recognises id (required), author
-    // (required), timestamp (required), reply-to, to, resolves, is-nit, required, sites,
-    // disposition — ten header fields, four required, six optional.
+    // CardFileFormat declares seven §14.1 block-open-line constants (grep for "OpenLine" in that
+    // file): HandoverOpenLine, TransitionOpenLine, VerdictOpenLine, AuthorisationOpenLine,
+    // ClaimOpenLine, LimitOpenLine, RefusalOpenLine. CardFileParser's own continuation/lookahead
+    // conditions (both the "what ends a header run" scan and the "what interrupts a comment body"
+    // scan) test exactly these seven predicates and no others. That is seven. Comments are the
+    // eighth append-only sequence and keep their own CommentHeaderPrefix/Suffix shape rather than
+    // one of the seven block-open shapes — §14.4 brings that one onto this syntax next, not this
+    // block; BuildComment (CardFileParser.cs) recognises id (required), author (required),
+    // timestamp (required), reply-to, to, resolves, is-nit, required, sites, disposition — ten
+    // header fields, four required, six optional.
     //
-    // The brief's "block's five" is not what the writer emits: CardFileWriter's isBlockCard
-    // branch (and BlockCardFields.Empty's own doc comment, "The seven fields, all unset") emit
-    // seven scalar/list fields — base, reviewed_state, tasks, gate_results, round, blocked_by,
-    // finding_key — not five. Five was correct only before gate_results and finding_key were
-    // added in later sections; the doc comment at CardFileWriter.cs:31 documenting "five" is
-    // itself stale. This is reported, not fixed, per the brief's read-half-only scope.
-    //
-    // A finding this re-derivation surfaced that the brief did not name: CardFileFormat's
-    // certification-text escaper (claim/limit text, refusal rule/remedy, authorisation reason —
-    // the one family of fields documented as "sentences a later reviewer reads") maps every
-    // space, not only an edge one, to \s (CertificationTextEscapeForwardTable, contrast
-    // FrontmatterEscapeForwardTable which never touches an interior space at all). A multi-word
-    // claim, limit, remedy or reason therefore never appears on the wire as prose — every word
-    // boundary is a literal backslash-s. See the assertions below for what this actually looks
-    // like on disk.
+    // §14.2/14.3's fix: every one of the seven families now carries its fields as one-per-line
+    // `key: value`, reusing the frontmatter line shape and its escaper (CardFileFormat.
+    // EscapeCardBlockValue, built from EscapeFrontmatterValue plus one more composed step escaping
+    // a literal `-->` to `\->` so a rule/remedy/reason/text containing that run can never end the
+    // enclosing HTML comment early in a rendered view). Interior spaces are never escaped — the
+    // fix this section exists for. See the assertions below for what that looks like on disk now,
+    // in contrast to the CardFileFormat.EscapeCommentHeaderValue-based `\s`-per-space rendering
+    // 13.9 found and the Product Owner called horrible.
 
     [Fact]
     public void EveryMarkerLineFamily_IsAttributableByPlainSubstringSearch()
@@ -110,38 +103,55 @@ public sealed class CardFileRawTextLegibilityTests
         Assert.Contains("gate_results: build=0=1\n", raw, StringComparison.Ordinal);
         Assert.Contains("finding_key: F-0012\n", raw, StringComparison.Ordinal);
 
-        // Handover: who handed off to whom, and when — readable as one line, in plain words.
+        // Handover: who handed off to whom, and when — one field per line, in plain words.
         Assert.Contains(
-            $"<!-- callboard:handover by=architect to=worker timestamp={T1:O} -->",
+            "<!-- callboard:handover\n" +
+            "by: architect\n" +
+            "to: worker\n" +
+            $"timestamp: {T1:O}\n" +
+            "-->",
             raw, StringComparison.Ordinal);
 
         // Transition: acting role, transition name, both flow-state endpoints, timestamp.
         Assert.Contains(
-            $"<!-- callboard:transition by=worker name=briefed-to-building from=briefed to=building timestamp={T2:O} -->",
+            "<!-- callboard:transition\n" +
+            "by: worker\n" +
+            "name: briefed-to-building\n" +
+            "from: briefed\n" +
+            "to: building\n" +
+            $"timestamp: {T2:O}\n" +
+            "-->",
             raw, StringComparison.Ordinal);
 
-        // Claim: which claim, which round — attributable. Its text is present, but every space
-        // in it is written on disk as the two characters \s (CardFileFormat.
-        // EscapeCertificationTextValue escapes every space, not only edges, unlike a frontmatter
-        // value): a reader recovers the words, run together by backslash-s, not a sentence.
+        // Claim: which claim, which round — attributable. Its text now reads as an ordinary
+        // sentence: §14.2 puts the field on its own line, so an interior space is never ambiguous
+        // and is never escaped — the fix 13.9's finding demanded.
         Assert.Contains(
-            "<!-- callboard:claim id=claim-0001 round=1 " +
-            "text=the\\sretry\\sbudget\\sis\\shonoured\\son\\severy\\sexport\\spath -->",
+            "<!-- callboard:claim\n" +
+            "id: claim-0001\n" +
+            "round: 1\n" +
+            "text: the retry budget is honoured on every export path\n" +
+            "-->",
             raw, StringComparison.Ordinal);
 
-        // Limit: what the certification does NOT establish — same space-as-\s exposure as claim text.
+        // Limit: what the certification does NOT establish — reads as prose the same way.
         Assert.Contains(
-            "<!-- callboard:limit round=1 " +
-            "text=does\\snot\\scover\\sthe\\sCLI's\\sown\\sretry\\sof\\sa\\sfailed\\swrite -->",
+            "<!-- callboard:limit\n" +
+            "round: 1\n" +
+            "text: does not cover the CLI's own retry of a failed write\n" +
+            "-->",
             raw, StringComparison.Ordinal);
 
-        // Refusal: who was refused and the rule are attributable and unaffected (rule is a single
-        // token); the remedy — the one field naming a runnable command — is space-escaped the
-        // same way, so "run 'callboard block transition --base' instead" is only recoverable as
-        // "run\s'callboard\sblock\stransition\s--base'\sinstead" on the wire.
+        // Refusal: who was refused, the rule, and the remedy — the one field naming a runnable
+        // command — all read as sentences now: "run 'callboard block transition --base' instead"
+        // appears on the wire exactly as written, no backslash-s standing in for a space.
         Assert.Contains(
-            $"<!-- callboard:refusal by=reviewer rule=base-immutable " +
-            $"remedy=run\\s'callboard\\sblock\\stransition\\s--base'\\sinstead timestamp={T3:O} -->",
+            "<!-- callboard:refusal\n" +
+            "by: reviewer\n" +
+            "rule: base-immutable\n" +
+            "remedy: run 'callboard block transition --base' instead\n" +
+            $"timestamp: {T3:O}\n" +
+            "-->",
             raw, StringComparison.Ordinal);
     }
 
@@ -185,14 +195,22 @@ public sealed class CardFileRawTextLegibilityTests
         Assert.Contains($"closed_at: {T4:O}\n", raw, StringComparison.Ordinal);
 
         Assert.Contains(
-            $"<!-- callboard:verdict by=supervisor verdict=request-changes range-from=f100b77 range-to=9a4233b timestamp={T3:O} -->",
+            "<!-- callboard:verdict\n" +
+            "by: supervisor\n" +
+            "verdict: request-changes\n" +
+            "range-from: f100b77\n" +
+            "range-to: 9a4233b\n" +
+            $"timestamp: {T3:O}\n" +
+            "-->",
             raw, StringComparison.Ordinal);
-        // Authorisation reason: same space-as-\s exposure as claim/limit/refusal text
-        // (CardFileFormat.EscapeCertificationTextValue) — "a third remediation round is
-        // warranted here" reads on the wire as "a\sthird\sremediation\sround\sis\swarranted\shere".
+        // Authorisation reason reads as an ordinary sentence — the same fix as claim/limit/refusal
+        // text: "a third remediation round is warranted here" appears verbatim, no backslash-s.
         Assert.Contains(
-            $"<!-- callboard:authorisation by=product-owner " +
-            $"reason=a\\sthird\\sremediation\\sround\\sis\\swarranted\\shere timestamp={T4:O} -->",
+            "<!-- callboard:authorisation\n" +
+            "by: product-owner\n" +
+            "reason: a third remediation round is warranted here\n" +
+            $"timestamp: {T4:O}\n" +
+            "-->",
             raw, StringComparison.Ordinal);
     }
 

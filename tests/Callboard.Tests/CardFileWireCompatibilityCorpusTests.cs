@@ -47,6 +47,23 @@ public sealed class CardFileWireCompatibilityCorpusTests
     /// current writer's output. Add a fixture here — never replace one — the first time a future
     /// section changes what <see cref="CardFileWriter.Serialize"/> emits.
     /// </summary>
+    // §14.1/14.2: the transition/verdict/handover fixtures below were updated in place to the new
+    // delimited-block syntax rather than kept as a permanent historical form the way O-4 normally
+    // requires — the Architect's own §14 brief states no data migration is owed for this specific
+    // change ("no callboard/ board is committed, so fixtures and the corpus move and nothing on
+    // disk does"), which is a deliberate, brief-authorised exception to O-4 for this wire form
+    // only, not a precedent for widening it generally.
+    //
+    // §14 remediation (reviewer finding): that authorisation covers *dropping* the old forms from
+    // this corpus — it does not by itself establish that the parser fails safely on what it no
+    // longer emits, which is the property O-4 actually protects against silently breaking. Before
+    // this remediation it did not hold: an old single-line marker for any of the seven §14.1
+    // families read back successfully with the entry silently absorbed into the card's body and no
+    // trace it had ever been recorded — worse than the "fails to parse" case O-4 exists for.
+    // OldSingleLineMarker_ForEveryFamily_FailsLoudly_RatherThanSilentlyMisparsing below is the test
+    // that makes the property true and keeps it true: the old forms now have a permanent home in
+    // this file as things that refuse, which is the honest version of what this waiver was
+    // gesturing at.
     private static readonly IReadOnlyDictionary<string, string> Corpus = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["§2 — the original nine-field card, no kind-specific fields at all"] =
@@ -98,8 +115,20 @@ public sealed class CardFileWireCompatibilityCorpusTests
             "blocked_by: Q-0009\n" +
             "---\n" +
             "Body text.\n" +
-            "<!-- callboard:transition by=architect name=brief from=drafting to=briefed timestamp=2026-08-19T09:00:00+00:00 -->\n" +
-            "<!-- callboard:transition by=reviewer name=request-changes from=in-review to=briefed timestamp=2026-08-20T09:00:00+00:00 -->\n",
+            "<!-- callboard:transition\n" +
+            "by: architect\n" +
+            "name: brief\n" +
+            "from: drafting\n" +
+            "to: briefed\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
+            "<!-- callboard:transition\n" +
+            "by: reviewer\n" +
+            "name: request-changes\n" +
+            "from: in-review\n" +
+            "to: briefed\n" +
+            "timestamp: 2026-08-20T09:00:00+00:00\n" +
+            "-->\n",
 
         ["§5 block E — section card with base/closed_by/closed_at and a verdict"] =
             "---\n" +
@@ -117,7 +146,13 @@ public sealed class CardFileWireCompatibilityCorpusTests
             "closed_at: 2026-08-23T09:00:00+00:00\n" +
             "---\n" +
             "Body text.\n" +
-            "<!-- callboard:verdict by=supervisor verdict=approve range-from=e055e5b range-to=9671619 timestamp=2026-08-23T09:00:00+00:00 -->\n",
+            "<!-- callboard:verdict\n" +
+            "by: supervisor\n" +
+            "verdict: approve\n" +
+            "range-from: e055e5b\n" +
+            "range-to: 9671619\n" +
+            "timestamp: 2026-08-23T09:00:00+00:00\n" +
+            "-->\n",
 
         ["§6 block B (shipped, pre-fingerprint/pre-disposition) — finding card with an explicit extent, no extent_fingerprint or disposition keys"] =
             "---\n" +
@@ -151,7 +186,11 @@ public sealed class CardFileWireCompatibilityCorpusTests
             "updated: 2026-08-19T09:00:00+00:00\n" +
             "---\n" +
             "Body text.\n" +
-            "<!-- callboard:handover by=architect to=reviewer timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:handover\n" +
+            "by: architect\n" +
+            "to: reviewer\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
             "<!-- callboard:comment id=C-0001 author=reviewer timestamp=2026-08-19T09:00:00+00:00 -->\n" +
             "A comment.\n" +
             "<!-- /callboard:comment -->\n",
@@ -252,6 +291,42 @@ public sealed class CardFileWireCompatibilityCorpusTests
             Assert.Equal(first.SectionFields, reparsed.SectionFields);
             Assert.Equal(first.FindingFields, reparsed.FindingFields);
         }
+    }
+
+    // §14 remediation (reviewer finding): the property this waiver depends on, made true and pinned
+    // — an old pre-14.1 single-line marker for each of the seven §14.1 block families now fails to
+    // parse, loudly, rather than being silently absorbed into the card's body as prose (the
+    // reviewer's own repro, generalised to every family: a transition marker that used to read back
+    // with Transitions.Count == 0 and no trace it had ever existed).
+    [Theory]
+    [InlineData(CardFileFormat.HandoverOpenLine, "handover")]
+    [InlineData(CardFileFormat.TransitionOpenLine, "transition")]
+    [InlineData(CardFileFormat.VerdictOpenLine, "verdict")]
+    [InlineData(CardFileFormat.AuthorisationOpenLine, "authorisation")]
+    [InlineData(CardFileFormat.ClaimOpenLine, "claim")]
+    [InlineData(CardFileFormat.LimitOpenLine, "limit")]
+    [InlineData(CardFileFormat.RefusalOpenLine, "refusal")]
+    public void OldSingleLineMarker_ForEveryFamily_FailsLoudly_RatherThanSilentlyMisparsing(string openLine, string family)
+    {
+        const string header =
+            "---\nid: X-0700\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "Body text.\n";
+        // The pre-14.1 shape: prefix, a space, key=value tokens, a trailing " -->" on one physical
+        // line — exactly what every family's marker looked like before this section landed.
+        var oldSingleLineForm = openLine + " by=architect to=worker timestamp=2026-08-19T09:00:00+00:00 -->\n";
+
+        var result = CardFileParser.Parse(header + oldSingleLineForm);
+
+        result.Match<object?>(
+            onSuccess: success => throw new Xunit.Sdk.XunitException(
+                $"expected the old {family} single-line marker to fail loudly, but it parsed successfully with 0 {family} entries — exactly the silent-misparse regression this test guards"),
+            onFailure: failure =>
+            {
+                Assert.Contains("malformed", failure.Reason, StringComparison.Ordinal);
+                Assert.Contains(family, failure.Reason, StringComparison.Ordinal);
+                return null;
+            });
     }
 
     private static CardFile Parse(string label) => Parse(label, Corpus[label]);

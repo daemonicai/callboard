@@ -166,7 +166,7 @@ public sealed class CardFileRoundTripTests
 
         const string trickyBody =
             "Some narrative.\n" +
-            "<!-- callboard:handover by=architect to=reviewer timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:handover\n" +
             "and continues after, as plain narrative, not a real handover.";
 
         var card = new CardFile(frontmatter, trickyBody, [], []);
@@ -189,7 +189,7 @@ public sealed class CardFileRoundTripTests
             "B-0106", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "4", Created, Updated);
 
         const string trickyCommentBody =
-            "See below:\n<!-- callboard:handover by=worker to=architect timestamp=2026-08-19T09:00:00+00:00 -->";
+            "See below:\n<!-- callboard:handover";
 
         var comment = new CardComment("C-0001", CardOwner.Worker, Updated, trickyCommentBody, null, null, null, []);
         var card = new CardFile(frontmatter, "Body.", [comment], []);
@@ -528,7 +528,12 @@ public sealed class CardFileRoundTripTests
             "---\nid: X-0002\nkind: block\ntitle: t\nstatus: drafting\nowner: reviewer\nscope: change\nsection: 4\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
             "body\n" +
-            "<!-- callboard:handover by=architect to=reviewer timestamp=2026-08-19T09:00:00+00:00 round=2 -->\n";
+            "<!-- callboard:handover\n" +
+            "by: architect\n" +
+            "to: reviewer\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "round: 2\n" +
+            "-->\n";
 
         var parsed = AssertSuccess(CardFileParser.Parse(raw));
 
@@ -539,7 +544,7 @@ public sealed class CardFileRoundTripTests
         // read-modify-write) would otherwise lose — the same extensibility rule §2 established
         // for frontmatter and comment headers.
         var reserialized = CardFileWriter.Serialize(parsed);
-        Assert.Contains("round=2", reserialized, StringComparison.Ordinal);
+        Assert.Contains("round: 2", reserialized, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -548,7 +553,11 @@ public sealed class CardFileRoundTripTests
         const string raw =
             "---\nid: X-0001\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 1\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
-            "<!-- callboard:handover by=nobody to=reviewer timestamp=2026-08-19T09:00:00+00:00 -->\n";
+            "<!-- callboard:handover\n" +
+            "by: nobody\n" +
+            "to: reviewer\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n";
 
         var result = CardFileParser.Parse(raw);
 
@@ -561,11 +570,57 @@ public sealed class CardFileRoundTripTests
         const string raw =
             "---\nid: X-0003\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 1\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
-            "<!-- callboard:handover by=architect timestamp=2026-08-19T09:00:00+00:00 -->\n";
+            "<!-- callboard:handover\n" +
+            "by: architect\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n";
 
         var result = CardFileParser.Parse(raw);
 
         AssertFailure(result);
+    }
+
+    // §14.1: "fail loudly on an unterminated block" — reaching end of file while still inside a
+    // §14.1 block (no line exactly "-->" ever seen) must refuse, not silently treat whatever field
+    // lines were read as the whole block. The failure mode named worth guarding against: a
+    // truncation that reads back as a valid shorter block.
+    [Fact]
+    public void Parse_HandoverBlockMissingItsClosingLine_FailsLoudly_RatherThanParsingATruncatedBlock()
+    {
+        const string raw =
+            "---\nid: X-0010\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 1\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            // deliberately no closing "-->" line — the file ends here
+            "<!-- callboard:handover\n" +
+            "by: architect\n" +
+            "to: reviewer\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n";
+
+        var reason = AssertFailure(CardFileParser.Parse(raw));
+
+        Assert.Contains("unterminated", reason, StringComparison.Ordinal);
+        Assert.Contains("-->", reason, StringComparison.Ordinal);
+    }
+
+    // The same unterminated-block refusal, for a family other than handover — proves the fix is in
+    // the shared field-line reader every one of the seven families now goes through, not something
+    // special-cased for handover alone.
+    [Fact]
+    public void Parse_RefusalBlockMissingItsClosingLine_FailsLoudly()
+    {
+        const string raw =
+            "---\nid: X-0011\nkind: block\ntitle: t\nstatus: in-review\nowner: reviewer\nscope: change\nsection: 9\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            // deliberately no closing "-->" line
+            "<!-- callboard:refusal\n" +
+            "by: reviewer\n" +
+            "rule: r\n" +
+            "remedy: m\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n";
+
+        var reason = AssertFailure(CardFileParser.Parse(raw));
+
+        Assert.Contains("unterminated", reason, StringComparison.Ordinal);
     }
 
     // §5 block C: the same round-trip and delimiter-safety rigor already established for
@@ -629,7 +684,7 @@ public sealed class CardFileRoundTripTests
 
         const string trickyBody =
             "Some narrative.\n" +
-            "<!-- callboard:transition by=architect name=brief from=drafting to=briefed timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:transition\n" +
             "and continues after, as plain narrative, not a real transition.";
 
         var card = new CardFile(frontmatter, trickyBody, [], []);
@@ -649,7 +704,14 @@ public sealed class CardFileRoundTripTests
             "---\nid: X-0004\nkind: block\ntitle: t\nstatus: building\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
             "body\n" +
-            "<!-- callboard:transition by=worker name=claim from=briefed to=building timestamp=2026-08-19T09:00:00+00:00 note=x -->\n";
+            "<!-- callboard:transition\n" +
+            "by: worker\n" +
+            "name: claim\n" +
+            "from: briefed\n" +
+            "to: building\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "note: x\n" +
+            "-->\n";
 
         var parsed = AssertSuccess(CardFileParser.Parse(raw));
 
@@ -657,7 +719,7 @@ public sealed class CardFileRoundTripTests
         Assert.Equal(("note", "x"), Assert.Single(transition.UnknownFields));
 
         var reserialized = CardFileWriter.Serialize(parsed);
-        Assert.Contains("note=x", reserialized, StringComparison.Ordinal);
+        Assert.Contains("note: x", reserialized, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -666,7 +728,13 @@ public sealed class CardFileRoundTripTests
         const string raw =
             "---\nid: X-0005\nkind: block\ntitle: t\nstatus: briefed\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
-            "<!-- callboard:transition by=nobody name=claim from=briefed to=building timestamp=2026-08-19T09:00:00+00:00 -->\n";
+            "<!-- callboard:transition\n" +
+            "by: nobody\n" +
+            "name: claim\n" +
+            "from: briefed\n" +
+            "to: building\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n";
 
         AssertFailure(CardFileParser.Parse(raw));
     }
@@ -677,7 +745,13 @@ public sealed class CardFileRoundTripTests
         const string raw =
             "---\nid: X-0006\nkind: block\ntitle: t\nstatus: briefed\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
-            "<!-- callboard:transition by=worker name=claim from=nowhere to=building timestamp=2026-08-19T09:00:00+00:00 -->\n";
+            "<!-- callboard:transition\n" +
+            "by: worker\n" +
+            "name: claim\n" +
+            "from: nowhere\n" +
+            "to: building\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n";
 
         AssertFailure(CardFileParser.Parse(raw));
     }
@@ -688,7 +762,12 @@ public sealed class CardFileRoundTripTests
         const string raw =
             "---\nid: X-0007\nkind: block\ntitle: t\nstatus: briefed\nowner: worker\nscope: change\nsection: 5\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
-            "<!-- callboard:transition by=worker from=briefed to=building timestamp=2026-08-19T09:00:00+00:00 -->\n";
+            "<!-- callboard:transition\n" +
+            "by: worker\n" +
+            "from: briefed\n" +
+            "to: building\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n";
 
         AssertFailure(CardFileParser.Parse(raw));
     }
@@ -732,9 +811,9 @@ public sealed class CardFileRoundTripTests
     }
 
     // Claim/limit text is free-form prose — the same round-trip proof RoundTrips_CommentIdAndReplyToContainingSpacesAndBackslashes
-    // already gives id/reply-to, extended here to newlines/carriage-returns, which the header-style
-    // id/reply-to escaping does not need to handle but certification text does (CardFileFormat.
-    // EscapeCertificationTextValue's own doc comment).
+    // already gives id/reply-to, extended here to newlines/carriage-returns, which the frontmatter-shape
+    // escaping every §14.1 block field value now shares (CardFileFormat.EscapeCardBlockValue) already
+    // handles the same way frontmatter's own values do.
     [Fact]
     public void RoundTrips_ClaimAndLimitTextContainingSpacesBackslashesAndNewlines()
     {
@@ -758,7 +837,12 @@ public sealed class CardFileRoundTripTests
             "---\nid: X-0300\nkind: block\ntitle: t\nstatus: approved\nowner: reviewer\nscope: change\nsection: 8\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
             "body\n" +
-            "<!-- callboard:claim id=claim-1 round=1 text=some\\stext confidence=high -->\n";
+            "<!-- callboard:claim\n" +
+            "id: claim-1\n" +
+            "round: 1\n" +
+            "text: some text\n" +
+            "confidence: high\n" +
+            "-->\n";
 
         var parsed = AssertSuccess(CardFileParser.Parse(raw));
 
@@ -766,7 +850,7 @@ public sealed class CardFileRoundTripTests
         Assert.Equal(("confidence", "high"), Assert.Single(claim.UnknownFields));
 
         var reserialized = CardFileWriter.Serialize(parsed);
-        Assert.Contains("confidence=high", reserialized, StringComparison.Ordinal);
+        Assert.Contains("confidence: high", reserialized, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -776,7 +860,11 @@ public sealed class CardFileRoundTripTests
             "---\nid: X-0301\nkind: block\ntitle: t\nstatus: approved\nowner: reviewer\nscope: change\nsection: 8\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
             "body\n" +
-            "<!-- callboard:limit round=1 text=some\\stext scope=narrow -->\n";
+            "<!-- callboard:limit\n" +
+            "round: 1\n" +
+            "text: some text\n" +
+            "scope: narrow\n" +
+            "-->\n";
 
         var parsed = AssertSuccess(CardFileParser.Parse(raw));
 
@@ -784,7 +872,7 @@ public sealed class CardFileRoundTripTests
         Assert.Equal(("scope", "narrow"), Assert.Single(limit.UnknownFields));
 
         var reserialized = CardFileWriter.Serialize(parsed);
-        Assert.Contains("scope=narrow", reserialized, StringComparison.Ordinal);
+        Assert.Contains("scope: narrow", reserialized, StringComparison.Ordinal);
     }
 
     // §9 block A: process-enforcement's refusal-line format — the same self-contained, no-body
@@ -796,8 +884,12 @@ public sealed class CardFileRoundTripTests
             "---\nid: X-0400\nkind: block\ntitle: t\nstatus: in-review\nowner: reviewer\nscope: change\nsection: 9\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
             "body\n" +
-            "<!-- callboard:refusal by=reviewer rule=work-lifecycle:\\sblock\\scards\\smove\\sthrough\\sa\\sdefined\\sflow " +
-            "remedy=call\\sone\\sof\\sthe\\stransitions\\savailable timestamp=2026-08-19T09:00:00+00:00 -->\n";
+            "<!-- callboard:refusal\n" +
+            "by: reviewer\n" +
+            "rule: work-lifecycle: block cards move through a defined flow\n" +
+            "remedy: call one of the transitions available\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n";
 
         var parsed = AssertSuccess(CardFileParser.Parse(raw));
 
@@ -819,7 +911,13 @@ public sealed class CardFileRoundTripTests
             "---\nid: X-0401\nkind: block\ntitle: t\nstatus: in-review\nowner: reviewer\nscope: change\nsection: 9\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
             "body\n" +
-            "<!-- callboard:refusal by=reviewer rule=r remedy=m timestamp=2026-08-19T09:00:00+00:00 severity=high -->\n";
+            "<!-- callboard:refusal\n" +
+            "by: reviewer\n" +
+            "rule: r\n" +
+            "remedy: m\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "severity: high\n" +
+            "-->\n";
 
         var parsed = AssertSuccess(CardFileParser.Parse(raw));
 
@@ -827,7 +925,7 @@ public sealed class CardFileRoundTripTests
         Assert.Equal(("severity", "high"), Assert.Single(refusal.UnknownFields));
 
         var reserialized = CardFileWriter.Serialize(parsed);
-        Assert.Contains("severity=high", reserialized, StringComparison.Ordinal);
+        Assert.Contains("severity: high", reserialized, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -836,7 +934,12 @@ public sealed class CardFileRoundTripTests
         const string raw =
             "---\nid: X-0402\nkind: block\ntitle: t\nstatus: in-review\nowner: reviewer\nscope: change\nsection: 9\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
-            "<!-- callboard:refusal by=nobody rule=r remedy=m timestamp=2026-08-19T09:00:00+00:00 -->\n";
+            "<!-- callboard:refusal\n" +
+            "by: nobody\n" +
+            "rule: r\n" +
+            "remedy: m\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n";
 
         AssertFailure(CardFileParser.Parse(raw));
     }
@@ -849,7 +952,7 @@ public sealed class CardFileRoundTripTests
 
         const string trickyBody =
             "Some narrative.\n" +
-            "<!-- callboard:refusal by=reviewer rule=not\\sreal remedy=x timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:refusal\n" +
             "and continues after, as plain narrative, not a real refusal.";
 
         var card = new CardFile(frontmatter, trickyBody, [], []);
@@ -868,7 +971,7 @@ public sealed class CardFileRoundTripTests
 
         const string trickyBody =
             "Some narrative.\n" +
-            "<!-- callboard:claim id=claim-1 round=1 text=not\\sreal -->\n" +
+            "<!-- callboard:claim\n" +
             "and continues after, as plain narrative, not a real claim.";
 
         var card = new CardFile(frontmatter, trickyBody, [], []);
@@ -886,7 +989,10 @@ public sealed class CardFileRoundTripTests
         const string raw =
             "---\nid: X-0008\nkind: block\ntitle: t\nstatus: approved\nowner: reviewer\nscope: change\nsection: 8\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
-            "<!-- callboard:claim round=1 text=some\\stext -->\n";
+            "<!-- callboard:claim\n" +
+            "round: 1\n" +
+            "text: some text\n" +
+            "-->\n";
 
         AssertFailure(CardFileParser.Parse(raw));
     }
@@ -897,9 +1003,92 @@ public sealed class CardFileRoundTripTests
         const string raw =
             "---\nid: X-0009\nkind: block\ntitle: t\nstatus: approved\nowner: reviewer\nscope: change\nsection: 8\n" +
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
-            "<!-- callboard:claim id=claim-1 round=1 text= -->\n";
+            "<!-- callboard:claim\n" +
+            "id: claim-1\n" +
+            "round: 1\n" +
+            "text: \n" +
+            "-->\n";
 
         AssertFailure(CardFileParser.Parse(raw));
+    }
+
+    // §14 remediation (reviewer finding on 14.1-14.3): a line that reaches the body/comment loops
+    // looking like one of the seven §14.1 block open lines but is not an exact match — an old
+    // single-line marker, a hand-edit with trailing content, anything short of an exact open line —
+    // must never be silently absorbed as prose. Pinned across all seven families in one place,
+    // not just the handful the earlier ad-hoc lookalike tests above happened to cover individually.
+    [Theory]
+    [InlineData(CardFileFormat.HandoverOpenLine, "handover")]
+    [InlineData(CardFileFormat.TransitionOpenLine, "transition")]
+    [InlineData(CardFileFormat.VerdictOpenLine, "verdict")]
+    [InlineData(CardFileFormat.AuthorisationOpenLine, "authorisation")]
+    [InlineData(CardFileFormat.ClaimOpenLine, "claim")]
+    [InlineData(CardFileFormat.LimitOpenLine, "limit")]
+    [InlineData(CardFileFormat.RefusalOpenLine, "refusal")]
+    public void RoundTrips_BodyContainingABareBlockOpenLine_ForEveryFamily_EscapesItAndInjectsNoEntry(string openLine, string family)
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0500", CardKind.Block, $"Delimiter-lookalike body ({family})", "drafting", CardOwner.Worker, CardScope.Change, "14", Created, Updated);
+        var trickyBody = "Some narrative.\n" + openLine + "\nand continues after, as plain narrative.";
+        var card = new CardFile(frontmatter, trickyBody, [], []);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
+
+        Assert.Equal(trickyBody, parsed.Body);
+        Assert.Empty(parsed.Handovers);
+        Assert.Empty(parsed.Transitions);
+        Assert.Empty(parsed.Claims);
+        Assert.Empty(parsed.Limits);
+        Assert.Empty(parsed.Refusals);
+        Assert.Empty(parsed.SectionFields.Verdicts);
+        Assert.Empty(parsed.SectionFields.Authorisations);
+    }
+
+    // The other half of the same symmetry, pinned as a test rather than asserted only in a
+    // comment: whatever CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter says the write side
+    // must escape, CardFileParser must refuse when that exact line arrives unescaped — the
+    // reviewer's own repro (an old pre-14.1 single-line transition marker silently disappearing
+    // into CardFile.Body with Transitions.Count == 0, no error, no trace) generalised to all seven.
+    [Theory]
+    [InlineData(CardFileFormat.HandoverOpenLine, "handover")]
+    [InlineData(CardFileFormat.TransitionOpenLine, "transition")]
+    [InlineData(CardFileFormat.VerdictOpenLine, "verdict")]
+    [InlineData(CardFileFormat.AuthorisationOpenLine, "authorisation")]
+    [InlineData(CardFileFormat.ClaimOpenLine, "claim")]
+    [InlineData(CardFileFormat.LimitOpenLine, "limit")]
+    [InlineData(CardFileFormat.RefusalOpenLine, "refusal")]
+    public void UnescapedMalformedBlockOpenLine_ForEveryFamily_IsExactlyWhatTheWriteSideEscapes_AndTheReadSideRefusesItUnescaped(string openLine, string family)
+    {
+        Assert.True(CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter(openLine));
+
+        const string header =
+            "---\nid: X-0600\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 14\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "body\n";
+
+        var reason = AssertFailure(CardFileParser.Parse(
+            header + openLine + " by=architect to=worker timestamp=2026-08-19T09:00:00+00:00 -->\n"));
+
+        Assert.Contains("malformed", reason, StringComparison.Ordinal);
+        Assert.Contains(family, reason, StringComparison.Ordinal);
+    }
+
+    // The reviewer's own repro, kept as its own named, concrete test alongside the generalised
+    // Theory above — the exact pre-14.1 wire form (CardFileWireCompatibilityCorpusTests.cs held
+    // this shape until this diff) that used to silently vanish with Transitions.Count == 0.
+    [Fact]
+    public void Parse_PreFourteenOneSingleLineTransitionMarker_FailsLoudly_RatherThanVanishingIntoBody()
+    {
+        const string raw =
+            "---\nid: X-0601\nkind: block\ntitle: t\nstatus: building\nowner: worker\nscope: change\nsection: 5\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
+            "body\n" +
+            "<!-- callboard:transition by=architect name=brief from=drafting to=briefed timestamp=2026-08-19T09:00:00+00:00 -->\n";
+
+        var reason = AssertFailure(CardFileParser.Parse(raw));
+
+        Assert.Contains("malformed", reason, StringComparison.Ordinal);
+        Assert.Contains("transition", reason, StringComparison.Ordinal);
     }
 
     private static CardFile AssertSuccess(CardFileParseResult result) =>

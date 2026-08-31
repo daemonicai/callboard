@@ -15,95 +15,165 @@ internal static class CardFileFormat
     internal const string CommentFooter = "<!-- /callboard:comment -->";
 
     /// <summary>
-    /// An ownership-handover entry (card-model 4.5): one self-contained line, no body and no
-    /// separate footer, since a handover carries no prose — <c>by</c>/<c>to</c>/<c>timestamp</c>
-    /// fields only, same <c>key=value</c> token shape as a comment header.
+    /// §14.1: the one delimited-block syntax shared by every one of the seven append-only
+    /// block-entry families below (derived from what <see cref="CardFileWriter"/> emits and
+    /// <see cref="CardFileParser"/> reads for the appended region — comments are the eighth
+    /// sequence and keep their own <see cref="CommentHeaderPrefix"/>/<see cref="CommentFooter"/>
+    /// shape; §14.4 brings that one onto this syntax next, not this task). One open line names the
+    /// family and carries nothing else; each field is then its own <c>key: value</c> line, the same
+    /// shape frontmatter itself uses; the block ends at a line <em>exactly equal to</em>
+    /// <see cref="BlockCloseLine"/> — not merely containing it. That equality requirement is what
+    /// makes an unterminated block fail loudly (§13.6's "a card which will not parse beats one that
+    /// parses wrongly", applied here): a stray <c>--&gt;</c> embedded inside a field's own text can
+    /// never be mistaken for the close line, because §14.3 escapes exactly that run
+    /// (<see cref="EscapeCardBlockValue"/>) before it ever reaches the file.
     /// </summary>
-    internal const string HandoverLinePrefix = "<!-- callboard:handover ";
-    internal const string HandoverLineSuffix = " -->";
+    internal const string BlockCloseLine = "-->";
+
+    /// <summary>
+    /// An ownership-handover entry (card-model 4.5): <c>by</c>/<c>to</c>/<c>timestamp</c> fields,
+    /// no prose. §14.1: the delimited block shape above — this is only the open line.
+    /// </summary>
+    internal const string HandoverOpenLine = "<!-- callboard:handover";
 
     /// <summary>
     /// A block flow-transition entry (work-lifecycle: "Every transition SHALL record the acting
-    /// role and the time it occurred", §5 block C): the same self-contained, no-body, no-footer
-    /// shape as <see cref="HandoverLinePrefix"/>, for the same reason — a transition carries no
-    /// prose, only <c>by</c>/<c>name</c>/<c>from</c>/<c>to</c>/<c>timestamp</c> fields.
+    /// role and the time it occurred", §5 block C): the same delimited block shape as
+    /// <see cref="HandoverOpenLine"/>, for the same reason — a transition carries no prose, only
+    /// <c>by</c>/<c>name</c>/<c>from</c>/<c>to</c>/<c>timestamp</c> fields.
     /// </summary>
-    internal const string TransitionLinePrefix = "<!-- callboard:transition ";
-    internal const string TransitionLineSuffix = " -->";
+    internal const string TransitionOpenLine = "<!-- callboard:transition";
 
     /// <summary>
     /// A section's supervisor-verdict entry (work-lifecycle: "Sections are entities" — "the
     /// verdict, the range and the acting role are recorded against that section entity", §5 block
-    /// E): the same self-contained, no-body, no-footer shape as <see cref="TransitionLinePrefix"/>,
-    /// for the same reason — a verdict carries no prose, only
+    /// E): the same delimited block shape as <see cref="TransitionOpenLine"/>, for the same reason —
+    /// a verdict carries no prose, only
     /// <c>by</c>/<c>verdict</c>/<c>range-from</c>/<c>range-to</c>/<c>timestamp</c> fields.
     /// </summary>
-    internal const string VerdictLinePrefix = "<!-- callboard:verdict ";
-    internal const string VerdictLineSuffix = " -->";
+    internal const string VerdictOpenLine = "<!-- callboard:verdict";
 
     /// <summary>
     /// A section's Product-Owner-authorisation entry (work-lifecycle: "Remediation beyond the
     /// second round requires recorded authorisation" — "The authorisation SHALL be part of the
-    /// record", §8a block C): the same self-contained, no-body, no-footer shape as
-    /// <see cref="VerdictLinePrefix"/>, for the same reason — an authorisation carries no prose
-    /// beyond its short <c>reason</c> field, only <c>by</c>/<c>reason</c>/<c>timestamp</c>.
+    /// record", §8a block C): the same delimited block shape as <see cref="VerdictOpenLine"/>, for
+    /// the same reason — an authorisation carries no prose beyond its short <c>reason</c> field,
+    /// only <c>by</c>/<c>reason</c>/<c>timestamp</c>.
     /// </summary>
-    internal const string AuthorisationLinePrefix = "<!-- callboard:authorisation ";
-    internal const string AuthorisationLineSuffix = " -->";
+    internal const string AuthorisationOpenLine = "<!-- callboard:authorisation";
 
     /// <summary>
     /// One enumerated claim of an approval (review-certification: "Certification enumerates its
-    /// claims", §8 block A). Self-contained, no body and no footer — the same shape as
-    /// <see cref="TransitionLinePrefix"/>/<see cref="VerdictLinePrefix"/> — but, unlike those two,
-    /// more than one can belong to the same approval, so each carries its own <c>id</c> (Architect
+    /// claims", §8 block A). The same delimited block shape as
+    /// <see cref="TransitionOpenLine"/>/<see cref="VerdictOpenLine"/> — but, unlike those two, more
+    /// than one can belong to the same approval, so each carries its own <c>id</c> (Architect
     /// ruling: "each claim carrying its own id" — 8.8, out of this block's scope, re-asserts an
     /// existing approval's claims individually and needs a stable handle to assert or refuse) and a
     /// <c>round</c> tying it to the remediation round it was certified in, the same scoping
     /// <see cref="GateResult.Round"/> already established for "only the current round's evidence is
     /// evidence".
     /// </summary>
-    internal const string ClaimLinePrefix = "<!-- callboard:claim ";
-    internal const string ClaimLineSuffix = " -->";
+    internal const string ClaimOpenLine = "<!-- callboard:claim";
 
     /// <summary>
     /// One stated limit of an approval — what the certification does NOT establish
     /// (review-certification: "An approval SHALL ... state what it does not establish"). Same shape
-    /// as <see cref="ClaimLinePrefix"/>, minus an <c>id</c>: a limit is never individually asserted
+    /// as <see cref="ClaimOpenLine"/>, minus an <c>id</c>: a limit is never individually asserted
     /// or refused (8.8 re-asserts claims, never limits — Architect ruling), so it needs no identity
     /// of its own, only the <c>round</c> it was certified in.
     /// </summary>
-    internal const string LimitLinePrefix = "<!-- callboard:limit ";
-    internal const string LimitLineSuffix = " -->";
+    internal const string LimitOpenLine = "<!-- callboard:limit";
 
     /// <summary>
     /// A card's append-only refusal entry (process-enforcement: "Refusals are explained and
     /// attributable" — "A refusal SHALL be recorded against the card with the acting role and the
-    /// time", §9 block A). Same self-contained, no-body, no-footer shape as
-    /// <see cref="TransitionLinePrefix"/> and its siblings — a refusal carries no prose beyond its
-    /// own <c>rule</c>/<c>remedy</c> text, only <c>by</c>/<c>rule</c>/<c>remedy</c>/<c>timestamp</c>
-    /// fields.
+    /// time", §9 block A). Same delimited block shape as <see cref="TransitionOpenLine"/> and its
+    /// siblings — a refusal carries no prose beyond its own <c>rule</c>/<c>remedy</c> text, only
+    /// <c>by</c>/<c>rule</c>/<c>remedy</c>/<c>timestamp</c> fields.
     /// </summary>
-    internal const string RefusalLinePrefix = "<!-- callboard:refusal ";
-    internal const string RefusalLineSuffix = " -->";
+    internal const string RefusalOpenLine = "<!-- callboard:refusal";
+
+    /// <summary>
+    /// §14 remediation (reviewer finding on `14.1–14.3`): the one shared declaration of the seven
+    /// §14.1 block-open-line prefixes, paired with a human label for a refusal message.
+    /// <see cref="LooksLikeDelimiterOrEscapedDelimiter"/> (write side — is this body/comment content
+    /// that must be escaped so it is never misread as a real block open line) and
+    /// <see cref="MalformedBlockOpenLineFamily"/> (read side — is this an unescaped line that starts
+    /// with one of these prefixes but is not an exact block open line, i.e. a malformed or legacy
+    /// marker that must never be silently absorbed as prose) both read from this one list, so the
+    /// two questions about the same seven prefixes can never drift apart. The comment header keeps
+    /// its own separate <see cref="IsCommentHeader"/> predicate for now — §14.4 unifies it into this
+    /// declaration when the comment header itself moves onto the §14.1 block shape.
+    /// </summary>
+    private static readonly IReadOnlyList<(string Prefix, string Family)> BlockOpenLinePrefixes =
+    [
+        (HandoverOpenLine, "handover"),
+        (TransitionOpenLine, "transition"),
+        (VerdictOpenLine, "verdict"),
+        (AuthorisationOpenLine, "authorisation"),
+        (ClaimOpenLine, "claim"),
+        (LimitOpenLine, "limit"),
+        (RefusalOpenLine, "refusal"),
+    ];
 
     /// <summary>
     /// True for a line that, written unescaped, would be misread as a structural delimiter on
-    /// the next parse — the header prefix, the footer, or an already-escaped instance of either
-    /// (any number of leading backslashes stripped still matches). Escaping is checked against
-    /// this, not just the bare patterns, so escaping the same content twice stays invertible.
+    /// the next parse — the comment header prefix, the comment footer, one of the seven §14.1 block
+    /// open lines (<see cref="BlockOpenLinePrefixes"/>), or an already-escaped instance of any of
+    /// those (any number of leading backslashes stripped still matches). Escaping is checked
+    /// against this, not just the bare patterns, so escaping the same content twice stays
+    /// invertible. Deliberately does not include <see cref="BlockCloseLine"/> itself: a bare
+    /// <c>--&gt;</c> line only means "end of block" while the parser is already scanning fields
+    /// inside one of the seven open lines above, never while scanning body or comment content —
+    /// see the field-value escaping this task also adds (<see cref="EscapeCardBlockValue"/>) for
+    /// the different hazard a literal <c>--&gt;</c> <em>inside</em> a field's own text poses.
     /// </summary>
     internal static bool LooksLikeDelimiterOrEscapedDelimiter(string line)
     {
         var unescaped = line.TrimStart('\\');
-        return unescaped.StartsWith(CommentHeaderPrefix, StringComparison.Ordinal)
-            || string.Equals(unescaped, CommentFooter, StringComparison.Ordinal)
-            || unescaped.StartsWith(HandoverLinePrefix, StringComparison.Ordinal)
-            || unescaped.StartsWith(TransitionLinePrefix, StringComparison.Ordinal)
-            || unescaped.StartsWith(VerdictLinePrefix, StringComparison.Ordinal)
-            || unescaped.StartsWith(AuthorisationLinePrefix, StringComparison.Ordinal)
-            || unescaped.StartsWith(ClaimLinePrefix, StringComparison.Ordinal)
-            || unescaped.StartsWith(LimitLinePrefix, StringComparison.Ordinal)
-            || unescaped.StartsWith(RefusalLinePrefix, StringComparison.Ordinal);
+        if (unescaped.StartsWith(CommentHeaderPrefix, StringComparison.Ordinal)
+            || string.Equals(unescaped, CommentFooter, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        foreach (var (prefix, _) in BlockOpenLinePrefixes)
+        {
+            if (unescaped.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// §14 remediation: §13.6's rule ("a card which will not parse beats one that parses wrongly")
+    /// applied to the malformed-open-line case, symmetric with §14.1's own unterminated-block case.
+    /// Returns the family name when <paramref name="line"/> starts with one of the seven §14.1
+    /// block-open prefixes (<see cref="BlockOpenLinePrefixes"/>) but is not itself an exact block
+    /// open line — a line the writer could never have produced as body or comment content, since
+    /// <see cref="LooksLikeDelimiterOrEscapedDelimiter"/> always escapes exactly such a line (one
+    /// leading backslash) before writing it. An escaped line therefore starts with <c>\</c>, never
+    /// with <c>&lt;</c>, and can never match a bare prefix here — so an unescaped match is always
+    /// either a hand-authored line or a pre-§14.1 legacy marker, and the caller refuses it instead
+    /// of silently absorbing it into prose. Returns <see langword="null"/> when line is not such a
+    /// case, including when it is itself exactly one of the seven open lines (the caller checks
+    /// that first via the <c>Is*Line</c> predicates) or when it carries a leading backslash (an
+    /// escaped content line, reversed by <see cref="UnescapeContentLine"/> instead — never this).
+    /// </summary>
+    internal static string? MalformedBlockOpenLineFamily(string line)
+    {
+        foreach (var (prefix, family) in BlockOpenLinePrefixes)
+        {
+            if (line.StartsWith(prefix, StringComparison.Ordinal) && !string.Equals(line, prefix, StringComparison.Ordinal))
+            {
+                return family;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -138,40 +208,40 @@ internal static class CardFileFormat
     internal static bool IsCommentFooter(string line) =>
         string.Equals(line, CommentFooter, StringComparison.Ordinal);
 
-    /// <summary>An unescaped, self-contained ownership-handover entry line.</summary>
+    /// <summary>An unescaped ownership-handover block's open line.</summary>
     internal static bool IsHandoverLine(string line) =>
-        line.StartsWith(HandoverLinePrefix, StringComparison.Ordinal)
-            && line.EndsWith(HandoverLineSuffix, StringComparison.Ordinal);
+        string.Equals(line, HandoverOpenLine, StringComparison.Ordinal);
 
-    /// <summary>An unescaped, self-contained block flow-transition entry line.</summary>
+    /// <summary>An unescaped block flow-transition block's open line.</summary>
     internal static bool IsTransitionLine(string line) =>
-        line.StartsWith(TransitionLinePrefix, StringComparison.Ordinal)
-            && line.EndsWith(TransitionLineSuffix, StringComparison.Ordinal);
+        string.Equals(line, TransitionOpenLine, StringComparison.Ordinal);
 
-    /// <summary>An unescaped, self-contained section-verdict entry line.</summary>
+    /// <summary>An unescaped section-verdict block's open line.</summary>
     internal static bool IsVerdictLine(string line) =>
-        line.StartsWith(VerdictLinePrefix, StringComparison.Ordinal)
-            && line.EndsWith(VerdictLineSuffix, StringComparison.Ordinal);
+        string.Equals(line, VerdictOpenLine, StringComparison.Ordinal);
 
-    /// <summary>An unescaped, self-contained section-authorisation entry line.</summary>
+    /// <summary>An unescaped section-authorisation block's open line.</summary>
     internal static bool IsAuthorisationLine(string line) =>
-        line.StartsWith(AuthorisationLinePrefix, StringComparison.Ordinal)
-            && line.EndsWith(AuthorisationLineSuffix, StringComparison.Ordinal);
+        string.Equals(line, AuthorisationOpenLine, StringComparison.Ordinal);
 
-    /// <summary>An unescaped, self-contained approval-claim entry line.</summary>
+    /// <summary>An unescaped approval-claim block's open line.</summary>
     internal static bool IsClaimLine(string line) =>
-        line.StartsWith(ClaimLinePrefix, StringComparison.Ordinal)
-            && line.EndsWith(ClaimLineSuffix, StringComparison.Ordinal);
+        string.Equals(line, ClaimOpenLine, StringComparison.Ordinal);
 
-    /// <summary>An unescaped, self-contained approval-limit entry line.</summary>
+    /// <summary>An unescaped approval-limit block's open line.</summary>
     internal static bool IsLimitLine(string line) =>
-        line.StartsWith(LimitLinePrefix, StringComparison.Ordinal)
-            && line.EndsWith(LimitLineSuffix, StringComparison.Ordinal);
+        string.Equals(line, LimitOpenLine, StringComparison.Ordinal);
 
-    /// <summary>An unescaped, self-contained refusal entry line.</summary>
+    /// <summary>An unescaped refusal block's open line.</summary>
     internal static bool IsRefusalLine(string line) =>
-        line.StartsWith(RefusalLinePrefix, StringComparison.Ordinal)
-            && line.EndsWith(RefusalLineSuffix, StringComparison.Ordinal);
+        string.Equals(line, RefusalOpenLine, StringComparison.Ordinal);
+
+    /// <summary>§14.1: an unescaped line marking the end of any of the seven block families above —
+    /// checked for exact equality, not merely containment, so that a field value carrying a literal
+    /// <c>--&gt;</c> (escaped by <see cref="EscapeCardBlockValue"/> before it ever reaches the file)
+    /// can never be misread as this.</summary>
+    internal static bool IsBlockCloseLine(string line) =>
+        string.Equals(line, BlockCloseLine, StringComparison.Ordinal);
 
     /// <summary>
     /// §13 remediation: gained <c>['s'] = ' '</c> so <see cref="UnescapeFrontmatterValue"/> reverses
@@ -339,26 +409,90 @@ internal static class CardFileFormat
     /// <summary>Reverses <see cref="EscapeCommentHeaderValue"/>.</summary>
     internal static string UnescapeCommentHeaderValue(string value) => UnescapeUsing(value, CommentHeaderEscapeTable);
 
-    private static readonly IReadOnlyDictionary<char, char> CertificationTextEscapeTable =
-        new Dictionary<char, char> { ['s'] = ' ', ['n'] = '\n', ['r'] = '\r' };
+    /// <summary>
+    /// §14.2/14.3: escapes a free-text field value carried by one of the seven §14.1 block families
+    /// (a refusal's <c>rule</c>/<c>remedy</c>, an authorisation's <c>reason</c>, a claim's or
+    /// limit's <c>text</c>, a verdict's <c>range-from</c>/<c>range-to</c>) — the field this
+    /// section's amendment exists for: these are the values the Product Owner read as
+    /// <c>rule=work-lifecycle:\sblock\scards\smove...</c> and called horrible. §14.1 puts one field
+    /// per physical <c>key: value</c> line inside the block's enclosing HTML comment, the same
+    /// shape frontmatter already uses, so <see cref="EscapeFrontmatterValue"/>'s own escaping
+    /// applies unchanged and unlocks the same win it gives frontmatter: an interior space is never
+    /// ambiguous on a <c>key: value</c> line, so it is never escaped, and the value reads as prose.
+    ///
+    /// What a frontmatter value never needs and this one does: every field here lives inside
+    /// <c>&lt;!-- ... --&gt;</c>, and a rendered view (a browser, GitHub's own Markdown viewer) ends
+    /// an HTML comment at the <em>first</em> literal <c>--&gt;</c> it finds anywhere in it, not only
+    /// at the line-exact boundary <see cref="CardFileParser"/> itself enforces — so a rule, remedy,
+    /// reason, or claim/limit text that happens to contain that literal three-character run (a real
+    /// example: "the record moves --&gt; forward") would leak the rest of the block into the
+    /// rendered page. §14.3 escapes exactly that run, mapping it to <c>\-&gt;</c> — not <c>&gt;</c>
+    /// alone, which a char-keyed table would also hit on every unrelated <c>=&gt;</c> and silently
+    /// mangle ordinary code-shaped prose (the very card that prompted this amendment carries
+    /// <c>onFailure: static _ =&gt; null</c>). Order matters: the arrow escape runs after
+    /// <see cref="EscapeFrontmatterValue"/>'s own backslash-doubling, so a value genuinely
+    /// containing the literal text <c>\-&gt;</c> is already <c>\\-&gt;</c> by this point and can
+    /// never be misread by <see cref="UnescapeCardBlockValue"/> as an escaped terminator.
+    /// </summary>
+    internal static string EscapeCardBlockValue(string value) =>
+        EscapeArrowTerminator(EscapeFrontmatterValue(value));
 
-    private static readonly IReadOnlyDictionary<char, string> CertificationTextEscapeForwardTable =
-        new Dictionary<char, string> { ['\\'] = "\\\\", [' '] = "\\s", ['\n'] = "\\n", ['\r'] = "\\r" };
+    private static string EscapeArrowTerminator(string value) =>
+        value.Contains(BlockCloseLine, StringComparison.Ordinal)
+            ? value.Replace(BlockCloseLine, "\\->", StringComparison.Ordinal)
+            : value;
 
     /// <summary>
-    /// Escapes a claim's or limit's free-text <c>text</c> field (§8 block A) — the same
-    /// space-escaping <see cref="EscapeCommentHeaderValue"/> applies (the line is <c>key=value</c>
-    /// tokens joined by a single space, so an unescaped space would split a value across tokens),
-    /// plus newline/carriage-return escaping <see cref="EscapeCommentHeaderValue"/> does not need
-    /// for its own <c>id</c>/<c>reply-to</c> values (always a single generated token, never
-    /// free-flowing prose) but certification text does: review-certification's own text is written
-    /// as sentences a later reviewer reads, and a literal newline embedded unescaped in a
-    /// single-physical-line format would corrupt the next line's own parse.
+    /// Reverses <see cref="EscapeCardBlockValue"/> in one left-to-right pass, checking a doubled
+    /// backslash before the arrow escape before <see cref="FrontmatterEscapeTable"/>'s own
+    /// single-character entries — the same priority <see cref="UnescapeUsing"/> already gives
+    /// <c>\\</c> over a table entry, extended with one more case. That priority is what keeps this
+    /// invertible: a value that already contained the literal text <c>\-&gt;</c> was serialised as
+    /// <c>\\-&gt;</c> (backslash doubled first), and since the doubled-backslash pair is always
+    /// consumed as a unit before the arrow check ever runs, the trailing <c>-&gt;</c> left behind is
+    /// never mistaken for an escaped terminator — see <see cref="EscapeCardBlockValue"/>'s own doc
+    /// comment for the worked trace.
     /// </summary>
-    internal static string EscapeCertificationTextValue(string value) => EscapeUsing(value, CertificationTextEscapeForwardTable);
+    internal static string UnescapeCardBlockValue(string value)
+    {
+        if (value.IndexOf('\\') < 0)
+        {
+            return value;
+        }
 
-    /// <summary>Reverses <see cref="EscapeCertificationTextValue"/>.</summary>
-    internal static string UnescapeCertificationTextValue(string value) => UnescapeUsing(value, CertificationTextEscapeTable);
+        var builder = new System.Text.StringBuilder(value.Length);
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '\\' && i + 1 < value.Length)
+            {
+                var next = value[i + 1];
+                if (next == '\\')
+                {
+                    builder.Append('\\');
+                    i++;
+                    continue;
+                }
+
+                if (next == '-' && i + 2 < value.Length && value[i + 2] == '>')
+                {
+                    builder.Append(BlockCloseLine);
+                    i += 2;
+                    continue;
+                }
+
+                if (FrontmatterEscapeTable.TryGetValue(next, out var mapped))
+                {
+                    builder.Append(mapped);
+                    i++;
+                    continue;
+                }
+            }
+
+            builder.Append(value[i]);
+        }
+
+        return builder.ToString();
+    }
 
     private static readonly IReadOnlyDictionary<char, char> SiteListItemEscapeTable =
         new Dictionary<char, char> { ['s'] = ' ', [','] = ',', ['n'] = '\n', ['r'] = '\r' };
@@ -371,8 +505,7 @@ internal static class CardFileFormat
     /// the same space-escaping <see cref="EscapeCommentHeaderValue"/> applies (the header is
     /// <c>key=value</c> tokens joined by a single space), plus the list separator itself (a path
     /// containing a literal comma must not be misread as two sites) and newline/carriage-return
-    /// escaping, the same combination <see cref="EscapeCertificationTextValue"/> already applies for
-    /// its own reasons.
+    /// escaping.
     /// </summary>
     internal static string EscapeSiteListItem(string value) => EscapeUsing(value, SiteListItemEscapeForwardTable);
 

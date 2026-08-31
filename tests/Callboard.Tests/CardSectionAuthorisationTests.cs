@@ -261,9 +261,10 @@ public sealed class CardSectionAuthorisationTests : IDisposable
 
     /// <summary>
     /// The same byte-identical-round-trip proof <see cref="CardSectionVerdictTests"/> already gives
-    /// its own append-only line: a hand-authored card carrying an authorisation line with awkward
-    /// raw values (an escaped space in <c>reason</c>, an unrecognised extra field) round-trips
-    /// byte-identically through parse → write.
+    /// its own append-only block: a hand-authored card carrying an authorisation block with an
+    /// unrecognised extra field round-trips byte-identically through parse → write. §14.2 dropped
+    /// the escaped-space convention this test used to exercise for <c>reason</c> — it now sits on
+    /// its own <c>key: value</c> line, so an interior space is never escaped.
     /// </summary>
     [Fact]
     public void HandAuthoredCard_WithAnAwkwardAuthorisationLine_RoundTripsByteIdentically()
@@ -282,7 +283,12 @@ public sealed class CardSectionAuthorisationTests : IDisposable
             "base: e055e5b\n" +
             "---\n" +
             "Body text.\n" +
-            "<!-- callboard:authorisation by=product-owner reason=pushing\\sfurther timestamp=2026-08-25T10:00:00.0000000+00:00 future-field=kept -->\n";
+            "<!-- callboard:authorisation\n" +
+            "by: product-owner\n" +
+            "reason: pushing further\n" +
+            "timestamp: 2026-08-25T10:00:00.0000000+00:00\n" +
+            "future-field: kept\n" +
+            "-->\n";
 
         var parsed = AssertParseSuccess(CardFileParser.Parse(raw));
 
@@ -312,7 +318,11 @@ public sealed class CardSectionAuthorisationTests : IDisposable
             "updated: 2026-08-25T09:00:00.0000000+00:00\n" +
             "---\n" +
             "Body text.\n" +
-            "<!-- callboard:authorisation by=product-owner reason= timestamp=2026-08-25T10:00:00.0000000+00:00 -->\n";
+            "<!-- callboard:authorisation\n" +
+            "by: product-owner\n" +
+            "reason: \n" +
+            "timestamp: 2026-08-25T10:00:00.0000000+00:00\n" +
+            "-->\n";
 
         var result = CardFileParser.Parse(raw);
 

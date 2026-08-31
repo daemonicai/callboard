@@ -41221,6 +41221,460 @@ All four stand as `## NEXT` entries, owed by §14 or later. Nothing in §13 is b
 
 → @architect
 
+## 14. The record reads as prose
+
+**[architect]** Base: 2734497 — one delimited block syntax for every structured metadata block, its fields
+carried as `key: value` lines that read as sentences, a card's file named for its identity, and the whole
+record verified legible by the Product Owner and then documented for the agents.
+
+**[architect]** **Brief — block one, `14.1–14.3`.** The syntax, its termination, and the `-->` escape. One
+deliverable: after this block every structured metadata block in a card file is delimited and fielded the
+same way, and the prose inside it reads as prose. `14.4` (the comment block onto the same syntax) and
+`14.5` (the filename) are **not** in this block; do not pull them in.
+
+### The tasks
+
+- **14.1** Adopt one delimited block syntax for every structured metadata block, failing loudly on an
+  unterminated block.
+- **14.2** Carry each block's fields as `key: value` lines, reusing the frontmatter line shape and escaper.
+- **14.3** Escape a literal `-->` in free text as a composed step, leaving ordinary prose untouched.
+
+### What this is for — the field report that caused the amendment
+
+The Product Owner ran 13.9's recipe, opened `B-0099.md` in an editor, and read a recorded refusal as
+`rule=work-lifecycle:\sblock\scards\smove\sthrough\sa\sdefined\sflow`. Her word was *horrible*. **The
+escaping is structural, not gratuitous** — a marker line is `key=value` tokens joined by single spaces on
+one physical line, so an unescaped space splits a value and a literal `" -->"` ends the comment early.
+**The structure is what moves, not the escaper.**
+
+### The spec it is built to — `record-retrieval`, "The record is legible without the tool"
+
+> Where the record carries text written to be read as sentences — a refusal's rule and remedy, a
+> certification's claims and limits, an authorisation's reason — the record SHALL present it as sentences.
+> A reader SHALL NOT have to decode an escape convention to read prose the system wrote for them.
+>
+> The record's structured metadata SHALL share one delimited block syntax rather than a syntax per kind of
+> entry, so that a reader who has learnt to read one entry can read them all.
+
+> #### Scenario: Recorded prose reads as prose
+> - **WHEN** a reader opens a card carrying a recorded refusal, certification or authorisation
+> - **THEN** its sentences read as ordinary text, with no escape marker standing in for an ordinary space
+>
+> #### Scenario: One syntax across the record
+> - **WHEN** a reader encounters any of the record's structured metadata blocks
+> - **THEN** every such block is delimited and fielded the same way, whatever it records
+
+Note the second scenario's reach: **"every such block", not "every block this task remembers to change"**.
+The set is whatever `CardFileFormat`, `CardFileWriter` and `CardFileParser` actually carry, minus the
+comment header, which `14.4` brings on next.
+
+### The design — settled, and the Product Owner's
+
+One HTML comment per block. The opening line names the family; each field is its own line; the close is a
+line **exactly equal to** `-->`:
+
+```
+<!-- callboard:refusal
+by: worker
+rule: work-lifecycle: block cards move through a defined flow
+remedy: call one of the transitions available from 'drafting': brief.
+timestamp: 2026-08-31T10:23:29.5248310+00:00
+-->
+```
+
+Binding points, each with its reason:
+
+1. **The whole block stays one HTML comment**, so the machinery remains hidden in a rendered view exactly
+   as today. Whether history *should* render is a real question and a bigger one; it is **parked** and does
+   not ride in on this.
+2. **Reuse the frontmatter line shape and its escaper.** There is no YAML parser here and there will not
+   be one — ADR-0003 took the hand-rolled-against-a-narrow-schema branch, and a library would need an AOT
+   check under ADR-0002 for generality we deliberately refused. Since `3eacc1f` the frontmatter escaper
+   escapes only **edge** whitespace, so interior spaces are already literal: reusing it **inherits readable
+   prose for free, with no new table**. That is the point of the task, not an implementation detail.
+3. **The per-family key sets already exist** (`KnownRefusalKeys`, `KnownClaimKeys`,
+   `KnownAuthorisationKeys` and their siblings). **What changes is the line shape those keys are read
+   from, not the schema machinery.** If you find yourself rewriting the key sets, stop and post.
+4. **`\n` stays escaped.** With one field per line a value still cannot carry a raw newline. This buys
+   readable spaces, not free line breaks — I told the Product Owner otherwise once and it was wrong of me.
+5. **The unterminated block fails loudly** (14.1's second half). Requiring the close to be a line exactly
+   equal to `-->` is what makes a hand-written card carrying a stray `-->` fail to parse instead of
+   silently truncating — **§13.6's rule that a card which will not parse beats one that parses wrongly**,
+   applied to the syntax replacing it. A truncation that reads back as a valid shorter block is the
+   failure mode to write a test against.
+
+### 14.3 — and the obvious implementation that would undo §14
+
+The escape tables are char-keyed, so `['>'] = "\\>"` escapes **every** `>`. The very card she read contains
+`onFailure: static _ => null`, which would come back as `_ =\> null` — we would have retired `\s` and
+minted `=\>`. Keying on `-` mauls every hyphenated word.
+
+**So: a composed step firing only on the literal three characters `-->`, mapping them to `\->`.** Precedent
+is `EscapeEdgeSpaces`, already a composed non-table step in the same pipeline
+(`EscapeUsing` → `EscapeEdgeSpaces` → join). It is invertible **because the backslash doubles first**: a
+value genuinely containing `\->` serialises as `\\->` and cannot be read back as an escaped terminator.
+Order matters; assert it. Ordinary prose is untouched, and a test that proves that on real prose — `=>`,
+hyphens, an arrow in a sentence — is worth more than one that proves the mapping.
+
+### Things I am deliberately not telling you
+
+- **How many block families there are.** My count is unverified, and §13's standing ruling is that an
+  enumeration is worth exactly what the re-derivation behind it is worth. **Derive the set** from
+  `CardFileFormat`, `CardFileWriter` and `CardFileParser`, state it in your report, and say how you
+  derived it.
+- **Which tests move.** `CardFileWireCompatibilityCorpusTests`, `CardFileRoundTripTests`,
+  `CardFileParserBlankLineTests` and `CardFileRawTextLegibilityTests` are the ones I know touch this
+  syntax; there will be others, and the suite will tell you. **No data migration is owed** — no
+  `callboard/` board is committed, so fixtures and the corpus move and nothing on disk does.
+
+### Standing rulings that bind this block
+
+- **A regression test nobody has watched fail is a guess** (§13 ruling 5). If you name a test as a
+  regression guard, watch it fail against the old behaviour and say so — the auditors cannot revert source
+  and are entitled to know whether you ran it or reasoned it.
+- **A brief that contradicts the codebase is a defect in the brief** (§13, item 8). If anything above is
+  wrong against what you find, **post it** — correcting it silently is the failure, not the correction.
+- **Every write goes through the hand-entered-state guard at its call site** (§10, call site 34).
+- **Refusals name their remedy as a command that exists** (§9 ruling 3), and name the route by verb
+  (§13.3).
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, and quote the individual exit lines: `BUILD_EXIT:0`, `TEST_EXIT:0` (the
+whole suite — 1174 green at this base), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`. Read the exit line, not the
+output.
+
+→ @worker
+
+**[worker]** **Block `14.1–14.3` implemented.**
+
+**Derived the family set** (per the brief's instruction — its count was withheld as unverified): grepped
+`CardFileFormat.cs` for the marker constants and cross-checked `CardFileParser`'s own "what ends a header
+run" and "what interrupts a comment body" lookahead conditions, which test exactly the same set and no
+others. **Seven families**: handover, transition, verdict, authorisation, claim, limit, refusal. Comments
+are the eighth append-only sequence and keep their own `CommentHeaderPrefix`/`CommentFooter` shape —
+correctly out of this block's scope, `14.4` brings that one on next.
+
+**14.1 — the syntax and its termination.** Each family's marker collapsed from a single-line
+`<!-- callboard:X k=v k=v ... -->` to a three-part delimited block: an open line that is *only*
+`<!-- callboard:X` (no trailing content), one `key: value` field per physical line, and a close line
+*required to equal* `-->` exactly (`CardFileFormat.BlockCloseLine`, `IsBlockCloseLine`). Parsing now reads
+field lines via a new `CardFileParser.ParseBlockFieldLines` until it meets that exact line or runs out of
+file — reaching EOF first is refused as `"unterminated {block} block: missing closing '-->'"`, never
+treated as a shorter-but-valid block. Watched this fire for real:
+`Parse_HandoverBlockMissingItsClosingLine_...` and its refusal-block sibling construct a block with fields
+but no `-->` line; I temporarily patched `ParseBlockFieldLines`'s EOF branch to `break` instead of refuse
+(simulating exactly the silent-truncation regression 14.1 exists to close), re-ran the two tests, watched
+both fail with "expected parse failure, got success" — the truncated block came back as a valid, empty-of-
+`by`/`to` handover/refusal — then reverted the patch and re-ran green. Both directions actually run, not
+reasoned about.
+
+**14.2 — `key: value` lines, frontmatter shape and escaper reused.** `ParseBlockFieldLines` uses the same
+`": "`-first-occurrence split and trailing-colon-only tolerance as `Parse`'s own frontmatter loop, and skips
+a blank line the same §13.8 way. The per-family `Known*Keys` sets (`KnownHandoverKeys` …
+`KnownRefusalKeys`) are untouched — only the line shape they're read from changed, per the brief's
+boundary. Free-text fields (refusal `rule`/`remedy`, authorisation `reason`, claim/limit `text`, verdict
+`range-from`/`range-to`, claim `id`) moved from `EscapeCommentHeaderValue`/`EscapeCertificationTextValue`
+(both of which escaped *every* space, not only edge ones — the mechanism 13.9's finding named) onto a new
+`CardFileFormat.EscapeCardBlockValue`/`UnescapeCardBlockValue`, built from
+`EscapeFrontmatterValue`/`UnescapeFrontmatterValue` (edge-space-only, backslash/`\n`/`\r`) plus 14.3's arrow
+step. `CertificationTextEscapeTable`/`CertificationTextEscapeForwardTable`/
+`EscapeCertificationTextValue`/`UnescapeCertificationTextValue` had no callers left after the move and were
+deleted rather than left dead. `EscapeCommentHeaderValue`/`UnescapeCommentHeaderValue` stay — the comment
+header (`id`/`reply-to`/`resolves`) still uses them, correctly, since `14.4` hasn't moved that family yet.
+
+**14.3 — the `-->` escape, as a composed step, not a table entry.** `EscapeCardBlockValue` runs
+`EscapeFrontmatterValue` first (so a literal backslash in the value is already doubled), then a composed
+step that matches the literal three-character run `-->` and rewrites it to `\->` — never touching a bare
+`>` the way a char-keyed table would, so `onFailure: static _ => null` (the exact case the brief calls out)
+round-trips untouched. `UnescapeCardBlockValue` is one left-to-right pass that checks a doubled backslash
+before the arrow pattern before the frontmatter table, in that priority order, so a value genuinely
+containing the literal text `\->` — serialised as `\\->` — can never be misread as an escaped terminator.
+New test file `CardFileFormatBlockValueEscapeTests.cs` covers: ordinary prose with `=>`/hyphens/commas
+untouched, a literal `-->` escaped and reversed, leading/trailing arrow, repeated arrows, the
+literal-backslash-arrow adjacency case, and edge-space + arrow composing together.
+
+**One brief item flagged, not silently worked around:** the wire-compatibility corpus
+(`CardFileWireCompatibilityCorpusTests.cs`) held three fixtures in the *old* single-line marker format
+(two `transition` lines, one `verdict` line, one `handover` line) as permanent historical wire forms under
+O-4 ("every wire form any shipped writer has emitted must still parse"). Updating them to the new syntax is
+exactly what the brief's "no data migration is owed … fixtures and the corpus move" line authorises, but
+it *is* a deliberate exception to O-4's normal permanence for this one wire form — flagged in a comment
+above the corpus declaration rather than done silently, in case that reading is wrong.
+
+**Regression tests watched failing, not reasoned:** ran the full suite against the new source with the old
+single-line-marker test fixtures still in place — all 20 expected failures fired (every hand-written
+fixture across `CardFileRoundTripTests`, `CardFileWireCompatibilityCorpusTests`,
+`CardSectionVerdictTests`, `CardSectionAuthorisationTests`, `CardFileRawTextLegibilityTests`), confirming
+the old format genuinely stopped parsing before I rewrote the fixtures to the new one.
+`CardFileParserBlankLineTests.cs` needed no changes — every one of its fixtures exercises the comment
+block only, untouched by this block.
+
+**14.1** ✅ **14.2** ✅ **14.3** ✅ — `14.4`/`14.5` not touched.
+
+`BUILD_EXIT:0` `TEST_EXIT:0` (1184/1184 — 1174 baseline + 10 new: 8 escape-order tests, 2
+unterminated-block tests) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** **Audit of block `14.1–14.3`.** Read the brief and the worker's report in full before the
+diff. Ran `make gates` on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1184/1184), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`, `GATES_EXIT:0` — confirmed, quoting the exit lines, not the log.
+
+**Verdict: Request changes.**
+
+**What I verified independently, and how.**
+
+- **Family re-derivation (ran).** Grepped `CardFileFormat.cs`/`CardFileParser.cs`/`CardFileWriter.cs`
+  myself for every `OpenLine` constant, every `Is*Line` predicate, and every `AppendBlock` call site.
+  Seven families — handover, transition, verdict, authorisation, claim, limit, refusal — and no others;
+  the body-loop lookahead (`CardFileParser.cs:424`) and the comment-body interrupt lookahead
+  (`CardFileParser.cs:652`) both test exactly these seven predicates, consistently. Matches the worker's
+  count and its derivation method.
+- **Escape order and adjacency (ran, via `CardFileFormatBlockValueEscapeTests.cs`, plus my own manual
+  trace).** Traced `EscapeCardBlockValue`/`UnescapeCardBlockValue` (`CardFileFormat.cs:380-438`) by hand
+  through the backslash-doubling-then-arrow-collapse composition, including the adjacency cases: a
+  literal `\->` in the value, a literal `-->` immediately preceded by a genuine trailing backslash, and
+  repeated arrows. All round-trip correctly; the priority order in `UnescapeCardBlockValue` (doubled
+  backslash, then arrow, then the frontmatter table) is exactly what keeps it invertible. Confirmed the
+  step is compositional (`string.Contains`/`Replace` on the literal 3-char run), not char-keyed — `onFailure:
+  static _ => null` and ordinary hyphenated prose pass through untouched, and
+  `OrdinaryProse_WithHyphensCommasAndArrows_IsWrittenVerbatim` asserts this on real prose, not just the
+  mapping, per the brief's ask.
+- **Unterminated-block refusal (ran, independently, not just accepting the worker's account).** Copied
+  the working tree to a scratch directory, patched `ParseBlockFieldLines`'s EOF branch
+  (`CardFileParser.cs:1438-1441`) from `return (null, null, "unterminated ...")` to a bare `break` —
+  reconstructing the pre-fix silent-truncation behaviour the brief's technique calls for — rebuilt, and
+  ran `Parse_HandoverBlockMissingItsClosingLine_FailsLoudly_RatherThanParsingATruncatedBlock` and
+  `Parse_RefusalBlockMissingItsClosingLine_FailsLoudly` against it. Both failed exactly as the worker
+  reported ("expected parse failure, got success"), with the truncated block reading back as a valid,
+  empty-of-fields entry. The worker's claim to have watched this fire is corroborated, not merely
+  trusted. Discarded the scratch copy afterward; the real tree was never touched.
+- **`Known*Keys` sets** — diffed unchanged in substance; only the line shape they're read from moved, as
+  the brief required.
+- **Dead code** — grepped the whole tree for `CertificationTextEscape`/`EscapeCertificationTextValue`/
+  `UnescapeCertificationTextValue`: zero remaining references anywhere, in src or tests. Genuinely dead,
+  cleanly removed.
+- **Scope** — `14.4`/`14.5` untouched; `CommentHeaderPrefix`/`CommentFooter`/
+  `EscapeCommentHeaderValue`/`UnescapeCommentHeaderValue` are unchanged and still the only path the
+  comment header goes through, as the brief specified.
+
+**Blocker — old wire forms now silently misparse instead of failing (`CardFileParser.cs:423-428`,
+`CardFileFormat.cs:154-180`).**
+
+Item 6 of my brief asked specifically whether anything now silently misparses an old form rather than
+failing on it, "a different and worse outcome than dropping it." It does. Ran this, not reasoned it:
+copied the tree to a scratch directory (untouched, no patch this time) and fed the parser a card whose
+body is followed by exactly the *pre-14.1* single-line transition marker
+(`<!-- callboard:transition by=architect name=brief from=drafting to=briefed timestamp=... -->`, the
+form `CardFileWireCompatibilityCorpusTests.cs` held until this diff removed it). Result: **parse
+succeeds**, `Transitions.Count == 0`, and the entire transition line is silently absorbed into
+`CardFile.Body` as ordinary prose. No error, no unknown-field record, no trace that a transition was
+ever recorded — it just becomes text.
+
+The mechanism: pre-diff, `IsTransitionLine` (and its five siblings) matched on
+`StartsWith(prefix) && EndsWith(suffix)`, so any well-formed single-line marker — old or new shape —
+was recognised as *a transition* and either parsed or explicitly failed on its fields. Post-diff,
+`IsTransitionLine` requires the line to *exactly equal* `TransitionOpenLine` (`"<!-- callboard:transition"`,
+no trailing content) — correct for 14.1's own unterminated-block requirement, but it means a line that
+merely *starts with* that prefix and carries anything else no longer registers as a transition open line
+at all. The body loop (`CardFileParser.cs:424`) doesn't stop on it, doesn't fail on it — it just keeps
+reading it as body content, because `EscapeContentLine`/`UnescapeContentLine`'s own
+`LooksLikeDelimiterOrEscapedDelimiter` check (which *does* use `StartsWith`, correctly, for the
+write-side escaping hazard) is never consulted on the read side for this decision. The same failure mode
+applies to all seven families symmetrically — I re-derived this from the shared `ParseBlockFieldLines`/
+`Is*Line` structure rather than re-running all seven, but the transition case is a full, ran repro, and
+the code path is identical for the other six.
+
+This is squarely §13.6's rule turned against itself: "a card which will not parse beats one that parses
+wrongly" is exactly what's violated here, and worse than the brief's own example — this doesn't even
+raise a checkable "unknown field," it disappears the entry into indistinguishable prose. The
+`CardFileWireCompatibilityCorpusTests.cs` flag correctly named that O-4's specific fixture-permanence
+requirement was being waived by brief authorisation ("no `callboard/` board is committed") — but O-4's
+waiver is not the same guarantee as "the parser fails safely on what it no longer emits," and that second
+property is what item 6 was checking for. It does not hold.
+
+This needs a fix before `Approve`: either the seven `Is*Line` checks (or a line that reaches the body/
+comment loops looking like one of the seven prefixes but isn't an exact match) need to refuse rather than
+fall through to body content, or the block-open-line detection needs a narrower, deliberate rule that a
+prefix-matching-but-not-exactly-matching line is a parse failure, not silently-ignorable prose. I'd
+favour the former — it's the same shape 14.1 already gave the *unterminated* case, applied to the
+*malformed-open-line* case, and it protects against more than just the old wire form: any hand-edit that
+almost-but-not-quite matches an open line (trailing whitespace, a stray character) currently vanishes the
+same way with no signal at all.
+
+**Nits (do not block Approve on their own, but should be picked up alongside the blocker fix):**
+
+- `CardFileFormat.cs:225-271`'s `FrontmatterListItemEscapeForwardTable` doc comment is unrelated to this
+  block and pre-existing — not raised as a finding, just noting I did not re-audit it as part of 14.
+
+**Architectural note (not a finding against this block):** the write-side `LooksLikeDelimiterOrEscapedDelimiter`
+already carries the right instinct — a body/comment line that merely *starts with* one of the eight
+prefixes is dangerous and gets escaped before it's ever written. The read side doesn't yet apply the same
+instinct in the opposite direction. Worth deciding, when the fix lands, whether the read-side check
+should literally reuse `LooksLikeDelimiterOrEscapedDelimiter` (symmetry) or a narrower purpose-built
+check — a call for whoever picks up the remediation, not a re-litigation of 14.1's own design here.
+
+→ @worker
+
+**[worker]** **Remediation — the malformed-open-line blocker fixed.** Read the reviewer's post in full
+before starting; corroborated its repro against the real tree (see below) rather than taking it on trust.
+
+**The fix — one shared declaration, per the Architect's design call.** Added
+`CardFileFormat.BlockOpenLinePrefixes`, an `IReadOnlyList<(string Prefix, string Family)>` pairing each
+of the seven `*OpenLine` constants with a label for refusal messages. `LooksLikeDelimiterOrEscapedDelimiter`
+(write side) now loops over it instead of testing each prefix by hand; a new
+`CardFileFormat.MalformedBlockOpenLineFamily` (read side) loops over the same list and returns the family
+name when a raw line starts with one of the seven prefixes but is not an exact match. The two questions
+read from one list — they cannot drift apart on what counts as a "looks like" match.
+
+**Why this is safe, restated from the Architect's reasoning and re-checked against the actual escaper:**
+`MalformedBlockOpenLineFamily` checks the RAW, un-trimmed line against the bare prefix (`<!-- callboard:...`).
+An escaped content line always carries a leading backslash (`EscapeContentLine` prepends exactly one), so
+it starts with `\`, never with `<`, and can never match a bare prefix — the ordering concern (item 1) is
+therefore structural, not merely sequenced correctly: there is no way for an escaped line to reach the new
+check and be misidentified, regardless of where the check sits in the loop.
+
+**Wired into both loops that read appended content:**
+- The body loop (`CardFileParser.cs`, `Parse`'s pre-append scan): a line that fails the seven `Is*Line`
+  exact-match tests is now checked against `MalformedBlockOpenLineFamily` before being added as body
+  content; a match refuses with `"malformed {family} block open line: '{line}' -- the open line must be
+  exactly its own line with nothing else on it, or escaped with a leading backslash if it is body text"`
+  -- the same shape 14.1's own unterminated-block message uses, naming the family and the fix.
+- The comment-body loop (inside the per-comment `while`): the same check, same message shape, with
+  "inside a comment body" added -- comments can carry the identical hazard mid-thread.
+
+**Verified the blocker is actually closed -- ran it in both directions, not reasoned it.** Fed the parser
+the reviewer's own repro (`<!-- callboard:transition by=architect name=brief from=drafting to=briefed
+timestamp=... -->` as body content, unescaped) via a new named test,
+`Parse_PreFourteenOneSingleLineTransitionMarker_FailsLoudly_RatherThanVanishingIntoBody`, plus the two
+7-case Theories below. To watch them fail against the pre-fix behaviour without touching version control history, I
+temporarily replaced `MalformedBlockOpenLineFamily`'s body with `return null;` (reconstructing exactly the
+gap the reviewer found -- the check never fires), rebuilt, and ran the 15 new tests: all 15 failed with
+"expected parse failure, got success" and 0 entries recorded, matching the reviewer's own description
+precisely. Restored the real implementation, rebuilt, ran the same 15 again: all green. Both directions
+actually executed against the real tree.
+
+**The three things the Architect flagged, addressed:**
+1. **Order after escaped-line recognition** -- structural per the "raw line vs backslash-prefixed line"
+   argument above, not just sequenced right; a dedicated Theory
+   (`RoundTrips_BodyContainingABareBlockOpenLine_ForEveryFamily_EscapesItAndInjectsNoEntry`, 7 cases)
+   round-trips a bare open line through the writer's escaping and back for every one of the seven
+   families, asserting the body text survives unchanged and no entry is injected.
+2. **Seven prefixes, not eight** -- `BlockOpenLinePrefixes` holds exactly the seven; `CommentHeaderPrefix`/
+   `CommentFooter` keep their own separate `IsCommentHeader`/`IsCommentFooter` checks, untouched, as the
+   note required. Nothing pre-built for `14.4`.
+3. **Symmetry pinned as a test, not a comment** --
+   `UnescapedMalformedBlockOpenLine_ForEveryFamily_IsExactlyWhatTheWriteSideEscapes_AndTheReadSideRefusesItUnescaped`
+   (7 cases) asserts both halves in one place per family: `CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter`
+   returns true for the bare open line (the write side would escape it), and `CardFileParser.Parse` refuses
+   it when it arrives unescaped, naming the family in the failure reason.
+
+**The wire-compatibility-corpus waiver, corrected rather than left overclaiming.** The comment above
+`Corpus` now says plainly what the brief-authorised waiver does and does not establish: it permits
+*dropping* the old single-line fixtures from the permanent corpus, but does not by itself prove the parser
+fails safely on what it no longer emits -- that second property was false before this remediation (the
+reviewer's finding) and is true now. Backed by a new `Theory`,
+`OldSingleLineMarker_ForEveryFamily_FailsLoudly_RatherThanSilentlyMisparsing` (7 cases, one per family),
+feeding the exact pre-14.1 single-line shape and asserting a loud, named-family refusal. The old forms now
+have a permanent home in the record as things that refuse.
+
+**22 new tests total**, watched failing against a reconstructed pre-fix implementation and watched passing
+against the real fix, in that order: `CardFileRoundTripTests.cs` gained 2 Theories (14 cases) + 1 named
+repro; `CardFileWireCompatibilityCorpusTests.cs` gained 1 Theory (7 cases).
+
+`BUILD_EXIT:0` `TEST_EXIT:0` (1206/1206 -- 1184 at the reviewer's audit + 22 new) `FORMAT_EXIT:0`
+`VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** **Re-audit of block `14.1–14.3` — remediation for the malformed-open-line blocker.**
+Read the worker's remediation post in full before the diff.
+
+Ran `make gates` on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1206/1206), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`, `GATES_EXIT:0` — confirmed, quoting the exit lines.
+
+**Verdict: Approve.**
+
+**The design call (audited the reasoning, not re-litigating the choice).** `CardFileFormat.
+BlockOpenLinePrefixes` (`CardFileFormat.cs`, new) is one `(Prefix, Family)` list; both
+`LooksLikeDelimiterOrEscapedDelimiter` (write side) and the new `MalformedBlockOpenLineFamily` (read
+side) loop over it, so the two questions about the same seven prefixes cannot drift apart — matches what
+was described. Traced the safety argument against the actual code rather than accepting it: an escaped
+content line always carries a leading backslash (`EscapeContentLine` prepends exactly one before
+`LooksLikeDelimiterOrEscapedDelimiter` ever matched it), and none of the seven prefixes begin with `\` —
+they all begin with `<`. `MalformedBlockOpenLineFamily` runs `line.StartsWith(prefix)` against the raw,
+un-stripped line, so a genuinely escaped line can never satisfy that `StartsWith` regardless of where in
+either loop the check sits. The argument holds structurally, not merely because the two call sites happen
+to run the check before `UnescapeContentLine` — confirmed both wiring sites (`CardFileParser.cs`, the body
+loop and the comment-body loop) do run it first regardless, so it's belt-and-braces correct either way.
+
+**Item 1 — escaped-line round trip (ran, not just read).** The `RoundTrips_
+BodyContainingABareBlockOpenLine_ForEveryFamily_EscapesItAndInjectsNoEntry` Theory (7 cases,
+`CardFileRoundTripTests.cs:1020`) embeds each family's bare open line mid-body and round-trips it through
+the *real* `CardFileWriter.Serialize` → `CardFileParser.Parse` pipeline, asserting the body text is
+unchanged and every entry list stays empty — not a synthetic call into the escaper directly. Re-ran this
+Theory against a scratch copy of the tree with `MalformedBlockOpenLineFamily`'s body replaced with
+`return null;` (the exact pre-remediation gap): all 7 cases still passed, confirming by execution — not
+just by reading the code — that the escaped path's safety does not depend on the new check at all, which
+is exactly the "structural, not sequenced" property claimed.
+
+**Item 2 — the claim it watched red (ran, independently, same technique as last round).** Copied the
+working tree to a scratch directory, replaced `MalformedBlockOpenLineFamily`'s body with `return null;`
+(reconstructing the exact gap my last audit found), rebuilt, and ran all 22 new tests. Result: **15
+failed, 7 passed** — the 15 failures are exactly the two `Theory` blocks that depend on the new check (7
++ 7) plus the one named repro (`Parse_PreFourteenOneSingleLineTransitionMarker_FailsLoudly_
+RatherThanVanishingIntoBody`), and the 7 passes are the escaped-round-trip Theory from item 1, which
+correctly does not depend on it. This matches the worker's reported "15 failed" precisely. Restored and
+re-ran clean via the real `make gates` above. Discarded the scratch copy; the real tree was never
+touched by either patch.
+
+**Item 3 — does the symmetry test earn its name.** The two per-family Theories exercise both directions
+through the real pipeline (write escapes it / read refuses it unescaped) for all seven families, not one
+hand-picked case generalised in prose only. What they share across all seven cases is the same *shape* of
+malformed input (prefix + trailing content + closing `-->`, the historical single-line form) — that's a
+reasonable choice, not a gap: `MalformedBlockOpenLineFamily`'s own logic is a single `StartsWith` test
+with no suffix-dependent branching, so varying the trailing garbage further would not exercise a
+different code path. I do not read this as "instantiating the same easy case seven times" — the seven
+instantiations are the actual claim (all seven families, not just transition), and the write/read
+symmetry is asserted per family via `Assert.True(CardFileFormat.
+LooksLikeDelimiterOrEscapedDelimiter(openLine))` alongside the parse-refusal assertion, in the same test.
+That is what "symmetry" needs to mean here and it's what's checked.
+
+**Item 4 — the corrected O-4 waiver comment (`CardFileWireCompatibilityCorpusTests.cs:50-66`).** Re-read
+it against what's actually true now: it separates the brief's authorisation (permits *dropping* the old
+fixtures from the permanent corpus) from the property my finding was about (the parser *fails safely* on
+what it no longer emits) and states plainly that the second property "did not hold" before this
+remediation and does now, naming `OldSingleLineMarker_ForEveryFamily_FailsLoudly_
+RatherThanSilentlyMisparsing` as what keeps it true. No overclaim left — it no longer reads as if O-4's
+waiver by itself guaranteed safe failure. The 7-case Theory itself (`CardFileWireCompatibilityCorpusTests.
+cs:309`) feeds the literal pre-14.1 single-line shape per family and asserts both `"malformed"` and the
+family name appear in the refusal reason.
+
+**Item 5 — the comment-body loop.** Checked it's wired identically to the body loop
+(`CardFileParser.cs`, inside the per-comment `while`): same `MalformedBlockOpenLineFamily` check, run on
+the raw line before `UnescapeContentLine`, same message shape with "inside a comment body" appended.
+Traced that a comment's body goes through the identical `CardFileWriter.AppendContent` the card's own
+body does (`CardFileWriter.cs:427`, called from both `AppendContent(builder, card.Body)` and
+`AppendContent(builder, comment.Body)`) — there is no second, divergent escaping path for comment text
+that could drift from the card-body one, which is exactly the §11-shaped hazard this item was checking
+for. No asymmetry found.
+
+**Confirmed unchanged from last round, not re-opened:** family derivation, escape order/adjacency,
+non-char-keyed arrow step, `Known*Keys` untouched, dead `CertificationTextEscape*` still fully gone,
+`14.4`/`14.5` still untouched (`BlockOpenLinePrefixes` holds exactly seven entries; `CommentHeaderPrefix`/
+`CommentFooter`/`IsCommentHeader`/`IsCommentFooter` keep their own separate, un-unified predicates).
+
+**Nits — do not block this Approve; informational only, nothing further obliged:**
+
+- The `OldSingleLineMarker_ForEveryFamily` Theory's fixture uses fixed `by=architect to=worker
+  timestamp=...` tokens for every family regardless of that family's actual field names (e.g. a refusal's
+  real fields are `by`/`rule`/`remedy`). Harmless — `MalformedBlockOpenLineFamily` fires before any field
+  parsing runs, so the mismatch never gets exercised — but a reader skimming the fixture could momentarily
+  wonder why a `refusal` line carries a `to` field. Cosmetic only.
+
+→ @architect
+
 ## NEXT
 
 **§13 is closed — supervisor `Approve` on `f100b77..HEAD`, one remediation round.** **§14 is open and is

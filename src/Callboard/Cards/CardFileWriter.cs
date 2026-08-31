@@ -352,10 +352,7 @@ internal static class CardFileWriter
         // reorders either.
         foreach (var handover in card.Handovers)
         {
-            builder.Append(CardFileFormat.HandoverLinePrefix)
-                .Append(BuildHandoverFields(handover))
-                .Append(CardFileFormat.HandoverLineSuffix)
-                .Append('\n');
+            AppendBlock(builder, CardFileFormat.HandoverOpenLine, BuildHandoverFields(handover));
         }
 
         // Transitions after handovers, before comments — the same fixed, deterministic layout
@@ -363,10 +360,7 @@ internal static class CardFileWriter
         // (oldest first) is what the append-only guarantee is actually about.
         foreach (var transition in card.Transitions)
         {
-            builder.Append(CardFileFormat.TransitionLinePrefix)
-                .Append(BuildTransitionFields(transition))
-                .Append(CardFileFormat.TransitionLineSuffix)
-                .Append('\n');
+            AppendBlock(builder, CardFileFormat.TransitionOpenLine, BuildTransitionFields(transition));
         }
 
         // Verdicts after transitions, before comments — the same fixed, deterministic layout
@@ -377,10 +371,7 @@ internal static class CardFileWriter
         // reason Transitions is not folded into a scalar.
         foreach (var verdict in card.SectionFields.Verdicts)
         {
-            builder.Append(CardFileFormat.VerdictLinePrefix)
-                .Append(BuildVerdictFields(verdict))
-                .Append(CardFileFormat.VerdictLineSuffix)
-                .Append('\n');
+            AppendBlock(builder, CardFileFormat.VerdictOpenLine, BuildVerdictFields(verdict));
         }
 
         // Authorisations after verdicts, before claims — same fixed, deterministic layout
@@ -389,10 +380,7 @@ internal static class CardFileWriter
         // Verdicts is not folded into a scalar.
         foreach (var authorisation in card.SectionFields.Authorisations)
         {
-            builder.Append(CardFileFormat.AuthorisationLinePrefix)
-                .Append(BuildAuthorisationFields(authorisation))
-                .Append(CardFileFormat.AuthorisationLineSuffix)
-                .Append('\n');
+            AppendBlock(builder, CardFileFormat.AuthorisationOpenLine, BuildAuthorisationFields(authorisation));
         }
 
         // Claims after verdicts/authorisations, then limits, before comments — the same fixed,
@@ -403,18 +391,12 @@ internal static class CardFileWriter
         // simply where the fixed convention places them.
         foreach (var claim in card.Claims)
         {
-            builder.Append(CardFileFormat.ClaimLinePrefix)
-                .Append(BuildClaimFields(claim))
-                .Append(CardFileFormat.ClaimLineSuffix)
-                .Append('\n');
+            AppendBlock(builder, CardFileFormat.ClaimOpenLine, BuildClaimFields(claim));
         }
 
         foreach (var limit in card.Limits)
         {
-            builder.Append(CardFileFormat.LimitLinePrefix)
-                .Append(BuildLimitFields(limit))
-                .Append(CardFileFormat.LimitLineSuffix)
-                .Append('\n');
+            AppendBlock(builder, CardFileFormat.LimitOpenLine, BuildLimitFields(limit));
         }
 
         // Refusals after claims/limits, before comments — the same fixed, deterministic layout
@@ -424,10 +406,7 @@ internal static class CardFileWriter
         // kind of card can be the target of a refused attempt.
         foreach (var refusal in card.Refusals)
         {
-            builder.Append(CardFileFormat.RefusalLinePrefix)
-                .Append(BuildRefusalFields(refusal))
-                .Append(CardFileFormat.RefusalLineSuffix)
-                .Append('\n');
+            AppendBlock(builder, CardFileFormat.RefusalOpenLine, BuildRefusalFields(refusal));
         }
 
         foreach (var comment in card.Comments)
@@ -456,6 +435,23 @@ internal static class CardFileWriter
         {
             builder.Append(CardFileFormat.EscapeContentLine(line)).Append('\n');
         }
+    }
+
+    /// <summary>
+    /// §14.1: writes one delimited block for any of the seven append-only families — the open
+    /// line, one already-escaped <c>key: value</c> line per field, and the close line
+    /// (<see cref="CardFileFormat.BlockCloseLine"/>) — so every family shares exactly this shape
+    /// and none can drift from it independently.
+    /// </summary>
+    private static void AppendBlock(StringBuilder builder, string openLine, IEnumerable<(string Key, string Value)> fields)
+    {
+        builder.Append(openLine).Append('\n');
+        foreach (var (key, value) in fields)
+        {
+            builder.Append(key).Append(": ").Append(value).Append('\n');
+        }
+
+        builder.Append(CardFileFormat.BlockCloseLine).Append('\n');
     }
 
     private static string BuildHeaderFields(CardComment comment)
@@ -509,113 +505,92 @@ internal static class CardFileWriter
         return fields.ToString();
     }
 
-    private static string BuildHandoverFields(CardHandover handover)
+    private static IEnumerable<(string Key, string Value)> BuildHandoverFields(CardHandover handover)
     {
-        var fields = new StringBuilder();
-        fields.Append("by=").Append(handover.By.ToWireString());
-        fields.Append(" to=").Append(handover.To.ToWireString());
-        fields.Append(" timestamp=").Append(FormatTimestamp(handover.Timestamp));
+        yield return ("by", handover.By.ToWireString());
+        yield return ("to", handover.To.ToWireString());
+        yield return ("timestamp", FormatTimestamp(handover.Timestamp));
 
         foreach (var (key, rawValue) in handover.UnknownFields)
         {
-            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+            yield return (key, rawValue);
         }
-
-        return fields.ToString();
     }
 
-    private static string BuildTransitionFields(CardBlockTransitionEntry transition)
+    private static IEnumerable<(string Key, string Value)> BuildTransitionFields(CardBlockTransitionEntry transition)
     {
-        var fields = new StringBuilder();
-        fields.Append("by=").Append(transition.By.ToWireString());
-        fields.Append(" name=").Append(transition.Name);
-        fields.Append(" from=").Append(transition.From.ToWireString());
-        fields.Append(" to=").Append(transition.To.ToWireString());
-        fields.Append(" timestamp=").Append(FormatTimestamp(transition.Timestamp));
+        yield return ("by", transition.By.ToWireString());
+        yield return ("name", transition.Name);
+        yield return ("from", transition.From.ToWireString());
+        yield return ("to", transition.To.ToWireString());
+        yield return ("timestamp", FormatTimestamp(transition.Timestamp));
 
         foreach (var (key, rawValue) in transition.UnknownFields)
         {
-            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+            yield return (key, rawValue);
         }
-
-        return fields.ToString();
     }
 
-    private static string BuildVerdictFields(SectionVerdictEntry verdict)
+    private static IEnumerable<(string Key, string Value)> BuildVerdictFields(SectionVerdictEntry verdict)
     {
-        var fields = new StringBuilder();
-        fields.Append("by=").Append(verdict.By.ToWireString());
-        fields.Append(" verdict=").Append(verdict.Verdict.ToWireString());
-        fields.Append(" range-from=").Append(CardFileFormat.EscapeCommentHeaderValue(verdict.RangeFrom));
-        fields.Append(" range-to=").Append(CardFileFormat.EscapeCommentHeaderValue(verdict.RangeTo));
-        fields.Append(" timestamp=").Append(FormatTimestamp(verdict.Timestamp));
+        yield return ("by", verdict.By.ToWireString());
+        yield return ("verdict", verdict.Verdict.ToWireString());
+        yield return ("range-from", CardFileFormat.EscapeCardBlockValue(verdict.RangeFrom));
+        yield return ("range-to", CardFileFormat.EscapeCardBlockValue(verdict.RangeTo));
+        yield return ("timestamp", FormatTimestamp(verdict.Timestamp));
 
         foreach (var (key, rawValue) in verdict.UnknownFields)
         {
-            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+            yield return (key, rawValue);
         }
-
-        return fields.ToString();
     }
 
-    private static string BuildAuthorisationFields(SectionAuthorisationEntry authorisation)
+    private static IEnumerable<(string Key, string Value)> BuildAuthorisationFields(SectionAuthorisationEntry authorisation)
     {
-        var fields = new StringBuilder();
-        fields.Append("by=").Append(authorisation.By.ToWireString());
-        fields.Append(" reason=").Append(CardFileFormat.EscapeCertificationTextValue(authorisation.Reason));
-        fields.Append(" timestamp=").Append(FormatTimestamp(authorisation.Timestamp));
+        yield return ("by", authorisation.By.ToWireString());
+        yield return ("reason", CardFileFormat.EscapeCardBlockValue(authorisation.Reason));
+        yield return ("timestamp", FormatTimestamp(authorisation.Timestamp));
 
         foreach (var (key, rawValue) in authorisation.UnknownFields)
         {
-            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+            yield return (key, rawValue);
         }
-
-        return fields.ToString();
     }
 
-    private static string BuildClaimFields(CardApprovalClaim claim)
+    private static IEnumerable<(string Key, string Value)> BuildClaimFields(CardApprovalClaim claim)
     {
-        var fields = new StringBuilder();
-        fields.Append(CardApprovalFieldKeys.Id).Append('=').Append(CardFileFormat.EscapeCommentHeaderValue(claim.Id));
-        fields.Append(' ').Append(CardApprovalFieldKeys.Round).Append('=').Append(claim.Round.ToString(CultureInfo.InvariantCulture));
-        fields.Append(' ').Append(CardApprovalFieldKeys.Text).Append('=').Append(CardFileFormat.EscapeCertificationTextValue(claim.Text));
+        yield return (CardApprovalFieldKeys.Id, CardFileFormat.EscapeCardBlockValue(claim.Id));
+        yield return (CardApprovalFieldKeys.Round, claim.Round.ToString(CultureInfo.InvariantCulture));
+        yield return (CardApprovalFieldKeys.Text, CardFileFormat.EscapeCardBlockValue(claim.Text));
 
         foreach (var (key, rawValue) in claim.UnknownFields)
         {
-            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+            yield return (key, rawValue);
         }
-
-        return fields.ToString();
     }
 
-    private static string BuildLimitFields(CardApprovalLimit limit)
+    private static IEnumerable<(string Key, string Value)> BuildLimitFields(CardApprovalLimit limit)
     {
-        var fields = new StringBuilder();
-        fields.Append(CardApprovalFieldKeys.Round).Append('=').Append(limit.Round.ToString(CultureInfo.InvariantCulture));
-        fields.Append(' ').Append(CardApprovalFieldKeys.Text).Append('=').Append(CardFileFormat.EscapeCertificationTextValue(limit.Text));
+        yield return (CardApprovalFieldKeys.Round, limit.Round.ToString(CultureInfo.InvariantCulture));
+        yield return (CardApprovalFieldKeys.Text, CardFileFormat.EscapeCardBlockValue(limit.Text));
 
         foreach (var (key, rawValue) in limit.UnknownFields)
         {
-            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+            yield return (key, rawValue);
         }
-
-        return fields.ToString();
     }
 
-    private static string BuildRefusalFields(CardRefusalEntry refusal)
+    private static IEnumerable<(string Key, string Value)> BuildRefusalFields(CardRefusalEntry refusal)
     {
-        var fields = new StringBuilder();
-        fields.Append("by=").Append(refusal.By.ToWireString());
-        fields.Append(" rule=").Append(CardFileFormat.EscapeCertificationTextValue(refusal.Rule));
-        fields.Append(" remedy=").Append(CardFileFormat.EscapeCertificationTextValue(refusal.Remedy));
-        fields.Append(" timestamp=").Append(FormatTimestamp(refusal.Timestamp));
+        yield return ("by", refusal.By.ToWireString());
+        yield return ("rule", CardFileFormat.EscapeCardBlockValue(refusal.Rule));
+        yield return ("remedy", CardFileFormat.EscapeCardBlockValue(refusal.Remedy));
+        yield return ("timestamp", FormatTimestamp(refusal.Timestamp));
 
         foreach (var (key, rawValue) in refusal.UnknownFields)
         {
-            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+            yield return (key, rawValue);
         }
-
-        return fields.ToString();
     }
 
     private static string FormatTimestamp(DateTimeOffset value) =>

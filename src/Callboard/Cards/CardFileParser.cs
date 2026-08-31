@@ -423,6 +423,16 @@ internal static class CardFileParser
         var bodyLines = new List<string>();
         while (cursor < lines.Length && !CardFileFormat.IsCommentHeader(lines[cursor]) && !CardFileFormat.IsHandoverLine(lines[cursor]) && !CardFileFormat.IsTransitionLine(lines[cursor]) && !CardFileFormat.IsVerdictLine(lines[cursor]) && !CardFileFormat.IsAuthorisationLine(lines[cursor]) && !CardFileFormat.IsClaimLine(lines[cursor]) && !CardFileFormat.IsLimitLine(lines[cursor]) && !CardFileFormat.IsRefusalLine(lines[cursor]))
         {
+            // §14 remediation: a line that starts with one of the seven §14.1 block-open prefixes
+            // but does not exactly match one can never be legitimate body content — the writer
+            // always escapes exactly such a line (CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter)
+            // before emitting it — so an unescaped match here is a hand-authored or pre-§14.1
+            // legacy marker, refused rather than silently absorbed as prose (§13.6).
+            if (CardFileFormat.MalformedBlockOpenLineFamily(lines[cursor]) is { } malformedFamily)
+            {
+                return Failure($"malformed {malformedFamily} block open line: '{lines[cursor]}' — the open line must be exactly its own line with nothing else on it, or escaped with a leading backslash if it is body text");
+            }
+
             bodyLines.Add(CardFileFormat.UnescapeContentLine(lines[cursor]));
             cursor++;
         }
@@ -468,17 +478,15 @@ internal static class CardFileParser
 
             if (CardFileFormat.IsHandoverLine(headerLine))
             {
-                var handoverFieldsText = headerLine[CardFileFormat.HandoverLinePrefix.Length..^CardFileFormat.HandoverLineSuffix.Length];
-                var handoverFieldsResult = ParseHandoverFields(handoverFieldsText);
+                cursor++; // consume the open line
+                var handoverFieldsResult = ParseBlockFieldLines(lines, ref cursor, KnownHandoverKeys, "handover block");
                 if (handoverFieldsResult.Failure is { } handoverFieldsFailure)
                 {
                     return Failure(handoverFieldsFailure);
                 }
 
-                cursor++;
-
                 // handoverFieldsResult.Failure is null here, so Fields/UnknownFields are
-                // guaranteed non-null by ParseHandoverFields's own contract.
+                // guaranteed non-null by ParseBlockFieldLines's own contract.
                 var handoverResult = BuildHandover(handoverFieldsResult.Fields!, handoverFieldsResult.UnknownFields!);
                 if (handoverResult.Failure is { } handoverFailure)
                 {
@@ -493,17 +501,15 @@ internal static class CardFileParser
 
             if (CardFileFormat.IsTransitionLine(headerLine))
             {
-                var transitionFieldsText = headerLine[CardFileFormat.TransitionLinePrefix.Length..^CardFileFormat.TransitionLineSuffix.Length];
-                var transitionFieldsResult = ParseTransitionFields(transitionFieldsText);
+                cursor++; // consume the open line
+                var transitionFieldsResult = ParseBlockFieldLines(lines, ref cursor, KnownTransitionKeys, "transition block");
                 if (transitionFieldsResult.Failure is { } transitionFieldsFailure)
                 {
                     return Failure(transitionFieldsFailure);
                 }
 
-                cursor++;
-
                 // transitionFieldsResult.Failure is null here, so Fields/UnknownFields are
-                // guaranteed non-null by ParseTransitionFields's own contract.
+                // guaranteed non-null by ParseBlockFieldLines's own contract.
                 var transitionResult = BuildBlockTransitionEntry(transitionFieldsResult.Fields!, transitionFieldsResult.UnknownFields!);
                 if (transitionResult.Failure is { } transitionFailure)
                 {
@@ -518,17 +524,15 @@ internal static class CardFileParser
 
             if (CardFileFormat.IsVerdictLine(headerLine))
             {
-                var verdictFieldsText = headerLine[CardFileFormat.VerdictLinePrefix.Length..^CardFileFormat.VerdictLineSuffix.Length];
-                var verdictFieldsResult = ParseVerdictFields(verdictFieldsText);
+                cursor++; // consume the open line
+                var verdictFieldsResult = ParseBlockFieldLines(lines, ref cursor, KnownVerdictKeys, "verdict block");
                 if (verdictFieldsResult.Failure is { } verdictFieldsFailure)
                 {
                     return Failure(verdictFieldsFailure);
                 }
 
-                cursor++;
-
                 // verdictFieldsResult.Failure is null here, so Fields/UnknownFields are guaranteed
-                // non-null by ParseVerdictFields's own contract.
+                // non-null by ParseBlockFieldLines's own contract.
                 var verdictResult = BuildSectionVerdictEntry(verdictFieldsResult.Fields!, verdictFieldsResult.UnknownFields!);
                 if (verdictResult.Failure is { } verdictFailure)
                 {
@@ -543,17 +547,15 @@ internal static class CardFileParser
 
             if (CardFileFormat.IsAuthorisationLine(headerLine))
             {
-                var authorisationFieldsText = headerLine[CardFileFormat.AuthorisationLinePrefix.Length..^CardFileFormat.AuthorisationLineSuffix.Length];
-                var authorisationFieldsResult = ParseAuthorisationFields(authorisationFieldsText);
+                cursor++; // consume the open line
+                var authorisationFieldsResult = ParseBlockFieldLines(lines, ref cursor, KnownAuthorisationKeys, "authorisation block");
                 if (authorisationFieldsResult.Failure is { } authorisationFieldsFailure)
                 {
                     return Failure(authorisationFieldsFailure);
                 }
 
-                cursor++;
-
                 // authorisationFieldsResult.Failure is null here, so Fields/UnknownFields are
-                // guaranteed non-null by ParseAuthorisationFields's own contract.
+                // guaranteed non-null by ParseBlockFieldLines's own contract.
                 var authorisationResult = BuildSectionAuthorisationEntry(authorisationFieldsResult.Fields!, authorisationFieldsResult.UnknownFields!);
                 if (authorisationResult.Failure is { } authorisationFailure)
                 {
@@ -568,17 +570,15 @@ internal static class CardFileParser
 
             if (CardFileFormat.IsClaimLine(headerLine))
             {
-                var claimFieldsText = headerLine[CardFileFormat.ClaimLinePrefix.Length..^CardFileFormat.ClaimLineSuffix.Length];
-                var claimFieldsResult = ParseClaimFields(claimFieldsText);
+                cursor++; // consume the open line
+                var claimFieldsResult = ParseBlockFieldLines(lines, ref cursor, KnownClaimKeys, "claim block");
                 if (claimFieldsResult.Failure is { } claimFieldsFailure)
                 {
                     return Failure(claimFieldsFailure);
                 }
 
-                cursor++;
-
                 // claimFieldsResult.Failure is null here, so Fields/UnknownFields are guaranteed
-                // non-null by ParseClaimFields's own contract.
+                // non-null by ParseBlockFieldLines's own contract.
                 var claimResult = BuildCardApprovalClaim(claimFieldsResult.Fields!, claimFieldsResult.UnknownFields!);
                 if (claimResult.Failure is { } claimFailure)
                 {
@@ -593,17 +593,15 @@ internal static class CardFileParser
 
             if (CardFileFormat.IsLimitLine(headerLine))
             {
-                var limitFieldsText = headerLine[CardFileFormat.LimitLinePrefix.Length..^CardFileFormat.LimitLineSuffix.Length];
-                var limitFieldsResult = ParseLimitFields(limitFieldsText);
+                cursor++; // consume the open line
+                var limitFieldsResult = ParseBlockFieldLines(lines, ref cursor, KnownLimitKeys, "limit block");
                 if (limitFieldsResult.Failure is { } limitFieldsFailure)
                 {
                     return Failure(limitFieldsFailure);
                 }
 
-                cursor++;
-
                 // limitFieldsResult.Failure is null here, so Fields/UnknownFields are guaranteed
-                // non-null by ParseLimitFields's own contract.
+                // non-null by ParseBlockFieldLines's own contract.
                 var limitResult = BuildCardApprovalLimit(limitFieldsResult.Fields!, limitFieldsResult.UnknownFields!);
                 if (limitResult.Failure is { } limitFailure)
                 {
@@ -618,17 +616,15 @@ internal static class CardFileParser
 
             if (CardFileFormat.IsRefusalLine(headerLine))
             {
-                var refusalFieldsText = headerLine[CardFileFormat.RefusalLinePrefix.Length..^CardFileFormat.RefusalLineSuffix.Length];
-                var refusalFieldsResult = ParseRefusalFields(refusalFieldsText);
+                cursor++; // consume the open line
+                var refusalFieldsResult = ParseBlockFieldLines(lines, ref cursor, KnownRefusalKeys, "refusal block");
                 if (refusalFieldsResult.Failure is { } refusalFieldsFailure)
                 {
                     return Failure(refusalFieldsFailure);
                 }
 
-                cursor++;
-
                 // refusalFieldsResult.Failure is null here, so Fields/UnknownFields are guaranteed
-                // non-null by ParseRefusalFields's own contract.
+                // non-null by ParseBlockFieldLines's own contract.
                 var refusalResult = BuildCardRefusalEntry(refusalFieldsResult.Fields!, refusalFieldsResult.UnknownFields!);
                 if (refusalResult.Failure is { } refusalFailure)
                 {
@@ -666,6 +662,13 @@ internal static class CardFileParser
                 if (CardFileFormat.IsCommentHeader(lines[cursor]) || CardFileFormat.IsHandoverLine(lines[cursor]) || CardFileFormat.IsTransitionLine(lines[cursor]) || CardFileFormat.IsVerdictLine(lines[cursor]) || CardFileFormat.IsAuthorisationLine(lines[cursor]) || CardFileFormat.IsClaimLine(lines[cursor]) || CardFileFormat.IsLimitLine(lines[cursor]) || CardFileFormat.IsRefusalLine(lines[cursor]))
                 {
                     return Failure($"missing comment footer before next block: '{lines[cursor]}'");
+                }
+
+                // §14 remediation: the same malformed-open-line refusal the body loop above gives,
+                // applied inside a comment body — see that loop's comment for the full reasoning.
+                if (CardFileFormat.MalformedBlockOpenLineFamily(lines[cursor]) is { } malformedFamily)
+                {
+                    return Failure($"malformed {malformedFamily} block open line inside a comment body: '{lines[cursor]}' — the open line must be exactly its own line with nothing else on it, or escaped with a leading backslash if it is comment text");
                 }
 
                 commentBodyLines.Add(CardFileFormat.UnescapeContentLine(lines[cursor]));
@@ -1430,38 +1433,78 @@ internal static class CardFileParser
         ParseCommentHeaderFields(string headerFieldsText) =>
         ParseKeyValueTokens(headerFieldsText, KnownCommentHeaderKeys, "comment header");
 
+    /// <summary>
+    /// §14.1: reads one §14.1 delimited block's field lines — starting just past its already-
+    /// consumed open line — until a line exactly equal to <see cref="CardFileFormat.BlockCloseLine"/>
+    /// (consumed on the way out) or end of file, whichever comes first. Reaching end of file first
+    /// is the unterminated-block case 14.1 requires to fail loudly, rather than silently treating
+    /// whatever was read as the whole block. Each field line is <c>key: value</c>, the same shape
+    /// and the same trailing-colon-only tolerance (an empty value whose trailing space an editor
+    /// stripped on save) <see cref="Parse"/>'s own frontmatter loop already gives — reusing the
+    /// frontmatter line shape per §14.2, not a second implementation of it. A blank line is skipped,
+    /// the same §13.8 tolerance the appended-region loop already gives between blocks.
+    /// </summary>
     private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
-        ParseHandoverFields(string handoverFieldsText) =>
-        ParseKeyValueTokens(handoverFieldsText, KnownHandoverKeys, "handover line");
+        ParseBlockFieldLines(string[] lines, ref int cursor, IReadOnlySet<string> knownKeys, string blockLabel)
+    {
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        var unknownFields = new List<(string Key, string RawValue)>();
 
-    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
-        ParseTransitionFields(string transitionFieldsText) =>
-        ParseKeyValueTokens(transitionFieldsText, KnownTransitionKeys, "transition line");
+        while (true)
+        {
+            if (cursor >= lines.Length)
+            {
+                return (null, null, $"unterminated {blockLabel}: missing closing '{CardFileFormat.BlockCloseLine}'");
+            }
 
-    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
-        ParseVerdictFields(string verdictFieldsText) =>
-        ParseKeyValueTokens(verdictFieldsText, KnownVerdictKeys, "verdict line");
+            var line = lines[cursor];
 
-    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
-        ParseAuthorisationFields(string authorisationFieldsText) =>
-        ParseKeyValueTokens(authorisationFieldsText, KnownAuthorisationKeys, "authorisation line");
+            if (line.Length == 0)
+            {
+                cursor++;
+                continue;
+            }
 
-    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
-        ParseClaimFields(string claimFieldsText) =>
-        ParseKeyValueTokens(claimFieldsText, KnownClaimKeys, "claim line");
+            if (CardFileFormat.IsBlockCloseLine(line))
+            {
+                cursor++;
+                break;
+            }
 
-    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
-        ParseLimitFields(string limitFieldsText) =>
-        ParseKeyValueTokens(limitFieldsText, KnownLimitKeys, "limit line");
+            string key;
+            string rawValue;
+            var separatorIndex = line.IndexOf(": ", StringComparison.Ordinal);
+            if (separatorIndex >= 0)
+            {
+                key = line[..separatorIndex];
+                rawValue = line[(separatorIndex + 2)..];
+            }
+            else if (line[^1] == ':')
+            {
+                key = line[..^1];
+                rawValue = string.Empty;
+            }
+            else
+            {
+                return (null, null, $"malformed {blockLabel} field: '{line}'");
+            }
 
-    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
-        ParseRefusalFields(string refusalFieldsText) =>
-        ParseKeyValueTokens(refusalFieldsText, KnownRefusalKeys, "refusal line");
+            fields[key] = rawValue;
+            if (!knownKeys.Contains(key))
+            {
+                unknownFields.Add((key, rawValue));
+            }
+
+            cursor++;
+        }
+
+        return (fields, unknownFields, null);
+    }
 
     /// <summary>
-    /// The <c>key=value</c> token parsing comment headers and handover lines both use — one
-    /// implementation so the two block kinds can never drift apart on how their header text is
-    /// split.
+    /// The <c>key=value</c> token parsing the comment header still uses — §14.4 brings the comment
+    /// header onto the §14.1 delimited-block shape next; until then this stays the one
+    /// implementation comment headers rely on.
     /// </summary>
     private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
         ParseKeyValueTokens(string fieldsText, IReadOnlySet<string> knownKeys, string blockLabel)
@@ -1682,7 +1725,7 @@ internal static class CardFileParser
             return (null, "verdict missing required field: range-from");
         }
 
-        var rangeFrom = CardFileFormat.UnescapeCommentHeaderValue(rangeFromRaw);
+        var rangeFrom = CardFileFormat.UnescapeCardBlockValue(rangeFromRaw);
         if (!SectionVerdictEntry.IsValidRangeValue(rangeFrom))
         {
             return (null, "verdict has an empty or whitespace-only 'range-from'");
@@ -1693,7 +1736,7 @@ internal static class CardFileParser
             return (null, "verdict missing required field: range-to");
         }
 
-        var rangeTo = CardFileFormat.UnescapeCommentHeaderValue(rangeToRaw);
+        var rangeTo = CardFileFormat.UnescapeCardBlockValue(rangeToRaw);
         if (!SectionVerdictEntry.IsValidRangeValue(rangeTo))
         {
             return (null, "verdict has an empty or whitespace-only 'range-to'");
@@ -1731,7 +1774,7 @@ internal static class CardFileParser
             return (null, "authorisation missing required field: reason");
         }
 
-        var reason = CardFileFormat.UnescapeCertificationTextValue(reasonRaw);
+        var reason = CardFileFormat.UnescapeCardBlockValue(reasonRaw);
         if (!SectionAuthorisationEntry.IsValidReasonValue(reason))
         {
             return (null, "authorisation has an empty or whitespace-only 'reason'");
@@ -1769,14 +1812,14 @@ internal static class CardFileParser
             return (null, "refusal missing required field: rule");
         }
 
-        var rule = CardFileFormat.UnescapeCertificationTextValue(ruleRaw);
+        var rule = CardFileFormat.UnescapeCardBlockValue(ruleRaw);
 
         if (!fields.TryGetValue("remedy", out var remedyRaw))
         {
             return (null, "refusal missing required field: remedy");
         }
 
-        var remedy = CardFileFormat.UnescapeCertificationTextValue(remedyRaw);
+        var remedy = CardFileFormat.UnescapeCardBlockValue(remedyRaw);
 
         if (!fields.TryGetValue("timestamp", out var timestampText))
         {
@@ -1800,7 +1843,7 @@ internal static class CardFileParser
             return (null, "claim missing required field: id");
         }
 
-        var id = CardFileFormat.UnescapeCommentHeaderValue(rawId);
+        var id = CardFileFormat.UnescapeCardBlockValue(rawId);
 
         if (!fields.TryGetValue(CardApprovalFieldKeys.Round, out var roundText) || !int.TryParse(roundText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var round))
         {
@@ -1812,7 +1855,7 @@ internal static class CardFileParser
             return (null, $"claim '{id}' missing required field: text");
         }
 
-        var text = CardFileFormat.UnescapeCertificationTextValue(rawText);
+        var text = CardFileFormat.UnescapeCardBlockValue(rawText);
         if (!CardApprovalClaim.IsValidText(text))
         {
             return (null, $"claim '{id}' has an empty or whitespace-only 'text'");
@@ -1835,7 +1878,7 @@ internal static class CardFileParser
             return (null, "limit missing required field: text");
         }
 
-        var text = CardFileFormat.UnescapeCertificationTextValue(rawText);
+        var text = CardFileFormat.UnescapeCardBlockValue(rawText);
         if (!CardApprovalLimit.IsValidText(text))
         {
             return (null, "limit has an empty or whitespace-only 'text'");
