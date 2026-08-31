@@ -11,7 +11,6 @@ namespace Callboard.Cards;
 /// <code>
 /// ---
 /// key: finding-x007
-/// new-card-file: /repo-relative/or/absolute/path/to/b-0012.md
 /// title: Fix the X defect
 /// ---
 /// The finding's body, verbatim — free text, any number of lines, any characters at all.
@@ -36,9 +35,16 @@ namespace Callboard.Cards;
 /// </para>
 ///
 /// <para>
-/// The header key is <see cref="NewCardFileKey"/> (<c>new-card-file</c>), not <c>file</c> — kept
-/// textually distinct from the manifest file itself, the flag's own argument, so a reader (or a
-/// grep) is never left asking "which file".
+/// <b>14.5-remediation (§14 supervisor finding, second round): <see cref="NewCardFileKey"/>
+/// (<c>new-card-file</c>) is no longer a recognised header — a manifest no longer names the new
+/// card's own file.</b> The new block card is named for the identity <see cref="CardStore.
+/// RecordSectionVerdictUnderExistingLock"/> mints, the same "container, then allocate, then
+/// <see cref="CardLayout.FileNameFor"/>" ordering every other card-minting door follows. Unlike a
+/// removed CLI flag, this key lives inside a file format rather than argv — a manifest still
+/// carrying it is not silently ignored: <see cref="Parse"/> checks for it by name, ahead of the
+/// generic "unrecognised header key" check, and refuses with a message naming the key and why,
+/// the same "an unknown or now-forbidden field refuses loudly" discipline 14.1's unterminated-block
+/// check established for the card format proper.
 /// </para>
 /// </summary>
 internal static class NewFindingCardManifest
@@ -47,7 +53,7 @@ internal static class NewFindingCardManifest
     internal const string NewCardFileKey = "new-card-file";
     internal const string TitleKey = "title";
 
-    private static readonly string[] RequiredHeaderKeysInOrder = [KeyKey, NewCardFileKey, TitleKey];
+    private static readonly string[] RequiredHeaderKeysInOrder = [KeyKey, TitleKey];
 
     /// <summary>
     /// Parses <paramref name="manifestPath"/>'s content (already read — file existence and
@@ -87,6 +93,16 @@ internal static class NewFindingCardManifest
 
             var key = line[..separatorIndex].Trim();
             var value = line[(separatorIndex + 1)..].Trim();
+
+            // 14.5-remediation: named explicitly, ahead of the generic unrecognised-key refusal
+            // below, so a manifest still spelling the removed header gets a message that says what
+            // changed and why — not the same generic "unrecognised key" a genuine typo gets.
+            if (string.Equals(key, NewCardFileKey, StringComparison.Ordinal))
+            {
+                return (null, $"manifest '{manifestPath}' names '{NewCardFileKey}', which is no longer accepted (14.5-remediation) — " +
+                    "the tool names the new card's file itself now; remove this header line.");
+            }
+
             if (!RequiredHeaderKeysInOrder.Contains(key, StringComparer.Ordinal))
             {
                 return (null, $"manifest '{manifestPath}' has an unrecognised header key: '{key}'. Recognised keys: {string.Join(", ", RequiredHeaderKeysInOrder)}.");
@@ -117,12 +133,6 @@ internal static class NewFindingCardManifest
             return (null, $"manifest '{manifestPath}' has an empty or whitespace-only '{KeyKey}'.");
         }
 
-        var newCardFile = headerValues[NewCardFileKey];
-        if (string.IsNullOrWhiteSpace(newCardFile))
-        {
-            return (null, $"manifest '{manifestPath}' has an empty or whitespace-only '{NewCardFileKey}'.");
-        }
-
         var title = headerValues[TitleKey];
         if (string.IsNullOrWhiteSpace(title))
         {
@@ -134,6 +144,6 @@ internal static class NewFindingCardManifest
         // "\n" split above and this reconstruction can never disagree on where the fence line ends.
         var body = string.Join('\n', lines[(closingFenceLineIndex + 1)..]);
 
-        return (new NewFindingCardRequest(key0, newCardFile, title, body), null);
+        return (new NewFindingCardRequest(key0, title, body), null);
     }
 }

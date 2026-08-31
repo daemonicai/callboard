@@ -1121,9 +1121,24 @@ internal static class CardStore
             return new CardNitDispositionOutcome.RoleNotPermitted(actingRole);
         }
 
+        // 14.5-remediation (§14 supervisor finding, second round): container, then allocate, then
+        // CardLayout.FileNameFor — the same ordering RecordFinding already established, applied
+        // here to the second door the supervisor's re-derivation from the allocation seam found.
         string? raisedId = null;
+        string? raisedFilePath = null;
         if (raiseRequest is not null)
         {
+            var raisedScope = raiseRequest.Kind == CardKind.Obligation ? CardScope.Change : CardScope.Capability;
+            string raisedRelativeDirectory;
+            try
+            {
+                raisedRelativeDirectory = CardLayout.DirectoryFor(raisedScope, changeName);
+            }
+            catch (ArgumentException ex)
+            {
+                return new CardNitDispositionOutcome.RaisedCardLayoutMismatch(ex.Message);
+            }
+
             var (allocatedId, allocationFailure) = AllocateIdentity(cardsRoot, raiseRequest.Kind, lockTimeout);
             if (allocationFailure is not null)
             {
@@ -1131,17 +1146,13 @@ internal static class CardStore
             }
 
             raisedId = allocatedId;
+            raisedFilePath = Path.Combine(
+                cardsRoot, raisedRelativeDirectory.Replace('/', Path.DirectorySeparatorChar), CardLayout.FileNameFor(raisedId!));
 
             // The raised card's directory has to exist before its lock file (created beside the
             // target) can be — the same reason WriteCard/RecordFinding create it ahead of any lock
             // acquisition.
-            var raisedDirectory = Path.GetDirectoryName(raiseRequest.FilePath);
-            if (string.IsNullOrEmpty(raisedDirectory))
-            {
-                return new CardNitDispositionOutcome.RaisedCardLayoutMismatch($"'{raiseRequest.FilePath}' has no containing directory to write into.");
-            }
-
-            Directory.CreateDirectory(raisedDirectory);
+            Directory.CreateDirectory(Path.GetDirectoryName(raisedFilePath)!);
         }
 
         var blockLockResult = CardLock.Acquire(nitFilePath, lockTimeout);
@@ -1152,16 +1163,16 @@ internal static class CardStore
                 {
                     if (raiseRequest is null)
                     {
-                        return DispositionNitUnderLocks(blockAcquired.Lock, cardsRoot, nitId, disposition, body, actingRole, timestamp, changeName, raiseRequest: null, raisedId: null);
+                        return DispositionNitUnderLocks(blockAcquired.Lock, cardsRoot, nitId, disposition, body, actingRole, timestamp, changeName, raiseRequest: null, raisedId: null, raisedFilePath: null);
                     }
 
-                    var raisedLockResult = CardLock.Acquire(raiseRequest.FilePath, lockTimeout);
+                    var raisedLockResult = CardLock.Acquire(raisedFilePath!, lockTimeout);
                     return raisedLockResult.Match<CardNitDispositionOutcome>(
                         onAcquired: raisedAcquired =>
                         {
                             using (raisedAcquired.Lock)
                             {
-                                return DispositionNitUnderLocks(blockAcquired.Lock, cardsRoot, nitId, disposition, body, actingRole, timestamp, changeName, raiseRequest, raisedId);
+                                return DispositionNitUnderLocks(blockAcquired.Lock, cardsRoot, nitId, disposition, body, actingRole, timestamp, changeName, raiseRequest, raisedId, raisedFilePath);
                             }
                         },
                         onTimedOut: timedOut => new CardNitDispositionOutcome.ToolFailure(timedOut.Message));
@@ -1184,7 +1195,8 @@ internal static class CardStore
         DateTimeOffset timestamp,
         string? changeName,
         NitDispositionRaiseRequest? raiseRequest,
-        string? raisedId)
+        string? raisedId,
+        string? raisedFilePath)
     {
         var nitFilePath = blockLock.CardPath;
         if (!File.Exists(nitFilePath))
@@ -1339,16 +1351,20 @@ internal static class CardStore
                 if (raiseRequest is not null)
                 {
                     var raisedScope = raiseRequest.Kind == CardKind.Obligation ? CardScope.Change : CardScope.Capability;
-                    var raisedAnchored = AnchoredCardPath.TryCreate(cardsRoot, raiseRequest.FilePath, raisedScope, changeName, out var raisedLayoutFailure);
+                    // 14.5-remediation: raisedFilePath is DispositionNit's own derivation, from the
+                    // identical CardLayout.DirectoryFor(raisedScope, changeName) call this anchors
+                    // against — the check stays, matching WriteCard's own discipline elsewhere, but
+                    // only as the mechanism that mints the AnchoredCardPath AtomicWrite requires.
+                    var raisedAnchored = AnchoredCardPath.TryCreate(cardsRoot, raisedFilePath!, raisedScope, changeName, out var raisedLayoutFailure);
                     if (raisedAnchored is null)
                     {
                         return new CardNitDispositionOutcome.RaisedCardLayoutMismatch(raisedLayoutFailure!.Reason);
                     }
 
-                    if (File.Exists(raiseRequest.FilePath))
+                    if (File.Exists(raisedFilePath))
                     {
                         return RefuseAndRecord<CardNitDispositionOutcome, CardNitDispositionOutcome.RaisedCardAlreadyExists>(cardsRoot, card, nitFilePath, changeName, actingRole, timestamp,
-                            new CardNitDispositionOutcome.RaisedCardAlreadyExists(raiseRequest.FilePath),
+                            new CardNitDispositionOutcome.RaisedCardAlreadyExists(raisedFilePath!),
                             static reason => new CardNitDispositionOutcome.ToolFailure(reason));
                     }
 
@@ -1397,31 +1413,31 @@ internal static class CardStore
 
                 var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updatedCard));
                 return writeResult.Match<CardNitDispositionOutcome>(
-                    onSuccess: _ => new CardNitDispositionOutcome.Dispositioned(updatedCard, dispositionComment, raisedCardFile, transitioned),
+                    onSuccess: _ => new CardNitDispositionOutcome.Dispositioned(updatedCard, dispositionComment, raisedCardFile, raisedFilePath, transitioned),
                     onNotFound: notFound =>
                     {
-                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        RollbackRaisedNitCard(raisedFilePath, raisedContent);
                         return new CardNitDispositionOutcome.CardNotFound(notFound.FilePath);
                     },
                     onAlreadyExists: alreadyExists =>
                     {
-                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        RollbackRaisedNitCard(raisedFilePath, raisedContent);
                         return new CardNitDispositionOutcome.LayoutMismatch(
                             $"'{alreadyExists.FilePath}' unexpectedly reported as already existing during a targeted rewrite.");
                     },
                     onLayoutMismatch: layoutMismatch =>
                     {
-                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        RollbackRaisedNitCard(raisedFilePath, raisedContent);
                         return new CardNitDispositionOutcome.LayoutMismatch(layoutMismatch.Reason);
                     },
                     onCorrupt: corrupt =>
                     {
-                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        RollbackRaisedNitCard(raisedFilePath, raisedContent);
                         return new CardNitDispositionOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason);
                     },
                     onToolFailure: toolFailure =>
                     {
-                        RollbackRaisedNitCard(raiseRequest, raisedContent);
+                        RollbackRaisedNitCard(raisedFilePath, raisedContent);
                         return new CardNitDispositionOutcome.ToolFailure(toolFailure.Reason);
                     },
                     onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
@@ -1436,24 +1452,24 @@ internal static class CardStore
     /// Compare-then-delete, not delete-by-path — see <see cref="DispositionNit"/>'s own doc comment,
     /// and <see cref="RollbackRaisedCard"/>, the same shape applied to <see cref="RecordFinding"/>'s
     /// raised card.</summary>
-    private static void RollbackRaisedNitCard(NitDispositionRaiseRequest? raiseRequest, string? raisedContent)
+    private static void RollbackRaisedNitCard(string? raisedFilePath, string? raisedContent)
     {
-        if (raiseRequest is null || raisedContent is null)
+        if (raisedFilePath is null || raisedContent is null)
         {
             return;
         }
 
         try
         {
-            if (!File.Exists(raiseRequest.FilePath))
+            if (!File.Exists(raisedFilePath))
             {
                 return;
             }
 
-            var currentContent = File.ReadAllText(raiseRequest.FilePath, Utf8NoBom);
+            var currentContent = File.ReadAllText(raisedFilePath, Utf8NoBom);
             if (string.Equals(currentContent, raisedContent, StringComparison.Ordinal))
             {
-                File.Delete(raiseRequest.FilePath);
+                File.Delete(raisedFilePath);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -2478,11 +2494,23 @@ internal static class CardStore
                 // survivor's directory is created inside WriteCard itself, immediately before that
                 // one card's own write — see the newCardsWritten loop below — so nothing touches
                 // the filesystem until the whole call is known to be going ahead.
-                foreach (var newFinding in newFindings)
+                //
+                // 14.5-remediation (§14 supervisor finding, second round): a new finding's card is
+                // no longer named by the caller, so there is nothing per-entry left to validate
+                // here — every new finding this call raises is Change-scoped, so one
+                // CardLayout.DirectoryFor resolution covers all of them; a missing/invalid
+                // changeName refuses here, before any identity is allocated, the same "container,
+                // then allocate, then FileNameFor" ordering RecordFinding already established.
+                string newCardRelativeDirectory = string.Empty;
+                if (newFindings.Count > 0)
                 {
-                    if (string.IsNullOrEmpty(Path.GetDirectoryName(newFinding.FilePath)))
+                    try
                     {
-                        return new CardSectionVerdictOutcome.LayoutMismatch($"'{newFinding.FilePath}' has no containing directory to write into.");
+                        newCardRelativeDirectory = CardLayout.DirectoryFor(CardScope.Change, changeName);
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        return new CardSectionVerdictOutcome.LayoutMismatch(ex.Message);
                     }
                 }
 
@@ -2614,7 +2642,16 @@ internal static class CardStore
                             }
                         }
 
-                        var usedNewFindingFilePaths = new HashSet<string>(StringComparer.Ordinal);
+                        // 14.5-remediation (§14 supervisor finding, second round): the
+                        // File.Exists/dedupe pre-check and per-entry AnchoredCardPath check that
+                        // used to sit here are gone — both existed only because a caller could name
+                        // a new finding's path, and a path can no longer collide with an on-disk
+                        // file or another entry in this same batch once every one of them is minted
+                        // from a freshly-allocated, unique identity (the same reasoning
+                        // RecordFinding's own doc comment gives for why its two-lock discipline no
+                        // longer guards against a caller-forced path collision either). Only the
+                        // key-ownership check remains — Key is still caller-supplied free text, and
+                        // still the one thing this scan exists to police.
                         foreach (var newFinding in newFindings)
                         {
                             if (ownedKeys.TryGetValue(newFinding.Key, out var owner))
@@ -2624,23 +2661,11 @@ internal static class CardStore
                                     static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
                             }
 
-                            if (File.Exists(newFinding.FilePath) || !usedNewFindingFilePaths.Add(newFinding.FilePath))
-                            {
-                                return RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.NewFindingCardAlreadyExists>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
-                                    new CardSectionVerdictOutcome.NewFindingCardAlreadyExists(newFinding.FilePath),
-                                    static reason => new CardSectionVerdictOutcome.ToolFailure(reason));
-                            }
-
-                            var newAnchored = AnchoredCardPath.TryCreate(cardsRoot, newFinding.FilePath, CardScope.Change, changeName, out var newLayoutFailure);
-                            if (newAnchored is null)
-                            {
-                                return new CardSectionVerdictOutcome.LayoutMismatch(newLayoutFailure!.Reason);
-                            }
-
                             // In-batch dedupe: a later entry in this same call naming the same key
-                            // is caught above too, and reports this manifest's own path, not an
-                            // on-disk card — there is none yet.
-                            ownedKeys[newFinding.Key] = ("<pending: this verdict>", newFinding.FilePath);
+                            // is caught above too, against the literal "<pending: this verdict>"
+                            // sentinel for both id and path — there is no on-disk owner, and no
+                            // known path either, until this call's own write loop allocates one.
+                            ownedKeys[newFinding.Key] = ("<pending: this verdict>", "<pending: this verdict>");
                         }
                     }
 
@@ -2702,12 +2727,26 @@ internal static class CardStore
                         // value is guaranteed non-empty here.
                         var newBlockFields = new BlockCardFields(rangeTo, null, [], 1, [], [], newFinding.Key);
 
+                        // 14.5-remediation: newCardRelativeDirectory was resolved once, up front,
+                        // before any identity in this call was allocated — only now, after this
+                        // entry's own identity is minted, does a path exist to have been computed
+                        // from anything else.
+                        var newFilePath = Path.Combine(
+                            cardsRoot, newCardRelativeDirectory.Replace('/', Path.DirectorySeparatorChar), CardLayout.FileNameFor(newId!));
+
                         var newWriteResult = WriteCard(
-                            cardsRoot, newFinding.FilePath, new NewCardFile(newFrontmatter, newFinding.Body, BlockFields: newBlockFields), lockTimeout, changeName);
+                            cardsRoot, newFilePath, new NewCardFile(newFrontmatter, newFinding.Body, BlockFields: newBlockFields), lockTimeout, changeName);
+                        // 14.5-remediation: NewFindingCardAlreadyExists implements ICardRefusalReason
+                        // and must be recorded against the section card, the same way the pre-check
+                        // this write-loop check replaces used to via RefuseAndRecord — WriteCard's
+                        // own AlreadyExists case does not record on its own.
                         var newWriteFailure = newWriteResult.Match<CardSectionVerdictOutcome?>(
                             onSuccess: static _ => null,
                             onNotFound: notFound => new CardSectionVerdictOutcome.CardNotFound(notFound.FilePath),
-                            onAlreadyExists: alreadyExists => new CardSectionVerdictOutcome.NewFindingCardAlreadyExists(alreadyExists.FilePath),
+                            onAlreadyExists: alreadyExists => RefuseAndRecord<CardSectionVerdictOutcome, CardSectionVerdictOutcome.NewFindingCardAlreadyExists>(
+                                cardsRoot, card, filePath, changeName, actingRole, timestamp,
+                                new CardSectionVerdictOutcome.NewFindingCardAlreadyExists(alreadyExists.FilePath),
+                                static reason => new CardSectionVerdictOutcome.ToolFailure(reason)),
                             onLayoutMismatch: layoutMismatch => new CardSectionVerdictOutcome.LayoutMismatch(layoutMismatch.Reason),
                             onCorrupt: corrupt => new CardSectionVerdictOutcome.CardCorrupt(corrupt.FilePath, corrupt.Reason),
                             onToolFailure: toolFailure => new CardSectionVerdictOutcome.ToolFailure(toolFailure.Reason),
@@ -4188,23 +4227,35 @@ internal static class CardStore
     /// multi-card write shape in this type is exactly what a hand-copied fourth would have been.
     /// </summary>
     internal static CardCommentPromoteOutcome PromoteComment(
-        string cardsRoot, string originalFilePath, string commentId, string raisedFilePath, CardKind toKind,
+        string cardsRoot, string originalFilePath, string commentId, CardKind toKind,
         string title, CardOwner actingRole, CardOwner? owedByRole, string body, string? changeName,
         DateTimeOffset timestamp, TimeSpan lockTimeout)
     {
+        // 14.5-remediation (§14 supervisor finding, second round): container, then allocate, then
+        // CardLayout.FileNameFor — the raised card's scope is fixed by toKind (Question is
+        // Repository-scoped, Decision is Capability-scoped — CardScopeRules), so this never needs
+        // changeName to resolve, same as the read below already noted.
+        var raisedScope = toKind == CardKind.Question ? CardScope.Repository : CardScope.Capability;
+        string raisedRelativeDirectory;
+        try
+        {
+            raisedRelativeDirectory = CardLayout.DirectoryFor(raisedScope, changeName);
+        }
+        catch (ArgumentException ex)
+        {
+            return new CardCommentPromoteOutcome.RaisedCardLayoutMismatch(ex.Message);
+        }
+
         var (raisedId, allocationFailure) = AllocateIdentity(cardsRoot, toKind, lockTimeout);
         if (allocationFailure is not null)
         {
             return new CardCommentPromoteOutcome.ToolFailure(allocationFailure);
         }
 
-        var raisedDirectory = Path.GetDirectoryName(raisedFilePath);
-        if (string.IsNullOrEmpty(raisedDirectory))
-        {
-            return new CardCommentPromoteOutcome.RaisedCardLayoutMismatch($"'{raisedFilePath}' has no containing directory to write into.");
-        }
+        var raisedFilePath = Path.Combine(
+            cardsRoot, raisedRelativeDirectory.Replace('/', Path.DirectorySeparatorChar), CardLayout.FileNameFor(raisedId!));
 
-        Directory.CreateDirectory(raisedDirectory);
+        Directory.CreateDirectory(Path.GetDirectoryName(raisedFilePath)!);
 
         return AcquireLocksAndRecord(
             originalFilePath, raisedFilePath, lockTimeout,
@@ -4337,7 +4388,7 @@ internal static class CardStore
 
                 var writeResult = AtomicWrite(anchored, CardFileWriter.Serialize(updatedCard));
                 return writeResult.Match<CardCommentPromoteOutcome>(
-                    onSuccess: _ => new CardCommentPromoteOutcome.Promoted(updatedCard, raisedCardFile),
+                    onSuccess: _ => new CardCommentPromoteOutcome.Promoted(updatedCard, raisedCardFile, raisedFilePath),
                     onNotFound: notFound =>
                     {
                         RollbackRaisedCommentCard(raisedFilePath, serializedRaisedCard);
@@ -5333,6 +5384,27 @@ internal static class CardStore
     /// </para>
     ///
     /// <para>
+    /// <b>14.5-remediation (§14 supervisor finding): the raised card's path is no longer <see
+    /// cref="FindingBlindSpotRaiseRequest"/>'s to name.</b> Both this method's target paths — the
+    /// finding's and, when <paramref name="raiseRequest"/> is supplied, the raised card's — are now
+    /// derived the same way <see cref="CreateCard"/> derives its one: <see cref="CardLayout.
+    /// DirectoryFor"/> resolves the container from <paramref name="section"/>'s fixed <see
+    /// cref="CardScope.Section"/> (the finding) or <see cref="ScopeForRaisedCard"/>'s fixed scope
+    /// (the raised card), <em>then</em> each card's own identity is allocated, <em>then</em> <see
+    /// cref="CardLayout.FileNameFor"/> turns that identity into a basename — never a caller-supplied
+    /// path. <c>--blind-spot-file</c> and <c>finding record</c>'s own leading positional are both
+    /// gone from the CLI (<see cref="CommandParser.RefuseLeadingPositionalArgument"/>); a caller
+    /// still names only the container, via <c>--change</c>. This does not remove the need for two
+    /// locks — the block B reasoning above no longer applies verbatim (a caller cannot make two
+    /// invocations collide on the raised card's path any more, since it is minted from a
+    /// freshly-allocated, unique identity), but ADR-0003's "every write takes the per-card advisory
+    /// lock" still requires one for <em>each</em> of the two files this method writes, and <see
+    /// cref="AcquireLocksAndRecord"/>'s own acquire-probe-release-retry shape is what makes
+    /// acquiring both, in one call, safe against a lock-ordering deadlock — a property that has
+    /// nothing to do with where either path came from.
+    /// </para>
+    ///
+    /// <para>
     /// <b>No lock ordering at all (§6 block B fifth remediation, reviewer's "cross-invocation lock
     /// ordering" finding).</b> An earlier version of this method decided a deterministic
     /// <see cref="StringComparer.Ordinal"/> order over the two paths so two concurrent invocations
@@ -5381,7 +5453,6 @@ internal static class CardStore
     /// ignored for a hazard (<see cref="CardScope.Repository"/>-scoped).</param>
     internal static CardFindingRecordOutcome RecordFinding(
         string cardsRoot,
-        string findingFilePath,
         string title,
         CardOwner actingRole,
         string section,
@@ -5395,6 +5466,36 @@ internal static class CardStore
         TimeSpan lockTimeout,
         string changeName)
     {
+        // 14.5-remediation: container before allocation, the same ordering CreateCard already
+        // established — a missing/invalid changeName (RequireChangeName) or a reserved one
+        // (ChangesDirectory's own check) refuses here, before either identity is burned, rather
+        // than after. Both directories are resolved up front so a bad changeName refuses once for
+        // the whole two-card write instead of possibly landing the raised card before discovering
+        // the finding's own directory is unresolvable.
+        string findingRelativeDirectory;
+        try
+        {
+            findingRelativeDirectory = CardLayout.DirectoryFor(CardScope.Section, changeName);
+        }
+        catch (ArgumentException ex)
+        {
+            return new CardFindingRecordOutcome.FindingLayoutMismatch(ex.Message);
+        }
+
+        string? raisedRelativeDirectory = null;
+        if (raiseRequest is not null)
+        {
+            var raisedScope = ScopeForRaisedCard(raiseRequest.Kind);
+            try
+            {
+                raisedRelativeDirectory = CardLayout.DirectoryFor(raisedScope, changeName);
+            }
+            catch (ArgumentException ex)
+            {
+                return new CardFindingRecordOutcome.BlindSpotLayoutMismatch(ex.Message);
+            }
+        }
+
         var (findingId, findingAllocationFailure) = AllocateIdentity(cardsRoot, CardKind.Finding, lockTimeout);
         if (findingAllocationFailure is not null)
         {
@@ -5412,6 +5513,17 @@ internal static class CardStore
 
             raisedId = allocatedRaisedId;
         }
+
+        // Only now — after both directories are known and both identities minted — does a path
+        // exist to have been computed from anything else (14.5's own "the ordering is the
+        // structural proof of 'never able to'"). CardLayout.FileNameFor is the single statement of
+        // id-to-basename; nothing here spells a basename any other way.
+        var findingFilePath = Path.Combine(
+            cardsRoot, findingRelativeDirectory.Replace('/', Path.DirectorySeparatorChar), CardLayout.FileNameFor(findingId!));
+        string? raisedFilePath = raiseRequest is null
+            ? null
+            : Path.Combine(
+                cardsRoot, raisedRelativeDirectory!.Replace('/', Path.DirectorySeparatorChar), CardLayout.FileNameFor(raisedId!));
 
         var blindSpot = raiseRequest is null
             ? FindingBlindSpotDeclaration.None
@@ -5443,29 +5555,20 @@ internal static class CardStore
         // Both directories exist before either lock is requested (reviewer blocker 3) — WriteCard's
         // own doc comment states why: a lock file is created beside the target, which needs the
         // target's directory to already exist, or the whole lock-acquire loop retries a create that
-        // can never succeed.
-        var findingDirectory = Path.GetDirectoryName(findingFilePath);
-        if (string.IsNullOrEmpty(findingDirectory))
+        // can never succeed. Both are guaranteed non-empty here — they are the same cardsRoot-
+        // relative-directory combination CardLayout.DirectoryFor already resolved above, never an
+        // arbitrary caller string with no directory component the way a caller-supplied path could
+        // once have been.
+        if (raisedFilePath is not null)
         {
-            return new CardFindingRecordOutcome.FindingLayoutMismatch($"'{findingFilePath}' has no containing directory to write into.");
+            Directory.CreateDirectory(Path.GetDirectoryName(raisedFilePath)!);
         }
 
-        if (raiseRequest is not null)
-        {
-            var raisedDirectory = Path.GetDirectoryName(raiseRequest.FilePath);
-            if (string.IsNullOrEmpty(raisedDirectory))
-            {
-                return new CardFindingRecordOutcome.BlindSpotLayoutMismatch($"'{raiseRequest.FilePath}' has no containing directory to write into.");
-            }
-
-            Directory.CreateDirectory(raisedDirectory);
-        }
-
-        Directory.CreateDirectory(findingDirectory);
+        Directory.CreateDirectory(Path.GetDirectoryName(findingFilePath)!);
 
         return AcquireLocksAndRecord(
-            findingFilePath, raiseRequest?.FilePath, lockTimeout,
-            () => RecordFindingUnderLocks(cardsRoot, findingFilePath, findingFrontmatter, body, findingFields, raiseRequest, raisedId, changeName),
+            findingFilePath, raisedFilePath, lockTimeout,
+            () => RecordFindingUnderLocks(cardsRoot, findingFilePath, findingFrontmatter, body, findingFields, raiseRequest, raisedId, raisedFilePath, changeName),
             static reason => new CardFindingRecordOutcome.ToolFailure(reason));
     }
 
@@ -5602,6 +5705,7 @@ internal static class CardStore
         FindingCardFields findingFields,
         FindingBlindSpotRaiseRequest? raiseRequest,
         string? raisedId,
+        string? raisedFilePath,
         string changeName)
     {
         // Deliberately not checked here, ahead of the raised card's own write below: the finding's
@@ -5614,15 +5718,21 @@ internal static class CardStore
         if (raiseRequest is not null)
         {
             var raisedScope = ScopeForRaisedCard(raiseRequest.Kind);
-            var raisedAnchored = AnchoredCardPath.TryCreate(cardsRoot, raiseRequest.FilePath, raisedScope, changeName, out var raisedLayoutFailure);
+            // 14.5-remediation: raisedFilePath is RecordFinding's own derivation, resolved from the
+            // identical CardLayout.DirectoryFor(raisedScope, changeName) call this anchors against
+            // — so, unlike a caller-supplied path, this can no longer disagree with it. The check
+            // stays (matching WriteCard's own discipline for every other card write in this type)
+            // because it is what produces the AnchoredCardPath AtomicWrite requires, not because a
+            // mismatch is still reachable here.
+            var raisedAnchored = AnchoredCardPath.TryCreate(cardsRoot, raisedFilePath!, raisedScope, changeName, out var raisedLayoutFailure);
             if (raisedAnchored is null)
             {
                 return new CardFindingRecordOutcome.BlindSpotLayoutMismatch(raisedLayoutFailure!.Reason);
             }
 
-            if (File.Exists(raiseRequest.FilePath))
+            if (File.Exists(raisedFilePath))
             {
-                return new CardFindingRecordOutcome.BlindSpotCardAlreadyExists(raiseRequest.FilePath);
+                return new CardFindingRecordOutcome.BlindSpotCardAlreadyExists(raisedFilePath!);
             }
 
             var raisedFrontmatter = new CardFrontmatter(
@@ -5684,10 +5794,13 @@ internal static class CardStore
             raisedContent = serializedRaisedCard;
         }
 
+        // Same "the check remains, but only as the mechanism that mints the AnchoredCardPath
+        // AtomicWrite needs" reasoning as the raised card's own anchor check above — findingFilePath
+        // is RecordFinding's own derivation from this exact CardLayout.DirectoryFor call.
         var findingAnchored = AnchoredCardPath.TryCreate(cardsRoot, findingFilePath, findingFrontmatter.Scope, changeName, out var findingLayoutFailure);
         if (findingAnchored is null)
         {
-            RollbackRaisedCard(raiseRequest, raisedContent);
+            RollbackRaisedCard(raisedFilePath, raisedContent);
             return new CardFindingRecordOutcome.FindingLayoutMismatch(findingLayoutFailure!.Reason);
         }
 
@@ -5701,7 +5814,7 @@ internal static class CardStore
         // conflict.
         if (File.Exists(findingFilePath))
         {
-            RollbackRaisedCard(raiseRequest, raisedContent);
+            RollbackRaisedCard(raisedFilePath, raisedContent);
             return new CardFindingRecordOutcome.FindingAlreadyExists(findingFilePath);
         }
 
@@ -5709,31 +5822,31 @@ internal static class CardStore
         var findingWriteResult = AtomicWrite(findingAnchored, CardFileWriter.Serialize(findingCardFile));
 
         return findingWriteResult.Match<CardFindingRecordOutcome>(
-            onSuccess: _ => new CardFindingRecordOutcome.Recorded(findingCardFile, raisedCard),
+            onSuccess: _ => new CardFindingRecordOutcome.Recorded(findingCardFile, findingFilePath, raisedCard, raisedFilePath),
             onNotFound: notFound =>
             {
-                RollbackRaisedCard(raiseRequest, raisedContent);
+                RollbackRaisedCard(raisedFilePath, raisedContent);
                 return new CardFindingRecordOutcome.ToolFailure($"unexpected 'not found' writing a brand-new card at '{notFound.FilePath}'.");
             },
             onAlreadyExists: alreadyExists =>
             {
-                RollbackRaisedCard(raiseRequest, raisedContent);
+                RollbackRaisedCard(raisedFilePath, raisedContent);
                 return new CardFindingRecordOutcome.FindingAlreadyExists(alreadyExists.FilePath);
             },
             onLayoutMismatch: layoutMismatch =>
             {
-                RollbackRaisedCard(raiseRequest, raisedContent);
+                RollbackRaisedCard(raisedFilePath, raisedContent);
                 return new CardFindingRecordOutcome.FindingLayoutMismatch(layoutMismatch.Reason);
             },
             onCorrupt: corrupt =>
             {
-                RollbackRaisedCard(raiseRequest, raisedContent);
+                RollbackRaisedCard(raisedFilePath, raisedContent);
                 return new CardFindingRecordOutcome.ToolFailure(
                     $"unexpected corruption reported writing a brand-new card at '{corrupt.FilePath}': {corrupt.Reason}");
             },
             onToolFailure: toolFailure =>
             {
-                RollbackRaisedCard(raiseRequest, raisedContent);
+                RollbackRaisedCard(raisedFilePath, raisedContent);
                 return new CardFindingRecordOutcome.ToolFailure(toolFailure.Reason);
             },
             onRoundDisagreesWithHistory: static _ => throw new InvalidOperationException("unreachable: RoundAgreesWithHistory is checked, and refuses, before AtomicWrite is ever reached for a block card."),
@@ -5750,7 +5863,7 @@ internal static class CardStore
     /// never wrote if something else has since legitimately taken over the path. This is the same
     /// shape: the file is deleted only when its current content still matches
     /// <paramref name="raisedContent"/>, the exact bytes this call itself wrote to
-    /// <paramref name="raiseRequest"/>'s own path; a mismatch is treated as a lost race, not an
+    /// <paramref name="raisedFilePath"/>; a mismatch is treated as a lost race, not an
     /// error. With both cards' paths now locked for this call's whole duration
     /// (<see cref="AcquireLocksAndRecord"/>), no other <c>finding record</c> invocation can actually
     /// produce that mismatch any more — but the guard costs nothing and matches the standing
@@ -5758,24 +5871,24 @@ internal static class CardStore
     /// own release — if the delete itself cannot complete, the caller already has a failure to act
     /// on and this is not the place to escalate a cleanup problem into a second, different one.
     /// </summary>
-    private static void RollbackRaisedCard(FindingBlindSpotRaiseRequest? raiseRequest, string? raisedContent)
+    private static void RollbackRaisedCard(string? raisedFilePath, string? raisedContent)
     {
-        if (raiseRequest is null || raisedContent is null)
+        if (raisedFilePath is null || raisedContent is null)
         {
             return;
         }
 
         try
         {
-            if (!File.Exists(raiseRequest.FilePath))
+            if (!File.Exists(raisedFilePath))
             {
                 return;
             }
 
-            var currentContent = File.ReadAllText(raiseRequest.FilePath, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            var currentContent = File.ReadAllText(raisedFilePath, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             if (string.Equals(currentContent, raisedContent, StringComparison.Ordinal))
             {
-                File.Delete(raiseRequest.FilePath);
+                File.Delete(raisedFilePath);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

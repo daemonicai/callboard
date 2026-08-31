@@ -21,12 +21,11 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0001.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "none",
             ],
@@ -38,6 +37,11 @@ public sealed class CommandDispatcherFindingRecordTests
         var result = doc.RootElement.GetProperty("result");
         Assert.Equal("none", result.GetProperty("blindSpot").GetString());
         Assert.False(result.TryGetProperty("raisedCardId", out _));
+
+        // 14.5-remediation (§14 supervisor finding): the written file's basename is the minted id —
+        // no caller supplied it.
+        var findingPath = result.GetProperty("filePath").GetString()!;
+        Assert.Equal(CardLayout.FileNameFor(result.GetProperty("id").GetString()!), Path.GetFileName(findingPath));
         Assert.True(File.Exists(findingPath));
     }
 
@@ -48,20 +52,14 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0002.md");
-        // An obligation is Change-scoped (lands beside the finding); a hazard is Repository-scoped
-        // (lands in callboard/register/ instead) — CardScopeRules.Validate's fixed table.
-        var raisedPath = kind == "obligation"
-            ? Path.Combine(repo.CardsDirectory, "h-0001.md")
-            : Path.Combine(repo.RegisterDirectory, "h-0001.md");
         var bodyFilePath = WriteBodyFile(repo.Path, "The instrument does not cover generated code.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Checked, with a gap", "--section", sectionId, "--change", ChangeName,
-                "--blind-spot", kind, "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+                "--blind-spot", kind, "--blind-spot-title", "Blind spot",
                 "--blind-spot-body-file", bodyFilePath,
             ],
             output, repo.Path, "Recorded body.");
@@ -71,8 +69,16 @@ public sealed class CommandDispatcherFindingRecordTests
         var result = doc.RootElement.GetProperty("result");
         Assert.Equal("raised-as", result.GetProperty("blindSpot").GetString());
         Assert.Equal(kind, result.GetProperty("raisedCardKind").GetString());
-        Assert.Equal(raisedPath, result.GetProperty("raisedCardFilePath").GetString());
+
+        // 14.5-remediation: the raised card's own basename is its own minted id too.
+        var raisedPath = result.GetProperty("raisedCardFilePath").GetString()!;
+        Assert.Equal(CardLayout.FileNameFor(result.GetProperty("raisedCardId").GetString()!), Path.GetFileName(raisedPath));
         Assert.True(File.Exists(raisedPath));
+
+        // An obligation is Change-scoped (lands beside the finding); a hazard is Repository-scoped
+        // (lands in callboard/register/ instead) — CardScopeRules.Validate's fixed table.
+        var expectedDirectory = (kind == "obligation" ? repo.CardsDirectory : repo.RegisterDirectory).TrimEnd(Path.DirectorySeparatorChar);
+        Assert.Equal(expectedDirectory, Path.GetDirectoryName(raisedPath));
     }
 
     // The load-bearing refusal (findings: "the system refuses and names the declaration it
@@ -97,23 +103,23 @@ public sealed class CommandDispatcherFindingRecordTests
         // this test's original "cold directory" premise a section card cannot touch.
         var sectionId = CreateSection(repo);
 
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0000.md");
-        var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0000.md");
         var bodyFilePath = WriteBodyFile(repo.Path, "The instrument does not cover generated code.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Checked, with a gap", "--section", sectionId, "--change", ChangeName,
-                "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+                "--blind-spot", "hazard", "--blind-spot-title", "Blind spot",
                 "--blind-spot-body-file", bodyFilePath,
             ],
             output, repo.Path, "Recorded body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
-        Assert.True(File.Exists(findingPath));
-        Assert.True(File.Exists(raisedPath));
+        using var doc = JsonDocument.Parse(output.ToString());
+        var result = doc.RootElement.GetProperty("result");
+        Assert.True(File.Exists(result.GetProperty("filePath").GetString()));
+        Assert.True(File.Exists(result.GetProperty("raisedCardFilePath").GetString()));
     }
 
     [Fact]
@@ -121,11 +127,11 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0003.md");
+        var filesBefore = Directory.GetFiles(repo.CardsDirectory, "*.md").Length;
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["finding", "record", findingPath, "--role", "worker", "--title", "Clean pass", "--section", sectionId, "--change", ChangeName],
+            ["finding", "record", "--role", "worker", "--title", "Clean pass", "--section", sectionId, "--change", ChangeName],
             output, repo.Path, "Recorded body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -137,7 +143,8 @@ public sealed class CommandDispatcherFindingRecordTests
         Assert.Contains("obligation", message, StringComparison.Ordinal);
         Assert.Contains("hazard", message, StringComparison.Ordinal);
 
-        Assert.False(File.Exists(findingPath));
+        // Nothing was minted — the refusal fired before any identity was ever allocated.
+        Assert.Equal(filesBefore, Directory.GetFiles(repo.CardsDirectory, "*.md").Length);
     }
 
     [Fact]
@@ -145,12 +152,11 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0004.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "maybe",
             ],
@@ -163,17 +169,19 @@ public sealed class CommandDispatcherFindingRecordTests
         Assert.Contains("'maybe'", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
     }
 
+    // 14.5-remediation: `--blind-spot-file` is gone, so this now tests the flag that is first in
+    // line behind it — `--blind-spot-title` — for the same "declared a blind spot but did not
+    // supply everything it needs" shape.
     [Fact]
-    public void RaisingWithoutBlindSpotFile_Refuses_WithMissingArgument()
+    public void RaisingWithoutBlindSpotTitle_Refuses_WithMissingArgument()
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0005.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Checked, with a gap", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "hazard",
             ],
@@ -181,7 +189,9 @@ public sealed class CommandDispatcherFindingRecordTests
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("missing-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
+        Assert.Contains("--blind-spot-title", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
     }
 
     // ADR-0001 / design.md: no workflow may require quoting a card body as a shell argument.
@@ -192,15 +202,13 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0010.md");
-        var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0010.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Checked, with a gap", "--section", sectionId, "--change", ChangeName,
-                "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+                "--blind-spot", "hazard", "--blind-spot-title", "Blind spot",
             ],
             output, repo.Path, "Recorded body.");
 
@@ -219,16 +227,15 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0011.md");
-        var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0011.md");
+        var filesBefore = Directory.GetFiles(repo.CardsDirectory, "*.md").Length;
         var missingBodyPath = Path.Combine(repo.Path, "no-such-body.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Checked, with a gap", "--section", sectionId, "--change", ChangeName,
-                "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+                "--blind-spot", "hazard", "--blind-spot-title", "Blind spot",
                 "--blind-spot-body-file", missingBodyPath,
             ],
             output, repo.Path, "Recorded body.");
@@ -238,7 +245,7 @@ public sealed class CommandDispatcherFindingRecordTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("blind-spot-body-file-not-found", refusal.GetProperty("code").GetString());
         Assert.Contains(missingBodyPath, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
-        Assert.False(File.Exists(findingPath));
+        Assert.Equal(filesBefore, Directory.GetFiles(repo.CardsDirectory, "*.md").Length);
     }
 
     // The same code fires for a path naming a directory — File.Exists is false for a directory
@@ -248,17 +255,15 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0012.md");
-        var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0012.md");
         var directoryBodyPath = Path.Combine(repo.Path, "a-directory");
         Directory.CreateDirectory(directoryBodyPath);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Checked, with a gap", "--section", sectionId, "--change", ChangeName,
-                "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+                "--blind-spot", "hazard", "--blind-spot-title", "Blind spot",
                 "--blind-spot-body-file", directoryBodyPath,
             ],
             output, repo.Path, "Recorded body.");
@@ -275,8 +280,6 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0013.md");
-        var raisedPath = Path.Combine(repo.RegisterDirectory, "h-0013.md");
         var bodyFilePath = WriteBodyFile(repo.Path, "Unreadable content.");
         var output = new StringWriter();
 
@@ -287,14 +290,15 @@ public sealed class CommandDispatcherFindingRecordTests
             return;
         }
 
+        var filesBefore = Directory.GetFiles(repo.CardsDirectory, "*.md").Length;
         File.SetUnixFileMode(bodyFilePath, UnixFileMode.None);
         try
         {
             var exitCode = RunInRepo(
                 [
-                    "finding", "record", findingPath,
+                    "finding", "record",
                     "--role", "worker", "--title", "Checked, with a gap", "--section", sectionId, "--change", ChangeName,
-                    "--blind-spot", "hazard", "--blind-spot-file", raisedPath, "--blind-spot-title", "Blind spot",
+                    "--blind-spot", "hazard", "--blind-spot-title", "Blind spot",
                     "--blind-spot-body-file", bodyFilePath,
                 ],
                 output, repo.Path, "Recorded body.");
@@ -304,7 +308,7 @@ public sealed class CommandDispatcherFindingRecordTests
             var refusal = doc.RootElement.GetProperty("refusal");
             Assert.Equal("blind-spot-body-file-unreadable", refusal.GetProperty("code").GetString());
             Assert.Contains(bodyFilePath, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
-            Assert.False(File.Exists(findingPath));
+            Assert.Equal(filesBefore, Directory.GetFiles(repo.CardsDirectory, "*.md").Length);
         }
         finally
         {
@@ -318,12 +322,11 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0006.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "none", "--extent-instrument", "make gates", "--extent-explicit", "src/Foo.cs",
             ],
@@ -345,8 +348,10 @@ public sealed class CommandDispatcherFindingRecordTests
         // than "confirmed unclaimed", masking the AlreadyExists case this test targets under a
         // ToolFailure instead). Its own id ("F-9999") deliberately does not collide with the
         // "F-0001" the fresh counter is about to issue — this fixture is about the *path*
-        // colliding, not the id.
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0007.md");
+        // colliding, not the id. 14.5-remediation: that path is CardLayout.FileNameFor("F-0001")
+        // now, not a caller's to choose — CreateSection above burns an "S" identity only, so
+        // "F-0001" is still the first Finding this repo's counter will ever mint.
+        var findingPath = Path.Combine(repo.CardsDirectory, CardLayout.FileNameFor("F-0001"));
         Directory.CreateDirectory(repo.CardsDirectory);
         var unrelatedFrontmatter = new CardFrontmatter(
             "F-9999", CardKind.Finding, "Unrelated", "open", CardOwner.Architect, CardScope.Change, sectionId, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
@@ -355,7 +360,7 @@ public sealed class CommandDispatcherFindingRecordTests
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "none",
             ],
@@ -371,11 +376,10 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0008.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["finding", "record", findingPath, "--title", "Clean pass", "--section", sectionId, "--change", ChangeName, "--blind-spot", "none"],
+            ["finding", "record", "--title", "Clean pass", "--section", sectionId, "--change", ChangeName, "--blind-spot", "none"],
             output, repo.Path, "Recorded body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -390,12 +394,11 @@ public sealed class CommandDispatcherFindingRecordTests
     public void SectionIdDoesNotResolveToAnyCard_Refuses_WithCardIdNotFound()
     {
         using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0014.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", "S-9999", "--change", ChangeName,
                 "--blind-spot", "none",
             ],
@@ -406,7 +409,8 @@ public sealed class CommandDispatcherFindingRecordTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("card-id-not-found", refusal.GetProperty("code").GetString());
         Assert.Contains("S-9999", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
-        Assert.False(File.Exists(findingPath));
+        // The section never resolved, so RecordFinding is never reached — nothing was minted.
+        Assert.False(Directory.Exists(repo.CardsDirectory) && Directory.GetFiles(repo.CardsDirectory, "*.md", SearchOption.AllDirectories).Length > 0);
     }
 
     // §7 block B remediation (reviewer blocker): the id does not resolve to any card, but a file
@@ -423,12 +427,11 @@ public sealed class CommandDispatcherFindingRecordTests
         var garbagePath = Path.Combine(repo.RegisterDirectory, "r-broken.md");
         File.WriteAllText(garbagePath, "not a card at all, no frontmatter fence");
 
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0018.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", "S-9999", "--change", ChangeName,
                 "--blind-spot", "none",
             ],
@@ -441,7 +444,7 @@ public sealed class CommandDispatcherFindingRecordTests
         var message = refusal.GetProperty("message").GetString()!;
         Assert.Contains("S-9999", message, StringComparison.Ordinal);
         Assert.Contains(garbagePath, message, StringComparison.Ordinal);
-        Assert.False(File.Exists(findingPath));
+        Assert.False(Directory.Exists(repo.CardsDirectory) && Directory.GetFiles(repo.CardsDirectory, "*.md", SearchOption.AllDirectories).Length > 0);
     }
 
     // §13.6, reviewer finding on 13.6's own item-7 count: `finding record --section` reaches the
@@ -460,12 +463,11 @@ public sealed class CommandDispatcherFindingRecordTests
             CardScope.Change, string.Empty, FixedNow, FixedNow);
         File.WriteAllText(corruptPath, CardFileWriter.Serialize(new CardFile(frontmatter, "Body.", [], [])));
 
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0019.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", "S-9999", "--change", ChangeName,
                 "--blind-spot", "none",
             ],
@@ -479,7 +481,8 @@ public sealed class CommandDispatcherFindingRecordTests
         Assert.Contains("S-9999", message, StringComparison.Ordinal);
         Assert.Contains(corruptPath, message, StringComparison.Ordinal);
         Assert.Contains("unrecognised status: 'not-a-real-status'", message, StringComparison.Ordinal);
-        Assert.False(File.Exists(findingPath));
+        // Only the pre-existing corrupt card sits in the directory — nothing was minted.
+        Assert.Single(Directory.GetFiles(repo.CardsDirectory, "*.md"));
     }
 
     // The id resolves, but to a card that is not a `section` at all — reuses the existing
@@ -496,12 +499,11 @@ public sealed class CommandDispatcherFindingRecordTests
         using var ruleDoc = JsonDocument.Parse(ruleOutput.ToString());
         var ruleId = ruleDoc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
 
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0015.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", ruleId, "--change", ChangeName,
                 "--blind-spot", "none",
             ],
@@ -533,12 +535,12 @@ public sealed class CommandDispatcherFindingRecordTests
         var collidingCard = new CardFile(collidingFrontmatter, "Body.", [], [], [], BlockCardFields.Empty, [], SectionCardFields.Empty);
         File.WriteAllText(collidingPath, CardFileWriter.Serialize(collidingCard), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0016.md");
+        var filesBefore = Directory.GetFiles(repo.CardsDirectory, "*.md").Length;
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "none",
             ],
@@ -549,7 +551,7 @@ public sealed class CommandDispatcherFindingRecordTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("duplicate-card-id", refusal.GetProperty("code").GetString());
         Assert.Contains(sectionId, refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
-        Assert.False(File.Exists(findingPath));
+        Assert.Equal(filesBefore, Directory.GetFiles(repo.CardsDirectory, "*.md").Length);
     }
 
     [Fact]
@@ -557,12 +559,11 @@ public sealed class CommandDispatcherFindingRecordTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0009.md");
         var output = new StringWriter();
 
         var exitCode = CommandDispatcher.Run(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Clean pass", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "none",
             ],

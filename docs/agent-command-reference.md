@@ -56,21 +56,43 @@ back in the result's `filePath`. A caller cannot express a wrong filename for a 
 through the CLI any more — do not write `block create <path>` into anything; that argument does not
 exist.
 
+**The property is about every door that mints a card, not only the nine `14.5` touched at the CLI's
+own primary-verb layer — a lesson this section itself needed twice.** A card is also minted as the
+*second* write of a two-card verb, or a *manifest field* rather than an argv flag, and both shapes
+turned out to have caller-named doors of their own, found and closed across two supervisor
+remediation rounds:
+
+- **`finding record`** mints the finding itself, and (with `--blind-spot obligation|hazard`) the
+  raised card alongside it. Both used to take a caller-supplied path — the finding via a leading
+  positional, the raised card via `--blind-spot-file` — and neither does now; read where each landed
+  from the response's `filePath`/`raisedCardFilePath`.
+- **`nit disposition --disposition defer|decline --raise <path>`** and **`comment promote --to
+  question|decision --raise <path>`** each raised a second card (an obligation/decision; a
+  question/decision) at a caller-named `--raise <path>`. `--raise` is gone from both; read where the
+  raised card landed from the response's own `raisedCardFilePath`.
+- **`section verdict --finding-new <manifest-file>`** mints a brand-new `block` card per first-time
+  finding. The manifest format itself used to carry a `new-card-file:` header naming that card's
+  path — the one door in this whole list where a caller named a file from *inside a file*, not an
+  argv flag. That header is gone; a manifest still spelling it refuses loudly
+  (`finding-new-manifest-malformed`, naming the header and why), the same "an unknown or
+  now-forbidden field refuses rather than silently drops" discipline `14.1`'s unterminated-block
+  check established for the card format proper. `section verdict`'s own response reports only the
+  new card's `id` (under `newCardIds`), not its path — read the id back and resolve it if the path is
+  needed, the same as any other identity-addressed reference.
+
+Do not write `finding record <path>`, `--blind-spot-file`, `nit disposition --raise`, `comment
+promote --raise`, or a manifest `new-card-file:` header into anything; none of them exist any more.
+
 **Addressing an existing card is a different door and was not touched.** Verbs that act on a card
 that already exists still take a path as their first positional argument — `block transition`,
 `block base`, `block gate`, `section verdict`, `section authorise`, `section close`, `section
-status`, `section export`, `finding record`, `finding status`. Where a verb needs no file-adjacent
-context of its own — `block approve`, `nit raise`, `nit disposition`, `comment add`, `comment
-resolve`, `comment promote`, `comment decline` — it addresses by `--id <card-id>` instead, resolved
-through the same identity resolver at execute time. `card show <card-id>` addresses by a bare
-positional id (not a path, and not a `--id` flag). **Do not flatten this into "everything takes
-`--id`"** — a path-addressed verb and an `--id`-addressed verb are not interchangeable, and the
-asymmetry between the two is real: which one a given verb uses is listed against each command below.
-
-One more thing this distinction does *not* cover: `finding record` mints a new card (a finding) but
-was not one of `14.5`'s nine doors — it is not called through `CardStore.CreateCard`, and still
-takes a positional path today. It is out of scope for this document (see the closing section), but
-worth stating plainly so nobody assumes "creation never takes a path" universally.
+status`, `section export`, `finding status`. Where a verb needs no file-adjacent context of its
+own — `block approve`, `nit raise`, `nit disposition`, `comment add`, `comment resolve`, `comment
+promote`, `comment decline` — it addresses by `--id <card-id>` instead, resolved through the same
+identity resolver at execute time. `card show <card-id>` addresses by a bare positional id (not a
+path, and not a `--id` flag). **Do not flatten this into "everything takes `--id`"** — a
+path-addressed verb and an `--id`-addressed verb are not interchangeable, and the asymmetry between
+the two is real: which one a given verb uses is listed against each command below.
 
 ## Verified against a real board
 
@@ -352,8 +374,8 @@ Identical verbs, same shapes — see the `worker` section above.
 
 ### Judged out of scope for `supervisor`, and why
 
-- **`finding record`** — mints a standalone finding card by its own positional-path door (not one of
-  `14.5`'s nine, still unmoved — see "The one distinction to hold onto" above), with its own
+- **`finding record`** — mints a standalone finding card (a `CardStore.CreateCard`-style door since
+  the 14.5-remediation — see "The one distinction to hold onto" above), with its own
   `--blind-spot`/`--extent-instrument`/`--extent-explicit` surface. A section verdict's own
   `--finding-new <manifest>` is the mechanism this document verified for attaching new findings to a
   verdict in one write; `finding record`'s standalone door (recording a finding *outside* a verdict,

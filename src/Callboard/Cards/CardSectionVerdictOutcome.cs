@@ -164,10 +164,12 @@ internal abstract record CardSectionVerdictOutcome
     /// finding, so that one card's thread is the complete history of one finding across every
     /// round it took to close"). The owner is either an existing on-disk card, or — §8a block B
     /// revision's own addition, once a single verdict could name more than one new finding — an
-    /// <em>earlier</em> <c>--finding-new</c> occurrence in this same call, in which case
-    /// <see cref="OwningCardId"/> is the literal <c>"&lt;pending: this verdict&gt;"</c> sentinel and
-    /// <see cref="OwningCardFilePath"/> is that earlier manifest's own <c>new-card-file</c>, since
-    /// there is no on-disk owner yet to name honestly. Names the remedy either way:
+    /// <em>earlier</em> <c>--finding-new</c> occurrence in this same call, in which case both
+    /// <see cref="OwningCardId"/> and <see cref="OwningCardFilePath"/> are the literal
+    /// <c>"&lt;pending: this verdict&gt;"</c> sentinel — there is no on-disk owner yet to name
+    /// honestly, and (14.5-remediation, §14 supervisor finding, second round) no known path either,
+    /// since the manifest no longer names one; both are known only once this call's own write loop
+    /// allocates the card's identity. Names the remedy either way:
     /// <c>--finding-recurred</c> for a real owner, a different key for an in-batch collision.
     /// Refusal-shaped.</summary>
     internal sealed record FindingAlreadyOwned(string Key, string OwningCardId, string OwningCardFilePath) : CardSectionVerdictOutcome, ICardRefusalReason

@@ -41,7 +41,11 @@ internal abstract record CardCommentPromoteOutcome
     /// method's own "second write" is the original card's resolving comment — same ordering
     /// <see cref="CardStore.RecordFinding"/> uses, and for the same reason: it is what makes a
     /// genuine "first write succeeded, second failed" rollback case reachable at all).</param>
-    internal sealed record Promoted(CardFile OriginalCard, CardFile RaisedCard) : CardCommentPromoteOutcome
+    /// <param name="RaisedCardFilePath">Where <paramref name="RaisedCard"/> landed — <see
+    /// cref="CardLayout.FileNameFor"/>'s result under its fixed scope's own directory
+    /// (14.5-remediation, §14 supervisor finding, second round: the caller no longer names
+    /// this).</param>
+    internal sealed record Promoted(CardFile OriginalCard, CardFile RaisedCard, string RaisedCardFilePath) : CardCommentPromoteOutcome
     {
         internal override TResult Match<TResult>(Func<Promoted, TResult> onPromoted, Func<CommentNotFound, TResult> onCommentNotFound, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<AlreadyResolved, TResult> onAlreadyResolved, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<CardNotFound, TResult> onCardNotFound, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure, Func<HandEnteredDerivedState, TResult> onHandEnteredDerivedState) =>
             onPromoted(this);

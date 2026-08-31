@@ -386,10 +386,9 @@ public sealed class HandEnteredDerivedStateCoverageTests : IDisposable
     public void PromoteComment_CardCarryingAReservedKey_Refuses_AndRecords()
     {
         var path = WriteTaintedCard(_changesDirectory, "b-0010", "B-0010", CardKind.Block, CardOwner.Worker);
-        var raiseFilePath = Path.Combine(_registerDirectory, "q-0099.md");
 
         var outcome = CardStore.PromoteComment(
-            _root, path, "some-comment-id", raiseFilePath, CardKind.Question, "A promoted question",
+            _root, path, "some-comment-id", CardKind.Question, "A promoted question",
             CardOwner.Worker, CardOwner.Architect, "Body.", ChangeName, Now, TimeSpan.FromSeconds(5));
 
         var handEntered = Assert.IsType<CardCommentPromoteOutcome.HandEnteredDerivedState>(outcome);

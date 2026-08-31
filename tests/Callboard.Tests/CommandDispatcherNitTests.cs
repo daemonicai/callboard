@@ -242,7 +242,7 @@ public sealed class CommandDispatcherNitTests
         var secondExit = RunInRepo(
             [
                 "nit", "disposition", "--id", secondNitId, "--role", "architect", "--disposition", "defer",
-                "--raise", Path.Combine(repo.ChangeDirectory, "o-0001.md"), "--title", "t", "--change", ChangeName,
+                "--title", "t", "--change", ChangeName,
             ],
             secondOutput, repo, "Deferring this one.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, secondExit);
@@ -273,7 +273,7 @@ public sealed class CommandDispatcherNitTests
         var firstExit = RunInRepo(
             [
                 "nit", "disposition", "--id", firstNitId, "--role", "architect", "--disposition", "defer",
-                "--raise", Path.Combine(repo.ChangeDirectory, "o-0002.md"), "--title", "t", "--change", ChangeName,
+                "--title", "t", "--change", ChangeName,
             ],
             firstOutput, repo, "Deferring this one.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, firstExit);
@@ -317,7 +317,7 @@ public sealed class CommandDispatcherNitTests
         var secondExit = RunInRepo(
             [
                 "nit", "disposition", "--id", secondNitId, "--role", "architect", "--disposition", "decline",
-                "--raise", Path.Combine(repo.DecisionsDirectory, "d-0003.md"), "--title", "t", "--change", ChangeName,
+                "--title", "t", "--change", ChangeName,
             ],
             secondOutput, repo, "Declining this one.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, secondExit);
@@ -352,7 +352,7 @@ public sealed class CommandDispatcherNitTests
         var secondExit = RunInRepo(
             [
                 "nit", "disposition", "--id", secondNitId, "--role", "architect", "--disposition", "defer",
-                "--raise", Path.Combine(repo.ChangeDirectory, "o-0003.md"), "--title", "t", "--change", ChangeName,
+                "--title", "t", "--change", ChangeName,
             ],
             new StringWriter(), repo, "Deferring this one.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, secondExit);
@@ -383,13 +383,12 @@ public sealed class CommandDispatcherNitTests
         using var repo = new TempGitRepo();
         WriteInitialBlockCard(repo.Path, "b-0004", "B-0004", BlockFlowState.InReview);
         var nitId = RaiseNit(repo, "B-0004", required: true);
-        var decisionPath = Path.Combine(repo.DecisionsDirectory, "d-0001.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
                 "nit", "disposition", "--id", nitId, "--role", "architect", "--disposition", "decline",
-                "--raise", decisionPath, "--title", "Code is right as it stands", "--change", ChangeName,
+                "--title", "Code is right as it stands", "--change", ChangeName,
             ],
             output, repo, "The pattern is deliberate; see the same idiom two lines up.");
 
@@ -401,6 +400,10 @@ public sealed class CommandDispatcherNitTests
         var raisedCardId = result.GetProperty("raisedCardId").GetString();
         Assert.False(string.IsNullOrWhiteSpace(raisedCardId));
 
+        // 14.5-remediation (§14 supervisor finding, second round): the raised card's basename is
+        // its own minted id — no caller supplied its path.
+        var decisionPath = result.GetProperty("raisedCardFilePath").GetString()!;
+        Assert.Equal(CardLayout.FileNameFor(raisedCardId!), Path.GetFileName(decisionPath));
         var decision = AssertParseSuccess(CardStore.ReadCard(decisionPath));
         Assert.Equal(CardKind.Decision, decision.Frontmatter.Kind);
         Assert.Equal(CardScope.Capability, decision.Frontmatter.Scope);
@@ -419,17 +422,18 @@ public sealed class CommandDispatcherNitTests
         using var repo = new TempGitRepo();
         WriteInitialBlockCard(repo.Path, "b-0005", "B-0005", BlockFlowState.InReview);
         var nitId = RaiseNit(repo, "B-0005");
-        var obligationPath = Path.Combine(repo.ChangeDirectory, "o-0001.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
                 "nit", "disposition", "--id", nitId, "--role", "architect", "--disposition", "defer",
-                "--raise", obligationPath, "--title", "Address in a later section", "--change", ChangeName,
+                "--title", "Address in a later section", "--change", ChangeName,
             ],
             output, repo, "Deferred to §10.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var obligationPath = doc.RootElement.GetProperty("result").GetProperty("raisedCardFilePath").GetString()!;
         var obligation = AssertParseSuccess(CardStore.ReadCard(obligationPath));
         Assert.Equal(CardKind.Obligation, obligation.Frontmatter.Kind);
         Assert.Equal(CardScope.Change, obligation.Frontmatter.Scope);
@@ -437,8 +441,11 @@ public sealed class CommandDispatcherNitTests
         Assert.Contains("Deferred to §10.", obligation.Body, StringComparison.Ordinal);
     }
 
+    // 14.5-remediation (§14 supervisor finding, second round): `--raise` is gone — this now
+    // tests the flag that is first in line behind it, `--title`, for the same "declared a raise
+    // but did not supply everything it needs" shape.
     [Fact]
-    public void NitDisposition_Defer_MissingRaiseFlag_RefusesWithMissingArgumentCode()
+    public void NitDisposition_Defer_MissingTitleFlag_RefusesWithMissingArgumentCode()
     {
         using var repo = new TempGitRepo();
         WriteInitialBlockCard(repo.Path, "b-0006", "B-0006", BlockFlowState.InReview);
@@ -446,12 +453,14 @@ public sealed class CommandDispatcherNitTests
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["nit", "disposition", "--id", nitId, "--role", "architect", "--disposition", "defer", "--title", "t", "--change", ChangeName],
+            ["nit", "disposition", "--id", nitId, "--role", "architect", "--disposition", "defer", "--change", ChangeName],
             output, repo, "reason");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("missing-argument", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
+        Assert.Contains("--title", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -469,7 +478,7 @@ public sealed class CommandDispatcherNitTests
 
         var secondOutput = new StringWriter();
         var secondExit = RunInRepo(
-            ["nit", "disposition", "--id", nitId, "--role", "architect", "--disposition", "decline", "--raise", Path.Combine(repo.DecisionsDirectory, "d-0002.md"), "--title", "t", "--change", ChangeName],
+            ["nit", "disposition", "--id", nitId, "--role", "architect", "--disposition", "decline", "--title", "t", "--change", ChangeName],
             secondOutput, repo, "reason two");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, secondExit);
@@ -865,7 +874,7 @@ public sealed class CommandDispatcherNitTests
         var round2Exit = RunInRepo(
             [
                 "nit", "disposition", "--id", round2NitId, "--role", "architect", "--disposition", "decline",
-                "--raise", Path.Combine(repo.DecisionsDirectory, "d-0004.md"), "--title", "t", "--change", ChangeName,
+                "--title", "t", "--change", ChangeName,
             ],
             round2Output, repo, "Declining in round 2 — no fix-before-land nit this round.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, round2Exit);
@@ -910,7 +919,7 @@ public sealed class CommandDispatcherNitTests
         var round3Exit = RunInRepo(
             [
                 "nit", "disposition", "--id", round3NitId, "--role", "architect", "--disposition", "decline",
-                "--raise", Path.Combine(repo.DecisionsDirectory, "d-0005.md"), "--title", "t", "--change", ChangeName,
+                "--title", "t", "--change", ChangeName,
             ],
             round3Output, repo, "Declining in round 3 — no fix-before-land nit this round.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, round3Exit);

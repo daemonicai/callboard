@@ -22,10 +22,6 @@ internal sealed record NitDispositionRaiseRequest
 {
     internal CardKind Kind { get; }
 
-    /// <summary>Where the raised card is written — a path, not a symbolic id, the same convention
-    /// every other raised-card request in this codebase follows.</summary>
-    internal string FilePath { get; }
-
     internal string Title { get; }
 
     /// <summary>The raised card's own content — for <c>defer</c>, what discharges the obligation;
@@ -35,7 +31,13 @@ internal sealed record NitDispositionRaiseRequest
     /// body — see <see cref="CardStore.DispositionNit"/>.</summary>
     internal string Body { get; }
 
-    internal NitDispositionRaiseRequest(CardKind kind, string filePath, string title, string body)
+    /// <summary>
+    /// 14.5-remediation (§14 supervisor finding, second round): this type no longer carries a
+    /// <c>FilePath</c> — <see cref="CardStore.DispositionNit"/> names the raised card itself, the
+    /// same "container, then allocate, then <see cref="CardLayout.FileNameFor"/>" ordering every
+    /// other card-minting door in this codebase now follows.
+    /// </summary>
+    internal NitDispositionRaiseRequest(CardKind kind, string title, string body)
     {
         if (!ReferenceEquals(kind, CardKind.Obligation) && !ReferenceEquals(kind, CardKind.Decision))
         {
@@ -46,7 +48,6 @@ internal sealed record NitDispositionRaiseRequest
         }
 
         Kind = kind;
-        FilePath = filePath;
         Title = title;
         Body = body;
     }

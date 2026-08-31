@@ -44,10 +44,9 @@ public sealed class CardCommentPromoteTests : IDisposable
     public void PromoteComment_ToQuestion_Promotes_WritesTheQuestionCard_AndResolvesTheOriginalThread()
     {
         var path = WriteCardWithComment("b-0001", "B-0001", "thread-1", CardOwner.Reviewer);
-        var raisedPath = Path.Combine(_registerDirectory, "q-0100.md");
 
         var outcome = CardStore.PromoteComment(
-            _root, path, "thread-1", raisedPath, CardKind.Question, "Should we ship X?", CardOwner.Reviewer,
+            _root, path, "thread-1", CardKind.Question, "Should we ship X?", CardOwner.Reviewer,
             CardOwner.ProductOwner, "Raised while resolving a thread.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
 
         var promoted = AssertPromoted(outcome);
@@ -57,7 +56,11 @@ public sealed class CardCommentPromoteTests : IDisposable
         Assert.Equal("open", promoted.RaisedCard.Frontmatter.Status);
         Assert.Equal("S-0001", promoted.RaisedCard.Frontmatter.Section);
 
-        var raisedOnDisk = AssertParseSuccess(CardStore.ReadCard(raisedPath));
+        // 14.5-remediation (§14 supervisor finding, second round): the written file's basename is
+        // the minted id — no caller supplied it.
+        Assert.Equal(CardLayout.FileNameFor(promoted.RaisedCard.Frontmatter.Id), Path.GetFileName(promoted.RaisedCardFilePath));
+
+        var raisedOnDisk = AssertParseSuccess(CardStore.ReadCard(promoted.RaisedCardFilePath));
         Assert.Equal(promoted.RaisedCard.Frontmatter.Id, raisedOnDisk.Frontmatter.Id);
 
         var originalOnDisk = AssertParseSuccess(CardStore.ReadCard(path));
@@ -74,10 +77,9 @@ public sealed class CardCommentPromoteTests : IDisposable
     public void PromoteComment_ToQuestion_OnASectionCard_LinksTheRaisedQuestionToTheSectionsOwnId()
     {
         var path = WriteSectionCardWithComment("s-0030", "S-0030", "thread-1", CardOwner.Reviewer);
-        var raisedPath = Path.Combine(_registerDirectory, "q-0200.md");
 
         var outcome = CardStore.PromoteComment(
-            _root, path, "thread-1", raisedPath, CardKind.Question, "Should we ship X?", CardOwner.Reviewer,
+            _root, path, "thread-1", CardKind.Question, "Should we ship X?", CardOwner.Reviewer,
             CardOwner.ProductOwner, "Raised while resolving a thread.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
 
         var promoted = AssertPromoted(outcome);
@@ -88,31 +90,31 @@ public sealed class CardCommentPromoteTests : IDisposable
     public void PromoteComment_ToDecision_Promotes_OwnedByTheActingRole_NoOwedByNeeded()
     {
         var path = WriteCardWithComment("b-0002", "B-0002", "thread-1", CardOwner.Architect);
-        var raisedPath = Path.Combine(_decisionsDirectory, "d-0100.md");
 
         var outcome = CardStore.PromoteComment(
-            _root, path, "thread-1", raisedPath, CardKind.Decision, "Ship X now.", CardOwner.Architect,
-            owedByRole: null, "Raised while resolving a thread.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
+            _root, path, "thread-1", CardKind.Decision, "Ship X now.", CardOwner.Architect,
+            null, "Raised while resolving a thread.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
 
         var promoted = AssertPromoted(outcome);
         Assert.Equal(CardKind.Decision, promoted.RaisedCard.Frontmatter.Kind);
         Assert.Equal(CardOwner.Architect, promoted.RaisedCard.Frontmatter.Owner);
         Assert.Equal(CardScope.Capability, promoted.RaisedCard.Frontmatter.Scope);
+        Assert.Equal(CardLayout.FileNameFor(promoted.RaisedCard.Frontmatter.Id), Path.GetFileName(promoted.RaisedCardFilePath));
     }
 
     [Fact]
     public void PromoteComment_CommentDoesNotExist_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard()
     {
         var path = WriteCardWithComment("b-0003", "B-0003", "thread-1", CardOwner.Reviewer);
-        var raisedPath = Path.Combine(_registerDirectory, "q-0101.md");
+        var filesBefore = Directory.GetFiles(_registerDirectory, "*.md").Length;
 
         var outcome = CardStore.PromoteComment(
-            _root, path, "no-such-thread", raisedPath, CardKind.Question, "Title.", CardOwner.Reviewer,
+            _root, path, "no-such-thread", CardKind.Question, "Title.", CardOwner.Reviewer,
             CardOwner.ProductOwner, "Body.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
 
         var refusal = Assert.IsType<CardCommentPromoteOutcome.CommentNotFound>(outcome);
         Assert.Equal("no-such-thread", refusal.CommentId);
-        Assert.False(File.Exists(raisedPath));
+        Assert.Equal(filesBefore, Directory.GetFiles(_registerDirectory, "*.md").Length);
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         var recorded = Assert.Single(read.Refusals);
@@ -125,17 +127,17 @@ public sealed class CardCommentPromoteTests : IDisposable
     public void PromoteComment_RoleNeitherAddresseeNorCardOwner_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard()
     {
         var path = WriteCardWithComment("b-0010", "B-0010", "thread-1", CardOwner.Reviewer);
-        var raisedPath = Path.Combine(_registerDirectory, "q-0105.md");
+        var filesBefore = Directory.GetFiles(_registerDirectory, "*.md").Length;
 
         var outcome = CardStore.PromoteComment(
-            _root, path, "thread-1", raisedPath, CardKind.Question, "Title.", CardOwner.Architect,
+            _root, path, "thread-1", CardKind.Question, "Title.", CardOwner.Architect,
             CardOwner.ProductOwner, "Body.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
 
         var refusal = Assert.IsType<CardCommentPromoteOutcome.RoleNotPermitted>(outcome);
         Assert.Equal(CardOwner.Architect, refusal.AttemptedRole);
         Assert.Equal(CardOwner.Worker, refusal.CardOwnerRole);
         Assert.Equal(CardOwner.Reviewer, refusal.AddressedTo);
-        Assert.False(File.Exists(raisedPath));
+        Assert.Equal(filesBefore, Directory.GetFiles(_registerDirectory, "*.md").Length);
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.False(CardCommentRouting.IsResolved(read.Comments, 0));
@@ -152,10 +154,9 @@ public sealed class CardCommentPromoteTests : IDisposable
     public void PromoteComment_ByCardOwner_ThreadAddressedToAnotherRole_Promotes()
     {
         var path = WriteCardWithComment("b-0011", "B-0011", "thread-1", CardOwner.ProductOwner);
-        var raisedPath = Path.Combine(_registerDirectory, "q-0106.md");
 
         var outcome = CardStore.PromoteComment(
-            _root, path, "thread-1", raisedPath, CardKind.Question, "Title.", CardOwner.Worker,
+            _root, path, "thread-1", CardKind.Question, "Title.", CardOwner.Worker,
             CardOwner.ProductOwner, "Body.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
 
         AssertPromoted(outcome);
@@ -165,20 +166,19 @@ public sealed class CardCommentPromoteTests : IDisposable
     public void PromoteComment_AlreadyResolved_Refuses_AndRecordsTheRefusal_AndWritesNoRaisedCard()
     {
         var path = WriteCardWithComment("b-0004", "B-0004", "thread-1", CardOwner.Reviewer);
-        var firstRaised = Path.Combine(_registerDirectory, "q-0102.md");
         var first = CardStore.PromoteComment(
-            _root, path, "thread-1", firstRaised, CardKind.Question, "Title.", CardOwner.Reviewer,
+            _root, path, "thread-1", CardKind.Question, "Title.", CardOwner.Reviewer,
             CardOwner.ProductOwner, "Body.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
         AssertPromoted(first);
 
-        var secondRaised = Path.Combine(_registerDirectory, "q-0103.md");
+        var filesBefore = Directory.GetFiles(_registerDirectory, "*.md").Length;
         var outcome = CardStore.PromoteComment(
-            _root, path, "thread-1", secondRaised, CardKind.Question, "Title again.", CardOwner.Reviewer,
+            _root, path, "thread-1", CardKind.Question, "Title again.", CardOwner.Reviewer,
             CardOwner.ProductOwner, "Body again.", ChangeName, PromotedAt.AddMinutes(5), TimeSpan.FromSeconds(5));
 
         var refusal = Assert.IsType<CardCommentPromoteOutcome.AlreadyResolved>(outcome);
         Assert.Equal("thread-1", refusal.CommentId);
-        Assert.False(File.Exists(secondRaised));
+        Assert.Equal(filesBefore, Directory.GetFiles(_registerDirectory, "*.md").Length);
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         var recorded = Assert.Single(read.Refusals);
@@ -190,14 +190,16 @@ public sealed class CardCommentPromoteTests : IDisposable
     {
         var path = WriteCardWithComment("b-0005", "B-0005", "thread-1", CardOwner.Reviewer);
 
-        // A readable, unrelated card at the target path — not garbage text (§13: the identity
-        // allocator now confirms, against the whole record, that the id it is about to issue is
-        // not already borne; an unparseable file at this exact path would report Unreadable rather
-        // than "confirmed unclaimed", masking the AlreadyExists case this test targets under a
-        // ToolFailure instead). Its own id ("Q-9999") deliberately does not collide with the
-        // "Q-0001" the fresh counter is about to issue — this fixture is about the *path*
-        // colliding, not the id.
-        var raisedPath = Path.Combine(_registerDirectory, "q-0104.md");
+        // 14.5-remediation (§14 supervisor finding, second round): the raised card's target path is
+        // no longer a caller's to choose — it is CardLayout.FileNameFor("Q-0001"), the first
+        // question identity a fresh counter in this test's own _root ever mints. A readable,
+        // unrelated card — not garbage text (§13: the identity allocator now confirms, against the
+        // whole record, that the id it is about to issue is not already borne; an unparseable file
+        // at this exact path would report Unreadable rather than "confirmed unclaimed", masking the
+        // AlreadyExists case this test targets under a ToolFailure instead). Its own id
+        // ("Q-9999") deliberately does not collide with "Q-0001" — this fixture is about the
+        // *path* colliding, not the id.
+        var raisedPath = Path.Combine(_registerDirectory, CardLayout.FileNameFor("Q-0001"));
         var unrelatedFrontmatter = new CardFrontmatter(
             "Q-9999", CardKind.Question, "Unrelated", "open", CardOwner.Architect, CardScope.Repository, string.Empty, Created, Created);
         File.WriteAllText(
@@ -205,7 +207,7 @@ public sealed class CardCommentPromoteTests : IDisposable
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var outcome = CardStore.PromoteComment(
-            _root, path, "thread-1", raisedPath, CardKind.Question, "Title.", CardOwner.Reviewer,
+            _root, path, "thread-1", CardKind.Question, "Title.", CardOwner.Reviewer,
             CardOwner.ProductOwner, "Body.", ChangeName, PromotedAt, TimeSpan.FromSeconds(5));
 
         var refusal = Assert.IsType<CardCommentPromoteOutcome.RaisedCardAlreadyExists>(outcome);

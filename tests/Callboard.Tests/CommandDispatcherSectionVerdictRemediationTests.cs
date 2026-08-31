@@ -28,8 +28,7 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
     {
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0001", "S-0001");
-        var newCardPath = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar), "b-new-0001.md");
-        var manifest = WriteManifestFile(repo.Path, "finding-x001", newCardPath, "Fix the X defect", "The reviewer nit about X was not addressed.");
+        var manifest = WriteManifestFile(repo.Path, "finding-x001", "Fix the X defect", "The reviewer nit about X was not addressed.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -44,6 +43,10 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         var newCardIds = doc.RootElement.GetProperty("result").GetProperty("newCardIds").EnumerateArray().Select(static e => e.GetString()).ToList();
         Assert.Single(newCardIds);
 
+        // 14.5-remediation (§14 supervisor finding, second round): the manifest no longer names the
+        // new card's path — it is CardLayout.FileNameFor(id) under the change directory.
+        var newCardPath = Path.Combine(
+            repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar), CardLayout.FileNameFor(newCardIds[0]!));
         var newCard = AssertParseSuccess(CardStore.ReadCard(newCardPath));
         Assert.Equal(CardKind.Block, newCard.Frontmatter.Kind);
         Assert.Equal("briefed", newCard.Frontmatter.Status);
@@ -69,12 +72,9 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0010", "S-0010");
         var changeDir = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
-        var path1 = Path.Combine(changeDir, "b-new-0010-1.md");
-        var path2 = Path.Combine(changeDir, "b-new-0010-2.md");
-        var path3 = Path.Combine(changeDir, "b-new-0010-3.md");
-        var manifest1 = WriteManifestFile(repo.Path, "finding-x010-1", path1, "First defect", "Body one.");
-        var manifest2 = WriteManifestFile(repo.Path, "finding-x010-2", path2, "Second defect", "Body two.");
-        var manifest3 = WriteManifestFile(repo.Path, "finding-x010-3", path3, "Third defect", "Body three.");
+        var manifest1 = WriteManifestFile(repo.Path, "finding-x010-1", "First defect", "Body one.");
+        var manifest2 = WriteManifestFile(repo.Path, "finding-x010-2", "Second defect", "Body two.");
+        var manifest3 = WriteManifestFile(repo.Path, "finding-x010-3", "Third defect", "Body three.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -91,6 +91,11 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         Assert.Equal(3, newCardIds.Count);
         Assert.Equal(3, newCardIds.Distinct().Count());
 
+        // 14.5-remediation: each new card's path is CardLayout.FileNameFor(id), in --finding-new
+        // argv order — the same order the ids themselves were minted in.
+        var path1 = Path.Combine(changeDir, CardLayout.FileNameFor(newCardIds[0]!));
+        var path2 = Path.Combine(changeDir, CardLayout.FileNameFor(newCardIds[1]!));
+        var path3 = Path.Combine(changeDir, CardLayout.FileNameFor(newCardIds[2]!));
         Assert.Equal("finding-x010-1", AssertParseSuccess(CardStore.ReadCard(path1)).BlockFields.FindingKey);
         Assert.Equal("finding-x010-2", AssertParseSuccess(CardStore.ReadCard(path2)).BlockFields.FindingKey);
         Assert.Equal("finding-x010-3", AssertParseSuccess(CardStore.ReadCard(path3)).BlockFields.FindingKey);
@@ -142,8 +147,7 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0003", "S-0003");
         var owningPath = WriteApprovedRemediationCard(repo.Path, "b-own-0002", "B-OWN-0002", "S-0003", "finding-x003", round: 1);
-        var newCardPath = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar), "b-new-0003.md");
-        var manifest = WriteManifestFile(repo.Path, "finding-x004", newCardPath, "Fix the second defect", "A second, unrelated defect.");
+        var manifest = WriteManifestFile(repo.Path, "finding-x004", "Fix the second defect", "A second, unrelated defect.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -155,6 +159,10 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
             output, repo.Path);
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var newCardId = doc.RootElement.GetProperty("result").GetProperty("newCardIds").EnumerateArray().Single().GetString()!;
+        var newCardPath = Path.Combine(
+            repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar), CardLayout.FileNameFor(newCardId));
         Assert.Equal("briefed", AssertParseSuccess(CardStore.ReadCard(owningPath)).Frontmatter.Status);
         Assert.Equal("briefed", AssertParseSuccess(CardStore.ReadCard(newCardPath)).Frontmatter.Status);
 
@@ -171,8 +179,9 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0004", "S-0004");
         var owningPath = WriteApprovedRemediationCard(repo.Path, "b-own-0003", "B-OWN-0003", "S-0004", "finding-x005", round: 1);
-        var newCardPath = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar), "b-new-0004.md");
-        var manifest = WriteManifestFile(repo.Path, "finding-x005", newCardPath, "Duplicate", "Attempting to re-raise an owned finding as new.");
+        var changeDir = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        var filesBefore = Directory.GetFiles(changeDir, "*.md").Length;
+        var manifest = WriteManifestFile(repo.Path, "finding-x005", "Duplicate", "Attempting to re-raise an owned finding as new.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -188,7 +197,8 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         Assert.Equal("finding-already-owned", refusal.GetProperty("code").GetString());
         Assert.Contains("B-OWN-0003", refusal.GetProperty("message").GetString());
 
-        Assert.False(File.Exists(newCardPath));
+        // Nothing was minted — the refusal fired before any identity was ever allocated.
+        Assert.Equal(filesBefore, Directory.GetFiles(changeDir, "*.md").Length);
         // All-or-nothing: the section itself carries no verdict either, since the whole call refused.
         var sectionRead = AssertParseSuccess(CardStore.ReadCard(sectionPath));
         Assert.Empty(sectionRead.SectionFields.Verdicts);
@@ -214,17 +224,21 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0018", "S-0018");
         var changeDir = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
-        var collidingPath = Path.Combine(changeDir, "b-new-0018.md");
-        // A real, parseable card — not garbage text: the key-ownership scan
+        // 14.5-remediation (§14 supervisor finding, second round): the new card's target path is no
+        // longer a caller's to choose — it is CardLayout.FileNameFor("B-0001"), the first block
+        // identity a fresh counter in this test's own repo ever mints (WriteInitialSectionCard and
+        // its siblings hand-write cards with hand-chosen ids, never through the counter). A real,
+        // parseable card at that target path — not garbage text: the key-ownership scan
         // (RecordSectionVerdictUnderExistingLock) reads every '*.md' file in the section's own
         // directory via ReadAllCards before it ever reaches the File.Exists check this test targets,
         // so an unparseable file at this path would hit CardCorrupt first and mask the refusal this
         // test means to exercise. No FindingKey, so it cannot be mistaken for owning 'finding-x018'.
+        var collidingPath = Path.Combine(changeDir, CardLayout.FileNameFor("B-0001"));
         var collidingFrontmatter = new CardFrontmatter(
             "B-UNRELATED-0018", CardKind.Block, "An unrelated file", "briefed", CardOwner.Architect, CardScope.Change, "S-0018", FixedNow, FixedNow);
         var collidingCard = new CardFile(collidingFrontmatter, "Body.", [], [], [], BlockCardFields.Empty, []);
         File.WriteAllText(collidingPath, CardFileWriter.Serialize(collidingCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        var manifest = WriteManifestFile(repo.Path, "finding-x018", collidingPath, "Never created", "The target file already exists.");
+        var manifest = WriteManifestFile(repo.Path, "finding-x018", "Never created", "The target file already exists.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -262,10 +276,9 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0011", "S-0011");
         var changeDir = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
-        var path1 = Path.Combine(changeDir, "b-new-0011-1.md");
-        var path2 = Path.Combine(changeDir, "b-new-0011-2.md");
-        var manifest1 = WriteManifestFile(repo.Path, "finding-x011", path1, "First manifest", "Body one.");
-        var manifest2 = WriteManifestFile(repo.Path, "finding-x011", path2, "Second manifest, same key", "Body two.");
+        var filesBefore = Directory.GetFiles(changeDir, "*.md").Length;
+        var manifest1 = WriteManifestFile(repo.Path, "finding-x011", "First manifest", "Body one.");
+        var manifest2 = WriteManifestFile(repo.Path, "finding-x011", "Second manifest, same key", "Body two.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -281,10 +294,11 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("finding-already-owned", refusal.GetProperty("code").GetString());
         Assert.Contains("pending: this verdict", refusal.GetProperty("message").GetString());
-        Assert.Contains(path1, refusal.GetProperty("message").GetString());
 
-        Assert.False(File.Exists(path1));
-        Assert.False(File.Exists(path2));
+        // Nothing was minted for either manifest — the refusal fired before any identity was
+        // allocated for the second entry, and the first entry's own write never runs either
+        // (validate-everything-then-write).
+        Assert.Equal(filesBefore, Directory.GetFiles(changeDir, "*.md").Length);
         Assert.Empty(AssertParseSuccess(CardStore.ReadCard(sectionPath)).SectionFields.Verdicts);
     }
 
@@ -364,8 +378,9 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0007", "S-0007");
         var taskBlockPath = WriteApprovedTaskImplementingBlockCard(repo.Path, "b-task-0002", "B-TASK-0002", "S-0007");
-        var newCardPath = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar), "b-new-0007.md");
-        var manifest = WriteManifestFile(repo.Path, "finding-x007", newCardPath, "Never created", "Would be created, but the call as a whole refuses.");
+        var changeDir = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        var filesBefore = Directory.GetFiles(changeDir, "*.md").Length;
+        var manifest = WriteManifestFile(repo.Path, "finding-x007", "Never created", "Would be created, but the call as a whole refuses.");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -377,45 +392,23 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
             output, repo.Path);
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
-        Assert.False(File.Exists(newCardPath));
+        Assert.Equal(filesBefore, Directory.GetFiles(changeDir, "*.md").Length);
         Assert.Empty(AssertParseSuccess(CardStore.ReadCard(sectionPath)).SectionFields.Verdicts);
         Assert.Equal("approved", AssertParseSuccess(CardStore.ReadCard(taskBlockPath)).Frontmatter.Status);
     }
 
-    // Reviewer finding, block B nit (fix-before-land): a refused call must not create the
-    // containing directory for a --finding-new target that is never written — the doc comment's
-    // "the filesystem... exactly as found" claim, taken literally. Mutation target: reverting the
-    // fix (creating the directory ahead of validation again) is what this test would go red
-    // against; a not-yet-existing nested directory makes a stray create observable, unlike the
-    // sibling tests above whose new-card directory already exists for other reasons.
-    [Fact]
-    public void SectionVerdict_RefusedCall_CreatesNoStrayDirectoryForAFindingNewTargetNeverWritten()
-    {
-        using var repo = new TempGitRepo();
-        var sectionPath = WriteInitialSectionCard(repo.Path, "s-0017", "S-0017");
-        var owningPath = WriteApprovedRemediationCard(repo.Path, "b-own-0017", "B-OWN-0017", "S-0017", "finding-x017", round: 1);
-        var changeDir = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
-        var neverCreatedDirectory = Path.Combine(changeDir, "not-yet-existing");
-        var newCardPath = Path.Combine(neverCreatedDirectory, "b-new-0017.md");
-        Assert.False(Directory.Exists(neverCreatedDirectory));
-        // Same key the owning card already owns — a genuine 8a.9 refusal, not a contrived failure.
-        var manifest = WriteManifestFile(repo.Path, "finding-x017", newCardPath, "Would collide", "Never written — the call refuses first.");
-        var output = new StringWriter();
-
-        var exitCode = RunInRepo(
-            [
-                "section", "verdict", sectionPath, "--verdict", "request-changes", "--range-from", "aaa", "--range-to", "bbb",
-                "--role", "supervisor", "--change", ChangeName, "--finding-new", manifest,
-            ],
-            output, repo.Path);
-
-        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
-        using var doc = JsonDocument.Parse(output.ToString());
-        Assert.Equal("finding-already-owned", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
-        Assert.False(File.Exists(newCardPath));
-        Assert.False(Directory.Exists(neverCreatedDirectory));
-        Assert.Equal("approved", AssertParseSuccess(CardStore.ReadCard(owningPath)).Frontmatter.Status);
-    }
+    // Reviewer finding, block B nit (fix-before-land)'s own fixture — retired here
+    // (14.5-remediation, §14 supervisor finding, second round), not merely deleted without a
+    // trace: it named a --finding-new target inside a deliberately not-yet-existing nested
+    // subdirectory the caller chose, to prove a refused call creates no stray directory for a
+    // card that is never written. A manifest can no longer name any directory at all — every new
+    // card this verb can ever mint lands in CardLayout.DirectoryFor(CardScope.Change, changeName),
+    // the section's own already-existing directory, so there is no caller-nameable "not yet
+    // existing" directory left to prove nothing was created in. The still-live half of what this
+    // test proved — a refused call writes nothing — remains covered by
+    // FindingNew_KeyAlreadyOwnedOnDisk_Refuses_CreatesNoSecondCard and
+    // FindingNew_TwoManifestsNameTheSameKeyInOneCall_RefusesTheWholeCall_CreatesNeither above,
+    // both of which assert the change directory's own file count is unchanged by a refusal.
 
     // CLI parse-level: a --finding-new manifest that does not exist refuses cleanly, naming the
     // manifest path.
@@ -446,7 +439,7 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0013", "S-0013");
         var manifestPath = Path.Combine(repo.Path, "manifest-no-closing-fence.txt");
-        File.WriteAllText(manifestPath, "---\nkey: finding-x013\nnew-card-file: /tmp/x.md\ntitle: X\nBody with no closing fence.\n");
+        File.WriteAllText(manifestPath, "---\nkey: finding-x013\ntitle: X\nBody with no closing fence.\n");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -470,7 +463,7 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0014", "S-0014");
         var manifestPath = Path.Combine(repo.Path, "manifest-missing-key.txt");
-        File.WriteAllText(manifestPath, "---\nkey: finding-x014\nnew-card-file: /tmp/x.md\n---\nBody.\n");
+        File.WriteAllText(manifestPath, "---\nkey: finding-x014\n---\nBody.\n");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -494,7 +487,7 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0015", "S-0015");
         var manifestPath = Path.Combine(repo.Path, "manifest-duplicate-key.txt");
-        File.WriteAllText(manifestPath, "---\nkey: finding-x015\nkey: finding-x015-again\nnew-card-file: /tmp/x.md\ntitle: X\n---\nBody.\n");
+        File.WriteAllText(manifestPath, "---\nkey: finding-x015\nkey: finding-x015-again\ntitle: X\n---\nBody.\n");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -519,7 +512,7 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         using var repo = new TempGitRepo();
         var sectionPath = WriteInitialSectionCard(repo.Path, "s-0016", "S-0016");
         var manifestPath = Path.Combine(repo.Path, "manifest-unrecognised-key.txt");
-        File.WriteAllText(manifestPath, "---\nkey: finding-x016\nnew-card-file: /tmp/x.md\ntitle: X\nauthor: someone\n---\nBody.\n");
+        File.WriteAllText(manifestPath, "---\nkey: finding-x016\ntitle: X\nauthor: someone\n---\nBody.\n");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
@@ -534,6 +527,38 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("finding-new-manifest-malformed", refusal.GetProperty("code").GetString());
         Assert.Contains("unrecognised", refusal.GetProperty("message").GetString());
+    }
+
+    // 14.5-remediation (§14 supervisor finding, second round): a manifest still spelling the
+    // removed 'new-card-file' header refuses loudly, by name — not folded into the generic
+    // "unrecognised header key" case above, so a caller still on the old format gets told what
+    // changed rather than a generic typo message.
+    [Fact]
+    public void SectionVerdict_FindingNewManifestStillNamesNewCardFile_Refuses_ByNameAndWritesNothing()
+    {
+        using var repo = new TempGitRepo();
+        var sectionPath = WriteInitialSectionCard(repo.Path, "s-0020", "S-0020");
+        var changeDir = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ChangeName).Replace('/', Path.DirectorySeparatorChar));
+        var filesBefore = Directory.GetFiles(changeDir, "*.md").Length;
+        var manifestPath = Path.Combine(repo.Path, "manifest-legacy-new-card-file.txt");
+        File.WriteAllText(manifestPath, "---\nkey: finding-x020\nnew-card-file: legacy-path.md\ntitle: X\n---\nBody.\n");
+        var output = new StringWriter();
+
+        var exitCode = RunInRepo(
+            [
+                "section", "verdict", sectionPath, "--verdict", "request-changes", "--range-from", "aaa", "--range-to", "bbb",
+                "--role", "supervisor", "--change", ChangeName, "--finding-new", manifestPath,
+            ],
+            output, repo.Path);
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("finding-new-manifest-malformed", refusal.GetProperty("code").GetString());
+        var message = refusal.GetProperty("message").GetString()!;
+        Assert.Contains("new-card-file", message, StringComparison.Ordinal);
+        Assert.Contains("no longer accepted", message, StringComparison.Ordinal);
+        Assert.Equal(filesBefore, Directory.GetFiles(changeDir, "*.md").Length);
     }
 
     // block transition ... finding-recurred is refused at parse (one-door discipline) — the
@@ -615,10 +640,10 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         return path;
     }
 
-    private static string WriteManifestFile(string repoRoot, string key, string newCardFile, string title, string body)
+    private static string WriteManifestFile(string repoRoot, string key, string title, string body)
     {
         var path = Path.Combine(repoRoot, "manifest-" + Guid.NewGuid().ToString("N") + ".txt");
-        var content = $"---\nkey: {key}\nnew-card-file: {newCardFile}\ntitle: {title}\n---\n{body}";
+        var content = $"---\nkey: {key}\ntitle: {title}\n---\n{body}";
         File.WriteAllText(path, content);
         return path;
     }

@@ -28,6 +28,16 @@ namespace Callboard.Tests;
 /// </para>
 ///
 /// <para>
+/// <b>14.5-remediation (§14 supervisor finding): a tenth and eleventh door, added by name.</b>
+/// <c>finding record</c> was not one of the nine creation verbs 14.5 itself touched — it mints a
+/// card too, but through <see cref="Cards.CardStore.RecordFinding"/>, a different call graph — and
+/// the supervisor found it still took a caller-supplied path for both the finding's own file and,
+/// via <c>--blind-spot-file</c>, the raised obligation/hazard's. This is not a representative
+/// sample any more for those two doors specifically: both are asserted below by name, alongside the
+/// three original doors.
+/// </para>
+///
+/// <para>
 /// <b>The diagnostic half.</b> The reviewer's finding: feeding the shipped binary the old positional
 /// invocation produced <c>missing-argument</c> — technically true (a downstream flag never got read)
 /// but misleading (the caller did supply it; a stray leading token, not a missing one, is what
@@ -109,6 +119,65 @@ public sealed class CommandDispatcherLegacyPositionalArgumentTests
                 "--role", "architect", "--change", ChangeName, "--task", "14.5",
             },
         };
+
+        // 14.5-remediation (§14 supervisor finding): the tenth door onto this exact guard —
+        // `finding record` never had it, and is the verb the supervisor's finding is about.
+        yield return new object[]
+        {
+            "finding",
+            new[]
+            {
+                "finding", "record", "legacy-path.md", "--title", "Checked",
+                "--role", "worker", "--section", "S-0001", "--change", ChangeName, "--blind-spot", "none",
+            },
+        };
+    }
+
+    // 14.5-remediation (§14 supervisor finding): the eleventh door — `finding record
+    // --blind-spot-file <path>`, which named the *raised* obligation/hazard's own file. Unlike the
+    // positional path above, this flag is not routed onto RefuseLeadingPositionalArgument (it was
+    // never a leading positional): it is simply gone from ConsumeKnownFlags' known-flag set, so a
+    // caller still spelling it gets the funnel's own generic unrecognised-argument refusal — the
+    // same "judged and left alone" disposition RuleProposeCompact_LegacyProposalFileFlag... proves
+    // below for --proposal-file, and for the identical reason: a worse parser is not worth a better
+    // message for a flag this verb never routes specially.
+    [Fact]
+    public void FindingRecord_LegacyBlindSpotFileFlag_Refuses_WithTheExistingUnrecognisedArgumentCode_AndWritesNoCard()
+    {
+        using var repo = new TempGitRepo();
+        var sectionOutput = new StringWriter();
+        RunInRepo(["section", "create", "--title", "Section", "--role", "architect", "--change", ChangeName], sectionOutput, repo.Path, "Body.");
+        var sectionId = JsonDocument.Parse(sectionOutput.ToString()).RootElement.GetProperty("result").GetProperty("id").GetString();
+
+        var bodyFilePath = Path.Combine(repo.Path, "blind-spot-body.md");
+        File.WriteAllText(bodyFilePath, "Content.");
+
+        // --blind-spot-file trails every other flag ConsumeKnownFlags would otherwise still
+        // recognise — the same "leftover token, not a missing one" shape the sibling
+        // RuleProposeCompact_LegacyProposalFileFlag... test below relies on: placed earlier, the
+        // unconsumed remainder (its own value, plus every flag behind it) would strand a
+        // still-required flag and surface as a misleading missing-argument instead, the exact
+        // asymmetry 14.5's positional guard was written to avoid on the positional's own leading
+        // token.
+        var output = new StringWriter();
+        var exitCode = RunInRepo(
+            [
+                "finding", "record", "--role", "worker", "--title", "Checked", "--section", sectionId!, "--change", ChangeName,
+                "--blind-spot", "hazard", "--blind-spot-title", "T", "--blind-spot-body-file", bodyFilePath,
+                "--blind-spot-file", "legacy-raised.md",
+            ],
+            output, repo.Path, "Body.");
+
+        Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
+        using var doc = JsonDocument.Parse(output.ToString());
+        var refusal = doc.RootElement.GetProperty("refusal");
+        Assert.Equal("unrecognised-argument", refusal.GetProperty("code").GetString());
+        Assert.Contains("--blind-spot-file", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+
+        // Only the section card exists under the record proper — the finding itself, and any
+        // raised card, were never written. (The body file above also matches "*.md" but lives
+        // outside callboard/, which is why the check is scoped to the record's own root.)
+        Assert.Single(Directory.EnumerateFiles(Path.Combine(repo.Path, "callboard"), "*.md", SearchOption.AllDirectories));
     }
 
     // The judged-and-left-alone half: 'rule propose-compact' never had a positional path (it used

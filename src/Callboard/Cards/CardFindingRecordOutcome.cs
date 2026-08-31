@@ -39,10 +39,16 @@ internal abstract record CardFindingRecordOutcome
     /// actually recorded (<see cref="FindingBlindSpotDeclaration.None"/> or a
     /// <see cref="FindingBlindSpotDeclaration.RaisedAs"/> naming <paramref name="RaisedCard"/>'s own
     /// id).</param>
+    /// <param name="FindingFilePath">Where <paramref name="Finding"/> landed — <see cref="
+    /// CardLayout.FileNameFor"/>'s result under the section-scoped change directory (14.5-
+    /// remediation, §14 supervisor finding: the caller no longer names this, so it can no longer be
+    /// recovered from a caller-supplied value the way it once could).</param>
     /// <param name="RaisedCard">The obligation or hazard card raised alongside the finding, or
     /// <see langword="null"/> when the blind spot was declared <see cref="FindingBlindSpotDeclaration.
     /// None"/> and nothing was raised.</param>
-    internal sealed record Recorded(CardFile Finding, CardFile? RaisedCard) : CardFindingRecordOutcome
+    /// <param name="RaisedCardFilePath">Where <paramref name="RaisedCard"/> landed, or <see
+    /// langword="null"/> exactly when <paramref name="RaisedCard"/> is.</param>
+    internal sealed record Recorded(CardFile Finding, string FindingFilePath, CardFile? RaisedCard, string? RaisedCardFilePath) : CardFindingRecordOutcome
     {
         internal override TResult Match<TResult>(Func<Recorded, TResult> onRecorded, Func<FindingAlreadyExists, TResult> onFindingAlreadyExists, Func<BlindSpotCardAlreadyExists, TResult> onBlindSpotCardAlreadyExists, Func<FindingLayoutMismatch, TResult> onFindingLayoutMismatch, Func<BlindSpotLayoutMismatch, TResult> onBlindSpotLayoutMismatch, Func<ToolFailure, TResult> onToolFailure) =>
             onRecorded(this);

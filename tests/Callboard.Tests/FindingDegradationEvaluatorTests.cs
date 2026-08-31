@@ -59,7 +59,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
     public void OpenSection_FindingReadsLive()
     {
         var sectionPath = WriteSectionCard("s-0001", "S-0001", closed: false);
-        var findingPath = WriteFinding("f-0001", "S-0001");
+        var findingPath = WriteFinding("S-0001");
         _ = sectionPath;
 
         var card = AssertParseSuccess(CardStore.ReadCard(findingPath));
@@ -70,7 +70,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
     public void ClosedSection_FindingReadsDegraded()
     {
         WriteSectionCard("s-0002", "S-0002", closed: true);
-        var findingPath = WriteFinding("f-0002", "S-0002");
+        var findingPath = WriteFinding("S-0002");
 
         var card = AssertParseSuccess(CardStore.ReadCard(findingPath));
         Assert.Same(FindingDegradationStatus.Degraded, AssertResolved(FindingDegradationEvaluator.Evaluate(card, _root)));
@@ -82,7 +82,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
     [Fact]
     public void SectionIdDoesNotResolveToAnyCard_ReadsLive_NotDegraded()
     {
-        var findingPath = WriteFinding("f-0003", "S-9999");
+        var findingPath = WriteFinding("S-9999");
 
         var card = AssertParseSuccess(CardStore.ReadCard(findingPath));
         Assert.Same(FindingDegradationStatus.Live, AssertResolved(FindingDegradationEvaluator.Evaluate(card, _root)));
@@ -95,7 +95,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
     [Fact]
     public void SectionIdDoesNotResolve_ButAnUnrelatedFileCouldNotBeRead_ReadsUnreadable_NotLive()
     {
-        var findingPath = WriteFinding("f-0004", "S-9999");
+        var findingPath = WriteFinding("S-9999");
 
         Directory.CreateDirectory(_registerDirectory);
         var garbagePath = Path.Combine(_registerDirectory, "r-broken.md");
@@ -122,7 +122,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
     public void ClosingTheSection_NeverWritesOrRewritesTheFindingCard()
     {
         var sectionPath = WriteSectionCard("s-0004", "S-0004", closed: false);
-        var findingPath = WriteFinding("f-0005", "S-0004");
+        var findingPath = WriteFinding("S-0004");
 
         var bytesBefore = File.ReadAllText(findingPath);
         var mtimeBefore = File.GetLastWriteTimeUtc(findingPath);
@@ -165,7 +165,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
     public void DegradedFinding_StillParsesAndRoundTrips()
     {
         WriteSectionCard("s-0006", "S-0006", closed: true);
-        var findingPath = WriteFinding("f-0006", "S-0006");
+        var findingPath = WriteFinding("S-0006");
 
         var card = AssertParseSuccess(CardStore.ReadCard(findingPath));
         Assert.Same(FindingDegradationStatus.Degraded, AssertResolved(FindingDegradationEvaluator.Evaluate(card, _root)));
@@ -184,7 +184,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
     {
         var openPath = WriteSectionCard("s-a-open", "S-0100", closed: false);
         var closedPath = WriteSectionCard("s-b-closed", "S-0100", closed: true);
-        var findingPath = WriteFinding("f-0007", "S-0100");
+        var findingPath = WriteFinding("S-0100");
 
         var card = AssertParseSuccess(CardStore.ReadCard(findingPath));
         var evaluation = FindingDegradationEvaluator.Evaluate(card, _root);
@@ -208,7 +208,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
     public void DefiniteMatch_TakesPrecedenceOverAnUnrelatedUnreadableCard()
     {
         WriteSectionCard("s-0007", "S-0102", closed: true);
-        var findingPath = WriteFinding("f-0009", "S-0102");
+        var findingPath = WriteFinding("S-0102");
 
         var garbagePath = Path.Combine(_directory, "s-broken-2.md");
         File.WriteAllText(garbagePath, "garbage", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -229,7 +229,7 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
         File.WriteAllText(
             Path.Combine(_registerDirectory, "r-0001.md"), CardFileWriter.Serialize(ruleCard), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var findingPath = WriteFinding("f-0010", "R-0001");
+        var findingPath = WriteFinding("R-0001");
         var card = AssertParseSuccess(CardStore.ReadCard(findingPath));
         var evaluation = FindingDegradationEvaluator.Evaluate(card, _root);
 
@@ -244,15 +244,13 @@ public sealed class FindingDegradationEvaluatorTests : IDisposable
         Assert.Contains("rule", reason, StringComparison.Ordinal);
     }
 
-    private string WriteFinding(string fileStem, string sectionId)
+    private string WriteFinding(string sectionId)
     {
-        var findingPath = Path.Combine(_directory, fileStem + ".md");
         var outcome = CardStore.RecordFinding(
-            _root, findingPath, "A finding", CardOwner.Worker, sectionId, "Body of the finding.",
+            _root, "A finding", CardOwner.Worker, sectionId, "Body of the finding.",
             instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest: null,
             FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
-        AssertRecorded(outcome);
-        return findingPath;
+        return AssertRecorded(outcome).FindingFilePath;
     }
 
     private string WriteSectionCard(string fileStem, string id, bool closed)

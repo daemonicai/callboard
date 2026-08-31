@@ -97,10 +97,11 @@ internal static class CardLayout
     /// The file name a card carrying <paramref name="id"/> is written under — its identity plus
     /// the <c>.md</c> extension, and nothing else (card-model: "A card's file SHALL be named for
     /// its identity, so that a directory listing of the record is a list of card identities").
-    /// The single statement of that mapping (14.5): <see cref="CardStore.CreateCard"/> is the only
-    /// caller, and only ever after <see cref="CardIdentityAllocator.Allocate"/> has already minted
-    /// <paramref name="id"/> — there is no route from caller-supplied text to a card's basename.
-    /// <see cref="RequireSafePathSegment"/> is defensive here, not load-bearing: every
+    /// The single statement of that mapping (14.5, extended by the §14 supervisor remediation):
+    /// <see cref="CardStore.CreateCard"/> and <see cref="CardStore.RecordFinding"/> are the only
+    /// callers, and each only ever after <see cref="CardIdentityAllocator.Allocate"/> has already
+    /// minted <paramref name="id"/> — there is no route from caller-supplied text to a card's
+    /// basename. <see cref="RequireSafePathSegment"/> is defensive here, not load-bearing: every
     /// <paramref name="id"/> this method ever sees was built by <see cref="CardIdentityAllocator"/>
     /// itself, which never produces a separator or a <c>.</c>/<c>..</c> segment.
     /// </summary>

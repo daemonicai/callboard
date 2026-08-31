@@ -24,11 +24,6 @@ internal sealed record FindingBlindSpotRaiseRequest
 {
     internal CardKind Kind { get; }
 
-    /// <summary>Where the raised card is written — a path, not a symbolic id, the same "verbs still
-    /// take file paths" convention every §5 verb follows (§6 block B brief: identity addressing is
-    /// §7/§8's open decision).</summary>
-    internal string FilePath { get; }
-
     internal string Title { get; }
 
     /// <summary>
@@ -38,7 +33,14 @@ internal sealed record FindingBlindSpotRaiseRequest
     /// </summary>
     internal string Body { get; }
 
-    internal FindingBlindSpotRaiseRequest(CardKind kind, string filePath, string title, string body)
+    /// <summary>
+    /// 14.5-remediation (§14 supervisor finding): this type no longer carries a <c>FilePath</c>.
+    /// <see cref="CardStore.RecordFinding"/> names the raised card's file itself, the same
+    /// "container, then allocate, then <see cref="CardLayout.FileNameFor"/>" ordering
+    /// <see cref="CardStore.CreateCard"/> already established (14.5) — a caller was never able to
+    /// supply one here in the first place, so there is nothing left for this type to carry.
+    /// </summary>
+    internal FindingBlindSpotRaiseRequest(CardKind kind, string title, string body)
     {
         if (!ReferenceEquals(kind, CardKind.Obligation) && !ReferenceEquals(kind, CardKind.Hazard))
         {
@@ -49,7 +51,6 @@ internal sealed record FindingBlindSpotRaiseRequest
         }
 
         Kind = kind;
-        FilePath = filePath;
         Title = title;
         Body = body;
     }

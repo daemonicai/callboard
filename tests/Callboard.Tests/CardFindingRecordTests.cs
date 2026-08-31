@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using Callboard.Cards;
@@ -46,13 +45,6 @@ public sealed class CardFindingRecordTests : IDisposable
         Directory.CreateDirectory(_root);
     }
 
-    // An obligation is Change-scoped, so it lands beside the finding in the change's own
-    // directory; a hazard is Repository-scoped, so it lands in callboard/register/ instead — the
-    // same fixed-by-kind table CardScopeRules.Validate and CardStore.ScopeForRaisedCard both state
-    // (see CardFindingRecordScopeAgreementTests).
-    private string RaisedCardPath(CardKind kind, string fileStem) =>
-        Path.Combine(kind == CardKind.Obligation ? _directory : _registerDirectory, fileStem + ".md");
-
     public void Dispose()
     {
         if (Directory.Exists(_root))
@@ -64,24 +56,27 @@ public sealed class CardFindingRecordTests : IDisposable
     [Fact]
     public void BlindSpotNone_WritesOnlyTheFinding_NoSecondCardAnywhereInTheDirectory()
     {
-        var findingPath = Path.Combine(_directory, "f-0001.md");
-
         var outcome = CardStore.RecordFinding(
-            _root, findingPath, "Everything checked clean", CardOwner.Worker, Section, "Body of the finding.",
+            _root, "Everything checked clean", CardOwner.Worker, Section, "Body of the finding.",
             instrument: "make gates", FindingExtent.BlockScope, verifiedAt: "abc123",
             raiseRequest: null, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
         var recorded = AssertRecorded(outcome);
         Assert.Null(recorded.RaisedCard);
+        Assert.Null(recorded.RaisedCardFilePath);
         Assert.Equal("none", recorded.Finding.FindingFields.BlindSpot.Match(onNone: static () => "none", onRaisedAs: static _ => "raised-as"));
+
+        // 14.5-remediation: the written file's basename is the minted id — the property no door
+        // that mints a card had ever asserted before this remediation (§14 supervisor finding).
+        Assert.Equal(CardLayout.FileNameFor(recorded.Finding.Frontmatter.Id), Path.GetFileName(recorded.FindingFilePath));
 
         // No card besides the finding itself exists anywhere the raised card could have landed —
         // proves "none" really did skip the second write, not merely that the outcome says so.
         var filesInDirectory = Directory.GetFiles(_directory, "*.md");
         Assert.Single(filesInDirectory);
-        Assert.Equal(findingPath, filesInDirectory[0]);
+        Assert.Equal(recorded.FindingFilePath, filesInDirectory[0]);
 
-        var read = AssertParseSuccess(CardStore.ReadCard(findingPath));
+        var read = AssertParseSuccess(CardStore.ReadCard(recorded.FindingFilePath));
         Assert.Equal("make gates", read.FindingFields.Instrument);
         Assert.Equal("abc123", read.FindingFields.VerifiedAt);
     }
@@ -91,18 +86,21 @@ public sealed class CardFindingRecordTests : IDisposable
     [InlineData("hazard")]
     public void BlindSpotRaised_WritesBothCards_EachReferencingTheOther(string kindText)
     {
-        var findingPath = Path.Combine(_directory, "f-0002.md");
         var raisedKind = kindText == "obligation" ? CardKind.Obligation : CardKind.Hazard;
-        var raisedPath = RaisedCardPath(raisedKind, "h-0001");
-        var raiseRequest = new FindingBlindSpotRaiseRequest(raisedKind, raisedPath, "Blind spot title", "Blind spot content.");
+        var raiseRequest = new FindingBlindSpotRaiseRequest(raisedKind, "Blind spot title", "Blind spot content.");
 
         var outcome = CardStore.RecordFinding(
-            _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
+            _root, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
             instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
         var recorded = AssertRecorded(outcome);
         Assert.NotNull(recorded.RaisedCard);
+        Assert.NotNull(recorded.RaisedCardFilePath);
         var raisedId = recorded.RaisedCard!.Frontmatter.Id;
+
+        // 14.5-remediation: both minted files' basenames are their own ids.
+        Assert.Equal(CardLayout.FileNameFor(recorded.Finding.Frontmatter.Id), Path.GetFileName(recorded.FindingFilePath));
+        Assert.Equal(CardLayout.FileNameFor(raisedId), Path.GetFileName(recorded.RaisedCardFilePath));
 
         // The finding's own reference: BlindSpot.RaisedAs names the raised card's id.
         var declaredId = recorded.Finding.FindingFields.BlindSpot.Match(
@@ -123,8 +121,8 @@ public sealed class CardFindingRecordTests : IDisposable
         Assert.Equal(raisedKind == CardKind.Obligation ? Section : null, recorded.RaisedCard.RegisterFields.OwedBy);
 
         // Both files actually landed on disk, independently readable.
-        var findingRead = AssertParseSuccess(CardStore.ReadCard(findingPath));
-        var raisedRead = AssertParseSuccess(CardStore.ReadCard(raisedPath));
+        var findingRead = AssertParseSuccess(CardStore.ReadCard(recorded.FindingFilePath));
+        var raisedRead = AssertParseSuccess(CardStore.ReadCard(recorded.RaisedCardFilePath!));
         Assert.Equal(raisedId, findingRead.FindingFields.BlindSpot.Match(onNone: static () => (string?)null, onRaisedAs: id => id));
         Assert.Equal(raisedKind, raisedRead.Frontmatter.Kind);
         Assert.Equal(raisedKind == CardKind.Obligation ? Section : null, raisedRead.RegisterFields.OwedBy);
@@ -141,17 +139,15 @@ public sealed class CardFindingRecordTests : IDisposable
         Assert.False(Directory.Exists(_directory), "test setup precondition: the change directory must not exist yet.");
         Assert.False(Directory.Exists(_registerDirectory), "test setup precondition: the register directory must not exist yet.");
 
-        var findingPath = Path.Combine(_directory, "f-0000.md");
-        var raisedPath = RaisedCardPath(CardKind.Hazard, "h-0000");
-        var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, raisedPath, "Blind spot title", "Blind spot content.");
+        var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, "Blind spot title", "Blind spot content.");
 
         var outcome = CardStore.RecordFinding(
-            _root, findingPath, "Everything checked clean", CardOwner.Worker, Section, "Body of the finding.",
+            _root, "Everything checked clean", CardOwner.Worker, Section, "Body of the finding.",
             instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
-        AssertRecorded(outcome);
-        Assert.True(File.Exists(findingPath));
-        Assert.True(File.Exists(raisedPath));
+        var recorded = AssertRecorded(outcome);
+        Assert.True(File.Exists(recorded.FindingFilePath));
+        Assert.True(File.Exists(recorded.RaisedCardFilePath));
     }
 
     // The partial-failure case, demonstrated by execution (§6 block B brief): pre-occupy the
@@ -161,37 +157,40 @@ public sealed class CardFindingRecordTests : IDisposable
     [Fact]
     public void FindingWriteFailsAfterRaisedCardAlreadyWritten_RaisedCardIsRolledBack()
     {
-        var findingPath = Path.Combine(_directory, "f-0003.md");
-        var raisedPath = RaisedCardPath(CardKind.Hazard, "h-0002");
-
-        // Pre-occupy the finding's path with an unrelated, readable card — not garbage text (§13:
-        // the identity allocator now confirms, against the whole record, that the id it is about
-        // to issue is not already borne; an unparseable file anywhere in the record reports
-        // Unreadable rather than "confirmed unclaimed", failing the allocation outright and masking
-        // the AlreadyExists case this test targets under a ToolFailure instead). Its own id
-        // ("F-9999") deliberately does not collide with the "F-0001" the fresh counter is about to
-        // issue — this fixture is about the finding's own *path* colliding, not its id. The
-        // directory has to exist for this stray write itself (unrelated to what RecordFinding does
-        // for its own writes), so it is created here, locally, not in shared setup.
+        // 14.5-remediation: the finding's target path is no longer a caller's to choose — it is
+        // CardLayout.FileNameFor("F-0001"), the first identity a fresh counter in this test's own
+        // _root ever mints. Pre-occupying it means writing there directly, under an unrelated,
+        // readable card (not garbage text — §13: the identity allocator confirms, against the
+        // whole record, that the id it is about to issue is not already borne; an unparseable file
+        // anywhere in the record reports Unreadable rather than "confirmed unclaimed", failing the
+        // allocation outright and masking the AlreadyExists case this test targets under a
+        // ToolFailure instead). Its own id ("F-9999") deliberately does not collide with "F-0001" —
+        // this fixture is about the finding's own *path* colliding, not its id. The directory has
+        // to exist for this stray write itself (unrelated to what RecordFinding does for its own
+        // writes), so it is created here, locally, not in shared setup.
         Directory.CreateDirectory(_directory);
+        var findingPath = Path.Combine(_directory, CardLayout.FileNameFor("F-0001"));
         var unrelatedFrontmatter = new CardFrontmatter(
             "F-9999", CardKind.Finding, "Unrelated", "open", CardOwner.Architect, CardScope.Change, Section, Recorded, Recorded);
         File.WriteAllText(
             findingPath, CardFileWriter.Serialize(new CardFile(unrelatedFrontmatter, "Unrelated.", [], [])),
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, raisedPath, "Blind spot title", "Blind spot content.");
+        var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, "Blind spot title", "Blind spot content.");
 
         var outcome = CardStore.RecordFinding(
-            _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
+            _root, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
             instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
         var alreadyExists = Assert.IsType<CardFindingRecordOutcome.FindingAlreadyExists>(outcome);
         Assert.Equal(findingPath, alreadyExists.FilePath);
 
         // The raised card must not be left behind — this is what "all-or-nothing" means in
-        // practice: a write that got as far as landing bytes on disk, then rolled back.
-        Assert.False(File.Exists(raisedPath), "the raised card was left behind after the finding's own write failed.");
+        // practice: a write that got as far as landing bytes on disk, then rolled back. Its own
+        // path is derived the same way; only one hazard was minted, so it is the only *.md the
+        // register directory could contain.
+        Assert.False(Directory.Exists(_registerDirectory) && Directory.GetFiles(_registerDirectory, "*.md").Length > 0,
+            "the raised card was left behind after the finding's own write failed.");
 
         // The pre-existing content at the finding's path is untouched — the finding write really
         // did refuse rather than silently succeeding over it.
@@ -205,9 +204,12 @@ public sealed class CardFindingRecordTests : IDisposable
     [Fact]
     public void RaisedCardPathAlreadyOccupied_RefusesBeforeWritingTheFinding()
     {
-        var findingPath = Path.Combine(_directory, "f-0004.md");
-        var raisedPath = RaisedCardPath(CardKind.Hazard, "h-0003");
+        // 14.5-remediation: same reasoning as the finding's own pre-occupy fixture above, but for
+        // the raised card's own target — CardLayout.FileNameFor("H-0001"), the first hazard identity
+        // a fresh counter in this test's own _root ever mints, under _registerDirectory (Repository
+        // scope).
         Directory.CreateDirectory(_registerDirectory);
+        var raisedPath = Path.Combine(_registerDirectory, CardLayout.FileNameFor("H-0001"));
 
         // A readable, unrelated card — not garbage text; see the sibling fixture above for why
         // (§13). Its own id ("H-9999") deliberately does not collide with the "H-0001" the fresh
@@ -218,17 +220,21 @@ public sealed class CardFindingRecordTests : IDisposable
             raisedPath, CardFileWriter.Serialize(new CardFile(unrelatedFrontmatter, "Unrelated.", [], [])),
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, raisedPath, "Blind spot title", "Blind spot content.");
+        var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, "Blind spot title", "Blind spot content.");
 
         var outcome = CardStore.RecordFinding(
-            _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
+            _root, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
             instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
 
         var alreadyExists = Assert.IsType<CardFindingRecordOutcome.BlindSpotCardAlreadyExists>(outcome);
         Assert.Equal(raisedPath, alreadyExists.FilePath);
 
-        // The finding was never written — the check on the raised card's path runs first.
-        Assert.False(File.Exists(findingPath));
+        // The finding was never written — the check on the raised card's path runs first. Its own
+        // target ("F-0001.md") would land under _directory, which the pre-occupying hazard card
+        // never touches (that sits under _registerDirectory instead), so no *.md anywhere in
+        // _directory is proof nothing was written there.
+        Assert.False(Directory.Exists(_directory) && Directory.GetFiles(_directory, "*.md").Length > 0,
+            "the finding was written even though the raised card's own path was already occupied.");
     }
 
     // 6.3's "does not degrade" — what a test can prove today, and what it cannot yet. Nothing in
@@ -259,17 +265,17 @@ public sealed class CardFindingRecordTests : IDisposable
         // chosen up front, ahead of either write.
         const string sectionId = "S-0001";
 
-        var findingPath = Path.Combine(_directory, "f-0005.md");
-        var raisedPath = RaisedCardPath(CardKind.Hazard, "h-0004");
-        var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, raisedPath, "Blind spot title", "Blind spot content.");
+        var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Hazard, "Blind spot title", "Blind spot content.");
 
         // RecordFinding runs first, against _directory before it exists — proving blocker 3's fix
         // in passing — which is also what makes WriteInitialSectionCard's own plain File.WriteAllText
         // below able to land in the same, now-existing directory.
         var recordOutcome = CardStore.RecordFinding(
-            _root, findingPath, "Checked, with a gap", CardOwner.Worker, sectionId, "Body of the finding.",
+            _root, "Checked, with a gap", CardOwner.Worker, sectionId, "Body of the finding.",
             instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
-        AssertRecorded(recordOutcome);
+        var recorded = AssertRecorded(recordOutcome);
+        var findingPath = recorded.FindingFilePath;
+        var raisedPath = recorded.RaisedCardFilePath!;
 
         var sectionPath = WriteInitialSectionCard("s-0001", sectionId);
 
@@ -312,7 +318,7 @@ public sealed class CardFindingRecordTests : IDisposable
         const string content = "exactly what this call wrote";
         File.WriteAllText(path, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        InvokeRollbackRaisedCard(new FindingBlindSpotRaiseRequest(CardKind.Hazard, path, "t", "b"), content);
+        InvokeRollbackRaisedCard(path, content);
 
         Assert.False(File.Exists(path), "the file was left behind even though its content matched exactly what this call wrote.");
     }
@@ -329,73 +335,30 @@ public sealed class CardFindingRecordTests : IDisposable
         const string someoneElsesContent = "content this call never wrote";
         File.WriteAllText(path, someoneElsesContent, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        InvokeRollbackRaisedCard(new FindingBlindSpotRaiseRequest(CardKind.Hazard, path, "t", "b"), "what this call actually wrote");
+        InvokeRollbackRaisedCard(path, "what this call actually wrote");
 
         Assert.True(File.Exists(path), "content this call never wrote was deleted anyway.");
         Assert.Equal(someoneElsesContent, File.ReadAllText(path));
     }
 
-    private static void InvokeRollbackRaisedCard(FindingBlindSpotRaiseRequest raiseRequest, string raisedContent)
+    private static void InvokeRollbackRaisedCard(string raisedFilePath, string raisedContent)
     {
         var method = typeof(CardStore).GetMethod("RollbackRaisedCard", BindingFlags.NonPublic | BindingFlags.Static)!;
-        method.Invoke(null, [raiseRequest, raisedContent]);
+        method.Invoke(null, [raisedFilePath, raisedContent]);
     }
 
-    // §6 block B third remediation, reviewer's "identical path" finding: a finding path and a
-    // --blind-spot-file path that name the same file two different ways used to make
-    // AcquireLocksAndRecord's fast path miss (StringComparison.Ordinal saw two different strings)
-    // and fall into the two-lock branch, which then self-deadlocked for the full lock timeout on
-    // this project's own default-case-insensitive shipped platform (APFS). An obligation is
-    // Change-scoped, which resolves to the identical directory a finding's own Section scope does
-    // (CardLayout.DirectoryFor), so a case-variant filename collision between the two is a real,
-    // reachable shape — not a hazard's Repository-scoped callboard/register/, which never shares a
-    // directory with a finding at all. Adapts its assertion to the actual volume's case sensitivity
-    // rather than assuming one: on a case-insensitive volume the two paths really are one file, and
-    // the correct outcome is a clean FindingAlreadyExists refusal (nothing corrupted, nothing
-    // orphaned); on a case-sensitive volume they are genuinely different files, and both are
-    // written. Either way, the load-bearing property is the same: this returns fast, never anywhere
-    // near the lock timeout, and never ToolFailure.
-    [Fact]
-    public void SameFileNamedByACaseVariantPath_NeverSelfDeadlocks_RegardlessOfVolumeCaseSensitivity()
-    {
-        var findingPath = Path.Combine(_directory, "case-variant-target.md");
-        var raisedPath = Path.Combine(_directory, "CASE-VARIANT-TARGET.MD");
-        var raiseRequest = new FindingBlindSpotRaiseRequest(CardKind.Obligation, raisedPath, "Blind spot title", "Blind spot content.");
-
-        var stopwatch = Stopwatch.StartNew();
-        var outcome = CardStore.RecordFinding(
-            _root, findingPath, "Checked, with a gap", CardOwner.Worker, Section, "Body of the finding.",
-            instrument: null, FindingExtent.BlockScope, verifiedAt: null, raiseRequest, FindingDisposition.Measured, Recorded, TimeSpan.FromSeconds(5), ChangeName);
-        stopwatch.Stop();
-
-        Assert.True(
-            stopwatch.Elapsed < TimeSpan.FromSeconds(2),
-            $"took {stopwatch.Elapsed} deciding whether the two paths are the same lock — looks like the self-deadlock reproduced.");
-
-        outcome.Match<object?>(
-            onRecorded: recorded =>
-            {
-                // Case-sensitive volume: genuinely two different files, both written successfully.
-                Assert.True(File.Exists(findingPath));
-                Assert.NotNull(recorded.RaisedCard);
-                return null;
-            },
-            onFindingAlreadyExists: already =>
-            {
-                // Case-insensitive volume (this sandbox's own TMPDIR, confirmed by direct
-                // filesystem probe during this remediation): the two paths are one physical file —
-                // the raised card's write landed there first, and the finding's own create-only
-                // check then correctly found it occupied. Nothing was left corrupted or orphaned.
-                Assert.Equal(findingPath, already.FilePath);
-                return null;
-            },
-            onBlindSpotCardAlreadyExists: already => throw new Xunit.Sdk.XunitException(
-                $"unexpected BlindSpotCardAlreadyExists('{already.FilePath}')"),
-            onFindingLayoutMismatch: mismatch => throw new Xunit.Sdk.XunitException($"unexpected FindingLayoutMismatch: {mismatch.Reason}"),
-            onBlindSpotLayoutMismatch: mismatch => throw new Xunit.Sdk.XunitException($"unexpected BlindSpotLayoutMismatch: {mismatch.Reason}"),
-            onToolFailure: toolFailure => throw new Xunit.Sdk.XunitException(
-                $"got ToolFailure — looks like the self-deadlock reproduced: {toolFailure.Reason}"));
-    }
+    // §6 block B third remediation's own "identical path" fixture — retired here (14.5-
+    // remediation, §14 supervisor finding), not merely deleted without a trace: it drove
+    // RecordFinding with a finding path and a --blind-spot-file path deliberately spelled as case
+    // variants of the same physical file, which is exactly the CLI door this remediation closes.
+    // Both paths are now minted from CardLayout.FileNameFor over two distinct, freshly-allocated
+    // ids, so the two can never again be the identical physical file this fixture forced — there is
+    // no longer a caller input that could reconstruct it. The still-live half of what this test
+    // proved — two distinct locks, in the same directory, acquired without a cross-invocation
+    // ordering deadlock — remains covered by BlindSpotRaised_WritesBothCards_EachReferencingTheOther's
+    // obligation case (Change scope shares the finding's own directory) and by
+    // CardFindingRecordConcurrencyTests' own dedicated coverage of AcquireLocksAndRecord's
+    // acquire-probe-release-retry shape.
 
     private string WriteInitialSectionCard(string fileStem, string id)
     {

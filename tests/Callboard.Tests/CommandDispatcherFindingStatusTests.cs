@@ -42,9 +42,8 @@ public sealed class CommandDispatcherFindingStatusTests
         var sourcePath = Path.Combine(repo.Path, "src", "Foo.cs");
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         File.WriteAllText(sourcePath, "original content");
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0001.md");
 
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var findingPath = Record(repo, extentExplicit: "src/Foo.cs").FindingFilePath;
         var status = Status(repo, findingPath);
 
         Assert.Equal("current", status.GetProperty("staleness").GetString());
@@ -58,9 +57,8 @@ public sealed class CommandDispatcherFindingStatusTests
         var sourcePath = Path.Combine(repo.Path, "src", "Foo.cs");
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         File.WriteAllText(sourcePath, "original content");
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0002.md");
 
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var findingPath = Record(repo, extentExplicit: "src/Foo.cs").FindingFilePath;
         File.WriteAllText(sourcePath, "content has moved on");
         var status = Status(repo, findingPath);
 
@@ -78,9 +76,8 @@ public sealed class CommandDispatcherFindingStatusTests
         var sourcePath = Path.Combine(repo.Path, "src", "Foo.cs");
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         File.WriteAllText(sourcePath, "original content");
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0003.md");
 
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var findingPath = Record(repo, extentExplicit: "src/Foo.cs").FindingFilePath;
         File.Delete(sourcePath);
         var status = Status(repo, findingPath);
 
@@ -96,9 +93,8 @@ public sealed class CommandDispatcherFindingStatusTests
         Directory.CreateDirectory(Path.GetDirectoryName(trackedPath)!);
         File.WriteAllText(trackedPath, "tracked");
         File.WriteAllText(untrackedPath, "not part of the extent");
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0004.md");
 
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var findingPath = Record(repo, extentExplicit: "src/Foo.cs").FindingFilePath;
         File.WriteAllText(untrackedPath, "changed, but outside the declared extent");
         var status = Status(repo, findingPath);
 
@@ -113,10 +109,9 @@ public sealed class CommandDispatcherFindingStatusTests
     public void ExplicitExtent_PathNeverResolvesToAReadableFile_ReadsBackNotMeasurable_NeverCurrent()
     {
         using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0014.md");
 
         // src/Typo.cs is never created — a typo'd or wrong-root path.
-        Record(repo, findingPath, extentExplicit: "src/Typo.cs");
+        var findingPath = Record(repo, extentExplicit: "src/Typo.cs").FindingFilePath;
         var status = Status(repo, findingPath);
 
         Assert.Equal("not-measurable", status.GetProperty("staleness").GetString());
@@ -133,9 +128,8 @@ public sealed class CommandDispatcherFindingStatusTests
         using var repo = new TempGitRepo();
         var directoryPath = Path.Combine(repo.Path, "src", "SomeDirectory");
         Directory.CreateDirectory(directoryPath);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0015.md");
 
-        Record(repo, findingPath, extentExplicit: "src/SomeDirectory");
+        var findingPath = Record(repo, extentExplicit: "src/SomeDirectory").FindingFilePath;
         var status = Status(repo, findingPath);
 
         Assert.Equal("not-measurable", status.GetProperty("staleness").GetString());
@@ -145,9 +139,8 @@ public sealed class CommandDispatcherFindingStatusTests
     public void InstrumentExtent_ReadsBackNotMeasurable_NamingTheInstrumentToReRun()
     {
         using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0005.md");
 
-        Record(repo, findingPath, extentInstrument: "make gates");
+        var findingPath = Record(repo, extentInstrument: "make gates").FindingFilePath;
         var status = Status(repo, findingPath);
 
         Assert.Equal("not-measurable", status.GetProperty("staleness").GetString());
@@ -158,9 +151,9 @@ public sealed class CommandDispatcherFindingStatusTests
     public void DefaultBlockScopeExtent_ReadsBackNotMeasurable_NeverCurrent()
     {
         using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0006.md");
 
-        Record(repo, findingPath); // no --extent-* flag at all: defaults to block-scope
+        // no --extent-* flag at all: defaults to block-scope
+        var findingPath = Record(repo).FindingFilePath;
         var status = Status(repo, findingPath);
 
         Assert.Equal("not-measurable", status.GetProperty("staleness").GetString());
@@ -173,9 +166,8 @@ public sealed class CommandDispatcherFindingStatusTests
         var sourcePath = Path.Combine(repo.Path, "src", "Foo.cs");
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         File.WriteAllText(sourcePath, "original content");
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0007.md");
 
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs", disposition: "argued-clean", verifiedAt: "state-42");
+        var findingPath = Record(repo, extentExplicit: "src/Foo.cs", disposition: "argued-clean", verifiedAt: "state-42").FindingFilePath;
         // Would report Stale under Measured — proves at the CLI boundary that ArguedClean's answer
         // does not depend on (and so cannot leak) what the extent's content is doing.
         File.WriteAllText(sourcePath, "content has moved on");
@@ -194,9 +186,8 @@ public sealed class CommandDispatcherFindingStatusTests
     public void OpenSection_FindingReadsBackLive()
     {
         using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0010.md");
 
-        Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var findingPath = Record(repo, extentExplicit: "src/Foo.cs").FindingFilePath;
         var status = Status(repo, findingPath);
 
         Assert.Equal("live", status.GetProperty("degradation").GetString());
@@ -214,9 +205,8 @@ public sealed class CommandDispatcherFindingStatusTests
         var sourcePath = Path.Combine(repo.Path, "src", "Foo.cs");
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         File.WriteAllText(sourcePath, "original content");
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0011.md");
 
-        var sectionId = Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var (sectionId, findingPath) = Record(repo, extentExplicit: "src/Foo.cs");
 
         var beforeClose = Status(repo, findingPath);
         Assert.Equal("live", beforeClose.GetProperty("degradation").GetString());
@@ -240,9 +230,8 @@ public sealed class CommandDispatcherFindingStatusTests
     public void BareFilenameWithNoDirectoryComponent_StillReadsBackDegraded_SameAsAnAbsolutePath()
     {
         using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0017.md");
 
-        var sectionId = Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var (sectionId, findingPath) = Record(repo, extentExplicit: "src/Foo.cs");
         var closeExit = RunInRepo(["section", "close", _sectionPathsById[sectionId], "--role", "architect", "--change", ChangeName], new StringWriter(), repo.Path, "unused");
         Assert.Equal(CommandDispatcher.SuccessExitCode, closeExit);
 
@@ -251,7 +240,7 @@ public sealed class CommandDispatcherFindingStatusTests
 
         var writer = new StringWriter();
         var exitCode = CommandDispatcher.Run(
-            ["finding", "status", "f-0017.md"],
+            ["finding", "status", Path.GetFileName(findingPath)],
             writer, TextReader.Null, TextWriter.Null, isInputRedirected: false, workingDirectory: repo.CardsDirectory, clock: static () => FixedNow);
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -267,9 +256,8 @@ public sealed class CommandDispatcherFindingStatusTests
     public void TwoCardFilesClaimTheSectionId_Refuses_AndNamesBothFiles()
     {
         using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0012.md");
 
-        var sectionId = Record(repo, findingPath, extentExplicit: "src/Foo.cs");
+        var (sectionId, findingPath) = Record(repo, extentExplicit: "src/Foo.cs");
         var openPath = _sectionPathsById[sectionId];
 
         var closedPath = Path.Combine(repo.CardsDirectory, "s-colliding.md");
@@ -324,13 +312,12 @@ public sealed class CommandDispatcherFindingStatusTests
     public void RecordResult_ReportsTheDispositionActuallyRecorded()
     {
         using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0008.md");
         var sectionId = CreateSection(repo);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "Measured by default", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "none",
             ],
@@ -345,13 +332,12 @@ public sealed class CommandDispatcherFindingStatusTests
     public void UnrecognisedDispositionFlag_Refuses_AndNamesBothValuesItAccepts()
     {
         using var repo = new TempGitRepo();
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0009.md");
         var sectionId = CreateSection(repo);
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath,
+                "finding", "record",
                 "--role", "worker", "--title", "t", "--section", sectionId, "--change", ChangeName,
                 "--blind-spot", "none", "--disposition", "not-a-real-value",
             ],
@@ -422,15 +408,19 @@ public sealed class CommandDispatcherFindingStatusTests
     // Creates a real section (§7 block A's own verb) and returns its allocated id, unless
     // sectionId is supplied — in which case no section is created, and the caller is responsible
     // for what --section then resolves to (used by the "id does not resolve" fixture).
-    private string Record(
-        TempGitRepo repo, string findingPath, string? extentExplicit = null, string? extentInstrument = null,
+    //
+    // 14.5-remediation (§14 supervisor finding): no longer takes a findingPath — `finding record`
+    // no longer has one to take. Returns the finding's own minted file path alongside the section
+    // id, since callers need it for their own subsequent `finding status` call.
+    private (string SectionId, string FindingFilePath) Record(
+        TempGitRepo repo, string? extentExplicit = null, string? extentInstrument = null,
         string? disposition = null, string? verifiedAt = null, string? sectionId = null)
     {
         var resolvedSectionId = sectionId ?? CreateSection(repo);
 
         var args = new List<string>
         {
-            "finding", "record", findingPath,
+            "finding", "record",
             "--role", "worker", "--title", "A finding", "--section", resolvedSectionId, "--change", ChangeName,
             "--blind-spot", "none",
         };
@@ -461,7 +451,9 @@ public sealed class CommandDispatcherFindingStatusTests
         var output = new StringWriter();
         var exitCode = RunInRepo(args.ToArray(), output, repo.Path, "Body of the finding.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
-        return resolvedSectionId;
+        using var doc = JsonDocument.Parse(output.ToString());
+        var findingFilePath = doc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
+        return (resolvedSectionId, findingFilePath);
     }
 
     private string CreateSection(TempGitRepo repo)

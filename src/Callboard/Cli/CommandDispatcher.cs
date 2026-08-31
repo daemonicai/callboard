@@ -356,15 +356,18 @@ internal static class CommandDispatcher
         /// <c>obligation</c>/<c>hazard</c>, and <see cref="Callboard.Cards.FindingExtent"/>'s and
         /// <see cref="Callboard.Cards.CardOwner"/>'s own wire-format checks need no file access
         /// either.
+        /// 14.5-remediation (§14 supervisor finding): no <c>FilePath</c> here any more — a caller no
+        /// longer names either card this verb writes; both are named for the identity <see
+        /// cref="Callboard.Cards.CardStore.RecordFinding"/> mints, the same "container, then
+        /// allocate, then <see cref="Callboard.Cards.CardLayout.FileNameFor"/>" ordering
+        /// <see cref="Callboard.Cards.CardStore.CreateCard"/> already established for every other
+        /// creation verb (14.5). A caller reads where each card landed from the response's own
+        /// <c>filePath</c>/<c>raisedCardFilePath</c> fields.
         /// </summary>
-        /// <param name="FilePath">Where the finding card is written — a path, not a symbolic id, the
-        /// same convention every other verb here follows (§6 block B brief: identity addressing is
-        /// §7/§8's open decision).</param>
         /// <param name="RaiseRequest">What to raise the declared blind spot as, or
         /// <see langword="null"/> when <c>--blind-spot none</c> was declared. Never a pre-existing
         /// card id — the tool allocates the raised card's identity itself, at execute time.</param>
         internal sealed record FindingRecord(
-            string FilePath,
             string Title,
             string Section,
             string ChangeName,
@@ -598,19 +601,24 @@ internal static class CommandDispatcher
         /// <summary>
         /// <c>comment promote --to question|decision</c> (§9 remediation, round two — S4). The one
         /// verb in this trio that writes two cards — a new <c>question</c>/<c>decision</c> card named
-        /// by <see cref="RaiseFilePath"/>/<see cref="Title"/>, plus the resolving comment on the
-        /// existing card <see cref="CommentResolve"/> also addresses — reusing <see cref="Cards.
+        /// by <see cref="Title"/>, plus the resolving comment on the existing card
+        /// <see cref="CommentResolve"/> also addresses — reusing <see cref="Cards.
         /// CardStore.RecordFinding"/>'s two-card, two-lock discipline rather than inventing a fourth
-        /// multi-card write shape (§8a supervisor finding on <c>CardStore.cs</c>). <see cref="OwedByRole"/>
-        /// is required only when <see cref="ToKind"/> is <see cref="CardKind.Question"/> — the role
-        /// that owes the answer, which becomes the new card's owner, the same <c>question create</c>
-        /// discipline (it is <see langword="null"/> for <see cref="CardKind.Decision"/>, whose owner is
+        /// multi-card write shape (§8a supervisor finding on <c>CardStore.cs</c>). No
+        /// <c>RaiseFilePath</c> any more (14.5-remediation, §14 supervisor finding, second round): the
+        /// raised card is named for the identity <see cref="Cards.CardStore.PromoteComment"/> mints,
+        /// the same "container, then allocate, then <see cref="Cards.CardLayout.FileNameFor"/>"
+        /// ordering every other card-minting door follows — a caller reads where it landed from the
+        /// response's own <c>raisedCardFilePath</c>. <see cref="OwedByRole"/> is required only when
+        /// <see cref="ToKind"/> is <see cref="CardKind.Question"/> — the role that owes the answer,
+        /// which becomes the new card's owner, the same <c>question create</c> discipline (it is
+        /// <see langword="null"/> for <see cref="CardKind.Decision"/>, whose owner is
         /// <see cref="ActingRole"/>, same as <c>decision create</c>). <see cref="Body"/> is the new
         /// card's own content, read from stdin, required redirected — the same discipline <c>question
         /// create</c>/<c>nit raise</c> already have for a brand-new card's body.
         /// </summary>
         internal sealed record CommentPromote(
-            string CardId, string CommentId, CardOwner ActingRole, CardKind ToKind, string RaiseFilePath, string Title,
+            string CardId, string CommentId, CardOwner ActingRole, CardKind ToKind, string Title,
             CardOwner? OwedByRole, string Body, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
@@ -1811,7 +1819,7 @@ internal static class CommandDispatcher
                 Transitioned = dispositioned.Transitioned,
                 Round = dispositioned.Card.BlockFields.Round,
                 RaisedCardId = dispositioned.RaisedCard?.Frontmatter.Id,
-                RaisedCardFilePath = parsed.RaiseRequest?.FilePath,
+                RaisedCardFilePath = dispositioned.RaisedCardFilePath,
                 ActingRole = parsed.ActingRole.ToWireString(),
                 Timestamp = parsed.Timestamp,
             }),
@@ -1892,12 +1900,9 @@ internal static class CommandDispatcher
         }
 
         var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
-        var newFindings = parsed.NewFindings
-            .Select(request => request with { FilePath = ResolveFilePath(parsed.WorkingDirectory, request.FilePath) })
-            .ToList();
         var outcome = CardStore.RecordSectionVerdict(
             repoRoot, filePath, parsed.Verdict, parsed.RangeFrom, parsed.RangeTo, parsed.ActingRole, parsed.Timestamp, lockTimeout,
-            parsed.ChangeName, recurringFindingCardPaths, newFindings);
+            parsed.ChangeName, recurringFindingCardPaths, parsed.NewFindings);
 
         return outcome.Match<CommandOutcome>(
             onRecorded: recorded => new CommandOutcome.Success(new SectionVerdictResult
@@ -2234,18 +2239,8 @@ internal static class CommandDispatcher
             return sectionRefusal;
         }
 
-        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
-        var raiseRequest = parsed.RaiseRequest is null
-            ? null
-            : new FindingBlindSpotRaiseRequest(
-                parsed.RaiseRequest.Kind,
-                ResolveFilePath(parsed.WorkingDirectory, parsed.RaiseRequest.FilePath),
-                parsed.RaiseRequest.Title,
-                parsed.RaiseRequest.Body);
-
         var outcome = CardStore.RecordFinding(
             repoRoot,
-            filePath,
             parsed.Title,
             parsed.ActingRole,
             parsed.Section,
@@ -2253,7 +2248,7 @@ internal static class CommandDispatcher
             parsed.Instrument,
             parsed.Extent,
             parsed.VerifiedAt,
-            raiseRequest,
+            parsed.RaiseRequest,
             parsed.Disposition,
             parsed.Timestamp,
             lockTimeout,
@@ -2262,14 +2257,14 @@ internal static class CommandDispatcher
         return outcome.Match<CommandOutcome>(
             onRecorded: recorded => new CommandOutcome.Success(new FindingRecordResult
             {
-                FilePath = filePath,
+                FilePath = recorded.FindingFilePath,
                 Id = recorded.Finding.Frontmatter.Id,
                 Title = recorded.Finding.Frontmatter.Title,
                 BlindSpot = recorded.Finding.FindingFields.BlindSpot.Match(
                     onNone: static () => "none",
                     onRaisedAs: static _ => "raised-as"),
                 RaisedCardId = recorded.RaisedCard?.Frontmatter.Id,
-                RaisedCardFilePath = raiseRequest?.FilePath,
+                RaisedCardFilePath = recorded.RaisedCardFilePath,
                 RaisedCardKind = recorded.RaisedCard?.Frontmatter.Kind.ToWireString(),
                 Disposition = recorded.Finding.FindingFields.Disposition.Match(
                     onMeasured: static () => "measured",
@@ -3407,9 +3402,8 @@ internal static class CommandDispatcher
             return card.Refusal;
         }
 
-        var raiseFilePath = ResolveFilePath(parsed.WorkingDirectory, parsed.RaiseFilePath);
         var outcome = CardStore.PromoteComment(
-            repoRoot, card.FilePath!, parsed.CommentId, raiseFilePath, parsed.ToKind, parsed.Title,
+            repoRoot, card.FilePath!, parsed.CommentId, parsed.ToKind, parsed.Title,
             parsed.ActingRole, parsed.OwedByRole, parsed.Body, parsed.ChangeName, parsed.Timestamp, lockTimeout);
 
         return outcome.Match<CommandOutcome>(
@@ -3419,7 +3413,7 @@ internal static class CommandDispatcher
                 CardId = promoted.OriginalCard.Frontmatter.Id,
                 CommentId = parsed.CommentId,
                 RaisedCardId = promoted.RaisedCard.Frontmatter.Id,
-                RaisedCardFilePath = raiseFilePath,
+                RaisedCardFilePath = promoted.RaisedCardFilePath,
                 RaisedCardKind = promoted.RaisedCard.Frontmatter.Kind.ToWireString(),
                 ActingRole = parsed.ActingRole.ToWireString(),
                 PromotedAt = promoted.OriginalCard.Frontmatter.Updated,

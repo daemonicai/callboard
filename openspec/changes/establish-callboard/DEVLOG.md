@@ -43293,6 +43293,604 @@ Both hold. Nothing further.
 
 → @architect
 
+**[supervisor]** **Section review — §14, `2734497..HEAD` (`acbf81e`, `9e5ad77`, `cfff4b6`, `b9039ca`,
+`b96c0da`). Verdict: `Request changes`.** One blocker, and it is the shape §13 named twice and this
+section's own `14.5` named a third time: *two doors mint the same card kind, one door was checked.*
+
+### Blocker — `finding record` mints cards at a file the caller names
+
+`14.5` is ticked as "Name **every card's file** for its identity, taking the filename out of the caller's
+hands", and `card-model`'s scenario is unqualified: *"its file is named for the identity the system
+issued, and the caller was never able to name it something else."* Both are false at two doors reachable
+today, and neither door is in `14.5`'s diff.
+
+- `CardLayout.FileNameFor` has **exactly one call site in `src/`** — `CardStore.cs:3407`, inside
+  `CreateCard`. Every one of the nine doors `14.5` closed reaches naming through there. `RecordFinding`
+  does not: it takes `findingFilePath` from its caller (`CardStore.cs`, `RecordFinding`'s signature),
+  allocates `findingId` from the same counter, and writes the minted card at the caller's path. The
+  positional survives at `CommandParser.cs:1455-1457` (`"'finding record' requires a card file path."`)
+  and is resolved into the store at `CommandDispatcher.cs:2238`. `callboard finding record notes/x.md …`
+  puts `F-0007` in `x.md` — the directory-listing property the requirement exists for, gone.
+- **The second door is worse, and is the §13 shape exactly.** `finding record --blind-spot
+  obligation|hazard --blind-spot-file <path>` mints a *new obligation or hazard card* at a caller-named
+  path (`raiseRequest.FilePath`, written under `AcquireLocksAndRecord`). `obligation create` and
+  `hazard create` are two of the nine doors `14.5` fixed. So the same two kinds are minted by a fixed
+  door and an unfixed one, checked against different requirements — the ruling recorded under §13 ("a
+  door added by an amendment must be checked against every requirement the door it parallels already
+  satisfies"), firing for the third time in this change.
+- **Why no block review could see it.** `14.5`'s reviewer verified nine doors and nine is what its diff
+  contains — correctly, and it even re-derived seven up to nine rather than taking the brief. Two blocks
+  later `14.7`'s worker *did* find the tenth and wrote it into the reference as an exception
+  (`docs/agent-command-reference.md:70-73`, `:355-357`: "still takes a positional path today … out of
+  scope for this document"). Each block is right on its own; the union is a SHALL with a documented
+  carve-out, which is a violation recorded rather than resolved. §14 is the last section — there is no
+  later one to catch this.
+- The commit body for `cfff4b6` claims the fix is "structural rather than checked — the tool cannot
+  produce one". As a property of the section that is not true; the tool can, through this verb.
+
+**Suggested remediation shape (one fix block, no new `N.M`, ticks nothing):**
+
+1. `RecordFinding` derives both paths the way `CreateCard` does, in that order — container from the
+   caller (`CardLayout.DirectoryFor` on scope + `--change`), then allocate, then
+   `CardLayout.FileNameFor(id)`. The ordering is the substance, same as `14.5`.
+2. Drop `finding record`'s positional and `--blind-spot-file`; wire both entry points to
+   `RefuseLeadingPositionalArgument` (`CommandParser.cs:706`), which already has seven named call sites
+   plus the shared `ParseCardCreate`. Callers already read `filePath` off the response, so nothing is
+   lost.
+3. Re-check `CardFindingRecordOutcome.FindingLayoutMismatch` / `BlindSpotLayoutMismatch`'s "has no
+   containing directory" arms — **check, don't assume**: if they become unprovokable they must go, since
+   §9's coverage gate rejects an arm for a case that cannot fire.
+4. Delete the exception prose at `docs/agent-command-reference.md:70-73` and `:355-357`; it exists only
+   to describe the defect.
+5. Add the assertion the property still lacks at these doors — mint a finding (and a raised
+   obligation/hazard), assert the file's basename equals the id. This is the §13 ruling "the absence of a
+   test is the finding", applied where it was not applied.
+
+### Checked and sound — recorded so it is not re-audited
+
+1. **"One syntax" as a union, not eight rule-by-rule checks.** `AppendBlock`
+   (`CardFileWriter.cs:443-455`) is the sole emitter for all eight families, and every free-text field on
+   every one of them goes through `EscapeCardBlockValue` — verified field by field at
+   `CardFileWriter.cs:467-597` (comment `id`/`reply-to`/`resolves`, verdict `range-from`/`range-to`,
+   authorisation `reason`, claim/limit `text`, refusal `rule`/`remedy`). No ninth shape survives anywhere
+   in a card file: frontmatter is the same `key: value` line shape, the comment body and `CommentFooter`
+   are content rather than metadata, and the identity counter is a bare number. **One residue, for
+   `## NEXT` and not a blocker:** a nit's `sites` still escapes an interior space as `\s`
+   (`CardFileFormat.cs:503-512`, `JoinSiteList`), left unchanged by `14.4`'s own admission. It is a
+   comma-joined path list, not a sentence, so the Product Owner's `14.6` ruling covers it on the same
+   reading — but a path containing a space reads `src/My\sFile.cs` in the record.
+2. **The tightening generalised; it was not applied twice by hand.** `BlockOpenLinePrefixes` is one list
+   read by both `LooksLikeDelimiterOrEscapedDelimiter` (write) and `MalformedBlockOpenLineFamily` (read);
+   `14.4` added the eighth family as **one list entry and nothing else**. The footer's exclusion is not an
+   argument that stopped being true: `CommentFooter` gets exact-equality matching in `IsCommentFooter`
+   *and* its own explicit branch at the head of `LooksLikeDelimiterOrEscapedDelimiter`, so a
+   footer-prefixed line carrying trailing content is still escaped — which is precisely what folding it in
+   as a `StartsWith` prefix would have stopped doing. The protection is in the code, not in the reasoning.
+3. **Nine doors, re-derived rather than taken.** Nine `CardStore.CreateCard` call sites in
+   `CommandDispatcher.cs` — 2395, 2420, 2457, 2477, 2509, 2536, 2594, 3484, 3731. All nine name the file
+   inside `CreateCard`, after allocation, from one statement; `rule author` and `rule propose-compact`
+   reach it by their own inline `.Match` and are covered anyway, because the naming lives in the store and
+   not in the mapping. The property holds at all nine. It is the tenth that fails.
+4. **`14.5` against `14.7`, both directions.** Nothing in the reference names `--proposal-file` or any
+   positional the binary now rejects (`--proposal-file` survives only in a doc comment and in the legacy
+   test that asserts its removal). Nothing a role needs is missing from the 17 families / 49 leaf commands
+   either. The one doc/binary disagreement is the blocker above, and it runs the other way: the document
+   is accurate about a surface that should not exist.
+5. **Deleted machinery.** All seven names are gone with zero live references; the single surviving mention
+   of `CommentHeaderPrefix` is an explanatory comment at `CardFileRawTextLegibilityTests.cs:30`. Nothing
+   later in the section resurrected a need for any of them.
+6. **`14.6`'s no-new-tests argument — right conclusion, wrong premise.**
+   `CardFileRawTextLegibilityTests.cs` was **not** carried through unmodified: `acbf81e` changed it 68/50
+   and `9e5ad77` 34/16. Read, it now asserts the block shapes byte-exact and multi-line (the refusal
+   assertion pins `<!-- callboard:refusal` / `by:` / `rule:` / `remedy: run 'callboard block transition
+   --base' instead` / `timestamp:` / `-->` as one string). So it is a test correctly re-pointed at each
+   syntax change, not one that quietly stopped asserting what it names — `14.6` adding no tests is right.
+   But the DEVLOG's stated reason ("carried through three syntax changes unmodified") is not what the
+   history shows, and if that framing is reused it will one day hide exactly the case it is offered to
+   rule out.
+7. **Refusal coverage, stated plainly rather than implied.** `unexpected-positional-argument`
+   (`CommandParser.cs:706-720`) is reached from seven named verbs plus the shared `ParseCardCreate`
+   (`section create`, `decision create`) — eight of the nine doors. The ninth, `rule propose-compact`, is
+   deliberately off it: its pre-`14.5` shape used `--proposal-file`, never a positional, so a legacy
+   caller gets `unrecognised-argument`, which `CommandDispatcherLegacyPositionalArgumentTests` asserts.
+   Coverage is complete for what the refusal is for. **§9's coverage gate does not reach CLI-layer
+   refusals and says nothing about this one** — it is covered by that dedicated test file, not by the
+   gate, and nothing here should be read as the gate speaking.
+8. **The `\s` ruling and its bound, checked against the spec text.** The requirement enumerates "a
+   refusal's rule and remedy, a certification's claims and limits, an authorisation's reason". A
+   frontmatter `title` is not in that list, so the Product Owner's ruling is compliant with the spec as
+   written, not an exemption from it. Everything the enumeration *does* reach is now escape-free — all of
+   it flows through `EscapeCardBlockValue`, which escapes edge spaces and `-->` and nothing else. The only
+   remaining `\s` producers in the record are frontmatter values, frontmatter list items and a nit's
+   `sites`, none of which the enumeration reaches. The bound is exactly where she left it.
+
+### For `## NEXT` — what this section did to the two parked items
+
+- **The JSON output not HTML-escaping.** §14 did not touch it, but `14.7` gave it a second consumer:
+  the reference quotes real output and contains no `\u00…` escape anywhere in 393 lines, so its examples
+  now depend on the relaxed encoder. Tightening it later silently invalidates a committed document.
+  Still not a blocker; it is now a change with a documented blast radius rather than an internal one.
+- **`index rebuild` as the eighth read that never converged on 13.5's one `unreadable` shape.** §14
+  neither helped nor harmed it. What §14 changes is that there is no later section to catch it, so it
+  stops being a parked item and becomes the Product Owner's call at archive time.
+
+`ADR-0001`/`0002`/`0003`/`0004` are intact across the section: no second surface, no reflection or
+dynamic code, every write still through the lock-and-rename protocol, the index still never authoritative
+and never a lock. The blocker is a naming contract, not an eroded ADR.
+
+→ @architect
+
+**[architect]** **Supervisor: `Request changes` on §14. Accepted in full — the finding is correct and it
+is mine.** Carving a remediation block. It gets **no new `N.M` numbers and ticks nothing**; every box in
+§14 is already ticked and the record of what was wrong and what fixed it lives here.
+
+### Why this got past three reviews, stated plainly
+
+**`14.7`'s worker found the tenth door and wrote it down.** It documented `finding record`'s surviving
+positional path as an exception, honestly, in `docs/agent-command-reference.md`. I then relayed it to the
+reviewer as *"verify that distinction is true, because it is exactly the kind of asymmetry a tidy-minded
+document flattens"* — and the reviewer verified it **was** true, live, and reported it correct.
+
+**Both were right and the question was wrong.** I asked whether the asymmetry was *real*. Nobody asked
+whether it was *allowed*. `card-model`'s scenario is unqualified — *"the caller was never able to name it
+something else"* — so a documented exception to a SHALL is not an exception, it is a defect with better
+manners than usual. **The tenth door was in a committed document, in the section's own diff, described
+accurately, and read by two agents and me.** Being written down is not being checked.
+
+That is the third time in two sections that two doors minting the same card kind were checked against
+different requirements — §13's `block create`, `14.5`'s nine, and now this. **And this instance is worse
+than the other two**, because `finding record --blind-spot obligation|hazard --blind-spot-file <path>`
+mints an **obligation or hazard** card at a caller-named path, and `obligation create` and `hazard create`
+are two of the nine doors `14.5` fixed. Same kinds. One door fixed, one not.
+
+`cfff4b6`'s commit body claims the property is "structural rather than checked — the tool cannot produce
+one". **As a statement about the section, that was false when I wrote it.**
+
+### The remediation block
+
+**Fix the cause, not the sentence.** The document's exception prose goes only because the exception goes.
+
+1. **Reorder `RecordFinding` the way `CreateCard` was reordered** — container, then allocate, then
+   `CardLayout.FileNameFor`. `FileNameFor` currently has exactly one call site in `src/`
+   (`CardStore.cs:3407`, inside `CreateCard`); after this it has more. **Both cards this verb writes are
+   in scope**: the finding itself, and the blind-spot obligation/hazard raised alongside it.
+2. **Mind the two-card write.** `RecordFinding` carries an acquire-probe-release-retry dance its own doc
+   comment describes, and it is there for a reason. **Do not reorder the locking to suit the naming.** If
+   the two genuinely conflict, stop and post `❓ @architect` rather than choosing — a naming fix that
+   loosens a write's atomicity trades a legibility defect for a correctness one, and D7's atomic rename
+   is what makes existence the only racing fact.
+3. **Close the CLI doors.** The positional at `CommandParser.cs:1455-1457` and `--blind-spot-file` come
+   off, onto `RefuseLeadingPositionalArgument` (`CommandParser.cs:706`) and the same treatment
+   respectively — the machinery `14.5` already built for the nine. **`unexpected-positional-argument` must
+   name a remedy that exists** for this verb specifically (§9 ruling 3, §13.3).
+4. **Re-check the two `LayoutMismatch` arms.** With the path no longer caller-supplied they may become
+   unprovokable, and **§9's coverage gate rejects an arm for a case that cannot fire**. Retire rather than
+   preserve symmetry — §13's second supervisor finding is the worked example, and `14.5` already retired
+   one refusal on exactly this reasoning. **Derive whether they can still fire; do not assume either way.**
+5. **Delete the exception prose** from `docs/agent-command-reference.md` (`:70-73`, `:355-357`) and correct
+   any example that passed a path to this verb. Every command in that document is one somebody ran —
+   **that standard holds for the edit.**
+6. **Add the assertion these doors have never had:** the written file's basename equals the minted id.
+   The supervisor's point is that no test asserted it for *any* of these doors, which is why the tenth
+   could exist. **Assert it across every door that mints a card, not only the two being fixed** — if that
+   is best expressed as one parameterised test over the derived door set, do that.
+
+### Standing rulings that bind this block
+
+- **Re-derive the door set yourself.** My count has been wrong twice in this section — "seven families",
+  "seven doors" that were nine — and the supervisor has now found a tenth and eleventh. **Do not trust
+  ten either.** State how you derived it.
+- **A regression test nobody has watched fail is a guess** (§13 ruling 5).
+- **A brief that contradicts the codebase is a defect in the brief** (§13, item 8).
+- **The absence of a test is the finding** (§13 ruling 2) — that is precisely what happened here.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT:0`, `TEST_EXIT:0` (whole suite — 1215 green at
+`b96c0da`), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+→ @worker
+
+**[worker]** **Remediation landed — the tenth and eleventh doors are closed.** Re-derived the door
+set myself rather than trusting "ten": `CardLayout.FileNameFor` has exactly two callers in `src/` —
+`CardStore.CreateCard` (nine call sites in `CommandDispatcher.cs`, 14.5's own set, unchanged) and
+`CardStore.RecordFinding` (one call site, `finding record`, which mints one or two cards per
+invocation — the finding always, the raised obligation/hazard only when `--blind-spot` names one).
+Eleven doors total; ten CLI invocations produce them, since one `finding record` call can mint two.
+
+1. **`RecordFinding` reordered the way `CreateCard` was reordered.** Both target paths — the
+   finding's own (`CardLayout.DirectoryFor(CardScope.Section, changeName)`) and, when a blind spot
+   is raised, the raised card's (`DirectoryFor(ScopeForRaisedCard(kind), changeName)`) — are now
+   resolved *before* either identity is allocated; only once both identities are minted does
+   `CardLayout.FileNameFor` turn each into a basename. A bad `changeName` (missing, or the reserved
+   `archive`) now refuses via `FindingLayoutMismatch`/`BlindSpotLayoutMismatch` before either
+   identity is burned — the same guarantee `CreateCard` already had.
+2. **The two-card lock discipline is untouched.** No conflict materialised: `AcquireLocksAndRecord`'s
+   acquire-probe-release-retry shape was never about *where* either path came from, only about
+   acquiring two independent per-card locks (ADR-0003) without a cross-invocation deadlock. Updated
+   its doc comment to say so plainly rather than leave the stale "caller-supplied path collision"
+   reasoning standing as the stated justification.
+3. **Both CLI doors closed.** `finding record`'s positional now routes through
+   `RefuseLeadingPositionalArgument`, the same guard 14.5's nine doors use. `--blind-spot-file` is
+   simply gone from `ConsumeKnownFlags`' known-flag set — a caller still spelling it gets the
+   funnel's own `unrecognised-argument`, the same "judged and left alone" disposition
+   `--proposal-file` already has for `rule propose-compact` (no bespoke handling needed for a flag
+   that was never a leading positional).
+4. **The two `LayoutMismatch` arms — checked, not assumed.** They remain genuinely provokable: once
+   the path is store-derived, `AnchoredCardPath.TryCreate`'s own re-check inside
+   `RecordFindingUnderLocks` is now structurally guaranteed to agree with itself (the same
+   already-accepted redundancy `CreateCard`→`WriteCard` carries for its own derived path), but the
+   *outer* check — `CardLayout.DirectoryFor` throwing on an invalid `changeName` — still fires for
+   real, through the CLI, via e.g. `--change archive`. Nothing retired; both arms stay live and
+   provokable, just from one relocated check instead of two.
+5. **Doc reference corrected.** `docs/agent-command-reference.md`: `finding record` moved from the
+   "addressing" list to the "creation, no positional" list alongside the other nine; the
+   `--blind-spot-file` exception prose (`:70-73`) is gone entirely; the supervisor's own
+   "judged out of scope" bullet (`:355-361`) no longer calls it a "positional-path door".
+6. **The assertion these doors never had, added once, across all eleven.** New
+   `CardMintedFileBasenameTests.cs` — one parameterised theory over the derived door set (all nine
+   `CreateCard` verbs plus `finding record`'s own finding-and-raised-card case), asserting the
+   written file's basename equals `CardLayout.FileNameFor(id)` for every one. Watched it fail first:
+   temporarily hard-coded `RecordFinding`'s finding path to `"wrong-name.md"`, ran the suite, saw
+   `Assert.Equal() Failure: Expected "F-0001.md", Actual "wrong-name.md"` on exactly the
+   `finding record` case, then reverted — not a guess.
+
+**Tests updated, not just added.** `CardFindingRecordTests.cs`, `CardFindingRecordConcurrencyTests.cs`,
+`FindingDegradationEvaluatorTests.cs`, `CommandDispatcherFindingRecordTests.cs`,
+`CommandDispatcherFindingStatusTests.cs`, `CommandDispatcherRuleAuthorTests.cs` all called
+`RecordFinding`/`finding record` with a caller-chosen path; every call site now either reads the
+minted path back off the outcome/response or predicts it from the first identity a fresh counter
+will mint (documented at each site). Two fixtures in `CardFindingRecordConcurrencyTests.cs` and one
+in `CardFindingRecordTests.cs` are retired rather than rewritten — each forced two invocations (or a
+single invocation's finding/raised pair) into a caller-supplied path collision that the remediation
+makes categorically unreachable; each retirement note says what the fixture proved and where the
+still-live half of that coverage now lives. `CommandDispatcherLegacyPositionalArgumentTests.cs`
+gains `finding record` as a named theory case (the tenth door onto `RefuseLeadingPositionalArgument`)
+and a new `--blind-spot-file`-specific test for the `unrecognised-argument` disposition.
+
+No `❓` needed — the brief's shape matched the codebase throughout; no contradiction to post.
+
+`make gates` → `GATES_EXIT:0` — `BUILD_EXIT:0`, `TEST_EXIT:0` (1224/1224, whole suite — 1214 carried
+forward from `b96c0da` plus 10 new theory cases in `CardMintedFileBasenameTests`), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** **Audit of the §14 remediation block.** Diff is the uncommitted tree against `b96c0da`.
+Read the supervisor's `Request changes`, the architect's remediation brief, and the worker's report in
+full before the diff.
+
+Ran `make gates` on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1224/1224), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+
+**Verdict: Request changes.**
+
+**Item 1 was the whole audit, and eleven is wrong — undercounting by at least four live, currently
+reachable doors.** The brief's own framing was exact: "the reliable seam is every site that allocates
+an identity and then writes a file, not just `CreateCard` call sites — that framing is exactly what hid
+`RecordFinding`." The worker's own re-derivation still used that narrower seam: it enumerated
+`CardLayout.FileNameFor`'s callers (`CreateCard`, `RecordFinding`) rather than every
+`AllocateIdentity`/`CardIdentityAllocator.Allocate` call site — and a door that mints a card *without*
+calling `FileNameFor` is, by construction, invisible to a search that starts from `FileNameFor`'s own
+callers. That is the identical blind spot that hid the door this block exists to fix, applied a second
+time by the fix itself.
+
+Grepping `CardStore.cs` for every `AllocateIdentity(`/`CardIdentityAllocator.Allocate(` call site (not
+just `FileNameFor`'s) surfaces four more, all live, all confirmed by running them against the real
+binary built from this tree, none touched by this diff:
+
+1. **`nit disposition --disposition defer --raise <path> --title ...`** mints an **obligation** card.
+   `DispositionNit` (`CardStore.cs:~1127`) takes `raiseRequest.FilePath` straight from the CLI and
+   passes it to `AnchoredCardPath.TryCreate`/`AtomicWrite` — never `CardLayout.FileNameFor`. Ran it:
+   `--raise callboard/changes/c/my-own-name.md` minted `O-0002` and wrote it at
+   `my-own-name.md`, not `O-0002.md`. `obligation create` is one of `14.5`'s nine fixed doors.
+2. **`nit disposition --disposition decline --raise <path> --title ...`** mints a **decision** card,
+   same mechanism, same `raiseRequest.FilePath` (`raisedScope` resolves to `CardScope.Capability` for
+   this arm — read, not run separately, since the code path is identical to (1) and (4) below already
+   ran it). `decision create` is one of the nine.
+3. **`section verdict --finding-new <manifest>`**, where the manifest's own `new-card-file:` header
+   field names the path. `RecordSectionVerdictUnderExistingLock` (`CardStore.cs:~2688-2705`) allocates
+   `newId` then calls `WriteCard(cardsRoot, newFinding.FilePath, ...)` — `newFinding.FilePath` is the
+   manifest's own field, read verbatim (`NewFindingCardRequest.cs`'s own doc comment: "Where the new
+   card is written — a path, not a symbolic id"). Ran it: a manifest naming
+   `callboard/changes/c/my-chosen-block-name.md` minted `B-0001` and wrote it there, not `B-0001.md`.
+   `block create` is the first and most central of the nine.
+4. **`comment promote --to question|decision --raise <path> --title ...`**. `PromoteComment`
+   (`CardStore.cs:~4187`) allocates `raisedId` then writes at the caller's own `raisedFilePath`
+   parameter, sourced from `CommandDispatcher.cs:3403`'s `parsed.RaiseFilePath`. Ran it:
+   `--to decision --raise callboard/decisions/my-own-decision-name.md` minted `D-0002`, filed under the
+   name I chose. `question create`/`decision create` are two more of the nine.
+
+Each of these mints a card of a kind `14.5` already gave its own system-named door — the exact §13/`14.5`
+shape, twice more, plus a card-model-central one (`block`, via `section verdict`). `card-model`'s scenario
+is still unqualified. The section still does not satisfy it.
+
+**This block should not land as-is.** It correctly, verifiably fixes the one door the supervisor named —
+items 2 through 7 below confirm that half is sound — but "eleven doors, all closed" is not true of the
+codebase this diff produces, and a second `Request changes` from the supervisor on the same shape of gap
+would be the third finding of this exact pattern in two sections, this time surviving a dedicated
+remediation built to close it.
+
+**Suggested correction to the remediation's own method, not just its result:** re-derive the door set from
+every `AllocateIdentity`/`CardIdentityAllocator.Allocate` call site in `CardStore.cs`, not from
+`FileNameFor`'s callers — the latter can only ever confirm what is already fixed. `CardMintedFileBasenameTests`
+is the right shape and the right insurance policy in principle (confirmed below, item 4) but currently
+proves the property only for the doors already known to have it; extended to reach all fifteen (eleven
+already right, four more found here), it would be the assertion whose absence let *all five* of these
+doors exist unnoticed, not just the one.
+
+---
+
+**The rest of the checklist, checked and — for the door actually fixed — sound:**
+
+**2 — the two-card write's atomicity.** Genuinely unchanged. `AcquireLocksAndRecord` (`CardStore.cs:5587`)
+carries zero diff hunks — confirmed by `git diff b96c0da` touching only lines 5333–5820, entirely inside
+`RecordFinding`/`RecordFindingUnderLocks`/`RollbackRaisedCard`. The acquire-probe-release-retry shape,
+the `CurrentlyNames` fast-path check, the jittered backoff — byte-identical. The call site's arguments
+(`findingFilePath`, `raisedFilePath`) keep the exact same null-ness semantics the old
+`raiseRequest?.FilePath` had. `RollbackRaisedCard`'s body is a mechanical rename (`raiseRequest.FilePath`
+→ `raisedFilePath`, a plain string now instead of a record-projected one) with no logic change. No
+loosening found.
+
+**3 — test arithmetic, reconciled exactly, not accepted.** `1215 + 10 (CardMintedFileBasenameTests,
+counted: 10 `yield return` cases) + 2 (CommandDispatcherLegacyPositionalArgumentTests: one new
+`finding record` theory case, one new `--blind-spot-file` `[Fact]`) − 3 (retired) = 1224.` The three
+retirements, each checked: `TwoInvocations_SharingTheSameBlindSpotFilePath_...` and
+`ReversedCaseVariantPair_AcrossTwoInvocations_NeverDeadlocks` (both `CardFindingRecordConcurrencyTests.cs`)
+forced two invocations to collide on a caller-named path, which is now categorically impossible (every
+path is a fresh, unique identity) — the underlying lock-contention property they protected is still
+proved deterministically by the file's three surviving single-invocation tests
+(`WhenTheRaisedLockIsUnavailable...`, `WhenTheRaisedLockRemainsUnavailable...`,
+`WhenTheRaisedLockIsReleasedPartway...`), confirmed still present. `SameFileNamedByACaseVariantPath_...`
+(`CardFindingRecordTests.cs`) forced a case-variant collision between the finding's and the raised card's
+own path, also now impossible for the same reason; its residual property (two locks, one directory, no
+deadlock) is covered by the retirement note's named siblings, confirmed present. All three retirements
+sound, nothing quietly lost.
+
+**4 — `CardMintedFileBasenameTests`, judged as insurance, not as a test.** The theory itself
+(`MintedFile_BasenameEqualsTheMintedId`) is well-built: it drives the real CLI, asserts
+`CardLayout.FileNameFor(id) == Path.GetFileName(filePath)` for every case, and the worker reports
+watching it fail by hard-coding a wrong filename — a real regression guard. But it reaches exactly the
+eleven doors its own derivation found, by the same `FileNameFor`-caller method item 1 above shows is
+incomplete. **It would not fail if a twelfth door were added tomorrow without the property** — it
+wouldn't even need tomorrow; it does not fail today, against the four doors already sitting in this same
+tree. The insurance policy has the right shape and the wrong coverage list.
+
+**5 — the `LayoutMismatch` arms.** Confirmed live: `finding record --change archive` still refuses
+`card-layout-mismatch` (`'archive' is a reserved change name`) — nothing retired, matches the report.
+Side note, not a finding against this block: neither `FindingLayoutMismatch` nor
+`BlindSpotLayoutMismatch` has ever had a test that provokes it (checked `b96c0da`'s own version of
+`CardFindingRecordTests.cs` — same gap, pre-existing, not introduced here).
+
+**6 — `--blind-spot-file` removal.** Confirmed it falls through to `unrecognised-argument` cleanly when
+it's the last token in argv (ran it) — matches the `--proposal-file` precedent exactly, and the worker's
+own new test's comment already discloses the same asymmetry I checked independently: placed *before*
+other required flags, the caller gets a misleading `missing-argument` instead, for the same
+`ConsumeKnownFlags`-stops-at-the-first-unrecognised-token reason `RefuseLeadingPositionalArgument` was
+built to intercept for the *leading* position only. Consistent with the standard already accepted for
+`--proposal-file`; not a new problem.
+
+**7 — the document.** Ran the corrected examples: `finding record` with no positional and
+`--blind-spot obligation` now writes `F-0001.md`/`O-0001.md`, matching `filePath`/`raisedCardFilePath` in
+the response exactly as the edited prose describes. The exception prose is gone from both named
+locations. One thing worth the architect's attention when this returns: the document's own "judged out of
+scope for `supervisor`" bullet describes `--finding-new <manifest>` as the mechanism for attaching new
+findings without ever hinting it shares this block's exact defect — accurate to the code as it stands,
+which is precisely the problem.
+
+→ @architect
+
+**[worker]** **Round two — re-derived from the allocation seam, four more doors closed.** The
+reviewer was right: grepping `CardLayout.FileNameFor`'s callers cannot, by construction, find a door
+that mints a card without ever calling `FileNameFor` — which is exactly what all four of these were.
+
+**The seam used this time, stated explicitly.** Every `AllocateIdentity`/`CardIdentityAllocator.Allocate`
+call site in `src/Callboard/Cards/CardStore.cs` — allocating an identity is the one thing every
+card-minting write does that no other write does, independent of how it turns that identity into a
+basename. That grep finds exactly five call sites: `CreateCard` (the nine `14.5` doors, unchanged),
+`RecordFinding` (round one), and three more — `DispositionNit`, `PromoteComment`,
+`RecordSectionVerdictUnderExistingLock`. Not trusting five either: I re-read each of the three to
+confirm what it mints and where the caller-named path lived, rather than taking the reviewer's count
+on faith.
+
+1. **`nit disposition --disposition defer|decline --raise <path>`** (`CardStore.DispositionNit`,
+   ~1107) — raised an obligation/decline a decision at a caller-named `--raise <path>`. Reordered the
+   same way: container (`CardLayout.DirectoryFor(raisedScope, changeName)`) resolved before either
+   identity is allocated, `FileNameFor` after. `--raise` is gone from `ConsumeKnownFlags`; a caller
+   still spelling it gets the funnel's `unrecognised-argument`. `NitDispositionRaiseRequest` no
+   longer carries `FilePath`. `CardNitDispositionOutcome.Dispositioned` gained `RaisedCardFilePath`
+   so the CLI result (`raisedCardFilePath`) still reports where it landed.
+2. **`comment promote --to question|decision --raise <path>`** (`CardStore.PromoteComment`, ~4187) —
+   same shape. The raised card's scope is fixed by kind (`Question`→Repository, `Decision`→Capability)
+   and never needed `changeName` to resolve, so the directory-then-allocate ordering was
+   straightforward. `CardCommentPromoteOutcome.Promoted` gained `RaisedCardFilePath`.
+3. **`section verdict --finding-new <manifest>`** (`CardStore.RecordSectionVerdictUnderExistingLock`,
+   ~2409) — the subtle one: the caller-named path lived in the manifest's own `new-card-file:`
+   header, a file format rather than an argv flag. Removed the key from
+   `NewFindingCardManifest.RequiredHeaderKeysInOrder` entirely and added an explicit, named check
+   ahead of the generic "unrecognised header key" refusal — a manifest still spelling
+   `new-card-file:` now gets a message naming the key and why (`finding-new-manifest-malformed`,
+   "no longer accepted (14.5-remediation) — the tool names the new card's file itself now"), not a
+   generic typo message. `NewFindingCardRequest` dropped `FilePath`. The per-entry pre-write
+   `File.Exists`/`AnchoredCardPath.TryCreate` checks in the key-ownership scan are gone (structurally
+   unreachable once paths are minted from unique ids); the key-ownership check itself — `Key` is
+   still caller-supplied free text — stays, now sentinel-per-both-fields
+   (`"<pending: this verdict>"`) for an in-batch collision since neither id nor path is known at
+   scan time. One real regression caught by the suite, not by inspection: the write-loop's own
+   `WriteCard`-`onAlreadyExists` arm wasn't wrapped in `RefuseAndRecord` the way the removed
+   pre-check was, so `NewFindingCardAlreadyExists` (an `ICardRefusalReason`) stopped recording
+   against the section card — `FindingNew_TargetFileAlreadyExistsOnDisk_Refuses_...` caught it on
+   the first `make test` run (`Assert.Single(read.Refusals)` on an empty list); fixed by wrapping
+   that arm the same way.
+4. **`CardMintedFileBasenameTests` extended, not self-extending — said plainly rather than claimed
+   otherwise.** Added five more theory cases (defer/decline, question/decision, `--finding-new`) —
+   fourteen doors, fifteen theory cases total. Checked whether this could be driven off a production
+   enumeration instead of a hand-maintained list: there isn't one — `CommandDispatcher`'s routing is
+   a closed-union visitor with no marker interface a card-minting case carries, and NativeAOT rules
+   out reflecting over the product assembly to build one. Recorded in the file's own doc comment as
+   a standing instruction (re-derive the `AllocateIdentity` seam when a new minting verb is added),
+   not solved.
+
+**Watched every new case fail before trusting it green**, one door at a time: hard-coded a wrong
+raised-file basename in `DispositionNit` (both `nit disposition` theory cases went red, `O-0001.md`
+vs `wrong-nit-name.md`), then in `PromoteComment` (both `comment promote` cases went red), then in
+`RecordSectionVerdictUnderExistingLock` (the `--finding-new` case went red — "expected a card to
+exist at `.../B-0001.md`... but it does not", since that case derives its own expected path rather
+than trusting the corrupted actual one). Reverted each in turn; `diff` against the pre-edit copy
+confirmed a clean revert before moving to the next.
+
+**`docs/agent-command-reference.md`** — the "one distinction to hold onto" section now names all
+four second-round doors explicitly (not just `finding record`), states what each used to take and
+no longer does, and the supervisor's own "judged out of scope" bullets weren't touched (neither
+`nit disposition` nor `comment promote` claimed a positional-path exception the way `finding
+record` once did, so nothing there was stale).
+
+No `❓` needed — the brief's shape matched the codebase throughout once the correct seam was used;
+the one place brief and codebase diverged (the write-loop refusal not recording) was a defect the
+suite caught, not a brief-vs-code contradiction to post about.
+
+`make gates` → `GATES_EXIT:0` — `BUILD_EXIT:0`, `TEST_EXIT:0` (1229/1229, whole suite — 1224 carried
+forward from the first remediation round plus 5 new theory cases), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** **Audit of the §14 remediation, round two.** Diff still against `b96c0da`. Read the
+worker's round-two report in full before the diff.
+
+Ran `make gates` on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1229/1229), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+
+**Verdict: Approve.** I would defend this to the supervisor on the full `2734497..HEAD` union, not
+only on this delta.
+
+**1 — the count, reconciled myself rather than accepted.** Grepped `CardStore.cs` for every
+`AllocateIdentity(`/`CardIdentityAllocator.Allocate(` occurrence directly: six raw call sites, inside
+five functions — `CreateCard` (one), `RecordFinding` (two, round one), `DispositionNit` (one),
+`PromoteComment` (one), `RecordSectionVerdictUnderExistingLock` (one). Nothing sits outside these
+five; the allocation seam is exhaustively enumerated. **"Fourteen doors, fifteen cases" reconciles
+under a stated, consistent convention, not a dropped door:** `RecordFinding` counts as two doors
+because one successful call genuinely mints two independent cards in the same write (finding always,
+raised sometimes) — the property has to hold for both. `DispositionNit` and `PromoteComment` each
+count as **one** door apiece, because a single call mints exactly one card from a choice of two kinds
+(defer-or-decline; question-or-decision) — never both — so it is one mechanism, verified by two
+cases (one per branch) rather than two independent doors. `9 + 2 + 1 + 1 + 1 = 14` doors; `9 + 1 + 2
++ 2 + 1 = 15` cases. That is a defensible, consistently-applied distinction (simultaneous-mint vs.
+either/or-mint), not the same thing round one's "eleven" undercounted by — round one's gap was a
+door invisible to the derivation method entirely; this gap, if it were one, would be an arithmetic
+slip in an already-complete enumeration, and it isn't one. Confirmed by counting `yield return`
+entries in `CardMintedFileBasenameTests.cs` directly: **fifteen**, matching every label to its verb.
+
+**One real inconsistency this check surfaced, worth a one-line fix, not a re-open:** the test file's
+own doc comment states *"the theory below covers all fourteen across the **twelve** cases"* —
+contradicting both the worker's own DEVLOG count (fifteen) and the file's actual content (fifteen,
+counted directly above). A stale draft of the sentence, not a coverage gap — the test itself runs all
+fifteen regardless of what the comment claims — but it sits in the one file whose entire job is to be
+trusted at a glance, and "twelve" is currently false on its face.
+
+**2 — the regression, and the shape it rhymes with.** `NewFindingCardAlreadyExists` now records:
+confirmed by the passing suite (`FindingNew_TargetFileAlreadyExistsOnDisk_Refuses_AndRecordsAgainstTheSection`
+asserts `Assert.Single(sectionRead.Refusals)`, not merely a refusal code) and by reading the fix
+directly — the write-loop's `onAlreadyExists` arm is now wrapped in `RefuseAndRecord`, matching the
+removed pre-check's own discipline. **No new instance of the same unwrapped-arm shape was introduced
+by this round's own edits** — checked `DispositionNit`'s and `PromoteComment`'s diff hunks line by
+line; both round-two touched only the path-derivation and variable renames, not the write-result
+handling.
+
+**But the shape does still exist, pre-dating this remediation entirely, at two spots this check
+turned up while looking:** `DispositionNit`'s raised-card `AtomicWrite`'s own race-fallback
+`onAlreadyExists` (the rare TOCTOU case, distinct from the pre-check just above it, which *is*
+wrapped and *is* in `RefusalCoverageGateTests`' bijection with a passing "records" test) constructs
+`RaisedCardAlreadyExists` unwrapped. `PromoteComment` is worse: **both** its pre-check and its
+race-fallback construct `RaisedCardAlreadyExists` unwrapped, and `RefusalCoverageGateTests.Exclusions`
+carries it under "§9 block A3: card creation never resolves an existing card to record against" —
+the exact reasoning that, applied to `NewFindingCardAlreadyExists`, was just judged wrong for a verb
+that (like `comment promote`) operates against a real, already-existing host card. Checked: this
+exclusion entry is byte-identical in `b96c0da`, untouched by either remediation round — genuinely
+pre-existing, not something round two broke or was asked to fix. **Not a blocker on this block** — it
+predates `14.5` by sections, and "audit every non-recording refusal in the codebase" was never this
+remediation's scope — but it is the same defect class this section exists to catch, found while doing
+exactly the check the brief asked for, and worth the architect's attention as a `## NEXT` entry rather
+than going unmentioned because it wasn't what I was sent to find.
+
+**3 — the manifest refusal, provoked live.** Built the release binary, ran `section verdict
+--finding-new <manifest still spelling new-card-file:>` against a throwaway board: refused
+`finding-new-manifest-malformed`, `"manifest 'manifest.txt' names 'new-card-file', which is no longer
+accepted (14.5-remediation) — the tool names the new card's file itself now; remove this header
+line."` — matches the report exactly. The remedy names an action a caller can take (remove the
+header line), not a fictional command; §9 ruling 3 is satisfied vacuously, the same way it was for
+`--blind-spot-file`'s removal in round one — nothing here claims a verb.
+
+**4 — the insurance policy's declared limit, judged as asked: honestly stated but not the true
+ceiling.** The "no reflection over the product assembly" half is correct and matches ADR-0002 exactly
+— that route really is closed. But the standing-instruction fallback is not the only alternative to
+it: nothing stops a **test-assembly-only, non-reflective, source-text scan** of `CardStore.cs` — read
+it as a string (no different from `RefusalCoverageGateTests`' own use of ordinary reflection, itself
+only legal because it runs on the unpublished test assembly, never AOT) and assert that every method
+containing `AllocateIdentity(`/`CardIdentityAllocator.Allocate(` also contains `FileNameFor(`, or is
+listed in a small, named, reasoned exceptions set the same shape `RefusalCoverageGateTests.Exclusions`
+already uses. That would fail on a sixteenth door's arrival without a person having to remember to
+re-derive anything — the exact self-checking shape `## NEXT`'s own carried hazard about `## NEXT`'s
+own anchor (`^## NEXT$` vs. a naive substring) already argues for elsewhere in this file. **The
+standing instruction is the weaker answer**, per the coordinator's own framing — worth naming as a
+`## NEXT` follow-up, not obliging this block.
+
+**5 — watched-red, reproduced independently for one of the three, trusted for the other two on
+matching evidence.** Copied the tree to scratch, hard-coded `PromoteComment`'s raised-file basename
+to a wrong literal, ran `CardMintedFileBasenameTests`: both `comment promote` cases (`--to question`,
+`--to decision`) failed with the exact shape reported — `Expected: "Q-0001.md" / "D-0001.md", Actual:
+"wrong-comment-promote-name.md"`. Reverted; real tree untouched. Did not separately reproduce
+`DispositionNit`'s or `RecordSectionVerdictUnderExistingLock`'s own claimed failures — the code shape
+is identical across all three (derive-then-`FileNameFor`, one call site each), the worker's report
+names specific expected/actual mismatches for each, and the one I checked matches precisely; treating
+the other two as reasoned-from-matching-evidence rather than independently run, stated plainly.
+
+**6 — the document.** All four second-round doors are named in the expanded "one distinction to hold
+onto" section, plus the honest asymmetry that `section verdict`'s own response reports only
+`newCardIds`, never a path — confirmed against my own live run above (`"newCardIds":["B-0001"]`,
+no path field). **This round's doc diff adds no new runnable example** (no new ` ```sh ` block) — it
+is prose describing behaviour already demonstrated by round one's examples and by the commands I ran
+directly for items 1–3 above, all of which match. Nothing here needed a fresh run beyond what the
+other items already covered.
+
+**Nits — what each obliges:**
+
+- **The "twelve cases" doc-comment error** (item 1) — obliges a one-line correction to
+  `CardMintedFileBasenameTests.cs`'s own doc comment (twelve → fifteen). Cosmetic; does not affect
+  what the test actually runs or asserts.
+- **`PromoteComment`'s pre-existing non-recording `RaisedCardAlreadyExists`** (item 2) — obliges
+  nothing on this block; recommend a `## NEXT` entry so it is not lost, since it is the same shape
+  this section has now found and fixed twice elsewhere.
+- **The insurance policy's weaker-than-necessary framing** (item 4) — obliges nothing on this block;
+  recommend naming the source-scan alternative in `## NEXT` for whoever next adds a card-minting door,
+  since the standing-instruction fallback is exactly the kind of "someone has to remember" mechanism
+  this section's own history (seven, nine, ten, eleven, fourteen) argues against trusting.
+
+→ @architect
+
+**[worker]** **Reviewer nit fixed — the doc comment's own count now matches the file.** It said
+"twelve cases" against a file that directly counts fifteen (`grep -c "yield return new object\[\]"` →
+15). Rewrote the paragraph to state the doors-vs-cases convention explicitly rather than a bare
+corrected number, so a future reader re-deriving the door set has the reconciliation, not just a
+fixed digit to trust blindly:
+
+- **Fourteen doors**: nine from `CreateCard`; two from `RecordFinding` (its finding and its
+  optionally-raised card are minted *simultaneously* by one call, so each counts as its own door);
+  one each from `DispositionNit`, `PromoteComment`, `RecordSectionVerdictUnderExistingLock` (each
+  mints *either/or* — one call produces exactly one card, whose kind depends on a caller-chosen flag
+  — so the method is one door regardless of how many kinds it can produce).
+- **Fifteen cases**: the either/or doors need a separate case per kind to exercise both sides
+  (`DispositionNit`'s one door → two cases, `defer`/`decline`; `PromoteComment`'s one door → two
+  more, `question`/`decision`), while `RecordFinding`'s two simultaneous doors are exercised
+  together in a single case. 9 (`CreateCard`) + 1 (`RecordFinding`) + 2 (`DispositionNit`) + 2
+  (`PromoteComment`) + 1 (`RecordSectionVerdictUnderExistingLock`) = 15, matching the file.
+
+Nothing else in this block changed. Confirmed the baseline didn't move: `make gates` →
+`GATES_EXIT:0` — `BUILD_EXIT:0`, `TEST_EXIT:0` (1229/1229, same as before this fix), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`.
+
+→ @architect
+
 ## NEXT
 
 **§13 is closed — supervisor `Approve` on `f100b77..HEAD`, one remediation round.** **§14 is open and is

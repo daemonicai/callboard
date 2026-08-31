@@ -470,12 +470,9 @@ public sealed class CardSectionCloseTests : IDisposable
     public void CloseSection_AQuestionPromotedFromACommentOnTheSectionCardItself_Refuses_NamingThatQuestion()
     {
         var sectionPath = WriteSectionCardWithComment("s-0018a", "S-0018A", "thread-1", CardOwner.Reviewer);
-        var registerDirectory = Path.Combine(_root, CardLayout.RegisterDirectory.Replace('/', Path.DirectorySeparatorChar));
-        Directory.CreateDirectory(registerDirectory);
-        var raisedPath = Path.Combine(registerDirectory, "q-0300.md");
 
         var promoteOutcome = CardStore.PromoteComment(
-            _root, sectionPath, "thread-1", raisedPath, CardKind.Question, "Should we ship X?", CardOwner.Reviewer,
+            _root, sectionPath, "thread-1", CardKind.Question, "Should we ship X?", CardOwner.Reviewer,
             CardOwner.ProductOwner, "Raised while resolving a thread.", ChangeName, Created, TimeSpan.FromSeconds(5));
         var promoted = Assert.IsType<CardCommentPromoteOutcome.Promoted>(promoteOutcome);
         Assert.Equal("S-0018A", promoted.RaisedCard.Frontmatter.Section);

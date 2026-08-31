@@ -24,15 +24,13 @@ public sealed class CommandDispatcherRuleAuthorTests
     {
         using var repo = new TempGitRepo();
         var sectionOne = CreateSection(repo, ChangeName);
-        var findingOne = CreateFinding(repo, "f-0001", sectionOne, ChangeName);
+        var (findingOne, findingOnePath) = CreateFinding(repo, sectionOne, ChangeName);
 
         var otherChangeDirectory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(OtherChangeName).Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(otherChangeDirectory);
         var sectionTwo = CreateSection(repo, OtherChangeName);
-        var findingTwo = CreateFinding(repo, "f-0002", sectionTwo, OtherChangeName, directory: otherChangeDirectory);
+        var (findingTwo, findingTwoPath) = CreateFinding(repo, sectionTwo, OtherChangeName);
 
-        var findingOnePath = Path.Combine(repo.CardsDirectory, "f-0001.md");
-        var findingTwoPath = Path.Combine(otherChangeDirectory, "f-0002.md");
         var findingOneBytesBefore = File.ReadAllBytes(findingOnePath);
         var findingOneMtimeBefore = File.GetLastWriteTimeUtc(findingOnePath);
         var findingTwoBytesBefore = File.ReadAllBytes(findingTwoPath);
@@ -81,14 +79,13 @@ public sealed class CommandDispatcherRuleAuthorTests
         using var repo = new TempGitRepo();
 
         var liveSectionId = CreateSection(repo, ChangeName);
-        var liveFindingId = CreateFinding(repo, "f-0006", liveSectionId, ChangeName);
-        var liveFindingPath = Path.Combine(repo.CardsDirectory, "f-0006.md");
+        var (liveFindingId, liveFindingPath) = CreateFinding(repo, liveSectionId, ChangeName);
 
         const string ArchivedChangeName = "archived-change";
         var archivedLiveDirectory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ArchivedChangeName).Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(archivedLiveDirectory);
         var archivedSectionId = CreateSection(repo, ArchivedChangeName);
-        var archivedFindingId = CreateFinding(repo, "f-0007", archivedSectionId, ArchivedChangeName, directory: archivedLiveDirectory);
+        var (archivedFindingId, archivedFindingLiveFilePath) = CreateFinding(repo, archivedSectionId, ArchivedChangeName);
 
         var archiveOutput = new StringWriter();
         var archiveExitCode = RunInRepo(
@@ -96,8 +93,13 @@ public sealed class CommandDispatcherRuleAuthorTests
         Assert.Equal(CommandDispatcher.SuccessExitCode, archiveExitCode);
         Assert.False(Directory.Exists(archivedLiveDirectory), "the change directory must have moved under changes/archive/.");
 
+        // 14.5-remediation: the archived finding's post-archive basename is CardLayout.FileNameFor
+        // over its own minted id, the same basename it had pre-archive (archive moves the directory,
+        // never renames a file within it) — derived here from the pre-archive path this remediation
+        // now hands back, rather than a caller-chosen file stem.
         var archivedFindingPath = Path.Combine(
-            repo.Path, CardLayout.ArchivedChangeDirectory(ArchivedChangeName).Replace('/', Path.DirectorySeparatorChar), "f-0007.md");
+            repo.Path, CardLayout.ArchivedChangeDirectory(ArchivedChangeName).Replace('/', Path.DirectorySeparatorChar),
+            Path.GetFileName(archivedFindingLiveFilePath));
         Assert.True(File.Exists(archivedFindingPath), "the archived finding must be resolvable at its post-archive path.");
         var archivedFindingBytesBefore = File.ReadAllBytes(archivedFindingPath);
         var archivedFindingMtimeBefore = File.GetLastWriteTimeUtc(archivedFindingPath);
@@ -196,8 +198,7 @@ public sealed class CommandDispatcherRuleAuthorTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo, ChangeName);
-        var findingId = CreateFinding(repo, "f-0005", sectionId, ChangeName);
-        var findingPath = Path.Combine(repo.CardsDirectory, "f-0005.md");
+        var (findingId, findingPath) = CreateFinding(repo, sectionId, ChangeName);
         var findingBytesBefore = File.ReadAllBytes(findingPath);
 
         var output = new StringWriter();
@@ -242,22 +243,24 @@ public sealed class CommandDispatcherRuleAuthorTests
         Assert.Empty(Directory.EnumerateFiles(repo.RegisterDirectory, "R-*.md", SearchOption.TopDirectoryOnly));
     }
 
-    private static string CreateFinding(TempGitRepo repo, string fileStem, string sectionId, string changeName, string? directory = null)
+    // 14.5-remediation (§14 supervisor finding): no longer takes a fileStem — `finding record` no
+    // longer has a filename for a caller to choose. Returns both the id (still what `--earned-from`
+    // needs) and the minted file path (what a caller now reads bytes/mtime off).
+    private static (string Id, string FilePath) CreateFinding(TempGitRepo repo, string sectionId, string changeName)
     {
-        var findingDirectory = directory ?? repo.CardsDirectory;
-        var findingPath = Path.Combine(findingDirectory, fileStem + ".md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "finding", "record", findingPath, "--role", "worker", "--title", "An incident",
+                "finding", "record", "--role", "worker", "--title", "An incident",
                 "--section", sectionId, "--change", changeName, "--blind-spot", "none",
             ],
             output, repo.Path, "What happened.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        return doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
+        var result = doc.RootElement.GetProperty("result");
+        return (result.GetProperty("id").GetString()!, result.GetProperty("filePath").GetString()!);
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

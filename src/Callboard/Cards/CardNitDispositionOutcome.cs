@@ -43,7 +43,7 @@ internal abstract record CardNitDispositionOutcome
     /// <c>fix-before-land</c> edge (work-lifecycle: "<c>in-review → briefed</c> …
     /// <c>round += 1</c>"). See <see cref="CardStore.DispositionNit"/>'s own doc comment for when
     /// that is and is not the case.</param>
-    internal sealed record Dispositioned(CardFile Card, CardComment DispositionComment, CardFile? RaisedCard, bool Transitioned) : CardNitDispositionOutcome
+    internal sealed record Dispositioned(CardFile Card, CardComment DispositionComment, CardFile? RaisedCard, string? RaisedCardFilePath, bool Transitioned) : CardNitDispositionOutcome
     {
         internal override TResult Match<TResult>(Func<Dispositioned, TResult> onDispositioned, Func<RoleNotPermitted, TResult> onRoleNotPermitted, Func<NotABlockCard, TResult> onNotABlockCard, Func<CardNotFound, TResult> onCardNotFound, Func<NitNotFound, TResult> onNitNotFound, Func<AlreadyDispositioned, TResult> onAlreadyDispositioned, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<RaisedCardLayoutMismatch, TResult> onRaisedCardLayoutMismatch, Func<RaisedCardAlreadyExists, TResult> onRaisedCardAlreadyExists, Func<CardCorrupt, TResult> onCardCorrupt, Func<ToolFailure, TResult> onToolFailure,
         Func<RoundDisagreesWithHistory, TResult> onRoundDisagreesWithHistory,

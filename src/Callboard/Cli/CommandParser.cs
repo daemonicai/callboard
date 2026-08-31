@@ -1428,12 +1428,14 @@ internal static class CommandParser
 
     /// <summary>
     /// Builds <c>finding record</c>'s <see cref="CommandDispatcher.ParsedCommand.FindingRecord"/>
-    /// (§6 block B). One positional token (card file path); <c>--role</c>, <c>--title</c>,
-    /// <c>--section</c>, <c>--change</c> and <c>--blind-spot</c> are required, the rest optional.
-    /// The body is read from stdin during this parse (a read-only extraction, not the card-writing
-    /// side effect O-3 guards — see <see cref="CommandDispatcher.ParsedCommand.FindingRecord"/>'s
-    /// own doc comment), so a missing or non-redirected stdin refuses here rather than at execute
-    /// time.
+    /// (§6 block B). No positional token any more (14.5-remediation, §14 supervisor finding: a
+    /// caller no longer names either card this verb writes — not the finding's own file, and not
+    /// the raised obligation/hazard's, so <c>--blind-spot-file</c> is gone too); <c>--role</c>,
+    /// <c>--title</c>, <c>--section</c>, <c>--change</c> and <c>--blind-spot</c> are required, the
+    /// rest optional. The body is read from stdin during this parse (a read-only extraction, not
+    /// the card-writing side effect O-3 guards — see <see cref="CommandDispatcher.ParsedCommand.
+    /// FindingRecord"/>'s own doc comment), so a missing or non-redirected stdin refuses here
+    /// rather than at execute time.
     ///
     /// <para>
     /// <b>The blind-spot declaration is checked as input, here (findings: "A clean finding requires
@@ -1450,11 +1452,10 @@ internal static class CommandParser
     /// </summary>
     private static CommandDispatcher.ParseResult ParseFindingRecord(CommandDispatcher.CommandContext context)
     {
-        var filePath = context.Arguments.TryTake();
-        if (filePath is null)
+        var positionalRefusal = RefuseLeadingPositionalArgument(context, "'finding record'");
+        if (positionalRefusal is not null)
         {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'finding record' requires a card file path."));
+            return new CommandDispatcher.ParseResult.Refused(positionalRefusal);
         }
 
         string? roleText = null;
@@ -1466,7 +1467,6 @@ internal static class CommandParser
         string? verifiedAt = null;
         string? extentInstrument = null;
         string? extentExplicitRaw = null;
-        string? blindSpotFile = null;
         string? blindSpotTitle = null;
         string? blindSpotBodyFile = null;
         string? dispositionText = null;
@@ -1482,7 +1482,6 @@ internal static class CommandParser
             ["--verified-at"] = value => verifiedAt = value,
             ["--extent-instrument"] = value => extentInstrument = value,
             ["--extent-explicit"] = value => extentExplicitRaw = value,
-            ["--blind-spot-file"] = value => blindSpotFile = value,
             ["--blind-spot-title"] = value => blindSpotTitle = value,
             ["--blind-spot-body-file"] = value => blindSpotBodyFile = value,
             ["--disposition"] = value => dispositionText = value,
@@ -1530,13 +1529,6 @@ internal static class CommandParser
                 break;
             case "obligation":
             case "hazard":
-                if (blindSpotFile is null)
-                {
-                    return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                        "missing-argument",
-                        $"'finding record' requires '--blind-spot-file <path>' when --blind-spot is '{blindSpotText}'."));
-                }
-
                 if (blindSpotTitle is null)
                 {
                     return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
@@ -1579,7 +1571,7 @@ internal static class CommandParser
                 }
 
                 var raisedKind = blindSpotText == "obligation" ? CardKind.Obligation : CardKind.Hazard;
-                raiseRequest = new FindingBlindSpotRaiseRequest(raisedKind, blindSpotFile, blindSpotTitle, blindSpotBody);
+                raiseRequest = new FindingBlindSpotRaiseRequest(raisedKind, blindSpotTitle, blindSpotBody);
                 break;
             default:
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
@@ -1648,7 +1640,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.FindingRecord(
-            filePath, title, section, changeName, role, body, instrument, extent, verifiedAt, raiseRequest, disposition,
+            title, section, changeName, role, body, instrument, extent, verifiedAt, raiseRequest, disposition,
             context.WorkingDirectory, context.Clock()));
     }
 
@@ -2960,19 +2952,23 @@ internal static class CommandParser
     /// (§8 block B, review-certification: "Nits carry a disposition"). Named by <c>--id</c> — the
     /// nit's own id, resolved through <see cref="Cards.NitResolver"/> at execute time, not
     /// <see cref="Cards.CardIdentityResolver"/> (a nit is a comment, not a card — see that type's
-    /// own doc comment). <c>--raise &lt;path&gt;</c>/<c>--title &lt;text&gt;</c> are required only
-    /// for <c>defer</c>/<c>decline</c> (argv-decidable: <c>--disposition</c>'s own value settles
-    /// which, checked here rather than left to execute) — the raised card's own body is the same
-    /// stdin body every disposition reads (review-certification: "load-bearing for <c>decline</c>").
-    /// Role <em>permission</em> (architect-only) is left to the execute phase, the same split
-    /// <c>block approve</c>'s own role check uses.
+    /// own doc comment). <c>--title &lt;text&gt;</c> is required only for <c>defer</c>/<c>decline</c>
+    /// (argv-decidable: <c>--disposition</c>'s own value settles which, checked here rather than
+    /// left to execute) — the raised card's own body is the same stdin body every disposition reads
+    /// (review-certification: "load-bearing for <c>decline</c>"). No <c>--raise &lt;path&gt;</c> any
+    /// more (14.5-remediation, §14 supervisor finding, second round): the raised card is named for
+    /// the identity <see cref="Cards.CardStore.DispositionNit"/> mints, the same "container, then
+    /// allocate, then <see cref="Cards.CardLayout.FileNameFor"/>" ordering every other card-minting
+    /// door follows; a caller still spelling <c>--raise</c> gets the funnel's own generic
+    /// <c>unrecognised-argument</c>, the same disposition <c>--proposal-file</c> already has for
+    /// <c>rule propose-compact</c>. Role <em>permission</em> (architect-only) is left to the execute
+    /// phase, the same split <c>block approve</c>'s own role check uses.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseNitDisposition(CommandDispatcher.CommandContext context)
     {
         string? nitId = null;
         string? roleText = null;
         string? dispositionText = null;
-        string? raiseFilePath = null;
         string? raiseTitle = null;
         string? changeName = null;
 
@@ -2981,7 +2977,6 @@ internal static class CommandParser
             ["--id"] = value => nitId = value,
             ["--role"] = value => roleText = value,
             ["--disposition"] = value => dispositionText = value,
-            ["--raise"] = value => raiseFilePath = value,
             ["--title"] = value => raiseTitle = value,
             ["--change"] = value => changeName = value,
         });
@@ -3029,13 +3024,6 @@ internal static class CommandParser
         NitDispositionRaiseRequest? raiseRequest = null;
         if (raiseKind is not null)
         {
-            if (raiseFilePath is null)
-            {
-                return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                    "missing-argument",
-                    $"'nit disposition --disposition {dispositionText}' requires '--raise <card-file-path>'."));
-            }
-
             if (raiseTitle is null)
             {
                 return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
@@ -3053,14 +3041,14 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         // The raise request's own construction happens here, once (never repeated per disposition
-        // case), even though raiseKind/raiseFilePath/raiseTitle are only ever non-null together
-        // (checked above) — the constructor's own kind restriction is a second, independent
+        // case), even though raiseKind/raiseTitle are only ever non-null together (checked
+        // above) — the constructor's own kind restriction is a second, independent
         // statement of the same invariant, not the only one, the same "verify rather than merely
         // rely on the one call site" discipline FindingBlindSpotRaiseRequest's own doc comment
         // describes.
         if (raiseKind is not null)
         {
-            raiseRequest = new NitDispositionRaiseRequest(raiseKind, raiseFilePath!, raiseTitle!, body);
+            raiseRequest = new NitDispositionRaiseRequest(raiseKind, raiseTitle!, body);
         }
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.NitDisposition(
@@ -3331,8 +3319,10 @@ internal static class CommandParser
     /// <summary>
     /// Builds <c>comment promote --to question|decision</c>'s <see cref="CommandDispatcher.
     /// ParsedCommand.CommentPromote"/>. Same addressing as <see cref="ParseCommentResolve"/> for the
-    /// thread being promoted; <c>--raise &lt;path&gt;</c>/<c>--title &lt;text&gt;</c> name the new
-    /// card the same way <c>nit disposition --raise</c> already does. <c>--owed-by &lt;role&gt;</c>
+    /// thread being promoted; <c>--title &lt;text&gt;</c> names the new card. No <c>--raise
+    /// &lt;path&gt;</c> any more (14.5-remediation, §14 supervisor finding, second round — the same
+    /// fix <c>nit disposition</c>'s own former <c>--raise</c> got): the raised card is named for the
+    /// identity <see cref="Cards.CardStore.PromoteComment"/> mints. <c>--owed-by &lt;role&gt;</c>
     /// is required only when <c>--to</c> is <c>question</c> — the role that owes the answer, the
     /// same <c>question create</c> discipline (a promoted <c>decision</c> is owned by <c>--role</c>
     /// itself, exactly what <c>decision create</c> already does, so no <c>--owed-by</c> is asked for
@@ -3348,7 +3338,6 @@ internal static class CommandParser
         string? commentId = null;
         string? roleText = null;
         string? toText = null;
-        string? raiseFilePath = null;
         string? title = null;
         string? owedByText = null;
         string? changeName = null;
@@ -3359,7 +3348,6 @@ internal static class CommandParser
             ["--comment-id"] = value => commentId = value,
             ["--role"] = value => roleText = value,
             ["--to"] = value => toText = value,
-            ["--raise"] = value => raiseFilePath = value,
             ["--title"] = value => title = value,
             ["--owed-by"] = value => owedByText = value,
             ["--change"] = value => changeName = value,
@@ -3410,12 +3398,6 @@ internal static class CommandParser
                     "unrecognised-target-kind", $"unrecognised '--to' value: '{toText}'. Recognised values: question, decision."));
         }
 
-        if (raiseFilePath is null)
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'comment promote' requires '--raise <card-file-path>'."));
-        }
-
         if (title is null)
         {
             return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
@@ -3451,7 +3433,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.CommentPromote(
-            id, commentId, role, toKind, raiseFilePath, title, owedByRole, body, changeName, context.WorkingDirectory, context.Clock()));
+            id, commentId, role, toKind, title, owedByRole, body, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

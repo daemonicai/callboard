@@ -119,18 +119,18 @@ public sealed class CommandDispatcherCommentTests
     {
         using var repo = new TempGitRepo();
         var (path, id) = WriteCardWithComment(repo, "b-0011", "B-0011", "thread-1", CardOwner.Reviewer);
-        var raisedPath = Path.Combine(repo.RegisterDirectory, "q-9997.md");
+        var filesBefore = Directory.Exists(repo.RegisterDirectory) ? Directory.GetFiles(repo.RegisterDirectory, "*.md").Length : 0;
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             ["comment", "promote", "--id", id, "--comment-id", "thread-1", "--role", "architect", "--to", "question",
-                "--raise", raisedPath, "--title", "A question.", "--owed-by", "product-owner", "--change", "establish-callboard"],
+                "--title", "A question.", "--owed-by", "product-owner", "--change", "establish-callboard"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("role-not-permitted", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
-        Assert.False(File.Exists(raisedPath));
+        Assert.Equal(filesBefore, Directory.Exists(repo.RegisterDirectory) ? Directory.GetFiles(repo.RegisterDirectory, "*.md").Length : 0);
 
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.False(CardCommentRouting.IsResolved(read.Comments, 0));
@@ -163,7 +163,7 @@ public sealed class CommandDispatcherCommentTests
 
         var exitCode = RunInRepo(
             ["comment", "promote", "--id", id, "--comment-id", "thread-1", "--role", "reviewer",
-                "--raise", Path.Combine(repo.RegisterDirectory, "q-9999.md"), "--title", "A question."],
+                "--title", "A question."],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -180,7 +180,7 @@ public sealed class CommandDispatcherCommentTests
 
         var exitCode = RunInRepo(
             ["comment", "promote", "--id", id, "--comment-id", "thread-1", "--role", "reviewer", "--to", "question",
-                "--raise", Path.Combine(repo.RegisterDirectory, "q-9998.md"), "--title", "A question."],
+                "--title", "A question."],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -193,20 +193,22 @@ public sealed class CommandDispatcherCommentTests
     {
         using var repo = new TempGitRepo();
         var (path, id) = WriteCardWithComment(repo, "b-0006", "B-0006", "thread-1", CardOwner.Reviewer);
-        var raisedPath = Path.Combine(repo.RegisterDirectory, "q-0001.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             ["comment", "promote", "--id", id, "--comment-id", "thread-1", "--role", "reviewer", "--to", "question",
-                "--raise", raisedPath, "--title", "Should we ship X?", "--owed-by", "product-owner", "--change", "establish-callboard"],
+                "--title", "Should we ship X?", "--owed-by", "product-owner", "--change", "establish-callboard"],
             output, repo.Path, "Raised while resolving a thread.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var result = doc.RootElement.GetProperty("result");
-        Assert.Equal(raisedPath, result.GetProperty("raisedCardFilePath").GetString());
+        var raisedPath = result.GetProperty("raisedCardFilePath").GetString()!;
         Assert.Equal("question", result.GetProperty("raisedCardKind").GetString());
 
+        // 14.5-remediation (§14 supervisor finding, second round): the raised card's basename is
+        // its own minted id — no caller supplied its path.
+        Assert.Equal(CardLayout.FileNameFor(result.GetProperty("raisedCardId").GetString()!), Path.GetFileName(raisedPath));
         Assert.True(File.Exists(raisedPath));
         var read = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.True(CardCommentRouting.IsResolved(read.Comments, 0));
