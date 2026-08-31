@@ -70,7 +70,11 @@ public sealed class CardStoreCorruptionTests : IDisposable
         var goodPathB = WriteGoodCard("b-0009");
 
         var content = File.ReadAllText(wreckedPath)
-            + "<!-- callboard:comment id=C-0001 author=worker resolved=false timestamp=2026-08-20T09:00:00+00:00 -->\n"
+            + "<!-- callboard:comment\n"
+            + "id: C-0001\n"
+            + "author: worker\n"
+            + "timestamp: 2026-08-20T09:00:00+00:00\n"
+            + "-->\n"
             + "this comment is never closed\n";
         File.WriteAllText(wreckedPath, content, new UTF8Encoding(false));
 

@@ -106,6 +106,35 @@ public sealed class CardFileRoundTripTests
         Assert.Equal(unaddressed, parsed.Comments[2]);
     }
 
+    // §14.4's own seam: the comment header now closes on the shared BlockCloseLine ("-->"), the
+    // exact same line the body reader would otherwise treat as a terminator. A comment body whose
+    // very first line is literally "-->" must not be mistaken for a second header close, must not
+    // be escaped on write (CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter deliberately excludes
+    // BlockCloseLine — see its own doc comment), and must round-trip as ordinary content.
+    [Fact]
+    public void CommentBodyWhoseFirstLineIsExactlyTheBlockCloseLine_RoundTrips_AndIsNotEscapedOnWrite()
+    {
+        var frontmatter = new CardFrontmatter(
+            "B-0107", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "14", Created, Updated);
+        const string trickyCommentBody = "-->\nsecond line of the same comment";
+        var comment = new CardComment("C-0001", CardOwner.Worker, Updated, trickyCommentBody, null, null, null, []);
+        var card = new CardFile(frontmatter, "Body.", [comment], []);
+
+        var raw = CardFileWriter.Serialize(card);
+
+        // Not escaped: the body's own first line reads on disk as a bare "-->", not "\-->" — the
+        // header's own close line is immediately followed by a second, unescaped "-->" line (the
+        // body's first line) rather than a backslash-prefixed one. Pinned as a raw-text assertion
+        // so a future change to LooksLikeDelimiterOrEscapedDelimiter that started escaping
+        // BlockCloseLine would be caught here, not only by the round-trip below.
+        Assert.Contains("-->\n-->\nsecond line of the same comment\n", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\-->", raw, StringComparison.Ordinal);
+
+        var parsed = AssertSuccess(CardFileParser.Parse(raw));
+        Assert.Equal(comment, Assert.Single(parsed.Comments));
+        Assert.Equal(trickyCommentBody, parsed.Comments[0].Body);
+    }
+
     [Fact]
     public void RoundTrips_BodyContainingTextThatLooksLikeACommentDelimiter()
     {
@@ -330,7 +359,12 @@ public sealed class CardFileRoundTripTests
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "---\n" +
             "body\n" +
-            "<!-- callboard:comment id=C-0001 author=worker round=2 timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: worker\n" +
+            "round: 2\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
             "hello\n" +
             "<!-- /callboard:comment -->\n";
 
@@ -358,12 +392,24 @@ public sealed class CardFileRoundTripTests
             "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n" +
             "---\n" +
             "body\n" +
-            "<!-- callboard:comment id=nit-1 author=reviewer to=architect timestamp=2026-08-19T09:00:00+00:00 " +
-            "is-nit=true required=true sites=src/A.cs,src/B.cs -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: nit-1\n" +
+            "author: reviewer\n" +
+            "to: architect\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "is-nit: true\n" +
+            "required: true\n" +
+            "sites: src/A.cs,src/B.cs\n" +
+            "-->\n" +
             "This is dead code.\n" +
             "<!-- /callboard:comment -->\n" +
-            "<!-- callboard:comment id=disp-1 author=architect resolves=nit-1 timestamp=2026-08-19T09:05:00+00:00 " +
-            "disposition=fix-before-land -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: disp-1\n" +
+            "author: architect\n" +
+            "resolves: nit-1\n" +
+            "timestamp: 2026-08-19T09:05:00+00:00\n" +
+            "disposition: fix-before-land\n" +
+            "-->\n" +
             "Fixing before it lands.\n" +
             "<!-- /callboard:comment -->\n";
 
@@ -415,10 +461,12 @@ public sealed class CardFileRoundTripTests
     [Fact]
     public void RoundTrips_CommentIdContainingTheHeaderTerminatorAsASubstring()
     {
-        // " -->" is the header's own terminator (CardFileFormat.CommentHeaderSuffix). Before the
-        // escaping fix, an id containing it as a substring would serialise successfully and then
-        // fail to parse back — the same "writes but can't be read back" failure the frontmatter
-        // escaping already guards against, applied here to the comment header.
+        // "-->" is the shared block terminator (CardFileFormat.BlockCloseLine) every §14.1 family's
+        // free-text fields must survive containing — §14.4 puts the comment header's id/reply-to/
+        // resolves through the same CardFileFormat.EscapeCardBlockValue every other family's
+        // free-text field already uses, precisely so a value containing this substring still
+        // round-trips instead of leaking the rest of a rendered HTML comment or being misread as
+        // the block's own close line.
         var frontmatter = new CardFrontmatter(
             "B-0104", CardKind.Block, "Title", "drafting", CardOwner.Worker, CardScope.Change, "2", Created, Updated);
         var comment = new CardComment("weird -->id", CardOwner.Worker, Updated, "Body.", null, null, null, []);
@@ -427,17 +475,6 @@ public sealed class CardFileRoundTripTests
         var parsed = AssertSuccess(CardFileParser.Parse(CardFileWriter.Serialize(card)));
 
         Assert.Equal(comment.Id, Assert.Single(parsed.Comments).Id);
-    }
-
-    [Fact]
-    public void EscapeCommentHeaderValue_IsReversedExactlyByUnescapeCommentHeaderValue()
-    {
-        const string value = @"has spaces, a \backslash\, and an = sign";
-
-        var escaped = CardFileFormat.EscapeCommentHeaderValue(value);
-
-        Assert.DoesNotContain(' ', escaped);
-        Assert.Equal(value, CardFileFormat.UnescapeCommentHeaderValue(escaped));
     }
 
     [Fact]
@@ -466,7 +503,7 @@ public sealed class CardFileRoundTripTests
     {
         const string raw =
             "---\nid: X-0001\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 1\ncreated: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\n" +
-            "body\n<!-- callboard:comment id=C-0001 author=worker resolved=false timestamp=2026-08-19T09:00:00+00:00 -->\nunterminated comment\n";
+            "body\n<!-- callboard:comment\nid: C-0001\nauthor: worker\ntimestamp: 2026-08-19T09:00:00+00:00\n-->\nunterminated comment\n";
 
         var result = CardFileParser.Parse(raw);
 
@@ -603,8 +640,8 @@ public sealed class CardFileRoundTripTests
     }
 
     // The same unterminated-block refusal, for a family other than handover — proves the fix is in
-    // the shared field-line reader every one of the seven families now goes through, not something
-    // special-cased for handover alone.
+    // the shared field-line reader every one of the eight families (including the comment header,
+    // since §14.4) now goes through, not something special-cased for handover alone.
     [Fact]
     public void Parse_RefusalBlockMissingItsClosingLine_FailsLoudly()
     {
@@ -616,6 +653,28 @@ public sealed class CardFileRoundTripTests
             "by: reviewer\n" +
             "rule: r\n" +
             "remedy: m\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n";
+
+        var reason = AssertFailure(CardFileParser.Parse(raw));
+
+        Assert.Contains("unterminated", reason, StringComparison.Ordinal);
+        Assert.Contains("-->", reason, StringComparison.Ordinal);
+    }
+
+    // §14.4: the comment header now reads through the same ParseBlockFieldLines as its seven
+    // siblings, so an unterminated *header* (no "-->" closing it before end of file) must refuse
+    // the same way — distinct from the pre-existing "missing comment footer" case below, which is
+    // about the body/footer, not the header block itself.
+    [Fact]
+    public void Parse_CommentHeaderBlockMissingItsClosingLine_FailsLoudly_RatherThanParsingATruncatedHeader()
+    {
+        const string raw =
+            "---\nid: X-0012\nkind: block\ntitle: t\nstatus: drafting\nowner: worker\nscope: change\nsection: 14\n" +
+            "created: 2026-08-19T09:00:00+00:00\nupdated: 2026-08-19T09:00:00+00:00\n---\nbody\n" +
+            // deliberately no closing "-->" line for the header — the file ends here
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: worker\n" +
             "timestamp: 2026-08-19T09:00:00+00:00\n";
 
         var reason = AssertFailure(CardFileParser.Parse(raw));
@@ -1012,11 +1071,12 @@ public sealed class CardFileRoundTripTests
         AssertFailure(CardFileParser.Parse(raw));
     }
 
-    // §14 remediation (reviewer finding on 14.1-14.3): a line that reaches the body/comment loops
-    // looking like one of the seven §14.1 block open lines but is not an exact match — an old
-    // single-line marker, a hand-edit with trailing content, anything short of an exact open line —
-    // must never be silently absorbed as prose. Pinned across all seven families in one place,
-    // not just the handful the earlier ad-hoc lookalike tests above happened to cover individually.
+    // §14 remediation (reviewer finding on 14.1-14.3), extended by §14.4: a line that reaches the
+    // body/comment loops looking like one of the eight §14.1 block open lines but is not an exact
+    // match — an old single-line marker, a hand-edit with trailing content, anything short of an
+    // exact open line — must never be silently absorbed as prose. Pinned across all eight families
+    // in one place, not just the handful the earlier ad-hoc lookalike tests above happened to cover
+    // individually.
     [Theory]
     [InlineData(CardFileFormat.HandoverOpenLine, "handover")]
     [InlineData(CardFileFormat.TransitionOpenLine, "transition")]
@@ -1025,6 +1085,7 @@ public sealed class CardFileRoundTripTests
     [InlineData(CardFileFormat.ClaimOpenLine, "claim")]
     [InlineData(CardFileFormat.LimitOpenLine, "limit")]
     [InlineData(CardFileFormat.RefusalOpenLine, "refusal")]
+    [InlineData(CardFileFormat.CommentOpenLine, "comment")]
     public void RoundTrips_BodyContainingABareBlockOpenLine_ForEveryFamily_EscapesItAndInjectsNoEntry(string openLine, string family)
     {
         var frontmatter = new CardFrontmatter(
@@ -1042,13 +1103,15 @@ public sealed class CardFileRoundTripTests
         Assert.Empty(parsed.Refusals);
         Assert.Empty(parsed.SectionFields.Verdicts);
         Assert.Empty(parsed.SectionFields.Authorisations);
+        Assert.Empty(parsed.Comments);
     }
 
     // The other half of the same symmetry, pinned as a test rather than asserted only in a
     // comment: whatever CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter says the write side
     // must escape, CardFileParser must refuse when that exact line arrives unescaped — the
     // reviewer's own repro (an old pre-14.1 single-line transition marker silently disappearing
-    // into CardFile.Body with Transitions.Count == 0, no error, no trace) generalised to all seven.
+    // into CardFile.Body with Transitions.Count == 0, no error, no trace) generalised to all eight
+    // (§14.4 added the comment case).
     [Theory]
     [InlineData(CardFileFormat.HandoverOpenLine, "handover")]
     [InlineData(CardFileFormat.TransitionOpenLine, "transition")]
@@ -1057,6 +1120,7 @@ public sealed class CardFileRoundTripTests
     [InlineData(CardFileFormat.ClaimOpenLine, "claim")]
     [InlineData(CardFileFormat.LimitOpenLine, "limit")]
     [InlineData(CardFileFormat.RefusalOpenLine, "refusal")]
+    [InlineData(CardFileFormat.CommentOpenLine, "comment")]
     public void UnescapedMalformedBlockOpenLine_ForEveryFamily_IsExactlyWhatTheWriteSideEscapes_AndTheReadSideRefusesItUnescaped(string openLine, string family)
     {
         Assert.True(CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter(openLine));

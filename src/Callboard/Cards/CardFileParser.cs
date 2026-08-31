@@ -421,10 +421,11 @@ internal static class CardFileParser
         }
 
         var bodyLines = new List<string>();
-        while (cursor < lines.Length && !CardFileFormat.IsCommentHeader(lines[cursor]) && !CardFileFormat.IsHandoverLine(lines[cursor]) && !CardFileFormat.IsTransitionLine(lines[cursor]) && !CardFileFormat.IsVerdictLine(lines[cursor]) && !CardFileFormat.IsAuthorisationLine(lines[cursor]) && !CardFileFormat.IsClaimLine(lines[cursor]) && !CardFileFormat.IsLimitLine(lines[cursor]) && !CardFileFormat.IsRefusalLine(lines[cursor]))
+        while (cursor < lines.Length && !CardFileFormat.IsCommentLine(lines[cursor]) && !CardFileFormat.IsHandoverLine(lines[cursor]) && !CardFileFormat.IsTransitionLine(lines[cursor]) && !CardFileFormat.IsVerdictLine(lines[cursor]) && !CardFileFormat.IsAuthorisationLine(lines[cursor]) && !CardFileFormat.IsClaimLine(lines[cursor]) && !CardFileFormat.IsLimitLine(lines[cursor]) && !CardFileFormat.IsRefusalLine(lines[cursor]))
         {
-            // §14 remediation: a line that starts with one of the seven §14.1 block-open prefixes
-            // but does not exactly match one can never be legitimate body content — the writer
+            // §14 remediation, extended by §14.4: a line that starts with one of the eight §14.1
+            // block-open prefixes but does not exactly match one can never be legitimate body
+            // content — the writer
             // always escapes exactly such a line (CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter)
             // before emitting it — so an unescaped match here is a hand-authored or pre-§14.1
             // legacy marker, refused rather than silently absorbed as prose (§13.6).
@@ -637,29 +638,32 @@ internal static class CardFileParser
                 continue;
             }
 
-            if (!CardFileFormat.IsCommentHeader(headerLine))
+            if (!CardFileFormat.IsCommentLine(headerLine))
             {
-                return Failure($"expected a comment header, a handover line, a transition line, a verdict line, an authorisation line, a claim line, a limit line, a refusal line, or end of file, found: '{headerLine}'");
+                return Failure($"expected a comment line, a handover line, a transition line, a verdict line, an authorisation line, a claim line, a limit line, a refusal line, or end of file, found: '{headerLine}'");
             }
 
-            if (!headerLine.EndsWith(CardFileFormat.CommentHeaderSuffix, StringComparison.Ordinal))
-            {
-                return Failure($"malformed comment header: '{headerLine}'");
-            }
-
-            var headerFieldsText = headerLine[CardFileFormat.CommentHeaderPrefix.Length..^CardFileFormat.CommentHeaderSuffix.Length];
-            var headerFieldsResult = ParseCommentHeaderFields(headerFieldsText);
+            // §14.4: the comment header is now a §14.1 delimited block like its seven siblings — the
+            // same ParseBlockFieldLines reader, so an unterminated header (no closing '-->') fails
+            // loudly the same way an unterminated handover/transition/etc. block already does,
+            // rather than the header line itself needing its own suffix check.
+            cursor++; // consume the open line
+            var headerFieldsResult = ParseBlockFieldLines(lines, ref cursor, KnownCommentHeaderKeys, "comment header");
             if (headerFieldsResult.Failure is { } headerFailure)
             {
                 return Failure(headerFailure);
             }
 
-            cursor++;
-
+            // §14.4: the header's own close line is the shared BlockCloseLine ("-->") — the same
+            // line the other seven families terminate on. ParseBlockFieldLines already consumed it
+            // above, so the comment body below begins on the line right after; a body whose first
+            // line happens to be exactly "-->" is ordinary content here, not a second terminator —
+            // this loop only ever watches for CardFileFormat.CommentFooter, never BlockCloseLine (see
+            // CardFileFormatBlockValueEscapeTests/CardFileRoundTripTests for the pinned case).
             var commentBodyLines = new List<string>();
             while (cursor < lines.Length && !CardFileFormat.IsCommentFooter(lines[cursor]))
             {
-                if (CardFileFormat.IsCommentHeader(lines[cursor]) || CardFileFormat.IsHandoverLine(lines[cursor]) || CardFileFormat.IsTransitionLine(lines[cursor]) || CardFileFormat.IsVerdictLine(lines[cursor]) || CardFileFormat.IsAuthorisationLine(lines[cursor]) || CardFileFormat.IsClaimLine(lines[cursor]) || CardFileFormat.IsLimitLine(lines[cursor]) || CardFileFormat.IsRefusalLine(lines[cursor]))
+                if (CardFileFormat.IsCommentLine(lines[cursor]) || CardFileFormat.IsHandoverLine(lines[cursor]) || CardFileFormat.IsTransitionLine(lines[cursor]) || CardFileFormat.IsVerdictLine(lines[cursor]) || CardFileFormat.IsAuthorisationLine(lines[cursor]) || CardFileFormat.IsClaimLine(lines[cursor]) || CardFileFormat.IsLimitLine(lines[cursor]) || CardFileFormat.IsRefusalLine(lines[cursor]))
                 {
                     return Failure($"missing comment footer before next block: '{lines[cursor]}'");
                 }
@@ -683,7 +687,7 @@ internal static class CardFileParser
             cursor++; // consume the footer line
 
             // headerFieldsResult.Failure is null here, so Fields/UnknownFields are guaranteed
-            // non-null by ParseCommentHeaderFields's own contract.
+            // non-null by ParseBlockFieldLines's own contract.
             var commentResult = BuildComment(
                 headerFieldsResult.Fields!, headerFieldsResult.UnknownFields!, string.Join('\n', commentBodyLines));
             if (commentResult.Failure is { } commentFailure)
@@ -1429,10 +1433,6 @@ internal static class CardFileParser
         return CardFileFormat.UnescapeFrontmatterValue(rawValue);
     }
 
-    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
-        ParseCommentHeaderFields(string headerFieldsText) =>
-        ParseKeyValueTokens(headerFieldsText, KnownCommentHeaderKeys, "comment header");
-
     /// <summary>
     /// §14.1: reads one §14.1 delimited block's field lines — starting just past its already-
     /// consumed open line — until a line exactly equal to <see cref="CardFileFormat.BlockCloseLine"/>
@@ -1501,41 +1501,6 @@ internal static class CardFileParser
         return (fields, unknownFields, null);
     }
 
-    /// <summary>
-    /// The <c>key=value</c> token parsing the comment header still uses — §14.4 brings the comment
-    /// header onto the §14.1 delimited-block shape next; until then this stays the one
-    /// implementation comment headers rely on.
-    /// </summary>
-    private static (IReadOnlyDictionary<string, string>? Fields, IReadOnlyList<(string Key, string RawValue)>? UnknownFields, string? Failure)
-        ParseKeyValueTokens(string fieldsText, IReadOnlySet<string> knownKeys, string blockLabel)
-    {
-        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
-        var unknownFields = new List<(string Key, string RawValue)>();
-
-        if (fieldsText.Length > 0)
-        {
-            foreach (var token in fieldsText.Split(' '))
-            {
-                var equalsIndex = token.IndexOf('=');
-                if (equalsIndex < 0)
-                {
-                    return (null, null, $"malformed {blockLabel} field: '{token}'");
-                }
-
-                var key = token[..equalsIndex];
-                var rawValue = token[(equalsIndex + 1)..];
-                fields[key] = rawValue;
-
-                if (!knownKeys.Contains(key))
-                {
-                    unknownFields.Add((key, rawValue));
-                }
-            }
-        }
-
-        return (fields, unknownFields, null);
-    }
-
     private static (CardComment? Comment, string? Failure) BuildComment(
         IReadOnlyDictionary<string, string> fields,
         IReadOnlyList<(string Key, string RawValue)> unknownFields,
@@ -1546,7 +1511,7 @@ internal static class CardFileParser
             return (null, "comment missing required field: id");
         }
 
-        var id = CardFileFormat.UnescapeCommentHeaderValue(rawId);
+        var id = CardFileFormat.UnescapeCardBlockValue(rawId);
 
         if (!fields.TryGetValue("author", out var authorText))
         {
@@ -1569,7 +1534,7 @@ internal static class CardFileParser
         }
 
         string? replyTo = fields.TryGetValue("reply-to", out var replyToText)
-            ? CardFileFormat.UnescapeCommentHeaderValue(replyToText)
+            ? CardFileFormat.UnescapeCardBlockValue(replyToText)
             : null;
 
         CardOwner? to = null;
@@ -1584,7 +1549,7 @@ internal static class CardFileParser
         }
 
         string? resolves = fields.TryGetValue("resolves", out var resolvesText)
-            ? CardFileFormat.UnescapeCommentHeaderValue(resolvesText)
+            ? CardFileFormat.UnescapeCardBlockValue(resolvesText)
             : null;
 
         var isNit = fields.TryGetValue(CardCommentNitFieldKeys.IsNit, out var isNitText) && string.Equals(isNitText, "true", StringComparison.Ordinal);

@@ -29,11 +29,19 @@ public sealed class CardFileParserBlankLineTests
         const string raw =
             FrontmatterHeader +
             "body\n" +
-            "<!-- callboard:comment id=C-0001 author=worker timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: worker\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
             "first\n" +
             "<!-- /callboard:comment -->\n" +
             "\n" +
-            "<!-- callboard:comment id=C-0002 author=architect timestamp=2026-08-19T09:05:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0002\n" +
+            "author: architect\n" +
+            "timestamp: 2026-08-19T09:05:00+00:00\n" +
+            "-->\n" +
             "second\n" +
             "<!-- /callboard:comment -->\n";
 
@@ -53,7 +61,11 @@ public sealed class CardFileParserBlankLineTests
         const string raw =
             FrontmatterHeader +
             "body\n" +
-            "<!-- callboard:comment id=C-0001 author=worker timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: worker\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
             "first\n" +
             "<!-- /callboard:comment -->\n" +
             "\n";
@@ -70,13 +82,21 @@ public sealed class CardFileParserBlankLineTests
         const string raw =
             FrontmatterHeader +
             "body\n" +
-            "<!-- callboard:comment id=C-0001 author=worker timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: worker\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
             "first\n" +
             "<!-- /callboard:comment -->\n" +
             "\n" +
             "\n" +
             "\n" +
-            "<!-- callboard:comment id=C-0002 author=architect timestamp=2026-08-19T09:05:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0002\n" +
+            "author: architect\n" +
+            "timestamp: 2026-08-19T09:05:00+00:00\n" +
+            "-->\n" +
             "second\n" +
             "<!-- /callboard:comment -->\n" +
             "\n" +
@@ -96,7 +116,11 @@ public sealed class CardFileParserBlankLineTests
         const string raw =
             FrontmatterHeader +
             "body\n" +
-            "<!-- callboard:comment id=C-0001 author=worker timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: worker\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
             "first paragraph\n" +
             "\n" +
             "second paragraph\n" +
@@ -120,7 +144,11 @@ public sealed class CardFileParserBlankLineTests
             FrontmatterHeader +
             "body\n" +
             "\n" +
-            "<!-- callboard:comment id=C-0001 author=worker timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: worker\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
             "first\n" +
             "<!-- /callboard:comment -->\n";
 
@@ -141,14 +169,18 @@ public sealed class CardFileParserBlankLineTests
         const string raw =
             FrontmatterHeader +
             "body\n" +
-            "<!-- callboard:comment id=C-0001 author=worker timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: worker\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
             "first\n" +
             "<!-- /callboard:comment -->\n" +
             "this is not a recognised block header\n";
 
         var reason = AssertFailure(CardFileParser.Parse(raw));
 
-        Assert.Contains("expected a comment header", reason, StringComparison.Ordinal);
+        Assert.Contains("expected a comment line", reason, StringComparison.Ordinal);
     }
 
     private static CardFile AssertSuccess(CardFileParseResult result) =>

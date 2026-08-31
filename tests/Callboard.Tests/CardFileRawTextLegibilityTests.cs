@@ -22,27 +22,29 @@ public sealed class CardFileRawTextLegibilityTests
     private static readonly DateTimeOffset T5 = new(2026, 8, 19, 13, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset T6 = new(2026, 8, 19, 14, 0, 0, TimeSpan.Zero);
 
-    // ---- Re-derivation record (§14.1-14.3) ------------------------------------------------
+    // ---- Re-derivation record (§14.1-14.4) ------------------------------------------------
     //
-    // CardFileFormat declares seven §14.1 block-open-line constants (grep for "OpenLine" in that
+    // CardFileFormat declares eight §14.1 block-open-line constants (grep for "OpenLine" in that
     // file): HandoverOpenLine, TransitionOpenLine, VerdictOpenLine, AuthorisationOpenLine,
-    // ClaimOpenLine, LimitOpenLine, RefusalOpenLine. CardFileParser's own continuation/lookahead
-    // conditions (both the "what ends a header run" scan and the "what interrupts a comment body"
-    // scan) test exactly these seven predicates and no others. That is seven. Comments are the
-    // eighth append-only sequence and keep their own CommentHeaderPrefix/Suffix shape rather than
-    // one of the seven block-open shapes — §14.4 brings that one onto this syntax next, not this
-    // block; BuildComment (CardFileParser.cs) recognises id (required), author (required),
+    // ClaimOpenLine, LimitOpenLine, RefusalOpenLine, CommentOpenLine (§14.4 added the last one —
+    // the comment header, previously its own single-line CommentHeaderPrefix/Suffix shape, moved
+    // onto the same block syntax as its seven siblings; the body and CommentFooter are unchanged).
+    // CardFileParser's own continuation/lookahead conditions (both the "what ends a header run"
+    // scan and the "what interrupts a comment body" scan) test exactly these eight predicates and
+    // no others. BuildComment (CardFileParser.cs) recognises id (required), author (required),
     // timestamp (required), reply-to, to, resolves, is-nit, required, sites, disposition — ten
-    // header fields, four required, six optional.
+    // header fields, four required, six optional — the schema itself unchanged by §14.4, only the
+    // line shape it is read from.
     //
-    // §14.2/14.3's fix: every one of the seven families now carries its fields as one-per-line
+    // §14.2/14.3's fix: every one of the eight families now carries its fields as one-per-line
     // `key: value`, reusing the frontmatter line shape and its escaper (CardFileFormat.
     // EscapeCardBlockValue, built from EscapeFrontmatterValue plus one more composed step escaping
     // a literal `-->` to `\->` so a rule/remedy/reason/text containing that run can never end the
     // enclosing HTML comment early in a rendered view). Interior spaces are never escaped — the
     // fix this section exists for. See the assertions below for what that looks like on disk now,
-    // in contrast to the CardFileFormat.EscapeCommentHeaderValue-based `\s`-per-space rendering
-    // 13.9 found and the Product Owner called horrible.
+    // including the comment header's own id/reply-to/resolves, which §14.4 moved onto
+    // EscapeCardBlockValue too, in contrast to the former dedicated `\s`-per-space rendering 13.9
+    // found and the Product Owner called horrible.
 
     [Fact]
     public void EveryMarkerLineFamily_IsAttributableByPlainSubstringSearch()
@@ -260,17 +262,33 @@ public sealed class CardFileRawTextLegibilityTests
 
         var raw = CardFileWriter.Serialize(card);
 
+        // §14.4: the comment header is now a block like its seven siblings — one field per line,
+        // reading as prose the same way (13.9's own fix, closed for the eighth family here).
         Assert.Contains(
-            $"<!-- callboard:comment id=C-0001 author=reviewer to=architect timestamp={T1:O} -->",
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: reviewer\n" +
+            "to: architect\n" +
+            $"timestamp: {T1:O}\n" +
+            "-->",
             raw, StringComparison.Ordinal);
         Assert.Contains(
             "Four readers still discard the parse failure with onFailure: static _ => null.",
             raw, StringComparison.Ordinal);
 
         Assert.Contains(
-            $"<!-- callboard:comment id=C-0002 author=reviewer reply-to=C-0001 to=worker resolves=C-0001 " +
-            $"timestamp={T5:O} is-nit=true required=true " +
-            "sites=src/Callboard/Cards/FindingExtentFingerprint.cs:42 disposition=fix-before-land -->",
+            "<!-- callboard:comment\n" +
+            "id: C-0002\n" +
+            "author: reviewer\n" +
+            "reply-to: C-0001\n" +
+            "to: worker\n" +
+            "resolves: C-0001\n" +
+            $"timestamp: {T5:O}\n" +
+            "is-nit: true\n" +
+            "required: true\n" +
+            "sites: src/Callboard/Cards/FindingExtentFingerprint.cs:42\n" +
+            "disposition: fix-before-land\n" +
+            "-->",
             raw, StringComparison.Ordinal);
     }
 

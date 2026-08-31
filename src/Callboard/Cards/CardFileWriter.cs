@@ -409,12 +409,12 @@ internal static class CardFileWriter
             AppendBlock(builder, CardFileFormat.RefusalOpenLine, BuildRefusalFields(refusal));
         }
 
+        // §14.4: the comment header moved onto the §14.1 delimited-block shape — the same
+        // AppendBlock every other append-only family uses. The body and CommentFooter below are
+        // unchanged: only the header carrying id/author/timestamp/etc. is now a block.
         foreach (var comment in card.Comments)
         {
-            builder.Append(CardFileFormat.CommentHeaderPrefix)
-                .Append(BuildHeaderFields(comment))
-                .Append(CardFileFormat.CommentHeaderSuffix)
-                .Append('\n');
+            AppendBlock(builder, CardFileFormat.CommentOpenLine, BuildCommentFields(comment));
 
             AppendContent(builder, comment.Body);
 
@@ -438,7 +438,7 @@ internal static class CardFileWriter
     }
 
     /// <summary>
-    /// §14.1: writes one delimited block for any of the seven append-only families — the open
+    /// §14.1: writes one delimited block for any of the eight append-only families — the open
     /// line, one already-escaped <c>key: value</c> line per field, and the close line
     /// (<see cref="CardFileFormat.BlockCloseLine"/>) — so every family shares exactly this shape
     /// and none can drift from it independently.
@@ -454,55 +454,60 @@ internal static class CardFileWriter
         builder.Append(CardFileFormat.BlockCloseLine).Append('\n');
     }
 
-    private static string BuildHeaderFields(CardComment comment)
+    /// <summary>
+    /// §14.4: the comment header's fields, in the same order the pre-§14.4 single-line header
+    /// emitted them, now yielded as <c>(Key, Value)</c> pairs for <see cref="AppendBlock"/> instead
+    /// of built into one space-joined token string. <c>id</c>/<c>reply-to</c>/<c>resolves</c> — the
+    /// header's only free-text fields — move onto <see cref="CardFileFormat.EscapeCardBlockValue"/>,
+    /// the same escaper every other family's free-text field already uses (§14.2/14.3), superseding
+    /// the header's former dedicated space-escaping pair.
+    /// </summary>
+    private static IEnumerable<(string Key, string Value)> BuildCommentFields(CardComment comment)
     {
-        var fields = new StringBuilder();
-        fields.Append("id=").Append(CardFileFormat.EscapeCommentHeaderValue(comment.Id));
-        fields.Append(" author=").Append(comment.Author.ToWireString());
+        yield return ("id", CardFileFormat.EscapeCardBlockValue(comment.Id));
+        yield return ("author", comment.Author.ToWireString());
 
         if (comment.ReplyTo is { } replyTo)
         {
-            fields.Append(" reply-to=").Append(CardFileFormat.EscapeCommentHeaderValue(replyTo));
+            yield return ("reply-to", CardFileFormat.EscapeCardBlockValue(replyTo));
         }
 
         if (comment.To is { } to)
         {
-            fields.Append(" to=").Append(to.ToWireString());
+            yield return ("to", to.ToWireString());
         }
 
         if (comment.Resolves is { } resolves)
         {
-            fields.Append(" resolves=").Append(CardFileFormat.EscapeCommentHeaderValue(resolves));
+            yield return ("resolves", CardFileFormat.EscapeCardBlockValue(resolves));
         }
 
-        fields.Append(" timestamp=").Append(FormatTimestamp(comment.Timestamp));
+        yield return ("timestamp", FormatTimestamp(comment.Timestamp));
 
         if (comment.IsNit)
         {
-            fields.Append(' ').Append(CardCommentNitFieldKeys.IsNit).Append("=true");
+            yield return (CardCommentNitFieldKeys.IsNit, "true");
         }
 
         if (comment.Required)
         {
-            fields.Append(' ').Append(CardCommentNitFieldKeys.Required).Append("=true");
+            yield return (CardCommentNitFieldKeys.Required, "true");
         }
 
         if (comment.Sites.Count > 0)
         {
-            fields.Append(' ').Append(CardCommentNitFieldKeys.Sites).Append('=').Append(CardFileFormat.JoinSiteList(comment.Sites));
+            yield return (CardCommentNitFieldKeys.Sites, CardFileFormat.JoinSiteList(comment.Sites));
         }
 
         if (comment.Disposition is { } disposition)
         {
-            fields.Append(' ').Append(CardCommentNitFieldKeys.Disposition).Append('=').Append(disposition.ToWireString());
+            yield return (CardCommentNitFieldKeys.Disposition, disposition.ToWireString());
         }
 
         foreach (var (key, rawValue) in comment.UnknownHeaderFields)
         {
-            fields.Append(' ').Append(key).Append('=').Append(rawValue);
+            yield return (key, rawValue);
         }
-
-        return fields.ToString();
     }
 
     private static IEnumerable<(string Key, string Value)> BuildHandoverFields(CardHandover handover)

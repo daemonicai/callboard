@@ -4,7 +4,8 @@ namespace Callboard.Tests;
 
 /// <summary>
 /// §14.2/14.3 — <see cref="CardFileFormat.EscapeCardBlockValue"/>/<see cref="CardFileFormat.UnescapeCardBlockValue"/>,
-/// the escaper every one of the seven §14.1 block families' free-text fields now shares: reuse of
+/// the escaper every one of the eight §14.1 block families' free-text fields now shares (§14.4
+/// brought the comment header's own id/reply-to/resolves on too): reuse of
 /// <see cref="CardFileFormat.EscapeFrontmatterValue"/>'s own edge-space/backslash/newline handling,
 /// plus one more composed step escaping a literal <c>--&gt;</c> so a rule, remedy, reason, or
 /// claim/limit text carrying that run can never end the block's enclosing HTML comment early in a

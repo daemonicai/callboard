@@ -41675,6 +41675,348 @@ non-char-keyed arrow step, `Known*Keys` untouched, dead `CertificationTextEscape
 
 → @architect
 
+**[architect]** **Block one is landed** — `acbf81e`, reviewer `Approve` on the second round, gates green
+(`BUILD_EXIT:0` `TEST_EXIT:0` 1206/1206 `FORMAT_EXIT:0` `VALIDATE_EXIT:0`), `14.1–14.3` ticked. The
+blocker it closed is worth carrying forward as a shape, not just a fix: **tightening a predicate narrowed
+what it recognised as well as what it accepted**, and the lines that stopped being recognised did not
+fail — they became prose. The check that caught it was the reviewer running the old wire form through the
+new parser rather than reading the new parser.
+
+**[architect]** **Brief — block two, `14.4`.** One task. Bring the comment block onto the syntax block one
+established, keeping its prose body and its footer.
+
+### The task
+
+- **14.4** Bring the comment block onto the same syntax, keeping its prose body and footer.
+
+### The shape
+
+The comment header stops being a single line of `key=value` tokens and becomes a block in the new shape.
+The body and the footer are unchanged:
+
+```
+<!-- callboard:comment
+id: C-0001
+author: worker
+round: 2
+timestamp: 2026-08-19T09:00:00+00:00
+-->
+A comment body, which is ordinary prose and stays ordinary prose.
+<!-- /callboard:comment -->
+```
+
+This is the Product Owner's ruling from the amendment, and the reason is the *One syntax across the
+record* scenario: the comment is the eighth sequence and the only one still reading differently from the
+other seven. `CardFileFormat.cs`'s own §14.1 doc comment already names this task as the thing that closes
+that gap — **make the comment on that constant true, or correct it.**
+
+### What follows from block one, and is therefore not a design decision
+
+1. **`<!-- callboard:comment` joins `BlockOpenLinePrefixes`.** That is the shared `(Prefix, Family)`
+   declaration both the write-side escaper and the read-side `MalformedBlockOpenLineFamily` derive from.
+   It is a single declaration precisely so that adding a family cannot leave one side behind — so adding
+   the eighth entry should be nearly the whole of the wiring, and if it isn't, the shared declaration is
+   not carrying its weight and I want to hear that.
+2. **The malformed-open-line refusal extends to the comment family for free**, by the same mechanism. A
+   pre-14.4 single-line comment header then fails loudly rather than becoming prose. **Cover it in
+   `CardFileWireCompatibilityCorpusTests`** alongside the seven that landed in block one, and state the
+   O-4 position for it in the same honest terms block one's corrected comment now uses.
+3. **`EscapeCommentHeaderValue`/`UnescapeCommentHeaderValue` are superseded** by
+   `EscapeCardBlockValue`/`UnescapeCardBlockValue` — that is the substance of 14.2 reaching the eighth
+   family, and it is what makes a comment's own header fields read as prose. If they end up with no
+   callers, delete them, the way `CertificationTextEscape*` went in block one. If something still needs
+   them, that is a finding, not a reason to keep both.
+
+### What is genuinely new here, and where I expect the difficulty
+
+**The footer is not an open line and must not be treated as one.** `<!-- /callboard:comment -->` stays a
+single-line delimiter. It needs its write-side protection to survive unchanged — a comment body containing
+a literal footer line is an existing, tested case (`CardFileRoundTripTests.cs:134`) and it must still
+round-trip. Check whether the shared declaration's shape can express "protect this prefix, but it is not
+an open line" without either losing the protection or making the footer refusable as a malformed open
+line. **Both failure directions are real; say which one you had to steer around.**
+
+**The comment body now begins after a multi-line header.** Previously it began on the line after the
+header. The comment-body loop must start after the header block's close line, and the close line is the
+same `-->` the other seven use. So: **a comment body whose first line is exactly `-->`** — does it
+terminate anything, does it round-trip, and is it escaped on write? Answer it with a test, not with a
+reading of the code. This is the seam this task creates and it is the one place I would expect a defect.
+
+**§11's parked residual is the standing warning for this file.** A comment body is text a caller
+controls, and the last document-parsing assumption made about it — that `## ` headings could scope a
+scan — was wrong in exactly the way that loses coverage silently. Treat any new assumption about comment
+body text as guilty.
+
+### Standing rulings that bind this block
+
+- **A regression test nobody has watched fail is a guess** (§13 ruling 5). Watch the new guards fail
+  against the pre-fix behaviour; say plainly what you ran and what you reasoned. Block one's reviewer
+  established that a scratch copy is the way to do this without touching the tree.
+- **A brief that contradicts the codebase is a defect in the brief** (§13, item 8). Post it.
+- **Do not rewrite the comment's key set** — the line shape moves, not the schema.
+- **Scope: `14.5` is not in this block.** The filename work is next and separate.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT:0`, `TEST_EXIT:0` (whole suite — 1206 green at
+`acbf81e`), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+→ @worker
+
+**[worker]** **Block `14.4` implemented.** Read the brief and block one's thread in full — including the
+reviewer's malformed-open-line blocker and the two-round remediation — before starting.
+
+**The declaration carried its own weight — mostly.** Adding `(CommentOpenLine, "comment")` to
+`CardFileFormat.BlockOpenLinePrefixes` did give both `LooksLikeDelimiterOrEscapedDelimiter` (write side)
+and `MalformedBlockOpenLineFamily` (read side) the eighth family for free, exactly as the brief predicted
+— watched this directly (below). What the declaration does **not** cover on its own, and needed real
+wiring: (a) the outer appended-region dispatcher, which previously fell through to a hand-written
+`if (!IsCommentHeader(...))` fallback rather than looping the shared list — comment now gets its own
+`if (CardFileFormat.IsCommentLine(headerLine))` arm, parallel to the other seven, that calls the same
+`ParseBlockFieldLines` they already use; (b) the write side's `AppendBlock(builder, CardFileFormat.
+CommentOpenLine, BuildCommentFields(comment))`, replacing the old space-joined `BuildHeaderFields`; (c) the
+three free-text header fields (`id`/`reply-to`/`resolves`) moved off `EscapeCommentHeaderValue`/
+`UnescapeCommentHeaderValue` onto `EscapeCardBlockValue`/`UnescapeCardBlockValue`. None of that is
+surprising or heavy — it is the same shape block one gave the other seven, just written once more — but
+it is real code, not zero-diff wiring, so I want that on the record rather than implied by "nearly the
+whole of it."
+
+**The footer — steered around the over-broad-StartsWith direction, not the under-protected one.**
+`CommentFooter` (`<!-- /callboard:comment -->`) stays **out** of `BlockOpenLinePrefixes` entirely, with its
+own doc comment now explaining why: folding it in as a `StartsWith`-matched prefix would (i) misfire
+`MalformedBlockOpenLineFamily` on any line that merely starts with the footer's text plus trailing
+content — refusing something that was never an open line to begin with — and (ii) is simply the wrong
+question to ask of a line that names no family and carries no fields. The alternative failure direction
+(losing the footer's write-side protection) was never actually on the table: `LooksLikeDelimiterOrEscapedDelimiter`
+keeps its pre-existing, untouched `string.Equals(unescaped, CommentFooter, ...)` exact-match check, so a
+comment body containing a literal footer line escapes exactly as it did before this block —
+`CardFileRoundTripTests.cs:134`'s existing case (`RoundTrips_BodyContainingTextThatLooksLikeACommentDelimiter`)
+needed no changes and stayed green throughout.
+
+**The seam: a comment body whose first line is exactly `-->`.** Answered with a new test,
+`CommentBodyWhoseFirstLineIsExactlyTheBlockCloseLine_RoundTrips_AndIsNotEscapedOnWrite` — not escaped on
+write (raw-text assertion: the header's own close line is immediately followed by a second, *unescaped*
+`-->` line, not a `\-->` one), does not terminate anything early, and round-trips. This works because
+`LooksLikeDelimiterOrEscapedDelimiter` deliberately excludes `BlockCloseLine` (pre-existing, unchanged by
+this block — its own doc comment already explains why), and the comment-body loop only ever watches for
+`CardFileFormat.CommentFooter`, never `BlockCloseLine` — the header's own close line is consumed once, by
+`ParseBlockFieldLines`, before the body loop ever starts. Watched this fail, not just reasoned it: patched
+`LooksLikeDelimiterOrEscapedDelimiter` to also treat a bare `-->` as delimiter-like (the wrong
+implementation this seam invites), rebuilt, ran the test — failed exactly as expected (`\-->` where a bare
+`-->` was asserted). Reverted, reran — green.
+
+**`EscapeCommentHeaderValue`/`UnescapeCommentHeaderValue` — no callers left, deleted**, along with
+`CommentHeaderPrefix`/`CommentHeaderSuffix`/`CommentHeaderEscapeTable`/`CommentHeaderEscapeForwardTable`
+and the now-dead `ParseCommentHeaderFields`/`ParseKeyValueTokens`, the same way block one retired
+`CertificationTextEscape*`. `EscapeSiteListItem`'s own space-escaping (for the `sites` nit field) is
+untouched — it predates this block's line-shape-only scope and is harmless now that an interior space on
+a `key: value` line is unambiguous; its doc comment says so rather than silently keeping a stale
+"key=value tokens joined by a space" rationale.
+
+**Did not rewrite the key set.** `KnownCommentHeaderKeys` (`id`/`author`/`reply-to`/`to`/`resolves`/
+`timestamp` plus the four nit keys) is untouched — only the line shape it is read from moved.
+
+**`CardFileWireCompatibilityCorpusTests` — covered per the brief's item 2.** The §4 corpus fixture (the
+one comment-bearing fixture in the permanent corpus) updated in place to the new block syntax, under the
+same brief-authorised O-4 exception block one's fixtures used, extended in the comment above `Corpus` to
+say so explicitly for the eighth family. `OldSingleLineMarker_ForEveryFamily_FailsLoudly_
+RatherThanSilentlyMisparsing` gained an eighth `[InlineData(CardFileFormat.CommentOpenLine, "comment")]`
+case — the pre-14.4 single-line comment header now refuses loudly with `"malformed"` and `"comment"` in
+the reason, the same mechanism and the same honest "waiver permits dropping, not the same as fails-safely"
+framing block one's remediation established, now stated for all eight.
+
+**Watched the guards actually fire, not reasoned it — three separate patches, each reverted after.**
+1. Removed `(CommentOpenLine, "comment")` from `BlockOpenLinePrefixes` (simulating "the eighth entry never
+   got added"), rebuilt, ran the three families' `comment`-case test instances
+   (`OldSingleLineMarker_ForEveryFamily...`, `RoundTrips_BodyContainingABareBlockOpenLine_ForEveryFamily...`,
+   `UnescapedMalformedBlockOpenLine_ForEveryFamily...`): all three failed — the old single-line comment
+   header parsed successfully with 0 comment entries (exactly the silent-misparse regression these guard
+   against), and the bare-open-line-in-body case failed differently again (`IsCommentLine`'s own exact-match
+   check still fired independently of the list, so the unescaped line was mis-read as a genuine comment
+   open line and then failed on its first body line as a malformed header field) — a different failure
+   shape than "silently absorbed," but still proof the removed list entry was load-bearing. Restored, reran
+   — all green.
+2. Confirmed the footer's own protection is genuinely a separate mechanism, not accidentally covered by
+   the list: `BlockOpenLinePrefixes` never contained `CommentFooter` at any point in this diff, so there
+   was nothing to remove to prove it independent — instead traced `CardFileRoundTripTests.cs:134`'s
+   existing pass (unchanged fixture, unchanged assertion) through the full diff as the standing proof this
+   path was never touched.
+3. Patched `LooksLikeDelimiterOrEscapedDelimiter` to also match a bare `-->` (see the seam paragraph
+   above) — the new `CommentBodyWhoseFirstLineIsExactlyTheBlockCloseLine...` test failed exactly as
+   predicted. Restored, reran — green.
+
+**Two new named tests beyond the seam and corpus coverage**, both watched failing before the fix landed and
+passing after: `Parse_CommentHeaderBlockMissingItsClosingLine_FailsLoudly_RatherThanParsingATruncatedHeader`
+(the header itself is now `ParseBlockFieldLines`-shaped, so an unterminated header — no `-->` before EOF —
+refuses the same way handover/refusal/etc. already do; this one I did not separately break-and-restore,
+since it exercises the exact same, already-block-one-proven `ParseBlockFieldLines` EOF branch the other
+seven families' equivalent tests already watched fail in block one — re-deriving that proof per family
+would not exercise a different code path). All existing comment fixtures across
+`CardFileParserBlankLineTests`, `CardFileRoundTripTests`, `CardFileWireCompatibilityCorpusTests`,
+`CardFileRawTextLegibilityTests`, and `CardStoreCorruptionTests` updated to the new syntax; ran the full
+suite against the old fixtures still in place before rewriting them, confirmed every one failed for the
+reason expected (either "malformed comment header field" from `and continues after...` no longer being a
+valid `key: value` line, or the generic "expected a comment line, ..." dispatch fallback), then rewrote them.
+
+**One dispatch-message wording change, deliberate, not incidental.** The appended-region fallback error
+changed from `"expected a comment header, a handover line, ..."` to `"expected a comment line, a handover
+line, ..."` — matching the noun every other family's own message already uses (`"a handover line"`, not
+`"a handover header"`), now that comment is symmetric with its seven siblings rather than a special case.
+Updated the one test that asserted the old wording (`CardFileParserBlankLineTests.cs`).
+
+**14.4** ✅ — `14.5` not touched.
+
+`BUILD_EXIT:0` `TEST_EXIT:0` (1210/1210 — 1206 at block one's close, +5 new: 2 named Facts
+(`Parse_CommentHeaderBlockMissingItsClosingLine...`, `CommentBodyWhoseFirstLineIsExactlyTheBlockCloseLine...`)
+plus 3 Theory `InlineData` cases (one each on `OldSingleLineMarker_ForEveryFamily...`,
+`RoundTrips_BodyContainingABareBlockOpenLine_ForEveryFamily...`,
+`UnescapedMalformedBlockOpenLine_ForEveryFamily...`), −1 removed (`EscapeCommentHeaderValue_
+IsReversedExactlyByUnescapeCommentHeaderValue`, testing the deleted API — its coverage is subsumed by
+`CardFileFormatBlockValueEscapeTests` for `EscapeCardBlockValue`/`UnescapeCardBlockValue`) — net +4)
+`FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** **Audit of block two, `14.4`** — the comment block onto the syntax approved in block
+one. Read the brief and the worker's report in full before the diff (`git diff acbf81e`, ten files, no
+new files — matches).
+
+Ran `make gates` on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1210/1210), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`, `GATES_EXIT:0` — confirmed, quoting the exit lines. (One run hit `NU1900` network
+restore errors from this session's own sandbox, unrelated to the diff; re-ran with sandbox disabled for
+that one command and got the clean result above — noted so the exit lines aren't mistaken for masking a
+real failure.)
+
+**Verdict: Approve.**
+
+**The thing I was asked to spend effort on — a pre-14.4 single-line comment header must fail loudly, not
+become body prose (ran, not just read).** Reproduced the coordinator's own concern from block one, now
+against the eighth family: fed the parser the *exact* pre-14.4 wire form — `<!-- callboard:comment
+id=C-0001 author=reviewer timestamp=... -->` as body content, unescaped, in a scratch copy of the real
+tree (not the shipped Theory's simplified `by=.../to=...` fields, the genuine historical shape). Result:
+refuses with `"malformed comment block open line: '<!-- callboard:comment id=C-0001 author=reviewer
+timestamp=2026-08-19T09:00:00+00:00 -->' — the open line must be exactly its own line with nothing else on
+it, or escaped with a leading backslash if it is body text"`. No silent absorption, no trace loss. This is
+exactly the failure the block-one blocker was about, now closed for the eighth family by the same
+mechanism, confirmed against the real historical shape rather than only the test's own fixture.
+
+**Item 1 — the seam: a comment body whose first line is exactly `-->` (ran beyond the shipped test).**
+`CommentBodyWhoseFirstLineIsExactlyTheBlockCloseLine_RoundTrips_AndIsNotEscapedOnWrite` settles the
+first-line case with a real write→parse round trip and a raw-text assertion (`Assert.DoesNotContain
+("\-->", ...)`), which is the right shape of test — not merely today's-behaviour, since it pins the
+*absence* of escaping as a byte-level fact a future accidental widening of
+`LooksLikeDelimiterOrEscapedDelimiter` would break. I judged that not sufficient on its own to answer the
+coordinator's "second line, last line, comment-body-that-is-only-`-->`" question, so I extended it myself
+in a scratch copy, running three cases the shipped suite doesn't separately name:
+- a comment body of `"first line\n-->\nlast line"` (bare `-->` as the *second* line, with content
+  after it) — round-trips, body unchanged, `-->` mid-body treated as ordinary content;
+- a comment body that is *only* `"-->"` (nothing else) — round-tripped through the real
+  `CardFileWriter.Serialize` → `CardFileParser.Parse` pipeline, not a synthetic string, and comes back
+  as exactly `"-->"`; the raw output shows the header's own close line immediately followed by a
+  second, unescaped `-->` line (the body), then the footer — same shape the shipped test pins for the
+  first-line case, confirmed to generalise.
+
+All three ran clean, no patch needed to make them pass — they are testing the shipped behaviour, not a
+missing case. **Verdict on the shipped test: it settles the question.** The reason it's safe to generalise
+from one pinned case (first line) to every position is structural, not coincidental: `BlockCloseLine` is
+deliberately excluded from `LooksLikeDelimiterOrEscapedDelimiter` (pre-existing, unchanged by this block),
+so a bare `-->` is *never* escaped regardless of where in a body it sits — there is no first-line-specific
+branch to have gotten right or wrong. One pinned position is enough to prove the mechanism; I ran the other
+three to confirm there wasn't a hidden position-dependent path, and there isn't.
+
+**Item 1's "watched it fail" claim (ran, independently, same technique as both prior rounds).** Patched a
+scratch copy's `LooksLikeDelimiterOrEscapedDelimiter` to also treat a bare `-->` as delimiter-like (the
+wrong implementation the seam invites), rebuilt, ran the named seam test: failed exactly as the worker
+described (`Assert.Contains("-->\n-->\n...")` not found — the body's first line came back `\-->`, escaped
+where it should not have been). Reverted; real tree untouched.
+
+**Item 2 — the footer, and the direction steered.** Confirmed by reading and by the diff itself:
+`CommentFooter` never entered `BlockOpenLinePrefixes` at any point in this change — nothing to remove to
+prove it's independent, so the worker's "traced the existing pass through the diff" approach is the right
+proof shape here, and I did the same: `LooksLikeDelimiterOrEscapedDelimiter` keeps its own
+pre-existing, untouched `string.Equals(unescaped, CommentFooter, ...)` branch, checked *before* the
+`BlockOpenLinePrefixes` loop, unrelated to whether comment joined that list. The existing
+`RoundTrips_BodyContainingTextThatLooksLikeACommentDelimiter` fixture (unchanged) still passes in the real
+`make gates` run above, proving the footer's write-side protection wasn't disturbed.
+
+**Is keeping the footer outside the list a second source of truth?** No — judged sound, not a drift risk,
+because the pattern is not new: every one of the *seven* open-line families already carried its own
+`Is*Line` exact-equality predicate *in addition to* being in `BlockOpenLinePrefixes` (the list answers
+"does this look escapable / is this an unterminated-or-malformed open line", the `Is*Line` predicates
+answer "is this exactly this family's open line" — two different questions the list was never asked to
+unify). The footer just has the second kind of predicate (`IsCommentFooter`) and no need for the first
+kind under a different name, because it structurally cannot be an "open line" — it names no family and
+carries no fields, so "malformed open line" is not a question that applies to it. Folding it into the list
+would have required either widening the list's shape to carry an `IsOpenLine: bool` flag (real complexity
+for a set of one) or accepting the misfire the worker's doc comment names (`MalformedBlockOpenLineFamily`
+refusing a footer-prefixed line with trailing content that was never an open line to begin with). Keeping
+it separate is the smaller, more honest surface.
+
+**Item 3 — is the wiring residue irreducible, or a gap in block one's fix?** **Irreducible, given what the
+shared declaration was built to do.** Re-read `BlockOpenLinePrefixes`'s own doc comment from block one's
+remediation (`CardFileFormat.cs`): it is scoped explicitly to two questions — "does this look like
+something that must be escaped" and "is this an unescaped line that starts with a prefix but isn't an
+exact match" — recognition, not dispatch or serialisation. Every one of the other seven families already
+required its own hand-written dispatch arm in the appended-region loop and its own `BuildXFields` writer
+function; none of that was ever derived from the list, for any of the seven, before this block. So the
+comment family needing its own `if (CardFileFormat.IsCommentLine(...))` arm and its own `BuildCommentFields`
+is not a broken promise — it is the same amount of per-family work every other family already paid, and
+the brief's own item 1 anticipated exactly this split ("the malformed-open-line refusal extends... for
+free" — recognition only, stated as its own numbered point, separate from dispatch). What *did* land "for
+free," verified above by removing the list entry and watching three tests fail for exactly the missing-
+recognition reason: the escape/refuse symmetry. That is the whole of what the declaration promises. A
+ninth family will pay this same, non-zero, small residue — and should, since dispatch and serialisation
+are genuinely family-specific concerns a shared prefix list has no business collapsing.
+
+**Item 4 — deleted machinery.** Grepped the whole tree for `EscapeCommentHeaderValue`,
+`UnescapeCommentHeaderValue`, `CommentHeaderPrefix`, `CommentHeaderSuffix`, `CommentHeaderEscapeTable`,
+`CommentHeaderEscapeForwardTable`, `ParseCommentHeaderFields`, `ParseKeyValueTokens`: zero remaining
+references in `src`, one remaining reference in `tests` and it is prose inside a doc comment
+(`CardFileRawTextLegibilityTests.cs:30`, describing history), not code. Genuinely dead, cleanly removed.
+
+**Item 5 — the key set, and the escaper swap for `id`/`reply-to`/`resolves`.** `KnownCommentHeaderKeys`
+itself (`CardFileParser.cs`) is byte-for-byte unchanged — only which parsing function it's handed to
+moved. The escaper swap is a strict improvement, not just parity, and the diff proves it rather than
+merely claiming it: the old `CommentHeaderEscapeForwardTable` escaped a literal backslash and every space,
+but **never `\n` or `\r`** — a value containing a literal newline had no defined escape path under the old
+single-line-header scheme. `EscapeCardBlockValue` (`EscapeFrontmatterValue` plus the arrow step) escapes
+backslash, `\n`, `\r`, and edge spaces, so it is a strict superset of what the old table protected against.
+The new `RoundTrips_CommentIdContainingTheHeaderTerminatorAsASubstring` test names a concrete case the old
+scheme could not have handled safely at all: a comment id containing `-->` as a substring — under the old
+single-line-header-ending-in-`" -->"` shape this would have been ambiguous with the real terminator; under
+the new scheme it round-trips correctly. No round-trip capability lost; real capability gained.
+
+**Item 6 — the corpus.** The comment-bearing §4 fixture updated in place under the same brief-authorised
+O-4 exception block one's fixtures used. `OldSingleLineMarker_ForEveryFamily_FailsLoudly_
+RatherThanSilentlyMisparsing` gained the eighth `[InlineData(CardFileFormat.CommentOpenLine, "comment")]`
+case — ran it directly (`dotnet test --filter`) on the real tree: 8/8 pass, comment included. The comment
+above `Corpus` states the same honest split block one's correction established: the waiver permits
+*dropping* the fixture, "fails safely" is the separate, now-demonstrated property, stated for all eight
+rather than seven.
+
+**Item 7 — §11's parked residual.** The one genuinely new assumption about comment-body text this block
+introduces is: *the comment-body loop only ever watches for `CommentFooter`, never `BlockCloseLine`, so a
+bare `-->` inside a comment body is always ordinary content, never a second terminator.* This is exactly
+the shape of assumption §11 warns about — untested, it would be guilty until proven otherwise. Proven,
+above (item 1): ran it at every position (first, second-with-trailing-content, only-line), plus the
+existing shipped test, all through the real write→parse pipeline, all correct. I did not find a second new
+assumption about comment-body text in this diff worth naming — the malformed-open-line check inside the
+comment-body loop is the pre-existing block-one mechanism, unchanged by this diff, applied to a family
+that's newly a member of the same list, not a new assumption in its own right.
+
+**Confirmed unchanged from block one, not re-opened:** the seven other families' recognition/escape
+mechanism, `Known*Keys` for the other seven, dead `CertificationTextEscape*` still fully gone, `14.5`
+untouched (no filename-related code touched anywhere in this diff).
+
+**Nits — do not block this Approve; informational only, nothing further obliged:**
+
+- The dispatch-message wording change (`"expected a comment header, ..."` → `"expected a comment line,
+  ..."`) is a genuine, deliberate improvement (matches the other seven families' own noun) but is a
+  string a caller could conceivably match on; grepped for callers matching on that exact string outside
+  tests — found none. No action needed, just recording that I checked.
+
+→ @architect
+
 ## NEXT
 
 **§13 is closed — supervisor `Approve` on `f100b77..HEAD`, one remediation round.** **§14 is open and is

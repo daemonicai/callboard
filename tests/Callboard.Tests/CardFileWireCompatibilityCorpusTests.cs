@@ -47,23 +47,26 @@ public sealed class CardFileWireCompatibilityCorpusTests
     /// current writer's output. Add a fixture here — never replace one — the first time a future
     /// section changes what <see cref="CardFileWriter.Serialize"/> emits.
     /// </summary>
-    // §14.1/14.2: the transition/verdict/handover fixtures below were updated in place to the new
-    // delimited-block syntax rather than kept as a permanent historical form the way O-4 normally
-    // requires — the Architect's own §14 brief states no data migration is owed for this specific
-    // change ("no callboard/ board is committed, so fixtures and the corpus move and nothing on
-    // disk does"), which is a deliberate, brief-authorised exception to O-4 for this wire form
-    // only, not a precedent for widening it generally.
+    // §14.1/14.2/14.4: the transition/verdict/handover/comment fixtures below were updated in place
+    // to the new delimited-block syntax rather than kept as a permanent historical form the way O-4
+    // normally requires — the Architect's own §14 brief states no data migration is owed for this
+    // specific change ("no callboard/ board is committed, so fixtures and the corpus move and
+    // nothing on disk does"), which is a deliberate, brief-authorised exception to O-4 for this wire
+    // form only, not a precedent for widening it generally. §14.4 extends the same authorisation to
+    // the comment header, the eighth family this exception covers, on the same terms.
     //
-    // §14 remediation (reviewer finding): that authorisation covers *dropping* the old forms from
-    // this corpus — it does not by itself establish that the parser fails safely on what it no
-    // longer emits, which is the property O-4 actually protects against silently breaking. Before
-    // this remediation it did not hold: an old single-line marker for any of the seven §14.1
-    // families read back successfully with the entry silently absorbed into the card's body and no
-    // trace it had ever been recorded — worse than the "fails to parse" case O-4 exists for.
-    // OldSingleLineMarker_ForEveryFamily_FailsLoudly_RatherThanSilentlyMisparsing below is the test
-    // that makes the property true and keeps it true: the old forms now have a permanent home in
-    // this file as things that refuse, which is the honest version of what this waiver was
-    // gesturing at.
+    // §14 remediation (reviewer finding), extended by §14.4: that authorisation covers *dropping*
+    // the old forms from this corpus — it does not by itself establish that the parser fails safely
+    // on what it no longer emits, which is the property O-4 actually protects against silently
+    // breaking. Before the reviewer's remediation it did not hold: an old single-line marker for
+    // any of the seven §14.1 families read back successfully with the entry silently absorbed into
+    // the card's body and no trace it had ever been recorded — worse than the "fails to parse" case
+    // O-4 exists for. §14.4 brought the comment header onto the same shared BlockOpenLinePrefixes
+    // declaration those seven already read from, so the same property holds for it too, by the same
+    // mechanism, for free — OldSingleLineMarker_ForEveryFamily_FailsLoudly_RatherThanSilentlyMisparsing
+    // below now covers all eight and is the test that makes the property true and keeps it true: the
+    // old forms now have a permanent home in this file as things that refuse, which is the honest
+    // version of what this waiver was gesturing at.
     private static readonly IReadOnlyDictionary<string, string> Corpus = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["§2 — the original nine-field card, no kind-specific fields at all"] =
@@ -191,7 +194,11 @@ public sealed class CardFileWireCompatibilityCorpusTests
             "to: reviewer\n" +
             "timestamp: 2026-08-19T09:00:00+00:00\n" +
             "-->\n" +
-            "<!-- callboard:comment id=C-0001 author=reviewer timestamp=2026-08-19T09:00:00+00:00 -->\n" +
+            "<!-- callboard:comment\n" +
+            "id: C-0001\n" +
+            "author: reviewer\n" +
+            "timestamp: 2026-08-19T09:00:00+00:00\n" +
+            "-->\n" +
             "A comment.\n" +
             "<!-- /callboard:comment -->\n",
     };
@@ -293,11 +300,14 @@ public sealed class CardFileWireCompatibilityCorpusTests
         }
     }
 
-    // §14 remediation (reviewer finding): the property this waiver depends on, made true and pinned
-    // — an old pre-14.1 single-line marker for each of the seven §14.1 block families now fails to
-    // parse, loudly, rather than being silently absorbed into the card's body as prose (the
-    // reviewer's own repro, generalised to every family: a transition marker that used to read back
-    // with Transitions.Count == 0 and no trace it had ever existed).
+    // §14 remediation (reviewer finding), extended by §14.4: the property this waiver depends on,
+    // made true and pinned — an old pre-14.1/pre-14.4 single-line marker for each of the eight
+    // §14.1 block families now fails to parse, loudly, rather than being silently absorbed into the
+    // card's body as prose (the reviewer's own repro, generalised to every family: a transition
+    // marker that used to read back with Transitions.Count == 0 and no trace it had ever existed).
+    // §14.4's comment case covers the eighth family the same repro generalises to: the pre-§14.4
+    // header shape (CommentOpenLine + a space + key=value tokens + " -->") is exactly the same
+    // "prefix, trailing content, then -->" shape the other seven's old form had.
     [Theory]
     [InlineData(CardFileFormat.HandoverOpenLine, "handover")]
     [InlineData(CardFileFormat.TransitionOpenLine, "transition")]
@@ -306,6 +316,7 @@ public sealed class CardFileWireCompatibilityCorpusTests
     [InlineData(CardFileFormat.ClaimOpenLine, "claim")]
     [InlineData(CardFileFormat.LimitOpenLine, "limit")]
     [InlineData(CardFileFormat.RefusalOpenLine, "refusal")]
+    [InlineData(CardFileFormat.CommentOpenLine, "comment")]
     public void OldSingleLineMarker_ForEveryFamily_FailsLoudly_RatherThanSilentlyMisparsing(string openLine, string family)
     {
         const string header =

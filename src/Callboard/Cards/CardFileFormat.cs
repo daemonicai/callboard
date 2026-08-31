@@ -10,23 +10,33 @@ namespace Callboard.Cards;
 internal static class CardFileFormat
 {
     internal const string FrontmatterFence = "---";
-    internal const string CommentHeaderPrefix = "<!-- callboard:comment ";
-    internal const string CommentHeaderSuffix = " -->";
+
+    /// <summary>
+    /// §14.4: the single-line delimiter closing an appended comment's body — never an open line
+    /// (it names no family and carries no fields of its own), so it is deliberately kept out of
+    /// <see cref="BlockOpenLinePrefixes"/> even though it needs the same write-side protection every
+    /// entry there gets. Folding it in as a <c>StartsWith</c>-matched prefix would either weaken
+    /// that protection (a footer-prefixed line with trailing content would stop being escaped) or
+    /// misfire the malformed-open-line refusal on such a line (it is not an open line, so "not an
+    /// exact match" is the wrong question to ask of it) — both directions are guarded against by
+    /// giving it its own <see cref="IsCommentFooter"/> exact-equality check and its own explicit
+    /// entry in <see cref="LooksLikeDelimiterOrEscapedDelimiter"/>, exactly as before §14.4.
+    /// </summary>
     internal const string CommentFooter = "<!-- /callboard:comment -->";
 
     /// <summary>
-    /// §14.1: the one delimited-block syntax shared by every one of the seven append-only
+    /// §14.1: the one delimited-block syntax shared by every one of the eight append-only
     /// block-entry families below (derived from what <see cref="CardFileWriter"/> emits and
-    /// <see cref="CardFileParser"/> reads for the appended region — comments are the eighth
-    /// sequence and keep their own <see cref="CommentHeaderPrefix"/>/<see cref="CommentFooter"/>
-    /// shape; §14.4 brings that one onto this syntax next, not this task). One open line names the
-    /// family and carries nothing else; each field is then its own <c>key: value</c> line, the same
-    /// shape frontmatter itself uses; the block ends at a line <em>exactly equal to</em>
-    /// <see cref="BlockCloseLine"/> — not merely containing it. That equality requirement is what
-    /// makes an unterminated block fail loudly (§13.6's "a card which will not parse beats one that
-    /// parses wrongly", applied here): a stray <c>--&gt;</c> embedded inside a field's own text can
-    /// never be mistaken for the close line, because §14.3 escapes exactly that run
-    /// (<see cref="EscapeCardBlockValue"/>) before it ever reaches the file.
+    /// <see cref="CardFileParser"/> reads for the appended region — §14.4 brought the comment
+    /// header, the eighth and last family, onto this same syntax; its body and
+    /// <see cref="CommentFooter"/> stay their own append-only-content shape, not a ninth family).
+    /// One open line names the family and carries nothing else; each field is then its own
+    /// <c>key: value</c> line, the same shape frontmatter itself uses; the block ends at a line
+    /// <em>exactly equal to</em> <see cref="BlockCloseLine"/> — not merely containing it. That
+    /// equality requirement is what makes an unterminated block fail loudly (§13.6's "a card which
+    /// will not parse beats one that parses wrongly", applied here): a stray <c>--&gt;</c> embedded
+    /// inside a field's own text can never be mistaken for the close line, because §14.3 escapes
+    /// exactly that run (<see cref="EscapeCardBlockValue"/>) before it ever reaches the file.
     /// </summary>
     internal const string BlockCloseLine = "-->";
 
@@ -94,16 +104,28 @@ internal static class CardFileFormat
     internal const string RefusalOpenLine = "<!-- callboard:refusal";
 
     /// <summary>
-    /// §14 remediation (reviewer finding on `14.1–14.3`): the one shared declaration of the seven
-    /// §14.1 block-open-line prefixes, paired with a human label for a refusal message.
-    /// <see cref="LooksLikeDelimiterOrEscapedDelimiter"/> (write side — is this body/comment content
-    /// that must be escaped so it is never misread as a real block open line) and
-    /// <see cref="MalformedBlockOpenLineFamily"/> (read side — is this an unescaped line that starts
-    /// with one of these prefixes but is not an exact block open line, i.e. a malformed or legacy
-    /// marker that must never be silently absorbed as prose) both read from this one list, so the
-    /// two questions about the same seven prefixes can never drift apart. The comment header keeps
-    /// its own separate <see cref="IsCommentHeader"/> predicate for now — §14.4 unifies it into this
-    /// declaration when the comment header itself moves onto the §14.1 block shape.
+    /// An appended comment's own header block's open line (§14.4: the comment header moved onto the
+    /// §14.1 delimited-block shape — its body and <see cref="CommentFooter"/> are unchanged, only
+    /// the header carrying <c>id</c>/<c>author</c>/<c>timestamp</c>/etc. is now a block like the
+    /// other seven). Joining <see cref="BlockOpenLinePrefixes"/> is what gives a pre-§14.4
+    /// single-line comment header the same loud, named-family refusal the other seven already have,
+    /// for free — see <see cref="MalformedBlockOpenLineFamily"/>.
+    /// </summary>
+    internal const string CommentOpenLine = "<!-- callboard:comment";
+
+    /// <summary>
+    /// §14 remediation (reviewer finding on `14.1–14.3`), extended by §14.4: the one shared
+    /// declaration of the eight §14.1 block-open-line prefixes, paired with a human label for a
+    /// refusal message. <see cref="LooksLikeDelimiterOrEscapedDelimiter"/> (write side — is this
+    /// body/comment content that must be escaped so it is never misread as a real block open line)
+    /// and <see cref="MalformedBlockOpenLineFamily"/> (read side — is this an unescaped line that
+    /// starts with one of these prefixes but is not an exact block open line, i.e. a malformed or
+    /// legacy marker that must never be silently absorbed as prose) both read from this one list, so
+    /// the two questions about the same eight prefixes can never drift apart. §14.4 added
+    /// <see cref="CommentOpenLine"/> here and nothing else — the mechanism this declaration exists
+    /// for is exactly that adding an eighth family costs one list entry, not a parallel
+    /// implementation on either side. <see cref="CommentFooter"/> is deliberately excluded — see its
+    /// own doc comment for why it is not an open line and is protected separately.
     /// </summary>
     private static readonly IReadOnlyList<(string Prefix, string Family)> BlockOpenLinePrefixes =
     [
@@ -114,25 +136,26 @@ internal static class CardFileFormat
         (ClaimOpenLine, "claim"),
         (LimitOpenLine, "limit"),
         (RefusalOpenLine, "refusal"),
+        (CommentOpenLine, "comment"),
     ];
 
     /// <summary>
     /// True for a line that, written unescaped, would be misread as a structural delimiter on
-    /// the next parse — the comment header prefix, the comment footer, one of the seven §14.1 block
-    /// open lines (<see cref="BlockOpenLinePrefixes"/>), or an already-escaped instance of any of
-    /// those (any number of leading backslashes stripped still matches). Escaping is checked
-    /// against this, not just the bare patterns, so escaping the same content twice stays
-    /// invertible. Deliberately does not include <see cref="BlockCloseLine"/> itself: a bare
-    /// <c>--&gt;</c> line only means "end of block" while the parser is already scanning fields
-    /// inside one of the seven open lines above, never while scanning body or comment content —
-    /// see the field-value escaping this task also adds (<see cref="EscapeCardBlockValue"/>) for
-    /// the different hazard a literal <c>--&gt;</c> <em>inside</em> a field's own text poses.
+    /// the next parse — the comment footer, one of the eight §14.1 block open lines
+    /// (<see cref="BlockOpenLinePrefixes"/>, comment's own open line included since §14.4), or an
+    /// already-escaped instance of any of those (any number of leading backslashes stripped still
+    /// matches). Escaping is checked against this, not just the bare patterns, so escaping the same
+    /// content twice stays invertible. Deliberately does not include <see cref="BlockCloseLine"/>
+    /// itself: a bare <c>--&gt;</c> line only means "end of block" while the parser is already
+    /// scanning fields inside one of the eight open lines above, never while scanning body or
+    /// comment content — see the field-value escaping this task also adds
+    /// (<see cref="EscapeCardBlockValue"/>) for the different hazard a literal <c>--&gt;</c>
+    /// <em>inside</em> a field's own text poses.
     /// </summary>
     internal static bool LooksLikeDelimiterOrEscapedDelimiter(string line)
     {
         var unescaped = line.TrimStart('\\');
-        if (unescaped.StartsWith(CommentHeaderPrefix, StringComparison.Ordinal)
-            || string.Equals(unescaped, CommentFooter, StringComparison.Ordinal))
+        if (string.Equals(unescaped, CommentFooter, StringComparison.Ordinal))
         {
             return true;
         }
@@ -151,17 +174,17 @@ internal static class CardFileFormat
     /// <summary>
     /// §14 remediation: §13.6's rule ("a card which will not parse beats one that parses wrongly")
     /// applied to the malformed-open-line case, symmetric with §14.1's own unterminated-block case.
-    /// Returns the family name when <paramref name="line"/> starts with one of the seven §14.1
+    /// Returns the family name when <paramref name="line"/> starts with one of the eight §14.1
     /// block-open prefixes (<see cref="BlockOpenLinePrefixes"/>) but is not itself an exact block
     /// open line — a line the writer could never have produced as body or comment content, since
     /// <see cref="LooksLikeDelimiterOrEscapedDelimiter"/> always escapes exactly such a line (one
     /// leading backslash) before writing it. An escaped line therefore starts with <c>\</c>, never
     /// with <c>&lt;</c>, and can never match a bare prefix here — so an unescaped match is always
-    /// either a hand-authored line or a pre-§14.1 legacy marker, and the caller refuses it instead
-    /// of silently absorbing it into prose. Returns <see langword="null"/> when line is not such a
-    /// case, including when it is itself exactly one of the seven open lines (the caller checks
-    /// that first via the <c>Is*Line</c> predicates) or when it carries a leading backslash (an
-    /// escaped content line, reversed by <see cref="UnescapeContentLine"/> instead — never this).
+    /// either a hand-authored line or a pre-§14.1/pre-§14.4 legacy marker, and the caller refuses it
+    /// instead of silently absorbing it into prose. Returns <see langword="null"/> when line is not
+    /// such a case, including when it is itself exactly one of the eight open lines (the caller
+    /// checks that first via the <c>Is*Line</c> predicates) or when it carries a leading backslash
+    /// (an escaped content line, reversed by <see cref="UnescapeContentLine"/> instead — never this).
     /// </summary>
     internal static string? MalformedBlockOpenLineFamily(string line)
     {
@@ -200,11 +223,14 @@ internal static class CardFileFormat
         return LooksLikeDelimiterOrEscapedDelimiter(withoutOneBackslash) ? withoutOneBackslash : line;
     }
 
-    /// <summary>An unescaped line marking the start of an appended comment's header.</summary>
-    internal static bool IsCommentHeader(string line) =>
-        line.StartsWith(CommentHeaderPrefix, StringComparison.Ordinal);
+    /// <summary>§14.4: an unescaped appended-comment block's open line — checked the same way as
+    /// its seven siblings below, since it now shares their shape.</summary>
+    internal static bool IsCommentLine(string line) =>
+        string.Equals(line, CommentOpenLine, StringComparison.Ordinal);
 
-    /// <summary>An unescaped line marking the end of an appended comment's body.</summary>
+    /// <summary>An unescaped line marking the end of an appended comment's body — not an open line;
+    /// see <see cref="CommentFooter"/>'s own doc comment for why it stays outside
+    /// <see cref="BlockOpenLinePrefixes"/>.</summary>
     internal static bool IsCommentFooter(string line) =>
         string.Equals(line, CommentFooter, StringComparison.Ordinal);
 
@@ -236,7 +262,7 @@ internal static class CardFileFormat
     internal static bool IsRefusalLine(string line) =>
         string.Equals(line, RefusalOpenLine, StringComparison.Ordinal);
 
-    /// <summary>§14.1: an unescaped line marking the end of any of the seven block families above —
+    /// <summary>§14.1: an unescaped line marking the end of any of the eight block families above —
     /// checked for exact equality, not merely containment, so that a field value carrying a literal
     /// <c>--&gt;</c> (escaped by <see cref="EscapeCardBlockValue"/> before it ever reaches the file)
     /// can never be misread as this.</summary>
@@ -260,23 +286,17 @@ internal static class CardFileFormat
     private static readonly IReadOnlyDictionary<char, char> FrontmatterEscapeTable =
         new Dictionary<char, char> { ['n'] = '\n', ['r'] = '\r', ['s'] = ' ' };
 
-    private static readonly IReadOnlyDictionary<char, char> CommentHeaderEscapeTable =
-        new Dictionary<char, char> { ['s'] = ' ' };
-
     /// <summary>
-    /// The forward mirror of <see cref="FrontmatterEscapeTable"/>/<see cref="CommentHeaderEscapeTable"/>/
-    /// <see cref="FrontmatterListItemEscapeTable"/>: each maps a character worth escaping to its
-    /// multi-character replacement, keyed by the raw character rather than the escape letter, and
-    /// each always includes a literal backslash first — every escaper here needs a backslash
-    /// escaped before anything else stays invertible. Every <c>Escape*Value</c>/<c>Escape*Item</c>
-    /// function below reduces to <see cref="EscapeUsing"/> over one of these, the same collapsing
-    /// <see cref="UnescapeUsing"/> already did for the reverse direction.
+    /// The forward mirror of <see cref="FrontmatterEscapeTable"/>/<see cref="FrontmatterListItemEscapeTable"/>:
+    /// each maps a character worth escaping to its multi-character replacement, keyed by the raw
+    /// character rather than the escape letter, and each always includes a literal backslash first
+    /// — every escaper here needs a backslash escaped before anything else stays invertible. Every
+    /// <c>Escape*Value</c>/<c>Escape*Item</c> function below reduces to <see cref="EscapeUsing"/>
+    /// over one of these, the same collapsing <see cref="UnescapeUsing"/> already did for the
+    /// reverse direction.
     /// </summary>
     private static readonly IReadOnlyDictionary<char, string> FrontmatterEscapeForwardTable =
         new Dictionary<char, string> { ['\\'] = "\\\\", ['\n'] = "\\n", ['\r'] = "\\r" };
-
-    private static readonly IReadOnlyDictionary<char, string> CommentHeaderEscapeForwardTable =
-        new Dictionary<char, string> { ['\\'] = "\\\\", [' '] = "\\s" };
 
     /// <summary>
     /// §13 remediation, corrected twice after review: this table's edge characters are exposed the
@@ -340,9 +360,8 @@ internal static class CardFileFormat
     /// §13 remediation: a leading and/or trailing space is then escaped as <c>\s</c>
     /// (<see cref="EscapeEdgeSpaces"/>) — on disk that whitespace is indistinguishable from layout,
     /// so an editor that strips trailing whitespace on save silently truncates it, and the card
-    /// still parses afterwards holding a different value. Interior spaces are never escaped: unlike
-    /// <see cref="CommentHeaderEscapeForwardTable"/>'s space-delimited format, frontmatter is
-    /// <c>key: value</c> to end of line, so an interior space is never ambiguous, and escaping it
+    /// still parses afterwards holding a different value. Interior spaces are never escaped:
+    /// frontmatter is <c>key: value</c> to end of line, so an interior space is never ambiguous, and escaping it
     /// anyway (<c>title: Which\sretry\spolicy?</c>) would cost the plain-text legibility the record
     /// is required to keep for a reader with no access to the tool. A value with no edge whitespace
     /// still serialises to exactly the bytes it always has.
@@ -388,37 +407,17 @@ internal static class CardFileFormat
     internal static string UnescapeFrontmatterValue(string value) => UnescapeUsing(value, FrontmatterEscapeTable);
 
     /// <summary>
-    /// Escapes a free-text comment-header field value (<c>id</c>/<c>reply-to</c> — the only two
-    /// fields in the header that are free text rather than a closed enum or a fixed-format
-    /// timestamp) so it can never be misread by the parser's own space-split tokenising of the
-    /// header. The header is <c>key=value</c> tokens joined by a single literal
-    /// space (see <see cref="CardFileWriter"/>), so the one character that would otherwise split a
-    /// value across tokens on the read side is the space itself — a backslash is escaped first, the same
-    /// invertibility discipline <see cref="EscapeFrontmatterValue"/> already applies, then every
-    /// space becomes <c>\s</c>. A literal <c>=</c> inside a value needs no escaping: the parser
-    /// splits each token on its <em>first</em> <c>=</c> only, and the fixed key literal
-    /// (<c>id</c>/<c>reply-to</c>) never itself contains one, so that first match is always the
-    /// true key/value boundary regardless of how many further <c>=</c> characters the value holds.
-    /// Escaping every space this way also closes the header-terminator lookalike the reviewer's
-    /// argument named: the terminator is <c>" -->"</c>, and its leading character is a literal
-    /// space — once every space in an escaped value has become the two-character <c>\s</c>, no
-    /// unescaped space (and so no literal <c>" -->"</c>) can ever occur inside it.
-    /// </summary>
-    internal static string EscapeCommentHeaderValue(string value) => EscapeUsing(value, CommentHeaderEscapeForwardTable);
-
-    /// <summary>Reverses <see cref="EscapeCommentHeaderValue"/>.</summary>
-    internal static string UnescapeCommentHeaderValue(string value) => UnescapeUsing(value, CommentHeaderEscapeTable);
-
-    /// <summary>
-    /// §14.2/14.3: escapes a free-text field value carried by one of the seven §14.1 block families
+    /// §14.2/14.3: escapes a free-text field value carried by one of the eight §14.1 block families
     /// (a refusal's <c>rule</c>/<c>remedy</c>, an authorisation's <c>reason</c>, a claim's or
-    /// limit's <c>text</c>, a verdict's <c>range-from</c>/<c>range-to</c>) — the field this
-    /// section's amendment exists for: these are the values the Product Owner read as
-    /// <c>rule=work-lifecycle:\sblock\scards\smove...</c> and called horrible. §14.1 puts one field
-    /// per physical <c>key: value</c> line inside the block's enclosing HTML comment, the same
-    /// shape frontmatter already uses, so <see cref="EscapeFrontmatterValue"/>'s own escaping
-    /// applies unchanged and unlocks the same win it gives frontmatter: an interior space is never
-    /// ambiguous on a <c>key: value</c> line, so it is never escaped, and the value reads as prose.
+    /// limit's <c>text</c>, a verdict's <c>range-from</c>/<c>range-to</c>, and — since §14.4 — a
+    /// comment's own <c>id</c>/<c>reply-to</c>/<c>resolves</c>, superseding the header's former
+    /// dedicated space-escaping pair) — the field this section's amendment exists for: these are the
+    /// values the Product Owner read as <c>rule=work-lifecycle:\sblock\scards\smove...</c> and
+    /// called horrible. §14.1 puts one field per physical <c>key: value</c> line inside the block's
+    /// enclosing HTML comment, the same shape frontmatter already uses, so
+    /// <see cref="EscapeFrontmatterValue"/>'s own escaping applies unchanged and unlocks the same
+    /// win it gives frontmatter: an interior space is never ambiguous on a <c>key: value</c> line,
+    /// so it is never escaped, and the value reads as prose.
     ///
     /// What a frontmatter value never needs and this one does: every field here lives inside
     /// <c>&lt;!-- ... --&gt;</c>, and a rendered view (a browser, GitHub's own Markdown viewer) ends
@@ -501,11 +500,14 @@ internal static class CardFileFormat
         new Dictionary<char, string> { ['\\'] = "\\\\", [' '] = "\\s", [','] = "\\,", ['\n'] = "\\n", ['\r'] = "\\r" };
 
     /// <summary>
-    /// Escapes one item of a nit's comma-joined <c>sites</c> comment-header value (§8 block B) —
-    /// the same space-escaping <see cref="EscapeCommentHeaderValue"/> applies (the header is
-    /// <c>key=value</c> tokens joined by a single space), plus the list separator itself (a path
-    /// containing a literal comma must not be misread as two sites) and newline/carriage-return
-    /// escaping.
+    /// Escapes one item of a nit's comma-joined <c>sites</c> comment-header value (§8 block B) — the
+    /// list separator itself (a path containing a literal comma must not be misread as two sites)
+    /// plus newline/carriage-return escaping. The space escaping here predates §14.4's move of the
+    /// comment header onto a <c>key: value</c> line (where an interior space is no longer
+    /// ambiguous); it is harmless and left unchanged rather than touched as part of this task's line-
+    /// shape-only scope — see the field-by-field accounting on
+    /// <see cref="FrontmatterListItemEscapeForwardTable"/> for the same distinction applied to
+    /// frontmatter's own list fields.
     /// </summary>
     internal static string EscapeSiteListItem(string value) => EscapeUsing(value, SiteListItemEscapeForwardTable);
 
@@ -684,8 +686,8 @@ internal static class CardFileFormat
     }
 
     /// <summary>
-    /// The one unescape shape both <see cref="UnescapeFrontmatterValue"/> and
-    /// <see cref="UnescapeCommentHeaderValue"/> reduce to: scan for a backslash, and if the
+    /// The one unescape shape every <c>Unescape*Value</c>/<c>Unescape*Item</c> function above
+    /// reduces to: scan for a backslash, and if the
     /// character after it is a key in <paramref name="table"/>, substitute the mapped character
     /// and consume both; an escaped backslash (<c>\\</c>) is always reversed regardless of the
     /// table, since both escapers escape a literal backslash the same way first. Anything else
