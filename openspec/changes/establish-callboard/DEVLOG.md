@@ -42497,6 +42497,482 @@ parser contortion the brief warned against, for no real gain.
 
 → @architect
 
+**[architect]** **Block three is landed** — `cfff4b6`, reviewer `Approve` after one obliging nit, gates
+green (`BUILD_EXIT:0` `TEST_EXIT:0` 1215/1215 `FORMAT_EXIT:0` `VALIDATE_EXIT:0`), `14.5` ticked. Three
+things from it worth the record:
+
+- **My brief said seven doors and there are nine.** The worker re-derived the set instead of taking it, and
+  the two it found — `rule author` and `rule propose-compact` — are reached by their own inline `.Match`
+  rather than `MapCardCreateOutcome`. That is §13's two-doors ruling firing again, one section later, and
+  it was caught by the same move that caught it the first time: **re-derive, then build.**
+- **The strongest verification this change has seen.** The reviewer did not read the diff to decide whether
+  an identity was being burned on a missing `--change` — it built and ran **the historical binary from
+  `9e5ad77`** against a throwaway repo, watched `R-0001` burn, then ran the current one and watched it not.
+  That technique now has two uses behind it and belongs in the reviewer definition.
+- **A nit inside an Approve obliged work and got it.** The property `14.5` exists to create had no test —
+  it was true and unasserted. Now asserted, and the coverage gate's silence on it is **stated** rather than
+  implied, because CLI-layer refusals sit outside the gate's domain (§9's known limit).
+
+**[architect]** **Brief — block four, `14.6`.** One task, and it does not end with you. **`14.6` ends at
+the Product Owner**, the way `13.8` and `13.9` did: you build the recipe and run it, she reads the output
+and rules. Do not expect to close this yourself, and do not write anything that presumes her verdict.
+
+### The task
+
+- **14.6** Verify a card's status, owner, scope and history are determinable from the file alone.
+
+### What this task actually is
+
+**This is 13.9 re-run after the fix it caused.** 13.9 built a verification recipe, the Product Owner ran
+it, opened `B-0099.md`, and read
+`rule=work-lifecycle:\sblock\scards\smove\sthrough\sa\sdefined\sflow`. Her word was *horrible*, and that
+reading is what produced the spec amendment this whole section is built to. **13.9 did its job by
+failing.**
+
+So the deliverable is **the same recipe, ported and re-run**, producing **the same two raw card files** —
+because re-running the identical script after §14 lands is the cleanest before-and-after available, and
+the same files have to come back readable. `verify-13-9.sh` is pasted in full in the DEVLOG under `## 13.`
+(search for "**4. The recipe**"); that is your starting point, not a fresh design.
+
+### Why it cannot be a straight re-run, and this is the work
+
+**`14.5` removed the positional card file path from all nine creation verbs**, and `verify-13-9.sh` uses
+it throughout — `block create callboard/changes/.../B-0099.md ...`, `question create
+callboard/register/Q-0001.md ...`. The script as written now refuses with
+`unexpected-positional-argument`. **Port it to the surface as it stands after `cfff4b6`**, changing the
+invocations and nothing else about what the run exercises.
+
+**One consequence you must not paper over.** The old script named `B-0099.md` and the tool put `B-0001`
+inside it — that mismatch is *why* it was a good test file, and `14.5` has made it unreachable through the
+CLI. The card will now land at its identity's name. **That is the fix working, not a defect in the
+recipe**, and the ported script should say so where it names the file. If you find yourself hand-authoring
+a mismatched file to preserve the old output, stop and post — that would be staging the before-picture
+rather than taking the after-picture.
+
+### What the recipe must still exercise
+
+The 13.9 run earned its result by producing real artefacts rather than hand-authored ones. Preserve that:
+a full attributed thread (raise → reply → an out-of-turn resolve that is itself **refused** → the correct
+resolve), so that a **real refusal** with real certification text lands on a real card, plus a frontmatter
+value that exercised the edge-whitespace case (`title: Which retry policy applies?\s`). Real ids from the
+tool, fresh scratch git repo, the `make build` DLL — **not** an AOT publish and no binary rename, which is
+how 13.9 avoided 13.8's collision shape entirely.
+
+**The two escape markers she read are the before-picture. Both must be shown resolved or shown still
+present.** Do not quietly drop a step because its finding is fixed — the step is the evidence.
+
+### What is in scope to *report* and out of scope to *fix*
+
+13.9's own findings list is in the DEVLOG and several items on it are **not** §14's to close. Re-check each
+against the current build and say which now hold and which do not:
+
+- **Absence as meaning** — `section:` is always present and empty when unset, while `base:`/`closed_by:`/
+  `answered_by:` are omitted entirely. Two conventions, both reading as "nothing here" to someone not told
+  the rule.
+- **History in HTML comments** — under raw text everything is visible, which is the binding reading
+  (ADR-0003); under **any Markdown renderer** every marker block and comment header vanishes, leaving
+  unattributed paragraphs. The Product Owner **parked** this deliberately in her amendment; it is a
+  bigger question than an escaping fix. **Report its current state; do not act on it.**
+- **Wire strings** — every enum-backed value is a whole word or short hyphenated phrase. Confirm it still
+  holds now that the block syntax has moved.
+
+**Reporting is the job here. Fixing is not** — a finding that needs a fix goes to me and then to the
+Product Owner, exactly as 13.9's did.
+
+### The automated half
+
+`CardFileRawTextLegibilityTests.cs` exists from 13.9 and has been carried through three blocks of syntax
+change. **Whatever part of "status, owner, scope and history determinable from the file alone" can be
+asserted, assert it there** — a human confirmation is not a substitute for a test, and 13.9's structure
+already separates the two. Say plainly which parts of the property are machine-checkable and which
+genuinely need a reader, because that division is the useful output of this task even after she rules.
+
+### What you hand back
+
+1. The ported script, left at a path you name, **runnable by the Product Owner unchanged**.
+2. The **full unedited transcript** of your own run of it.
+3. **The two raw card files, in full**, as they now read — that is the artefact she judges.
+4. Your findings list, re-checked item by item against the current build.
+5. An explicit statement of what a reader must still know that the file does not tell them.
+
+### Standing rulings that bind this block
+
+- **A verification recipe can satisfy the paperwork and not the task** (§12 ruling 5). §12's first recipe
+  would have rendered her an *empty* board while asking her to confirm lanes and shading. **Read your own
+  output as she will**, before you hand it over.
+- **A brief that contradicts the codebase is a defect in the brief** (§13, item 8). Post it.
+- **A regression test nobody has watched fail is a guess** (§13 ruling 5).
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT:0`, `TEST_EXIT:0` (whole suite — 1215 green at
+`cfff4b6`), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+→ @worker
+
+**[worker]** **Block four, `14.6` — recipe ported, run, and the two raw files handed back for reading.**
+Read the brief in full before starting, including `## 13.`'s pasted `verify-13-9.sh` and the "Spec
+amendment and a renumbering" post. **This block does not close itself — it ends at the Product Owner.**
+
+**1. The port.** Only the two creation invocations changed. `block create` and `question create` no
+longer take a positional card-file path (`14.5`, `cfff4b6`); each now returns `result.filePath` in its
+JSON, which the script captures with `sed` and uses for every step downstream (`block transition`,
+`cat`), same as 13.9 read `B-0099.md` back off the argv it typed. `block transition`, `comment add`,
+`comment resolve` were already flag/`--id`-addressed and needed no change. Everything else — the refusal
+sequence, the thread shape, the edge-whitespace title — is untouched. The script states the filename
+consequence inline rather than leaving it implicit: the old script named `B-0099.md` and the tool put
+`B-0001` inside it; that mismatch is unreachable through the CLI now, and the card lands at `B-0001.md`
+because `14.5`'s own spec scenario ("The file is named for the card") says it should. Not a defect in
+the recipe.
+
+Ported script: `openspec/changes/establish-callboard/verify-14-6.sh`, runnable unchanged (`sh
+verify-14-6.sh`, from repo root, after `make build`). No hand-authored file staged anywhere — every
+artefact in the transcript below came from the tool.
+
+**2. Full unedited transcript of my own run** (`sh verify-14-6.sh > out.txt 2>&1`, that file's bytes
+below verbatim — learned from 13.9's remediation not to retype a captured line by hand):
+
+```
+== Step 1: create a block card (no path argument — the tool names the file) ==
+{"ok":true,"command":"block create --title Wire a retry budget --role architect --change establish-callboard --task 13.9","result":{"filePath":"/private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md","id":"B-0001","title":"Wire a retry budget","kind":"block","scope":"change","status":"drafting","section":"","actingRole":"architect","timestamp":"2026-08-31T15:01:17.847398+00:00","tasks":["13.9"]}}
+(card landed at: /private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md, identity: B-0001)
+
+== Step 2: a refusal (undefined transition) ==
+{"ok":false,"command":"block transition /private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md build --role worker --change establish-callboard","refusal":{"code":"undefined-transition","message":"no transition 'build' from 'drafting'. Available: brief.","rule":"work-lifecycle: block cards move through a defined flow","remedy":"call one of the transitions available from 'drafting': brief."}}
+
+== Step 3: brief it (records base), then a role tries an out-of-turn transition (second refusal) ==
+{"ok":true,"command":"block transition /private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md brief --role architect --base f100b77 --change establish-callboard","result":{"filePath":"/private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md","transition":"brief","from":"drafting","to":"briefed","actingRole":"architect","timestamp":"2026-08-31T15:01:17.984649+00:00","base":"f100b77","round":1}}
+{"ok":true,"command":"block transition /private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md claim --role worker --change establish-callboard","result":{"filePath":"/private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md","transition":"claim","from":"briefed","to":"building","actingRole":"worker","timestamp":"2026-08-31T15:01:18.054277+00:00","base":"f100b77","round":1}}
+
+== Step 4: a comment thread — raised, replied, then resolved by a different role (a third refusal along the way) ==
+{"ok":true,"command":"comment add --id B-0001 --role reviewer --to architect --change establish-callboard","result":{"filePath":"/private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md","cardId":"B-0001","commentId":"comment-d119e925d78e4174ad7ae585f4b3cbdc","actingRole":"reviewer","to":"architect","addedAt":"2026-08-31T15:01:18.124656+00:00"}}
+{"ok":true,"command":"comment add --id B-0001 --role architect --to reviewer --reply-to comment-d119e925d78e4174ad7ae585f4b3cbdc --change establish-callboard","result":{"filePath":"/private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md","cardId":"B-0001","commentId":"comment-8c2f250e48c34836b2097541ab66cd67","actingRole":"architect","to":"reviewer","replyTo":"comment-d119e925d78e4174ad7ae585f4b3cbdc","addedAt":"2026-08-31T15:01:18.198618+00:00"}}
+{"ok":false,"command":"comment resolve --id B-0001 --comment-id comment-d119e925d78e4174ad7ae585f4b3cbdc --role reviewer --change establish-callboard","refusal":{"code":"role-not-permitted","message":"'/private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md' thread disposition denied for role 'reviewer'.","rule":"process-enforcement: a thread is disposed of only by its addressee or the card's owner","remedy":"only 'architect' (the thread's addressee) or 'architect' (the card's owner) may dispose of this thread; 'reviewer' attempted it."}}
+{"ok":true,"command":"comment resolve --id B-0001 --comment-id comment-d119e925d78e4174ad7ae585f4b3cbdc --role architect --change establish-callboard","result":{"filePath":"/private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md","cardId":"B-0001","commentId":"comment-d119e925d78e4174ad7ae585f4b3cbdc","resolvingCommentId":"resolution-54b9ef5e2580403786d30a423f6157f9","actingRole":"architect","resolvedAt":"2026-08-31T15:01:18.337971+00:00"}}
+
+== Step 5: a question card with a title that has a trailing space (no path argument here either) ==
+{"ok":true,"command":"question create --title Which retry policy applies?  --role architect --owed-by product-owner","result":{"filePath":"/private/tmp/cb-verify-14-6-42345/callboard/register/Q-0001.md","id":"Q-0001","title":"Which retry policy applies? ","kind":"question","scope":"repository","status":"open","owedBy":"product-owner","section":"","actingRole":"architect","timestamp":"2026-08-31T15:01:18.40703+00:00"}}
+(card landed at: /private/tmp/cb-verify-14-6-42345/callboard/register/Q-0001.md, identity: Q-0001)
+
+==================================================================
+RAW FILE — /private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md
+==================================================================
+---
+id: B-0001
+kind: block
+title: Wire a retry budget
+status: building
+owner: architect
+scope: change
+section: 
+created: 2026-08-31T15:01:17.8473980+00:00
+updated: 2026-08-31T15:01:18.3379710+00:00
+base: f100b77
+tasks: 13.9
+round: 1
+---
+Implements the read-half determinability check.
+
+<!-- callboard:transition
+by: architect
+name: brief
+from: drafting
+to: briefed
+timestamp: 2026-08-31T15:01:17.9846490+00:00
+-->
+<!-- callboard:transition
+by: worker
+name: claim
+from: briefed
+to: building
+timestamp: 2026-08-31T15:01:18.0542770+00:00
+-->
+<!-- callboard:refusal
+by: worker
+rule: work-lifecycle: block cards move through a defined flow
+remedy: call one of the transitions available from 'drafting': brief.
+timestamp: 2026-08-31T15:01:17.9229170+00:00
+-->
+<!-- callboard:refusal
+by: reviewer
+rule: process-enforcement: a thread is disposed of only by its addressee or the card's owner
+remedy: only 'architect' (the thread's addressee) or 'architect' (the card's owner) may dispose of this thread; 'reviewer' attempted it.
+timestamp: 2026-08-31T15:01:18.2708050+00:00
+-->
+<!-- callboard:comment
+id: comment-d119e925d78e4174ad7ae585f4b3cbdc
+author: reviewer
+to: architect
+timestamp: 2026-08-31T15:01:18.1246560+00:00
+-->
+Four readers still discard the parse failure with onFailure: static _ => null.
+
+<!-- /callboard:comment -->
+<!-- callboard:comment
+id: comment-8c2f250e48c34836b2097541ab66cd67
+author: architect
+reply-to: comment-d119e925d78e4174ad7ae585f4b3cbdc
+to: reviewer
+timestamp: 2026-08-31T15:01:18.1986180+00:00
+-->
+Fixed in the same commit; four readers now report a count and a path.
+
+<!-- /callboard:comment -->
+<!-- callboard:comment
+id: resolution-54b9ef5e2580403786d30a423f6157f9
+author: architect
+reply-to: comment-d119e925d78e4174ad7ae585f4b3cbdc
+resolves: comment-d119e925d78e4174ad7ae585f4b3cbdc
+timestamp: 2026-08-31T15:01:18.3379710+00:00
+-->
+Confirmed against the diff; closing the thread.
+
+<!-- /callboard:comment -->
+
+==================================================================
+RAW FILE — /private/tmp/cb-verify-14-6-42345/callboard/register/Q-0001.md
+==================================================================
+---
+id: Q-0001
+kind: question
+title: Which retry policy applies?\s
+status: open
+owner: product-owner
+scope: repository
+section: 
+created: 2026-08-31T15:01:18.4070300+00:00
+updated: 2026-08-31T15:01:18.4070300+00:00
+---
+Fixed backoff, three attempts.
+
+
+==================================================================
+TOOL'S OWN READING — for cross-check only, read this AFTER you have
+written down your own answers from the raw files above
+==================================================================
+--- card show B-0001 ---
+{"ok":true,"command":"card show B-0001","result":{"id":"B-0001","kind":"block","filePath":"/private/tmp/cb-verify-14-6-42345/callboard/changes/establish-callboard/B-0001.md","title":"Wire a retry budget","status":"building","owner":"architect","scope":"change","section":"","created":"2026-08-31T15:01:17.847398+00:00","updated":"2026-08-31T15:01:18.337971+00:00","unknownFrontmatterFields":[],"body":"Implements the read-half determinability check.\n","handovers":[],"blockFields":{"base":"f100b77","tasks":["13.9"],"round":1,"blockedBy":[],"gateResults":[]},"transitions":[{"by":"architect","name":"brief","from":"drafting","to":"briefed","timestamp":"2026-08-31T15:01:17.984649+00:00","unknownFields":[]},{"by":"worker","name":"claim","from":"briefed","to":"building","timestamp":"2026-08-31T15:01:18.054277+00:00","unknownFields":[]}],"claims":[],"limits":[],"sectionFields":{"verdicts":[],"authorisations":[]},"findingFields":{"extentKind":"blockScope","extentItems":[],"blindSpotKind":"none","disposition":"measured"},"registerFields":{"earnedFrom":[],"absorbs":[]},"questionFields":{},"refusals":[{"by":"worker","rule":"work-lifecycle: block cards move through a defined flow","remedy":"call one of the transitions available from 'drafting': brief.","timestamp":"2026-08-31T15:01:17.922917+00:00","unknownFields":[]},{"by":"reviewer","rule":"process-enforcement: a thread is disposed of only by its addressee or the card's owner","remedy":"only 'architect' (the thread's addressee) or 'architect' (the card's owner) may dispose of this thread; 'reviewer' attempted it.","timestamp":"2026-08-31T15:01:18.270805+00:00","unknownFields":[]}],"comments":[{"id":"comment-d119e925d78e4174ad7ae585f4b3cbdc","author":"reviewer","timestamp":"2026-08-31T15:01:18.124656+00:00","body":"Four readers still discard the parse failure with onFailure: static _ => null.\n","to":"architect","isNit":false,"required":false,"sites":[],"unknownHeaderFields":[]},{"id":"comment-8c2f250e48c34836b2097541ab66cd67","author":"architect","timestamp":"2026-08-31T15:01:18.198618+00:00","body":"Fixed in the same commit; four readers now report a count and a path.\n","replyTo":"comment-d119e925d78e4174ad7ae585f4b3cbdc","to":"reviewer","isNit":false,"required":false,"sites":[],"unknownHeaderFields":[]},{"id":"resolution-54b9ef5e2580403786d30a423f6157f9","author":"architect","timestamp":"2026-08-31T15:01:18.337971+00:00","body":"Confirmed against the diff; closing the thread.\n","replyTo":"comment-d119e925d78e4174ad7ae585f4b3cbdc","resolves":"comment-d119e925d78e4174ad7ae585f4b3cbdc","isNit":false,"required":false,"sites":[],"unknownHeaderFields":[]}]}}
+
+--- state ---
+{"ok":true,"command":"state","result":{"openSections":[],"taskCompletion":[{"changeName":"establish-callboard","tasksFileFound":false,"ticked":0,"total":0}],"liveObligations":[],"openQuestions":[{"id":"Q-0001","filePath":"/private/tmp/cb-verify-14-6-42345/callboard/register/Q-0001.md","title":"Which retry policy applies? ","owesAnswer":"product-owner"}],"blockedCards":[],"unreadable":[]}}
+```
+
+**3. The two raw files, standalone, in full — this is the artefact she judges** (identical text to the
+two `RAW FILE` sections above; repeated here per the brief's item 3):
+
+`callboard/changes/establish-callboard/B-0001.md`:
+
+```
+---
+id: B-0001
+kind: block
+title: Wire a retry budget
+status: building
+owner: architect
+scope: change
+section: 
+created: 2026-08-31T15:01:17.8473980+00:00
+updated: 2026-08-31T15:01:18.3379710+00:00
+base: f100b77
+tasks: 13.9
+round: 1
+---
+Implements the read-half determinability check.
+
+<!-- callboard:transition
+by: architect
+name: brief
+from: drafting
+to: briefed
+timestamp: 2026-08-31T15:01:17.9846490+00:00
+-->
+<!-- callboard:transition
+by: worker
+name: claim
+from: briefed
+to: building
+timestamp: 2026-08-31T15:01:18.0542770+00:00
+-->
+<!-- callboard:refusal
+by: worker
+rule: work-lifecycle: block cards move through a defined flow
+remedy: call one of the transitions available from 'drafting': brief.
+timestamp: 2026-08-31T15:01:17.9229170+00:00
+-->
+<!-- callboard:refusal
+by: reviewer
+rule: process-enforcement: a thread is disposed of only by its addressee or the card's owner
+remedy: only 'architect' (the thread's addressee) or 'architect' (the card's owner) may dispose of this thread; 'reviewer' attempted it.
+timestamp: 2026-08-31T15:01:18.2708050+00:00
+-->
+<!-- callboard:comment
+id: comment-d119e925d78e4174ad7ae585f4b3cbdc
+author: reviewer
+to: architect
+timestamp: 2026-08-31T15:01:18.1246560+00:00
+-->
+Four readers still discard the parse failure with onFailure: static _ => null.
+
+<!-- /callboard:comment -->
+<!-- callboard:comment
+id: comment-8c2f250e48c34836b2097541ab66cd67
+author: architect
+reply-to: comment-d119e925d78e4174ad7ae585f4b3cbdc
+to: reviewer
+timestamp: 2026-08-31T15:01:18.1986180+00:00
+-->
+Fixed in the same commit; four readers now report a count and a path.
+
+<!-- /callboard:comment -->
+<!-- callboard:comment
+id: resolution-54b9ef5e2580403786d30a423f6157f9
+author: architect
+reply-to: comment-d119e925d78e4174ad7ae585f4b3cbdc
+resolves: comment-d119e925d78e4174ad7ae585f4b3cbdc
+timestamp: 2026-08-31T15:01:18.3379710+00:00
+-->
+Confirmed against the diff; closing the thread.
+
+<!-- /callboard:comment -->
+```
+
+`callboard/register/Q-0001.md`:
+
+```
+---
+id: Q-0001
+kind: question
+title: Which retry policy applies?\s
+status: open
+owner: product-owner
+scope: repository
+section: 
+created: 2026-08-31T15:01:18.4070300+00:00
+updated: 2026-08-31T15:01:18.4070300+00:00
+---
+Fixed backoff, three attempts.
+```
+
+**4. The two escape markers she read — one resolved, one still present, exactly as the brief said to
+show.** The block-card refusal she called *horrible* —
+`rule=work-lifecycle:\sblock\scards\smove\sthrough\sa\sdefined\sflow` — now reads
+`rule: work-lifecycle: block cards move through a defined flow` on its own line, and the remedy the
+same way: `remedy: call one of the transitions available from 'drafting': brief.` — a sentence, not a
+`\s`-joined token run. That marker is resolved. The frontmatter title's edge-whitespace marker —
+`title: Which retry policy applies?\s` — is unchanged, because §14 never touched frontmatter's own
+`EscapeFrontmatterValue`/`EscapeEdgeSpaces` pair (Product Owner's ruling: "3eacc1f left it escaping only
+edge whitespace" already, and that convention is untouched here); it is the same `\s` on the same one
+trailing space it always was, present in the raw file for her to read exactly as before.
+
+**5. 13.9's findings, re-checked against this build, item by item.**
+
+- **Absence as meaning — still holds, unchanged.** `B-0001.md` carries `section: ` (present, empty,
+  trailing space before the newline) and `base: f100b77` (present because set). `Q-0001.md` carries
+  neither `closed_by:` nor `answered_by:` — omitted entirely, because the question was never answered.
+  Two conventions ("field present but blank" vs "field omitted") both reading as "nothing recorded" to a
+  reader not told the rule. §14 changed the *block* syntax, not the frontmatter presence rule; this
+  finding is orthogonal to what §14 fixed and nothing in this run's diff touches it. **Still open — not
+  §14's to close, per the brief.**
+- **History in HTML comments — still holds, unchanged, and the split the amendment named is exactly
+  what's on disk.** Every transition/refusal/comment header above is inside `<!-- ... -->`. Under raw
+  text — the binding reading per ADR-0003 — every field is visible, attributed, and now reads as
+  sentences rather than `\s`-joined tokens (that's what changed). Under any Markdown renderer, an HTML
+  comment renders as nothing: the whole `<!-- callboard:refusal ... -->` block, and every
+  `<!-- callboard:comment ... -->` header with it, disappears, leaving only the comment *bodies* ("Four
+  readers still discard the parse failure…", "Fixed in the same commit…", "Confirmed against the
+  diff…") as unattributed paragraphs with no visible author, no `to:`, no `reply-to:`, no timestamp. I
+  did not render it through an actual Markdown engine — the claim is structural (any conformant renderer
+  drops an HTML comment node), not empirically re-derived against a specific renderer, and I did not run
+  one to confirm it beyond that structural fact. The Product Owner parked this deliberately in her
+  amendment; per the brief, reporting its state, not acting on it.
+- **Wire strings — still holds.** `status: building`, `owner: architect`, `scope: change`, `kind: block`,
+  `by: worker`, `name: brief`, `from: drafting`, `to: briefed` — every enum-backed value on both raw
+  files above is a whole word or short hyphenated phrase (`role-not-permitted`,
+  `undefined-transition` in the JSON layer use the same convention). None needed decoding.
+
+**6. What a reader must still know that the file does not tell them** (the brief's item 5):
+
+- **The absence/presence convention itself.** Nothing in the file says "an omitted field means unset,
+  reading a blank one also means unset, and they are not the same field family" — a reader has to be
+  told this once, from outside the file.
+- **That the record is meant to be read raw, not rendered.** Nothing in the file warns a reader who
+  opens it in a Markdown previewer that every transition, refusal and comment attribution will vanish.
+  ADR-0003 states the binding reading; the file itself carries no such notice.
+- **The `\s` convention on frontmatter edge whitespace.** `title: Which retry policy applies?\s` reads,
+  to someone who hasn't read `CardFileFormat`'s doc comment or this thread, as a title ending in a
+  literal backslash and the letter `s` — not as "the real title has a trailing space." (§14 fixed this
+  for the eight block-marker families; frontmatter's own edge-space convention is untouched and this is
+  its one live instance in the run.)
+- **The full transition flow.** A refusal names the transitions available *from the current state*
+  reactively (`"Available: brief."`), but the file records only the transitions that actually happened —
+  the complete state graph is not written down anywhere in the card itself.
+- **Role permissions.** The reviewer's out-of-turn resolve was refused and the refusal is on record, but
+  the *rule* that only a thread's addressee or the card's owner may dispose of it is stated only in that
+  one refusal's `remedy:` text — a reader who never triggers the refusal has no other way to learn it
+  from the file.
+
+**7. The automated half.** `CardFileRawTextLegibilityTests.cs` (13.9's file, carried through `14.1`–`14.5`
+unmodified in content) already asserts, by plain substring/line search sharing none of
+`CardFileFormat`'s escape tables: every marker family's fields readable as `key: value` sentences
+(`EveryMarkerLineFamily_...`, `VerdictAndAuthorisation_...`, `CommentThread_...`,
+`FindingQuestionAndRegisterFields_...`); the absence-vs-empty convention on `section:`/`base:`
+(`AbsentBaseAndEmptySection_...`); and the frontmatter `\s` edge-whitespace convention
+(`EscapedEdgeWhitespace_...`). Re-ran it standalone against this build (`make test`, included in the
+1215) — still green, still exercising exactly this run's shapes (I checked the assertions against this
+run's actual output rather than trusting the file's own doc comment; they match line-for-line, e.g.
+`"status: building\n"`, `"section: \n"`). I made no source or test change — the property this block
+verifies was already fully covered by what 13.9 built and what `14.1`–`14.4` carried forward; there was
+nothing left uncovered to add a fact to.
+
+**Machine-checkable vs reader-only — the division the brief asked for, stated plainly:**
+- **Machine-checkable:** every marker family reads as `key: value` prose with no per-family legend
+  (asserted); the absence-vs-empty split exists on the wire exactly as described (asserted); the `\s`
+  edge-whitespace marker is exactly what it says (asserted); wire strings are whole words (asserted by
+  every `Assert.Contains("status: building\n", ...)`-shaped line). All of it is "is the string on the
+  wire what the spec says it should be" — a plain substring/line match, nothing that requires rendering
+  or human interpretation.
+- **Reader-only, not machine-checkable without inventing a second reader:** whether a *human* who has
+  never read `CardFileFormat`'s doc comment can independently recover "absent and blank both mean unset"
+  or "`\s` means an escaped trailing space" from the file alone, with no prior briefing — that is a
+  judgement about comprehension, not string equality, and it is exactly what this block hands to the
+  Product Owner rather than asserting in xunit. Likewise "does a Markdown renderer actually hide this" is
+  checkable only by running one; the test suite asserts the structural fact (it's inside an HTML comment)
+  and stops there.
+
+**Tasks completed:** `14.6` — the recipe and its run, not the verdict; per the brief, this does not close
+itself.
+
+**Gates:** `BUILD_EXIT:0` `TEST_EXIT:0` (1215/1215) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+→ @architect
+
+**[architect]** **`14.6` is confirmed by the Product Owner** — *"looks good to me"*. Ticking it and
+committing on her word, as `13.8` was.
+
+**What she accepted, stated so it is not re-litigated later.** The refusal she called *horrible* now reads
+as a sentence, and so does the longer role-not-permitted one on the same card; the whole card is one
+syntax; the file is `B-0001.md` holding `B-0001`. **And one `\s` survives**, deliberately —
+`title: Which retry policy applies?\s`, frontmatter's own edge-whitespace convention on a real trailing
+space. I put it to her explicitly rather than letting it pass unremarked, because it is the one thing on
+the card that still reads as a decoded escape, and because her amendment's requirement enumerates a
+refusal's rule and remedy, a certification's claims and limits, an authorisation's reason — **a title is
+not in that list**, so keeping it is compliant with the spec as written rather than an oversight against
+it. She read it and accepted it. **That is now a Product Owner ruling, not an unexamined leftover:** the
+sentence requirement covers recorded prose, not every frontmatter value.
+
+**Recorded as still open and not §14's**, from the worker's re-check: absence-as-meaning (`section: `
+present and empty vs `base:` omitted entirely — both read as "nothing here" to a reader not told the
+rule), and history-in-HTML-comments (raw text fully legible, the binding reading per ADR-0003; every
+attribution vanishes under any Markdown renderer). The second is the Product Owner's own deliberate park
+from the amendment. The worker was straight about the limit of its own evidence there — the renderer claim
+is **structural, not run** — which is the right way to hand over a fact you did not test.
+
+**No source or test change was needed, and that is the finding.** `CardFileRawTextLegibilityTests.cs` is
+13.9's file, carried through `14.1`–`14.4` unmodified in content, and it already asserted every
+machine-checkable half of the property against shapes those three blocks changed underneath it. A test
+written before the syntax moved, still green after it moved, checked line-for-line against this run's real
+output rather than trusted. **13.9 failed usefully and then covered its own fix.**
+
 ## NEXT
 
 **§13 is closed — supervisor `Approve` on `f100b77..HEAD`, one remediation round.** **§14 is open and is
