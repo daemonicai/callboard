@@ -40,6 +40,10 @@ with no creation command has no counter that advances, and therefore no such gua
 
 A card's identity SHALL remain valid and resolvable after the change that raised it is archived.
 
+A card's file SHALL be named for its identity, so that a directory listing of the record is a list of
+card identities. The system SHALL name the file when it mints the identity; a caller names the container
+a card belongs in, never the file itself.
+
 #### Scenario: Identity survives archive
 
 - **WHEN** a reader resolves a card identity raised in a change that has since been archived
@@ -54,6 +58,12 @@ A card's identity SHALL remain valid and resolvable after the change that raised
 
 - **WHEN** the system is asked to issue an identity that a card in the record already bears
 - **THEN** it refuses the allocation and names the card holding that identity
+
+#### Scenario: The file is named for the card
+
+- **WHEN** a card is created
+- **THEN** its file is named for the identity the system issued, and the caller was never able to name it
+  something else
 
 ### Requirement: Ownership names whose turn it is
 

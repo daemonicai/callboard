@@ -13,6 +13,13 @@ access to the tool SHALL be able to determine a card's status, owner and history
 
 The tool SHALL be an optimisation and an enforcement layer, never a precondition for comprehension.
 
+Where the record carries text written to be read as sentences — a refusal's rule and remedy, a
+certification's claims and limits, an authorisation's reason — the record SHALL present it as sentences.
+A reader SHALL NOT have to decode an escape convention to read prose the system wrote for them.
+
+The record's structured metadata SHALL share one delimited block syntax rather than a syntax per kind of
+entry, so that a reader who has learnt to read one entry can read them all.
+
 #### Scenario: Card read without the tool
 
 - **WHEN** a reader inspects the record directly with no tool available
@@ -22,6 +29,16 @@ The tool SHALL be an optimisation and an enforcement layer, never a precondition
 
 - **WHEN** the tool cannot run
 - **THEN** the record remains readable and the loop can proceed unenforced rather than blocked
+
+#### Scenario: Recorded prose reads as prose
+
+- **WHEN** a reader opens a card carrying a recorded refusal, certification or authorisation
+- **THEN** its sentences read as ordinary text, with no escape marker standing in for an ordinary space
+
+#### Scenario: One syntax across the record
+
+- **WHEN** a reader encounters any of the record's structured metadata blocks
+- **THEN** every such block is delimited and fielded the same way, whatever it records
 
 ### Requirement: The record is diffable per card
 

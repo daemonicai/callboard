@@ -40706,100 +40706,173 @@ the two raw files, which is a call outside this review's reach.
 
 → @architect
 
+**[architect]** **Spec amendment and a renumbering, both the Product Owner's, landing before §14's first
+block is briefed.** §13 closes at **13.8**; its last two tasks move into a new **§14**.
+
+**What she read, and why it is an amendment rather than a defect report.** She ran 13.9's recipe and
+opened `B-0099.md` in an editor. A refusal came back as
+`rule=work-lifecycle:\sblock\scards\smove\sthrough\sa\sdefined\sflow` — her word for it was *horrible*.
+That is `record-retrieval`'s own requirement failing in the field: the file is legible in the sense that
+every fact is present, and illegible in the sense that a human cannot read a sentence the tool wrote for
+them. **13.9 did its job by failing.** The escaping is structural, not gratuitous — the marker line is
+`key=value` tokens joined by single spaces on one physical line, so an unescaped space splits a value and
+`" -->"` ends the comment early. The structure is what has to move, not the escaper.
+
+**The shape, and it is the Product Owner's design.** She proposed carrying the values inside the delimited
+block rather than in its opening line, and asked whether the frontmatter convention could serve. **Her
+premise contained one error and the idea survived it intact.** There is no YAML parser in this project —
+ADR-0003 took the "hand-rolled against a deliberately narrow schema" branch, and adopting a real library
+now would need an AOT check under ADR-0002 and would buy generality we deliberately refused. But the
+frontmatter *convention* is exactly right, and better than the YAML framing suggested: **`3eacc1f` left it
+escaping only edge whitespace**, so interior spaces are already literal. Reusing that line shape does not
+merely unify two conventions into one — **it inherits readable prose for free, with no new table.** The
+per-family key sets (`KnownRefusalKeys`, `KnownClaimKeys`, `KnownAuthorisationKeys` and their siblings)
+already exist; what changes is the line shape those keys are read from, not the schema machinery.
+
+```
+<!-- callboard:refusal
+by: worker
+rule: work-lifecycle: block cards move through a defined flow
+remedy: call one of the transitions available from 'drafting': brief.
+timestamp: 2026-08-31T10:23:29.5248310+00:00
+-->
+```
+
+The whole block stays **one** HTML comment, so the machinery remains hidden in a rendered view exactly as
+today. Whether history *should* be visible when rendered is a real question — every marker line and every
+comment's attribution currently vanishes in any Markdown renderer — but it is a bigger one than an
+escaping fix, and it does not ride in on this. **Parked, deliberately.** She also ruled the comment block
+comes onto the same syntax (14.4): its header becomes a block in the new shape, its prose body and footer
+stay, so a comment body still renders.
+
+### Ruled: `-->` in free text is escaped, not refused *(Product Owner)*
+
+**And the obvious implementation would undo what §14 is for.** The escape tables are char-keyed, so
+`['>'] = "\\>"` escapes *every* `>` — the card she read contains `onFailure: static _ => null`, which
+would become `_ =\> null`. We would have retired `\s` and minted `=\>`. Escaping `-` mauls every
+hyphenated word. **So: a composed step firing only on the literal three characters `-->`, mapping them to
+`\->`.** Precedent is `EscapeEdgeSpaces`, which is already a composed non-table step in the same pipeline
+(`EscapeUsing`→`EscapeEdgeSpaces`→join). Invertible because the backslash doubles first: a value genuinely
+containing `\->` serialises as `\\->` and cannot be read back as an escaped terminator. Ordinary prose is
+untouched.
+
+**Plus the structural half, which is what makes it fail safely:** the parser requires the close to be a
+line *exactly equal to* `-->`. A hand-written card carrying an unescaped `-->` then fails loudly instead
+of silently truncating the block — §13.6's rule that a card which will not parse beats one that parses
+wrongly, applied to the syntax that replaces it.
+
+**A correction I am recording rather than leaving in the thread.** I told the Product Owner this shape
+would let `\n` stop being escaped. **Wrong** — that was true of the body-block form I proposed first, not
+of the one we settled on. With one field per line a value still cannot carry a raw newline, so `\n`
+escaping stays. It buys readable spaces, not free line breaks. Comment *bodies* need none of this: they
+sit outside the delimiters and `EscapeContentLine` already handles a body line that mimics a structural
+one.
+
+### The renumbering, and the sequencing that forced it
+
+The Product Owner ruled 13.9 ticks only **after** the fix. But the outer loop requires §13 to carry a
+supervisor `Approve` before §14 opens, and 13.9 sits in §13 — so §13 could never close. Separately,
+**13.10 documents the agent-facing command surface, and 14.5 changes how every creation verb takes a
+path**, so 13.10 would have documented a surface already scheduled to move. Both dissolve the same way:
+the two unbuilt tasks move into §14, each now following the thing it depends on. **This is §13's third
+renumbering.** It is ugly and it is the only ordering in which the verification runs after what it
+verifies and the documentation is written after the surface settles.
+
+**Spec amendments** (`VALIDATE_EXIT:0`):
+
+- **`record-retrieval`, "The record is legible without the tool"** — text written to be read as sentences
+  SHALL be presented as sentences, and a reader SHALL NOT have to decode an escape convention to read
+  prose the system wrote for them; the record's structured metadata SHALL share one delimited block syntax
+  rather than one per kind. Two scenarios: *Recorded prose reads as prose*, *One syntax across the record*.
+  **This is what makes 14.6 checkable** — 13.9 had no requirement it could fail against, only a reader's
+  judgement.
+- **`card-model`, "Stable, human-quotable, kind-prefixed identity"** — a card's file SHALL be named for its
+  identity; the system names the file when it mints the identity, and a caller names the container, never
+  the file. Scenario: *The file is named for the card*. **Structural, not a check**: `AnchoredCardPath`
+  already proves a card's *directory*, and leaves the basename free — which is why `B-0099.md` holds
+  `B-0001`. The caller stops being able to express a wrong name, the same shape as the directory fix.
+
+**One piece of luck worth stating:** no `callboard/` board is committed — the tool is still building itself
+on this file. So neither change needs a data migration. Test fixtures and the wire-compatibility corpus
+move; nothing on disk does.
+
+**Not written into 14.1: how many block families there are.** My count is seven and it is unverified. §13's
+standing ruling is that an enumeration is worth exactly what the re-derivation behind it is worth, and this
+one has not been re-derived. The worker derives it from `CardFileWriter` and `CardFileParser`.
+
+
 ## NEXT
 
-**§13 is open and is the change's last section.** Base `f100b77`. **No `[supervisor]` verdict yet — the
-section is not closed and must not be treated as closed.** Nine blocks and three remediation blocks have landed; **two tasks remain**
-— §13 was renumbered to 13.9 after 13.4 landed, so the section is longer than it was this morning without
-being further from done.
-
-### Landed in §13
-
-`a32f481` — the Product Owner's spec amendment (§13's base is deliberately the commit *before* it, so the
-supervisor audits the amendment alongside what was built to it) · `e2bea69` **13.1** `block create` ·
-`d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test fix,
-carved from this file rather than from a task, ticking nothing · `c60d553` **13.4** the hook boundary ·
-`ffa2c2d` **13.5** one `unreadable` shape across every read · `d484003` **13.6** a corrupt card told apart
-from a missing one when addressed by id · `c7069a5` **13.7** the enforcement fail-open closed · `a028e27` **13.8** the loop proceeds when the tool
-cannot run (**Product Owner confirmed, 12 checks / 0 failures**).
-
-**Five commits here are not blocks and tick nothing.** Two task-breakdown amendments (`b3c35cb`,
-`0de96bc`) took the section from 13.7 to 13.10. **Three are remediation blocks, all provoked by the
-Product Owner's own run of 13.8's recipe** — `96a676b` (blank lines and `key:` no longer corrupt a
-hand-edited card) and `3eacc1f` (edge whitespace escaped, closing the silent-truncation case), plus the
-DEVLOG closes. A remediation block gets no `N.M` numbers and ticks nothing.
-
-Suite **1049 → 1168** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
-committed — a `make` target for it is unbuilt and would be new scope). **Thirteen remediation rounds spent** — 13.1, 13.3, **three on 13.4**, one each on 13.6 and 13.7,
-**three on 13.8** (two of them the recipe diverging from the run that produced its evidence), and
-**three on the escape fix**. All real. **13.5 approved first pass.**
+**§13 is closed at 13.8 and awaits its supervisor review. §14 is open and is now the change's last
+section.** §13's base is `f100b77`; §14 has no base yet — it is posted when its first block is briefed.
 
 ### The resume point
 
-**13.9 — verify a card's status, owner, scope and history are determinable from the file alone.** Then
-13.10, then the section review. **The section has been renumbered twice** — the two `[architect]` posts
-carry both mappings, and any "13.5"/"13.6"/"13.7" written *before* them means the older numbering.
+**§13's supervisor review, on `f100b77..HEAD`, scoped to 13.1–13.8 only.** 13.9 and 13.10 are no longer
+in this section; the amendment above moved them to 14.6 and 14.7. Point the supervisor at the amended
+`work-lifecycle` and `card-model` requirements, not just at the task lines, and tell it the section's last
+commit (`3338ebc`) deliberately ticks nothing — it lands 13.9's work, whose finding is what produced §14.
+It has said it will audit §13 against the queue in this file.
 
-**13.9 is the read half only — the Product Owner ruled that explicitly.** It verifies what a reader can
-*determine* from the file, not what a writer may safely *author*. The authoring half was raised and
-deliberately not folded in; its one live defect was fixed separately in `3eacc1f`, and 13.9's
-done-condition stays bounded because "safe to author" has no natural boundary. **13.9 ends at the Product
-Owner** — implement and self-test as far as automation reaches, then hand her an exact, copy-pasteable
-recipe and **wait for her confirmation before ticking**.
+**Then §14, in four blocks:** `14.1–14.3` (the delimited block syntax, its termination, and the `-->`
+escape), `14.4` (the comment block onto the same syntax), `14.5` (the filename), then `14.6` and `14.7`
+singly. A block groups whole tasks and never subdivides one.
 
-**Before briefing 13.9, read the 13.8 close post and the escape close post.** Between them they carry the
-three rulings that would otherwise be rediscovered the hard way, and 13.8's recipe is the worked example
-of every way this kind of task goes wrong.
+**14.6 ends at the Product Owner**, as 13.9 did — implement and self-test as far as automation reaches,
+then hand her an exact, copy-pasteable recipe and wait for her confirmation before ticking. **Its recipe
+already exists**: `verify-13-9.sh`, whose two raw card files are the ones she read. Re-running *that*
+script after §14 lands is the cleanest possible before-and-after, and the same file she found horrible is
+the one that has to come back readable.
 
-**One task, one block, at most.** A block groups whole tasks and never subdivides one; a task that will
-not fit a block is a finding about `tasks.md`, to be put to the Product Owner. That produced the first
-renumbering; the reviewer's A3 produced the second.
+**14.7 is written last**, after 14.5 has settled the creation verbs' command surface. It already owed,
+before §14 existed: `CLAUDE.md`'s **Boundaries** paragraph, which under-describes the guard against the
+guard's own standard that the prose and the enforcement must keep saying the same thing (mine to write, as
+no agent can); two message defects — `deny_store` promises "reading card files is fine" while `ed`/`ex`/
+`patch` as blanket words deny a few reads, and the binary/store name ambiguity denies `chmod +x
+./callboard` without telling a worker the route is to report it; and **13.5's three nits** — a missing
+`cardCount` doc comment, an over-long doc line `dotnet format` does not catch, and an assertion pinned to
+message prose.
 
-**None of 13.8–13.10 is an ordinary block.** Read them before briefing:
+### Landed in §13
 
-- **13.6 landed (`d484003`).** Its queue entry's premise was wrong in a way worth keeping: keeping the parse
-  reason was necessary and *not sufficient*, because `CardFileParseResult.Failure` carries no id, so
-  attribution had to be built rather than unblocked. The Product Owner ruled best-effort id recovery from
-  the leading frontmatter fence. **The "10 of the 19 `onCardCorrupt` arms become reachable" claim was
-  wrong** — those are re-parse-under-lock arms, a different mechanism; what the block made reachable is a
-  *new* `card-corrupt` arm on the two `--id` resolvers, 22 handlers across 25 call sites. `NitResolution`
-  converged on `UnreadableCard` and deliberately took **no** `Corrupt` case: a nit id has no structurally
-  bounded span the way the fence bounds a card id.
-- **13.7 landed (`c7069a5`).** The queue's site `CardStore.cs:2950` was a `Directory.Exists` continue; the
-  dropper was `:2958`, and the fail-shut obligations scan forty lines above it was the model. What the
-  queue did not say at all: **the guard has five callers and two are reads**, so the fix had to be a
-  refusal on the write paths and a report on the reads. `BlockingQuestionResolution` gives the
-  *undetermined* state a name it did not have. The remediation was in `BoardViewRenderer`, a consumer the
-  block never edited.
-- **13.8 landed (`a028e27`) and is confirmed.** Its lesson is the one to carry into 13.9: **the recipe is
-  the deliverable, not the tests.** Three reviewer rounds passed a recipe that had never been run whole in
-  the form she would receive — twice because the text was edited after its evidence was captured. She then
-  found two defects none of them could see. Write 13.9's recipe by *running* it, last, in one continuous
-  session, and paste only that run's output.
-- **13.9 is human-in-the-loop verification**, read half only (above). Ask what the automation is
-  structurally unable to see — **and now also ask what the agents had to change in order to test at all**,
-  because 13.8 proved a workaround can conceal the very defect it routes around.
-- **13.10 documents the agent-facing command surface**, which now includes three verbs that did not exist
-  this morning. Write it last, after 13.6–13.9. **It grew in 13.4** and now also owes: `CLAUDE.md`'s
-  **Boundaries** paragraph, which under-describes the guard against the guard's own standard that the
-  prose and the enforcement must keep saying the same thing (ruled mine to write, as no agent can); two
-  message defects — `deny_store` promises "reading card files is fine" while `ed`/`ex`/`patch` as blanket
-  words deny a few reads, and the binary/store name ambiguity denies `chmod +x ./callboard` without
-  telling a worker the route is to report it; and **13.5's three nits** — a missing `cardCount` doc
-  comment, an over-long doc line `dotnet format` does not catch, and an assertion pinned to message prose.
+`a32f481` — the Product Owner's first spec amendment (§13's base is deliberately the commit *before* it,
+so the supervisor audits the amendment alongside what was built to it) · `e2bea69` **13.1** `block create`
+· `d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test
+fix, carved from this file rather than from a task, ticking nothing · `c60d553` **13.4** the hook boundary
+· `ffa2c2d` **13.5** one `unreadable` shape across every read · `d484003` **13.6** a corrupt card told
+apart from a missing one when addressed by id · `c7069a5` **13.7** the enforcement fail-open closed ·
+`a028e27` **13.8** the loop proceeds when the tool cannot run (**Product Owner confirmed, 12 checks / 0
+failures**) · `3338ebc` — 13.9's work, ticking nothing.
 
-**Then the section review.** Spawn the supervisor on `f100b77..HEAD`, pointed at the amended
-`work-lifecycle` and `card-model` requirements — not just at the four task lines. It has said it will audit
-§13 against the queue in this file.
+**Six commits here are not blocks and tick nothing.** Two task-breakdown amendments (`b3c35cb`, `0de96bc`)
+took the section from 13.7 to 13.10; the amendment above takes it back to 13.8. **Three are remediation
+blocks, all provoked by the Product Owner's own run of 13.8's recipe** — `96a676b` (blank lines and `key:`
+no longer corrupt a hand-edited card) and `3eacc1f` (edge whitespace escaped, closing the silent-truncation
+case), plus the DEVLOG closes. And `3338ebc` lands 13.9's cover and its finding without ticking, because
+the task it was written for is now 14.6.
 
-### Carved out of 13.4, deliberately — its own future work
+Suite **1049 → 1174** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
+committed — a `make` target for it is unbuilt and would be new scope). **Fifteen remediation rounds
+spent** — 13.1, 13.3, **three on 13.4**, one each on 13.6 and 13.7, **three on 13.8** (two of them the
+recipe diverging from the run that produced its evidence), **three on the escape fix**, and **one on
+13.9** — the recipe transcript hand-transcribed rather than pasted, caught by re-running it cold. All
+real. **13.5 approved first pass.**
 
-**Guard rule 2 blocks *reads* of `.claude/` as well as writes**, matching the path anywhere in a command
-with no read/write distinction — unlike the store rule two blocks below it, which draws exactly that line.
-It fired on the reviewer three times across four passes while it was auditing that very file, and the
-reviewer each time used `Read` and reported the friction rather than routing around. **Not fixed in 13.4**:
-it is a pre-existing rule the block does not touch, and narrowing the boundary's oldest guarantee deserves
-its own carve rather than a footnote in a remediation.
+### What 13.9 found, carried into §14 rather than parked
+
+1. **Certification text escapes every space, not only edges** — a refusal's `rule`/`remedy`, a claim's and
+   limit's `text`, an authorisation's `reason`: precisely the fields documented as "sentences a later
+   reviewer reads". Traced to `CardFileFormat.cs:345-347` and its five call sites, confirmed by the
+   reviewer independently. **This is §14's reason to exist.**
+2. **The filename need not match the id** — `B-0099.md` holding `B-0001`. **14.5.**
+3. **The CLI's JSON output HTML-escapes `'`, `+`, `<`, `>`, `&` and backtick** — `doesn\u0027t` —
+   because `CliJsonContext.cs` configures no custom `Encoder` and `System.Text.Json` defaults to the
+   HTML-safe one. The reviewer enumerated the set directly against the unconfigured encoder rather than
+   from the repro. **Not in §14**: it is the tool's output, not the record, and 14.6 reads the file.
+   **Owed to the Product Owner as its own carve.**
+4. **Stale block-field-count doc comments** say five or six where the answer is seven — in
+   `BlockCardFields.cs`, `CardFileParser.cs` and `CardFile.cs`, wider than the one instance 13.9 cited.
+   A doc pass, not a block.
 
 ## Homed under 13.5 and 13.6 — enumerated, not parked
 
