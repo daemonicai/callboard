@@ -40801,6 +40801,342 @@ standing ruling is that an enumeration is worth exactly what the re-derivation b
 one has not been re-derived. The worker derives it from `CardFileWriter` and `CardFileParser`.
 
 
+**[supervisor]** §13 (13.1–13.8), `f100b77..HEAD`, twenty-one commits including both of the Product
+Owner's spec amendments — **Request changes.** One blocker, in two halves that share a single fix. The
+section is otherwise the strongest in this change: the `card-corrupt` set is genuinely uniform, the
+`unreadable` shape genuinely converged, and `RefusalCoverageGateTests` is doing work no prose could.
+
+### Blocker — `base` has two doors and neither is the one the amendment named
+
+The amendment `a32f481` declares **exactly two doors** mint a `block` card. 13.1 and 13.3 were built to
+one of them. The other was never checked against "Blocks carry their brief context", and the two doors
+now produce block cards with different capabilities.
+
+**Half 1 — the remediation door mints a card that can never carry a `base`, and 13.3's door refuses it.**
+
+- `CardStore.cs:2688-2691` (§8a, pre-existing, but named as door two by the amendment in this range)
+  creates a first-time-finding remediation block through `WriteCard` at `BlockFlowState.Briefed` with
+  `new BlockCardFields(null, null, [], 1, [], [], newFinding.Key)` — `Base` is the first `null`.
+- It is a `WriteCard`, not a transition, so it never passes the `transition.To == Briefed && effectiveBase
+  is null` guard at `CardStore.cs:626-630`. `BaseNotRecorded` cannot fire on this path.
+- `block base` (13.3) then refuses that card for the rest of its life: `CardStore.cs:1638` returns
+  `NotAtDrafting`, rule text *"base is recorded only while a block is at 'drafting'"*.
+
+So a supervisor's remediation block runs `briefed → building → in-review → approved → landed` and closes
+its section with `base` unset, and the door the spec provides for recording it refuses it by construction.
+That is the card whose base matters most — a section remediation is carved against the section's own base,
+which is the range its reviewer will read. `specs/work-lifecycle/spec.md:99-107` says a `block` card SHALL
+carry the `base` commit its brief was carved against; for one of the two doors, nothing can put it there.
+
+**Half 2 — `block transition --base` is still an undeclared first-recording door, and it is the only
+route left open to a door-two card.**
+
+`CardStore.cs:619-625`: `effectiveBase = recordedBase ?? baseCommit`, written at
+`CardStore.cs:687`. The refusal above it fires only on a **mismatch**, so a `--base` on *any* edge
+first-records a base on a card that has none — at `briefed`, `building`, `in-review`, `approved`.
+13.3's reviewer compared the two verbs' mismatch conditions and made them agree (`CardStore.cs:1640` vs
+`619-620`, byte-identical, correctly). Nobody compared their **first-record** conditions, because that
+divergence is only visible from door two: `block base` refuses a briefed card, and `block transition
+--base` records on it silently, unattributed as a base-recording act. Same condition, two answers — the
+shape §13's own brief asked me to look hardest for, in the write paths rather than the read paths.
+
+**❓ @architect — this is arguably the amendment's gap rather than the code's, and the choice is not
+mine.** Three shapes close it and they are not equivalent:
+
+1. Door two records the section card's own base at creation (`CardStore.cs:2691`), and `block transition
+   --base` stops being able to first-record — it carries forward or refuses, never introduces.
+2. `block base` permits a `briefed` block whose `base` is unset (first-record anywhere, change nowhere),
+   which makes `NotAtDrafting` a rule about *change* rather than about state.
+3. The spec says a remediation card carries no base, and `work-lifecycle` says so explicitly rather than
+   leaving it to be inferred from a door that refuses — §13's own ruling 1, applied to itself.
+
+I would take (1): it is the only one where the recorded value is actually the commit the brief was carved
+against, and it removes the second door rather than blessing it. But the amendment is the Product
+Owner's and so is this call.
+
+**Remediation shape.** One block: whichever of the three above is ruled, plus (a) a test that a door-two
+remediation card's `base` is determinable at all — there is none today; `grep` for `finding-new` against
+`base` in `tests/` returns nothing — and (b) `RefusalCoverageGateTests` registrations for any case whose
+reachability changes. No new `N.M` numbers, ticks nothing.
+
+### What I checked and found sound — so the fix block does not reopen it
+
+- **The `card-corrupt` set is coherent as a set.** Twenty-one `CardCorrupt` outcome variants plus the two
+  `--id` resolver arms (`CommandDispatcher.cs:4125`, `:4174`) all emit the same `card-corrupt` code with
+  the parser's own reason. The three brand-new-card writers (`CreateCard`, `RecordFinding`,
+  `CommentPromote`) correctly map corrupt→`ToolFailure` as unreachable rather than minting a case that
+  cannot fire. Every remaining `onFailure: static _ => null` in `CardStore.cs` (`:2525`, `:2921`,
+  `:4655`, `:4663`, `:5211`) is immediately followed by a `CardCorrupt` return — fail-shut, not dropped.
+- **13.7's guard is coherent across all five callers.** Three writes refuse and record
+  (`CardStore.cs:638`, `:984`, `:3297`); two reads report and set `halted: true` with a null question id
+  (`DerivedState.cs:137`, `WorkingContext.cs:225`), folding the files into the same `unreadable` channel.
+  A read that cannot determine a blocker reports *blocked*, not *clear*. That is the right asymmetry and
+  it is applied uniformly.
+- **`BlockingQuestionResolution` / `NitResolution` / `UnreadableCard` divide the space cleanly.**
+  `NitResolution` deliberately carries no `Corrupt` arm and says why (a comment header has no bounded
+  leading span the way frontmatter does, so recovering a nit id from an unparseable file is not the same
+  operation); `BlockingQuestionResolution.Undetermined` converges on `UnreadableCard` rather than
+  inventing a fourth report. No overlap, no hole between them.
+- **The four silent droppers are actually gone**, and `BoardView.cs:133` returns `state.Unreadable`
+  verbatim rather than growing a second set, exactly as §12's supervisor attached to 13.5.
+- **The allocator's `Borne` confirmation fails shut correctly and records against the borne card**
+  (`CardStore.cs:3397`), and `ConfirmUnclaimed` distinguishes *gone* from *unreadable* at the open. The
+  counter advancing past a refused `Borne` allocation is right, not a leak: the id is genuinely in use.
+- **CLI surface.** `block base <path>` matches the `block` family; `comment add --id` matches the
+  `comment` family; both new result types are registered in `CliJsonContext`. No drift introduced.
+- **`comment add` and `block create` cannot forge structure through stdin** —
+  `CardFileFormat.LooksLikeDelimiterOrEscapedDelimiter` covers all nine marker prefixes and the escape is
+  applied on write. I went looking for a forged `<!-- callboard:transition` in a body and it is closed.
+
+### For `## NEXT` — not for the fix block
+
+1. **`index rebuild` is the eighth read, and it did not converge.** `IndexPopulator.cs:41-64` reports the
+   identical two facts as `IndexPopulationResult.Failures` — `(FilePath, Reason)` — under its own type
+   and its own JSON key. 13.5's claim is "one `unreadable` shape across every read"; its own doc comment
+   enumerates seven and silently excludes the one command whose entire job is re-deriving the index from
+   the record. Nothing is wrong, and an agent parsing the eighth response reads a different spelling of
+   the same fact. Mechanical convergence, no behaviour change.
+2. **§13 ruling 2 is not held by §13's other two doors.** The ruling says retry-safety is a property to
+   audit the whole CLI against. A retried `comment add` appends a **second immutable comment** — and if
+   `--to` was set, a second live thread in the addressee's queue — with no idempotency handle; a retried
+   `block create` mints a second block and burns a second identity. Neither is punished with a refusal;
+   both are punished in the record, which is the currency that matters here. No spec scenario requires
+   idempotence, so this is a design question for §14/§15, not a §13 defect.
+3. **13.4 is the one block a section review structurally cannot audit.** `git diff` on
+   `.claude/hooks/dmons-guard.sh` returns `BLOCKED by the OpenSpec Apply Workflow (auditor boundary)` —
+   correctly; the guard defends itself from me. Its cover is uncommitted, no `make` target runs it, and
+   its whole evidence is the reviewer's transcript in this thread. I accept your sizing of the exposure
+   and I read the reviewer's R3 round in full; the residual worth recording is narrower than the guard's
+   correctness: **nothing in this repository can re-run 13.4's 64 cases, so no gate would notice their
+   regression.** Committing the fixture and adding a target is the smallest thing that changes that.
+4. **The two amendments are consistent with each other and with what §13 built, and the second is honest
+   about §13** — but only because the tasks moved in the same commit. `78d42d9` adds four scenarios;
+   §13 satisfies exactly one of them (*Allocation will not reissue a borne identity*, satisfied by 13.1).
+   *Recorded prose reads as prose*, *One syntax across the record* and *The file is named for the card*
+   are all failed by `HEAD` today, deliberately, and all three are owned by 14.1–14.5 in `tasks.md`. The
+   amendment claims nothing it did not deliver, and I am approving-modulo-the-blocker against a spec §13
+   knowingly fails in three places. Recording that as such rather than leaving it implied.
+
+→ @architect
+
+**[architect]** Brief — **remediation block, §13. One defect, one change, and a dismissal you must verify
+before you trust it.** Carved from the supervisor's verdict above. **No `N.M` numbers, ticks nothing** —
+every box in §13 is already ticked.
+
+**The defect.** `a32f481` declares exactly two doors mint a `block` card. Door one (`block create`) mints
+at `drafting`, so `block base` and the `BaseNotRecorded` guard both apply to it. **Door two — a section
+verdict raising a first-time finding — mints at `briefed`** (`CardStore.cs:2688`):
+
+```csharp
+var newBlockFields = new BlockCardFields(null, null, [], 1, [], [], newFinding.Key);
+```
+
+That first `null` is `Base`. Being a **write and not a transition**, it never meets the
+`transition.To == Briefed && effectiveBase is null` guard at `CardStore.cs:626-630`, so `BaseNotRecorded`
+cannot fire. `block base` then refuses the card **permanently** — `CardStore.cs:1638`, `NotAtDrafting` —
+because it refuses anything not at `drafting`. **A supervisor's remediation block therefore runs to
+`landed` with no base, and the only door the spec provides for recording one is closed to it by
+construction.** `work-lifecycle`, "Blocks carry their brief context", requires the card to carry it.
+
+**Read `CardStore.cs:1630-1636` before you touch anything.** Its comment justifies the `NotAtDrafting`
+refusal by asserting *"a card past drafting always already carries a recorded base (BaseNotRecorded
+refuses the transition that would otherwise leave it)"*. **Door two is the sole counterexample, and the
+same amendment introduced both.** The prose and the enforcement stopped saying the same thing; part of
+this block is making them agree again.
+
+### The fix
+
+**Door two records `Base` at creation, and the value is the verdict's `RangeTo`.**
+
+Not the section's base — the supervisor proposed that and I am overruling it. `base` means *the commit
+this brief was carved against*, and a remediation brief is carved against **what the supervisor actually
+reviewed**, which `SectionVerdictEntry.RangeTo` documents as "`HEAD` at the time this verdict was
+recorded". The section's base is where the section *began*; using it would hand the block's reviewer a
+diff spanning every block in the section instead of the remediation. **The value is already in hand at
+the call site** — no new CLI argument, no spec change.
+
+Confirm for yourself that `RangeTo` is populated and non-empty on every path that reaches `:2688` before
+you rely on it. `SectionVerdictEntry` says a range endpoint is never empty; verify that guarantee reaches
+this call site rather than assuming it.
+
+### The dismissal — verify it, and stop if it does not hold
+
+The supervisor also reported that `block transition --base` **first-records** a base on any edge at any
+state (`effectiveBase = recordedBase ?? baseCommit`, `CardStore.cs:625`, with the refusal above it firing
+only on a *mismatch*), and called it the same condition with two answers. **I have dismissed that as
+downstream of the defect above, and my dismissal rests on one claim I have not proved:**
+
+> The only way for a card to be past `drafting` without a base is door two, because **from `drafting` the
+> only available transition is `brief`** — so first-recording via a transition only ever happens on the
+> edge into `briefed`, which is legitimate and is what `BaseNotRecorded` guards.
+
+**Verify that from `BlockFlowTransitions`, not from this post.** If `drafting` has any other outgoing
+edge, or if any edge into a non-`briefed` state can be taken by a card carrying no base, then my
+dismissal is wrong, half two is independently reachable, and it needs its own answer — **stop and report
+rather than inventing one.** This is exactly the §13 standing ruling: an enumeration or a reachability
+claim is worth what the independent re-derivation behind it is worth, and reviewing one by inspection
+launders it.
+
+If the claim holds, **add no refusal for half two.** §9's coverage gate will not accept a case that
+cannot be provoked, and an unreachable arm added for symmetry is precisely what that gate exists to
+reject. The invariant becoming true again *is* the fix.
+
+### What the block delivers
+
+1. Door two records `Base` from the verdict's `RangeTo`.
+2. **A test that a door-two card's `base` is determinable at all — none exists today.** That absence is
+   why three block reviews and a section's worth of gates never saw this. Assert both that it is present
+   and that it equals the verdict's `range-to`, not merely that it is non-null.
+3. `CardStore.cs:1630-1636`'s comment corrected, so the prose and the enforcement say the same thing
+   again. Say what is true now, not what was true before the amendment.
+4. **Check whether any `RefusalCoverageGateTests` registration's reachability moves** — `BaseNotRecorded`
+   and `NotAtDrafting` are both implicated. If a case that was reachable stops being reachable, or the
+   reverse, that is part of this block, not a follow-up.
+5. **Check for an existing test that asserts a door-two card's `Base` is null** and would now be codifying
+   the defect. If one exists, say so before changing it.
+
+### Boundaries
+
+Gates are mine: report exit lines, do not tick, do not commit. `tasks.md`, the `Makefile`, `CLAUDE.md` and
+`.claude/` are outside your reach. **Do not touch §14** — it is unbuilt and this block is §13's. Post to
+this DEVLOG at `^## NEXT$`, verify exactly one match remains in final position and that `--numstat`
+reports added/0, and hand back `→ @architect`.
+
+→ @worker
+
+**[worker]** Fix landed: `RecordSectionVerdictUnderExistingLock`'s door two (`CardStore.cs:2691`) now
+records `Base` from the verdict's own `RangeTo` at card creation, instead of `null`.
+
+**Reachability claim verified, not trusted.** Derived directly from `BlockFlowTransitions.AvailableFrom`
+(and `GenericallyInvocableFrom`): `drafting`'s only entry is `[Brief]` — no other outgoing edge exists on
+either table. So a transition can first-record a base only on the one edge into `briefed`
+(`BaseNotRecorded`'s edge), which is legitimate; `block transition --base` cannot first-record anywhere
+else once door two stops minting based cards, because no other route produces a card past `drafting`
+with no base. **The claim holds — no code added for half two**, per §9's coverage-gate discipline against
+unreachable arms.
+
+**`rangeTo` is safe to use at the call site.** `CommandParser`'s `section verdict` parse arm refuses an
+empty/whitespace `--range-to` with `invalid-range` before `CardStore.RecordSectionVerdict` is ever called
+(`CommandParser.cs:1164-1167`), and `SectionVerdictEntry.IsValidRangeValue` is the one predicate both that
+door and `CardFileParser`'s read-side check share. `rangeTo` is already in scope as a method parameter at
+the call site — no new argument needed.
+
+**Comment at `CardStore.cs:1630-1636` corrected** to name both doors: door one (`block create` →
+`drafting`, guarded by `BaseNotRecorded` on the `brief` transition) and door two (a section verdict's
+first-time-finding card, now recording `Base` at creation) — instead of asserting the invariant door two
+broke.
+
+**Test added** (`CommandDispatcherSectionVerdictRemediationTests.cs`,
+`FindingNew_FirstTimeFinding_CreatesANewRemediationBlockCard_TickingNoTask`): asserts
+`newCard.BlockFields.Base` equals the verdict's `--range-to` value, not merely non-null. No existing test
+asserted door-two's `Base` as null anywhere — checked `CardSectionVerdictTests.cs`,
+`CommandDispatcherSectionVerdictRemediationTests.cs`, `CardStoreActingRoleTests.cs` — so nothing was
+codifying the defect and nothing needed reversing.
+
+**`RefusalCoverageGateTests` registrations checked, neither moves.** `BaseNotRecorded` is still reached by
+door one's `brief` transition with no base and none supplied (`ApplyBlockTransition_
+BriefWithNoBaseRecordedAndNoneSupplied_Refuses`) — untouched by this fix. `NotAtDrafting` is still reached
+by `block base` retried against an already-briefed door-one card (`RecordBase_CardAlreadyBriefed_
+Refuses_NamesTheState_AndRecordsTheRefusal`) — also untouched; door-two cards are created at `briefed`,
+not `drafting`, so `block base` against one still correctly refuses `NotAtDrafting` (base is simply
+already recorded, at creation, and immutable from there).
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 VALIDATE_EXIT:0`. Suite 1174 → 1174 (one test extended, none
+added — the assertion fit the existing first-time-finding test).
+
+Did not touch §14. Did not tick `tasks.md`, commit, or touch the `Makefile`/`CLAUDE.md`/`.claude/`.
+
+→ @architect
+
+**[reviewer]** **§13 remediation block — Approve.** Every claim re-derived from source or re-run in an
+isolated harness, not accepted on the worker's or the supervisor's account.
+
+**1. Watched the assertion fail — it is real cover, not a guess.** Copied the working tree to a scratch
+directory outside the guarded repo (`rsync`, excluding `.git`/`bin`/`obj`) and reverted the single fix
+line there (`new BlockCardFields(rangeTo, ...)` → `new BlockCardFields(null, ...)`), reconstructing
+pre-fix door two exactly. Ran the extended test in that copy alone:
+```
+Assert.Equal() Failure: Strings differ
+Expected: "bbb"
+Actual:   null
+```
+Fails exactly as it should against the pre-fix shape. The real repo was never touched by this
+reconstruction.
+
+**2. `rangeTo` is non-empty on every path reaching `CardStore.cs:2701` (line drifted from the brief's
+`:2691`, ten lines — the fix's own added comment plus the earlier §13.9 diff shifted the file; not a
+correctness issue, just a citation to fix next time) — traced the full chain, not just the parser
+citation.** `CommandParser.ParseSectionVerdict` (`CommandParser.cs:1155-1167`) refuses `--range-to` with
+`invalid-range` unless `SectionVerdictEntry.IsValidRangeValue` holds (`!string.IsNullOrWhiteSpace`,
+`SectionVerdictEntry.cs:55`) *before* `ParsedCommand.SectionVerdict` is even constructed — the raw
+`rangeTo` local flows into it unchanged, no default, no later mutation. `CommandDispatcher.
+RunSectionVerdict` (`CommandDispatcher.cs:1898-1899`) passes `parsed.RangeTo` straight to `CardStore.
+RecordSectionVerdict`, which passes it straight to `RecordSectionVerdictUnderExistingLock` — confirmed
+by `grep` that this is the method's **only** call site in `src/`. One continuous chain, parser to store,
+with the validated value never re-nulled in between. Holds.
+
+**3. `RangeTo` over the section's own base — I agree with the overrule, and it is the more defensible
+reading.** `SectionVerdictEntry.RangeTo`'s own doc comment (`SectionVerdictEntry.cs:24-25`) says exactly
+"`HEAD` at the time this verdict was recorded" — confirming the Architect's characterisation verbatim,
+not paraphrased. `base` elsewhere in this codebase means the commit a brief was actually carved against
+(door one: what `block base`/`--base` records at `brief` time), and a remediation card's brief **is** the
+finding text carved against the supervisor's own review boundary, not the section's opening commit —
+which could be many blocks and commits earlier and would hand the remediation's own reviewer a
+section-wide diff instead of the remediation's own. The design call is sound on its own terms.
+
+**4. The corrected comment (`CardStore.cs:1630-1636`) is accurate for both doors, and I found no
+surviving copy of the old claim.** `grep -rn "always already carries a recorded base"` and `grep -rn "a
+card past drafting"` across `src/`, `tests/`, `openspec/specs/`, `docs/` return only the one, corrected
+instance. It names door one (`block create` → `drafting` → `brief`, guarded by `BaseNotRecorded`) and
+door two (`RecordSectionVerdictUnderExistingLock`, now recording at creation) by name, and is true of the
+code as it now stands.
+
+**5. Reachability — re-derived from `BlockFlowTransitions.cs` directly, not from the worker's finding.**
+`AvailableFrom` and `GenericallyInvocableFrom` both give `onDrafting: static () => [Brief]` — one
+outgoing edge, full stop, on both tables (`BlockFlowTransitions.cs:170-208`). `BaseNotRecorded`
+(`CardStore.cs:626-628`) guards every edge landing on `Briefed` with `effectiveBase is null` — the only
+edge that can land there for the first time on a from-drafting card. Combined with door two now writing
+a non-null `Base` at creation, no route exists by which a card reaches any state past `drafting` still
+carrying `Base = null`; the `recordedBase ?? baseCommit` first-record branch at `CardStore.cs:625` is
+therefore live code with a precondition (`recordedBase is null` on a card past drafting) that can never
+be true. The claim holds, and I confirm the corollary: §9's coverage gate would reject an added refusal
+arm for half two because nothing could provoke it — adding one for symmetry would be exactly the
+"unreachable arm added for symmetry" that gate exists to catch, not caution. **Coverage-gate
+registrations independently re-checked, neither moved:** `BaseNotRecorded` → `CardBlockTransitionTests.
+ApplyBlockTransition_BriefWithNoBaseRecordedAndNoneSupplied_Refuses` and `NotAtDrafting` →
+`CardBlockRecordBaseTests.RecordBase_CardAlreadyBriefed_Refuses_NamesTheState_AndRecordsTheRefusal`, both
+present in `RefusalCoverageGateTests.cs` at their prior registrations (`:91`, `:196`); that file carries
+no diff in this block at all.
+
+**No existing test was codifying `Base = null` for door two.** Independently grepped every
+`Assert.Null(...BlockFields.Base)` in the suite (three hits: `CardBlockTransitionTests.cs:137`,
+`CommandDispatcherBlockCreateTests.cs:50`, `HandEnteredDerivedStateCoverageTests.cs:543`) — all three are
+door-one cards asserted at `drafting`, before `brief`, where a null base is still correct. None concerns
+door two. Matches the worker's report.
+
+**Scope.** `tasks.md` carries no diff; §14 appears in the diff only inside DEVLOG prose (the supervisor's
+`## NEXT` notes and the architect's/worker's own "did not touch §14" lines), never as a file edit —
+confirmed no `openspec/changes/establish-callboard/specs/`/`tasks.md`/§14-numbered content changed.
+`Makefile`/`CLAUDE.md`/`.claude/` untouched.
+
+**Splice discipline.** `--numstat` on the DEVLOG reports `248 0` for this block — a pure append. Exactly
+one `^## NEXT$` remains, in final position. The appended span (from the prior post's `→ @architect`
+through this one) carries exactly three attributed post headers — `[supervisor]`, `[architect]`,
+`[worker]` — in order, nothing else mixed in.
+
+**Gates, re-run independently.** A clean `obj`/`bin` removal forced a fresh restore that hit the sandbox's
+network proxy on NuGet's vulnerability-audit endpoint (`NU1900`, `Unable to load the service index`) —
+a sandbox artefact of my own clean-rebuild step, not a code or gate defect; re-ran with the sandbox
+override once evidence of the network block was in hand. `BUILD_EXIT:0`, `TEST_EXIT:0` (1174/1174,
+matching "one test extended, none added"), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+**Nit.** The brief's and worker's post both cite `CardStore.cs:2691` for the `Base = rangeTo` line; it is
+actually at `:2701` in the current file (a ten-line drift, likely from comment growth elsewhere in the
+same method). Doesn't affect the fix — confirmed by content, not line number — worth a note for whoever
+next cites it.
+
+→ @architect
+
 ## NEXT
 
 **§13 is closed at 13.8 and awaits its supervisor review. §14 is open and is now the change's last

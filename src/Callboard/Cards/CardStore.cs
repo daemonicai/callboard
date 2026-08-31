@@ -1629,10 +1629,14 @@ internal static class CardStore
                 }
 
                 // Architect ruling item 3: recording is allowed only while the card is at
-                // 'drafting'. Checked before BaseImmutable below even though a card past drafting
-                // always already carries a recorded base (BaseNotRecorded refuses the transition
-                // that would otherwise leave it) — this names the more specific, more useful fact
-                // (which state the card is in) rather than folding it into "base already recorded".
+                // 'drafting'. Checked before BaseImmutable below. A card past drafting always
+                // already carries a recorded base: door one (block create -> drafting -> the
+                // brief transition) is guarded by BaseNotRecorded, and door two (a section
+                // verdict's first-time-finding remediation card, RecordSectionVerdictUnderExisting
+                // Lock) records Base at creation time — see that method's own comment — rather than
+                // minting a card this refusal would then permanently lock out. This names the more
+                // specific, more useful fact (which state the card is in) rather than folding it
+                // into "base already recorded".
                 if (currentState != BlockFlowState.Drafting)
                 {
                     return RefuseAndRecord<CardBlockRecordBaseOutcome, CardBlockRecordBaseOutcome.NotAtDrafting>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -2688,7 +2692,13 @@ internal static class CardStore
                         var newFrontmatter = new CardFrontmatter(
                             newId!, CardKind.Block, newFinding.Title, BlockFlowState.Briefed.ToWireString(), actingRole,
                             CardScope.Change, card.Frontmatter.Id, timestamp, timestamp);
-                        var newBlockFields = new BlockCardFields(null, null, [], 1, [], [], newFinding.Key);
+                        // §13 remediation: Base is the verdict's own RangeTo, not left null — a
+                        // remediation brief is carved against what the supervisor actually reviewed
+                        // (SectionVerdictEntry.RangeTo: "HEAD at the time this verdict was
+                        // recorded"), and CommandParser's `section verdict` parse arm already refuses
+                        // an empty/whitespace `--range-to` before this method is ever called, so the
+                        // value is guaranteed non-empty here.
+                        var newBlockFields = new BlockCardFields(rangeTo, null, [], 1, [], [], newFinding.Key);
 
                         var newWriteResult = WriteCard(
                             cardsRoot, newFinding.FilePath, new NewCardFile(newFrontmatter, newFinding.Body, BlockFields: newBlockFields), lockTimeout, changeName);

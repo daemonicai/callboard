@@ -52,6 +52,13 @@ public sealed class CommandDispatcherSectionVerdictRemediationTests
         Assert.Empty(newCard.BlockFields.Tasks);
         Assert.Equal(1, newCard.BlockFields.Round);
         Assert.Equal("The reviewer nit about X was not addressed.", newCard.Body);
+
+        // §13 remediation: a door-two card's Base must be determinable at all (there was no
+        // assertion of this anywhere before this fix — the gap three block reviews and a
+        // section's worth of gates missed), and specifically equal to the verdict's own
+        // range-to ("bbb" here) — the commit the remediation brief was actually carved
+        // against — not merely non-null.
+        Assert.Equal("bbb", newCard.BlockFields.Base);
     }
 
     // §8a block B revision: three new findings in one verdict is the ordinary case, not a corner
