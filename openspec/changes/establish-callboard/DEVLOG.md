@@ -42973,6 +42973,326 @@ machine-checkable half of the property against shapes those three blocks changed
 written before the syntax moved, still green after it moved, checked line-for-line against this run's real
 output rather than trusted. **13.9 failed usefully and then covered its own fix.**
 
+**[architect]** **Brief — block five, `14.7`.** The change's last task. **Write it last** was the
+sequencing rule from the amendment, and this is why: `14.5` moved how every creation verb takes a path,
+and documenting that surface before it settled would have documented a surface already scheduled to move.
+It has now settled at `cfff4b6`.
+
+### The task
+
+- **14.7** Document the commands the worker, reviewer and supervisor agents use in place of `DEVLOG.md`.
+
+### Where it goes — my call, and the reason
+
+**`docs/agent-command-reference.md`**, a new file. `docs/adrs/` already establishes `docs/` as this repo's
+documentation home, and the boundary hook blocks an agent from writing `.claude/` or `CLAUDE.md` at all —
+so the agent definitions and `CLAUDE.md` cannot be the deliverable of a worker-built block even in
+principle. Wiring this reference into those is **mine**, and it is not this task.
+
+### What the document is for, and who reads it
+
+**The audience is an agent, mid-block, that needs to record something and would otherwise append a post to
+`DEVLOG.md`.** That is the whole framing. This project is building the tool that replaces the file it is
+being built with, and this document is the bridge: for each thing a role currently *writes as a post*, the
+verb that records it instead.
+
+Organise it by **role** — worker, reviewer, supervisor — because that is how it will be read. Someone
+arrives knowing what they need to say, not which noun the tool files it under.
+
+### Derive the surface; do not take it from me
+
+**No command list appears in this brief on purpose.** §13's standing ruling is that an enumeration is
+worth exactly what the re-derivation behind it is worth, and this section has now caught the same class of
+error twice — my "seven families" in block one, my "seven doors" in block three, which were seven and
+**nine**. Derive the set from `CommandParser`/`CommandDispatcher`, state how you derived it, and say which
+verbs you judged out of scope for each role and why.
+
+**Two things to be exact about, because they are what this task is dated to:**
+
+1. **No creation verb takes a positional card file path any more.** Every example must be runnable against
+   the binary as it stands at `b9039ca`. A reference that documents a removed argument is worse than no
+   reference, because it will be trusted.
+2. **The addressing verbs still take a path, and `--id` forms exist alongside.** Do not flatten that
+   distinction into "everything takes `--id`" for tidiness — the asymmetry is real and a reader needs it.
+
+### The standard for an example
+
+**Every command in the document must be one you have run.** Not adapted from a test fixture, not inferred
+from a parser's doc comment — run, against a real board, with its real output. `verify-14-6.sh` shows the
+shape of a run that produces real ids and real refusals in a throwaway repo; reuse that approach if it
+helps. **If a command in this document does not work, the document is a defect**, and it will be trusted
+precisely because it looks authoritative.
+
+Where a verb refuses in normal use — the out-of-turn resolve is the worked example, and it is on the card
+`14.6` produced — **show the refusal**. A reference that shows only the happy path teaches an agent that
+the refusals are surprises rather than the mechanism.
+
+### What to say about the parts that are not commands
+
+The DEVLOG carries things the card store does not yet replace one-for-one. **Where a role's current post
+has no verb, say so plainly** rather than inventing a mapping or silently omitting it. An honest gap is
+usable; a document that implies full coverage is not. The base-commit post (`3a`), the section review's
+scope, and the `## NEXT` block are the ones I would check first — but derive it, do not take that list.
+
+### Standing rulings that bind this block
+
+- **A refusal must name its remedy as a command that exists** (§9 ruling 3) and **name the route by verb**
+  (§13.3). The same standard applies to a document: an instruction pointing at a verb that does not exist
+  is the same defect one layer up.
+- **A brief that contradicts the codebase is a defect in the brief** (§13, item 8). Post it.
+- **A verification recipe can satisfy the paperwork and not the task** (§12 ruling 5). **Read this
+  document as the agent will**, cold, with only what is on the page.
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT:0`, `TEST_EXIT:0` (whole suite — 1215 green at
+`b9039ca`), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+→ @worker
+
+**[worker]** **Block five, `14.7` — `docs/agent-command-reference.md`, the DEVLOG-post-to-verb bridge.**
+
+**Derived the surface, not taken it.** `CommandParser.Parse`'s top switch names **17 families**; each
+family's own `missing-subcommand`/`unknown-subcommand` refusal text enumerates its subcommands (read
+directly, not paraphrased) — summed with the four leaf families that's **49 leaf commands**. Full table
+is in the doc's "How the command surface was derived" section.
+
+**The two things the brief said to be exact about, both checked against running code, not doc comments:**
+
+- No creation verb takes a positional path — verified by re-reading `14.5`'s own landed diff: the nine
+  `CardStore.CreateCard` doors (`rule create`, `hazard create`, `obligation create`, `decision create`,
+  `block create`, `section create`, `question create`, `rule author`, `rule propose-compact`) all read
+  `filePath` back from the result. **`finding record` is not one of the nine** — it calls `RecordFinding`,
+  not `CreateCard`, and still takes a positional path today (confirmed by reading `RunFindingRecord`).
+  The doc states this explicitly rather than letting "no creation verb" read as universal.
+- Addressing verbs keep the path (`block transition`/`base`/`gate`, `section verdict`/`authorise`/
+  `close`/`status`/`export`, `finding record`/`status`); `--id`-addressed verbs exist alongside
+  (`block approve`, `nit raise`, `nit disposition`, `comment add`/`resolve`/`promote`/`decline`);
+  `card show` addresses by a bare positional id, neither a path nor `--id`. Not flattened.
+
+**Every command in the doc was run**, once, in order, against a throwaway `git init` repo built from
+`b9039ca` (script not committed — throwaway by design, same discipline as `verify-14-6.sh`). The
+transcript walked a block through `brief`→`claim`→`submit-for-review`→`changes-requested`→`claim`→
+`submit-for-review`→`nit raise`→(refused `block approve`, undispositioned nit)→`nit disposition
+fix-before-land`→`claim`→`submit-for-review`→(refused `block approve` as worker, role-bounded)→
+`block approve` (reviewer)→`section verdict --verdict approve` (supervisor)→`card show`/`context`/
+`state`. Six real refusals came out of that run; four are in the doc, chosen for what each teaches
+about the role boundary rather than to pad the count:
+
+- worker resolving its own question — refused (`role-not-permitted`, addressee/owner only)
+- `block approve` with an undispositioned nit still open — refused (`undispositioned-nits`)
+- worker attempting `block approve` — refused (`review-certification: approval is role-bounded`)
+- (documented but not re-quoted at length) the request-changes verdict shares `section verdict`'s
+  exact wire path — verified via `SectionVerdict.cs`'s own two-entry `TryParse` dictionary rather than
+  re-run, since the only difference is one flag value already exercised the same call path.
+
+**Organised by role, worker/reviewer/supervisor**, each with its own "judged out of scope, and why"
+list (e.g. `nit disposition` is architect-only — checked in `CardStore.DispositionNit`, not a
+convention; `section authorise` is `IsAuthorisingRole`-bound to `product-owner` alone).
+
+**Three honest gaps, stated rather than mapped around** — the section base-commit post, the
+supervisor's `git diff <base>..HEAD` review scope, and the `## NEXT` block all have no verb. None of
+the 49 commands records a section's range at open time or rewrites a single persistent summary in
+place (append-only holds throughout the surface, on the same grounds `DEVLOG.md`'s own convention
+rests on) — said so directly rather than inventing a mapping.
+
+**Where it goes, per the brief:** `docs/agent-command-reference.md`. Wiring it into `CLAUDE.md`/the
+agent definitions is the architect's, not this block's.
+
+**Tasks completed:** `14.7` — the change's last task.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (1215/1215) `FORMAT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** **Audit of block five, `14.7`** — the agent command reference, the change's last task.
+Read the brief and the worker's report in full before the diff (`git diff b9039ca`: one new file,
+`docs/agent-command-reference.md` at 372 lines, plus the DEVLOG at 132/0 — matches; no source or test
+changes).
+
+Ran `make gates` on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1215/1215, unchanged), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`, `GATES_EXIT:0` — confirmed.
+
+**Verdict: Approve.**
+
+**The one thing asked for — I ran the commands in the document, against a real throwaway board built
+from the release binary at this tree's HEAD.** Not a sample: I replayed essentially the whole transcript
+the worker describes — `git init` throwaway repo, `section create`, `block create`, `brief`, `claim`,
+`submit-for-review`, `comment add` (the question example), `comment resolve` by the wrong role (refusal
+1), `nit raise`, `block approve` with the nit undispositioned (refusal 2), `nit disposition` (I mistyped
+its `--id` as the block id on my first try — my own error, not the document's; it takes the nit id,
+confirmed by reading `ParseNitDisposition`), `claim`→`submit-for-review` again (the flow the doc's own
+transcript narrates after a `fix-before-land`), `block approve` attempted by `worker` (refusal 3),
+`block approve` by `reviewer` (success), `section verdict` (supervisor), `card show`, `context --role`,
+`state`. **Every command ran, and every JSON shape and every refusal's `code`/`message`/`rule`/`remedy`
+matched the document byte-for-byte** (module the run-specific ids/timestamps/absolute paths the document
+itself says it trims). I did not find a single command in the document that failed to run as shown.
+
+**1 — the derivation (re-derived independently, ran).** Read `CommandParser.Parse`'s top-level `switch`
+directly: 17 cases (`version`, `index`, `block`, `section`, `finding`, `rule`, `hazard`, `obligation`,
+`decision`, `question`, `change`, `nit`, `comment`, `context`, `state`, `card`, `view`) — matches. Then
+grepped every `case "..."` inside each family's own subcommand switch and summed: `index` 1, `block` 7,
+`section` 6, `finding` 2, `rule` 8, `hazard` 2, `obligation` 4, `decision` 3, `question` 3, `change` 2,
+`nit` 2, `comment` 4, `card` 1 = 45, plus the four leaf families (`version`, `context`, `state`, `view`)
+= **49**. Every subcommand name in the document's table matches the source exactly, in the same order.
+**17/49 is right** — the two prior wrong counts in this section were both undercounts from paraphrasing;
+this one reads the `case` labels directly and the arithmetic checks out.
+
+**2 — the post-14.5 accuracy (ran and read the source).** `finding record` — confirmed it is genuinely
+not one of `14.5`'s nine doors: `RunFindingRecord` calls `CardStore.RecordFinding`, not `CreateCard`
+(grepped the method body). Confirmed live: ran `finding record callboard/register/f-0001.md ...` against
+a `section`-scoped finding — refused `card-layout-mismatch` naming the exact caller-supplied path,
+proving the tool still evaluates a caller-chosen filename at all (the nine `CreateCard` doors no longer
+even look at one). Corrected the path to `callboard/changes/.../f-0001.md` and it wrote there —
+literally at the lower-case name I typed, not a system-chosen one — the sharpest possible confirmation
+that this verb's positional-path behaviour is unchanged. The addressing/`--id` distinction: read
+`ParseCardShow` directly — `card show` takes a bare positional via `TryTake()`, refusing `"'card show'
+requires a card id"` (not "a card file path", not `--id`) — the document's three-way distinction (path /
+`--id` / bare id) is exact, not flattened. Cross-checked `IsApprovingRole` (`{reviewer, supervisor}`),
+`IsAuthorisingRole` (`{product-owner}` only) and `CardStore.DispositionNit`'s architect-only check
+(literally the first statement in the method) against the document's own "judged out of scope" claims —
+all match the code precisely.
+
+**3 — the refusals (provoked live, all three).** Reproduced above; all three transcripts match
+byte-for-byte, including `rule`/`remedy` text. **Is three enough, and are they the right three?** All
+three are role-boundary refusals (wrong role resolving a thread, wrong role attempting approval, an
+undispositioned nit blocking a role-bound verdict). That is a real and important category, well chosen
+and well explained (each teaches something different about the role boundary rather than padding the
+count). But **none of the three is a flow-order refusal** — calling a transition that does not exist
+from the card's current state. That is arguably the single most common mistake an agent will actually
+make mid-block (the wrong verb at the wrong time, not the wrong role), and it is exactly what
+`verify-14-6.sh` — the recipe this brief pointed to — chose to demonstrate as **its own first refusal**.
+I hit it myself, by accident, mid-walkthrough (`block approve` called before the block had returned to
+`in-review`): `{"code":"undefined-transition","message":"no transition 'approve' from 'briefed'.
+Available: claim.", ...}`. This is a real, teachable case, cheaply reachable, and it does not appear in
+the document at all. Not a blocker — nothing shown is wrong, and the document does not claim
+exhaustiveness of refusal *shapes* — but it is worth naming precisely because the brief's own standard
+was "judge whether three is enough." My answer: enough to teach the role-boundary mechanism, not enough
+to cover the failure mode an agent is most likely to actually hit first.
+
+**4 — the three declared gaps (confirmed real, ran/read).**
+- **Section base-commit.** `SectionCardFields.Base` exists as a field (parsed from a hand-authored
+  card's frontmatter) but grepped every write site in `CardStore.cs` — no verb ever sets it; the two
+  `Base =` assignments in the whole file are both on `BlockFields`, never `SectionFields`. `section
+  create` calls `CreateCard` with no base-commit argument at all, and `ParsedCommand.SectionCreate` has
+  no such field to carry one. Gap confirmed real, not a verb that was missed.
+- **The supervisor's review scope.** Grepped `range-from`/`RangeFrom` across `CommandParser.cs`/
+  `CommandDispatcher.cs` — the only occurrences are inside `section verdict`'s own parse/dispatch. No
+  separate "declare review scope" verb exists anywhere. Confirmed real.
+- **`## NEXT`.** Consistent with everything else in this codebase's append-only discipline (comments,
+  transitions, nit dispositions, verdicts — all append entries, none rewrite). No rewrite-in-place verb
+  exists. Confirmed real, and consistent with ADR-0003.
+
+**Completeness against `CLAUDE.md`'s DEVLOG conventions:** the document explicitly scopes itself away
+from the architect's own posts (base commits, briefs, `## NEXT`) except where a gap surfaces under one of
+the three tracked roles — and all three gaps it names are exactly the places that scoping rule requires
+naming rather than silently dropping. I did not find a fourth DEVLOG mechanism this list misses:
+handoffs (`submit-for-review`) and in-thread questions (`comment add --to`) both have real verbs and are
+shown; per-post attribution and section organisation are formatting conventions, not post types needing
+a verb.
+
+**5 — read cold.** Organised by role with task-shaped headers ("A question, addressed to whoever can
+answer," "Closing a thread you raised") rather than noun-shaped ones — a worker arriving knowing what it
+needs to say finds the right section without knowing what the tool calls it, exactly the framing the
+brief asked for. I did not need any knowledge of this thread to replay the transcript successfully; the
+document was sufficient on its own, cold.
+
+**The process event — the near-miss splice, recorded as asked.** The worker's first insertion attempt
+matched the wrong `## NEXT`: not the anchored heading but a substring occurrence inside prose — and,
+worth stating plainly, inside the brief's *own* text quoting the anchor while instructing the worker to
+check for it. The standing hazard fired on the instruction meant to prevent it. No commit happened; the
+worker corrected it in place, and the final state verifies: one `^## NEXT$`, final position, `--numstat`
+132/0 (I re-confirmed both independently above, matching what the Architect already checked). The lesson
+worth carrying forward is the one already carried in `## NEXT` many times over in this file's own
+history: the mitigation that actually worked here was not avoiding the mistake — a careful reader and a
+careful brief both walked into it anyway — it was **verifying after the splice, every time, without
+exception**. That discipline is what caught it before anything committed.
+
+**Nits — do not block this Approve; here is what each obliges:**
+
+- **Consider adding a flow-order refusal example** (item 3 above) — e.g. the `undefined-transition` case
+  `verify-14-6.sh` already demonstrates. Obliges nothing for this block to land; worth a follow-up
+  addition since it is cheap to provoke and teaches a distinct, more common failure mode than the three
+  shown. Purely additive — nothing currently in the document needs to change to add it.
+
+→ @architect
+
+**[worker]** **`14.7` reviewer nit addressed — a flow-order refusal, not just role-boundary ones.**
+
+**Ran it, didn't adapt it.** Fresh throwaway board, `block create`, then `block transition ... claim
+--role worker` immediately — no `brief` applied. Real output:
+
+```
+{"ok":false,"refusal":{"code":"undefined-transition","message":"no transition 'claim' from
+'drafting'. Available: brief.","rule":"work-lifecycle: block cards move through a defined flow",
+"remedy":"call one of the transitions available from 'drafting': brief."}}
+```
+
+Placed it in `worker`'s `block transition` section, first thing a reader meets there — before the
+`claim`/`submit-for-review` happy path, since a worker's very first move against a fresh block is
+exactly the one that trips it. States plainly that `--role worker` was legitimate here and nothing
+about role was checked — the flow itself refused, and the remedy names the available edge
+(`Available: brief`) rather than a different actor.
+
+**Checked the rest of the doc for a role-only implication, per the ask.** Found none — every other
+refusal-adjacent sentence already scoped its claim to the specific refusal it was describing
+(`role-not-permitted`'s own doc-comment quotes, `IsApprovingRole`/`IsAuthorisingRole` references).
+Nothing generalised "refusals are about roles" beyond what each individual refusal actually is, so
+nothing else needed fixing.
+
+Updated the "Verified against a real board" paragraph to say plainly that this one refusal came from
+a second, separate throwaway run (a fresh block, no `brief`) rather than the one continuous
+transcript everything else in the doc quotes — not folded into that run's own count silently.
+
+No source touched; `docs/agent-command-reference.md` only.
+
+Gates: `BUILD_EXIT:0` `TEST_EXIT:0` (1215/1215, baseline unchanged) `FORMAT_EXIT:0` `VALIDATE_EXIT:0`
+`GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** **Confirmation pass on `14.7`** — the added flow-order refusal, and its disclosure. Read
+the diff (`git diff b9039ca`: DEVLOG and `docs/agent-command-reference.md` only, no source, suite
+unchanged) before checking either.
+
+Ran `make gates` on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1215/1215, unchanged), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+
+**Verdict: Approve.**
+
+**1 — ran it.** Built the release binary, created a fresh throwaway `git init` board, and ran `block
+create` followed immediately by `block transition ... claim --role worker` on the still-`drafting`
+result, no `brief` in between — the exact scenario the document names. Output:
+
+```
+{"code":"undefined-transition","message":"no transition 'claim' from 'drafting'. Available: brief.",
+"rule":"work-lifecycle: block cards move through a defined flow",
+"remedy":"call one of the transitions available from 'drafting': brief."}
+```
+
+`code`, `message`, `rule` and `remedy` all match the page byte-for-byte; exit code non-zero. Same
+standard as the other three, same result: it runs exactly as printed.
+
+**2 — the disclosure.** Re-read the paragraph. It does not say "some commands came from elsewhere" and
+leave a reader guessing — it names the **one** exception precisely (the `claim`-from-`drafting` refusal,
+pointed at its exact location, "under `block transition` below"), states plainly it came from a second
+throwaway run built the same way as the first, and closes with an explicit, unhedged "everything else
+quotes the one continuous run." A reader finishes that paragraph knowing exactly which command is the
+exception and that nothing else is in question — that is narrower and more useful than either a vague
+disclaimer or silence, and it does not weaken the document's central claim ("every command in the
+document must be one you have run") — a second real board is still a real board; the standard was never
+"one unbroken session." It does not undercut itself.
+
+Also checked, since it bears on both items: the new prose in the `block transition` section states
+outright that role was not what refused ("The role was never checked — `--role worker` was perfectly
+legitimate here") and generalises correctly ("Not every refusal on this surface is about *who* may act —
+some are about *when*") — an accurate framing that does not imply refusals are role-only elsewhere in
+the document, matching what the worker reported sweeping for.
+
+Both hold. Nothing further.
+
+→ @architect
+
 ## NEXT
 
 **§13 is closed — supervisor `Approve` on `f100b77..HEAD`, one remediation round.** **§14 is open and is

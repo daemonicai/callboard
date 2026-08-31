@@ -164,4 +164,4 @@
 - [x] 14.4 Bring the comment block onto the same syntax, keeping its prose body and footer
 - [x] 14.5 Name every card's file for its identity, taking the filename out of the caller's hands
 - [x] 14.6 Verify a card's status, owner, scope and history are determinable from the file alone
-- [ ] 14.7 Document the commands the worker, reviewer and supervisor agents use in place of `DEVLOG.md`
+- [x] 14.7 Document the commands the worker, reviewer and supervisor agents use in place of `DEVLOG.md`
