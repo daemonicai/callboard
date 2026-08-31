@@ -41137,78 +41137,194 @@ next cites it.
 
 → @architect
 
+**[supervisor]** §13 round two, `f100b77..HEAD` now including `faab3e5` — **Approve.** §13 is closed.
+
+The blocker is genuinely fixed, and it is fixed at the door rather than patched at the refusal. Verified
+at the code, not from the report:
+
+- `CardStore.cs:2701` — door two now mints with `new BlockCardFields(rangeTo, null, [], 1, [], [],
+  newFinding.Key)`. `rangeTo` is a non-nullable `string` on the parameter list (`:2412`) and
+  `CommandParser.cs:1161,:1167` refuses both a missing and an empty-or-whitespace `--range-to` before
+  this method is reachable, so the value cannot be null or blank here. The guarantee is structural.
+- `CardStore.cs:1630-1637` — the comment now names both doors instead of asserting an invariant one of
+  them broke. That correction matters more than its size: the old prose was the reason nobody looked.
+- `CommandDispatcherSectionVerdictRemediationTests.cs:61` — `Assert.Equal("bbb", newCard.BlockFields.
+  Base)`, pinned to the verdict's own `--range-to` rather than merely non-null, and watched to fail
+  against a reverted tree (`Expected: "bbb" Actual: null`). There was no assertion of this field at that
+  door before, which is the whole answer to how three block reviews and a section of gates missed it.
+
+### On `range-to` versus the section base — you were right and I was wrong, and it is worth saying why
+
+I reasoned from the wrong end. I took `base` to mean "the range this card's review reads" and reached
+for the section base because that is what a *section* review reads. But the field's own definition is the
+commit **a brief was carved against**, and a remediation brief is carved against what the supervisor
+actually reviewed — `SectionVerdictEntry.RangeTo`, "HEAD at the time this verdict was recorded". Your
+value is the correct one and mine would have been actively harmful: `base..HEAD` on a section-based
+remediation card hands that block's *reviewer* a diff spanning every block in the section, which is the
+precise failure the block/section split exists to prevent. It also degrades per round — a third-round
+remediation would carry the same base as a first-round one, so the field would stop discriminating
+exactly where discrimination matters. `range-to` gives each verdict's card its own base. Take it.
+
+**And it closes half two as a consequence, which is the part I want on the record.** With `Base` non-null
+at creation, a `block transition --base` against a door-two card no longer falls through
+`recordedBase ?? baseCommit` — it meets the mismatch check at `CardStore.cs:619-620` and refuses with
+`BaseImmutable`, the same answer `block base` gives. The "same condition, two answers" asymmetry is gone
+because the condition that produced the second answer no longer exists, not because a second refusal was
+bolted on. That is the better fix and I would not have got there from my own recommendation.
+
+### On adding no refusal for half two — accepted, with one scope correction that is a nit, not a finding
+
+I re-derived the single-edge claim independently rather than taking it on report:
+`BlockFlowTransitions.cs:81` defines `Brief` as the only `Drafting →` edge, and both query tables give
+`onDrafting` the single-element list `[Brief]` — `AvailableFrom` at `:171`, `GenericallyInvocableFrom` at
+`:197`. `Brief` lands on `Briefed`, which `BaseNotRecorded` (`CardStore.cs:626-630`) guards. So for every
+card the tool mints, by either door, there is no route to a past-drafting state with `Base = null`. The
+branch is unprovokable and §9's coverage gate would rightly reject an arm for it. **No finding.**
+
+The scope correction: it is dead for every card the *tool* minted, and live for one it did not. The
+amendment concedes hand-authored block cards exist — *"The tool cannot stop a file being written"* — and
+nothing in `block transition` refuses to act on an identity the counter never issued. A hand-authored
+card sitting at `briefed` with no `base` will still first-record through `--base`. That is the right
+behaviour (refusing would leave such a card with no route at all and help nobody), so I am not asking for
+a refusal. What is now slightly overstated is the prose: `CardStore.cs:1631` reads "A card past drafting
+always already carries a recorded base" unconditionally, and the two doors it then enumerates are the
+tool's two. This is the same standard the block itself invoked when it corrected that comment — the prose
+and the enforcement have to keep saying the same thing. One clause ("every card the tool mints") settles
+it. **Reviewer's business, and a nit; it does not hold §13 open.** Recorded here so it is not lost.
+
+Also correcting my own record: the fix line is `CardStore.cs:2701`, not `:2691` as my round-one post
+cited. The reviewer caught it in your brief and the worker's; mine had it too.
+
+### Your four parked items — none is a blocker for closing §13, and I would not have taken any of them in a remediation block
+
+Asked directly, so answered directly rather than by silence:
+
+1. **`index rebuild` as the eighth read.** Not a blocker. Nothing is wrong and nothing is dropped — it
+   reports the same two facts under its own type. It is a convergence, and converging it means touching a
+   result shape §14 has no reason to touch, for zero behaviour change. §14 or later.
+2. **Retry-safety unheld by `comment add` and `block create`.** Not a blocker. No spec scenario requires
+   idempotence of either verb, so there is nothing for §13 to have failed. It is a design question about
+   what a door should do when an agent cannot tell whether its call landed, and it wants a ruling before
+   it wants code.
+3. **13.4's 64 cases unrunnable from the repo.** Not a blocker, and I said so when I raised it — a `make`
+   target and a committed fixture is new scope by your own sizing, and I agree with the sizing. The
+   exposure is that nothing would notice a regression, not that the guard is wrong; the reviewer's R3
+   round is real evidence that it is right today.
+4. **`78d42d9` adding four scenarios of which §13 satisfies one.** Not a blocker, and this one is closest
+   to being one, so the reasoning matters: it is not a blocker *because* the same commit moved the tasks
+   that own the other three into §14. §13 does not claim them. Had `tasks.md` left 13.9/13.10 in place,
+   the identical spec text would have been a blocker on this section. The amendment is honest.
+
+All four stand as `## NEXT` entries, owed by §14 or later. Nothing in §13 is blocked on any of them.
+
+§13 is approved and closed. Open §14.
+
+→ @architect
+
 ## NEXT
 
-**§13 is closed at 13.8 and awaits its supervisor review. §14 is open and is now the change's last
-section.** §13's base is `f100b77`; §14 has no base yet — it is posted when its first block is briefed.
+**§13 is closed — supervisor `Approve` on `f100b77..HEAD`, one remediation round.** **§14 is open and is
+the change's last section.** It has no base yet; post it before briefing its first block.
 
 ### The resume point
 
-**§13's supervisor review, on `f100b77..HEAD`, scoped to 13.1–13.8 only.** 13.9 and 13.10 are no longer
-in this section; the amendment above moved them to 14.6 and 14.7. Point the supervisor at the amended
-`work-lifecycle` and `card-model` requirements, not just at the task lines, and tell it the section's last
-commit (`3338ebc`) deliberately ticks nothing — it lands 13.9's work, whose finding is what produced §14.
-It has said it will audit §13 against the queue in this file.
+**§14, block one: `14.1–14.3`** — the delimited block syntax, its termination, and the `-->` escape. Then
+`14.4` (the comment block onto the same syntax), `14.5` (the filename), then `14.6` and `14.7` singly. A
+block groups whole tasks and never subdivides one.
 
-**Then §14, in four blocks:** `14.1–14.3` (the delimited block syntax, its termination, and the `-->`
-escape), `14.4` (the comment block onto the same syntax), `14.5` (the filename), then `14.6` and `14.7`
-singly. A block groups whole tasks and never subdivides one.
+**Post §14's base first** (`git rev-parse --short HEAD`) as the first entry under the `## 14.` heading.
+Without it the section review has no scope.
 
-**14.6 ends at the Product Owner**, as 13.9 did — implement and self-test as far as automation reaches,
-then hand her an exact, copy-pasteable recipe and wait for her confirmation before ticking. **Its recipe
-already exists**: `verify-13-9.sh`, whose two raw card files are the ones she read. Re-running *that*
-script after §14 lands is the cleanest possible before-and-after, and the same file she found horrible is
-the one that has to come back readable.
+**The design is settled and recorded** in the amendment post above: one HTML comment per block, `key: value`
+lines inside it reusing the frontmatter line shape and escaper (which since `3eacc1f` escapes only *edge*
+whitespace, so prose reads as prose with no new table), the close required to be a line exactly equal to
+`-->`, and a literal `-->` in free text escaped by a composed step to `\->`. The per-family key sets
+already exist; what moves is the line shape they are read from.
 
-**14.7 is written last**, after 14.5 has settled the creation verbs' command surface. It already owed,
-before §14 existed: `CLAUDE.md`'s **Boundaries** paragraph, which under-describes the guard against the
-guard's own standard that the prose and the enforcement must keep saying the same thing (mine to write, as
-no agent can); two message defects — `deny_store` promises "reading card files is fine" while `ed`/`ex`/
-`patch` as blanket words deny a few reads, and the binary/store name ambiguity denies `chmod +x
-./callboard` without telling a worker the route is to report it; and **13.5's three nits** — a missing
-`cardCount` doc comment, an over-long doc line `dotnet format` does not catch, and an assertion pinned to
-message prose.
+**Do not write "seven families" into any brief.** That count is mine and unverified. The worker derives it
+from `CardFileWriter` and `CardFileParser`.
 
-### Landed in §13
+**14.6 ends at the Product Owner**, as 13.9 did. **Its recipe already exists** — `verify-13-9.sh`, whose
+two raw card files are the ones she read and called horrible. Re-running that same script after §14 lands
+is the cleanest before-and-after available, and the same file has to come back readable.
 
-`a32f481` — the Product Owner's first spec amendment (§13's base is deliberately the commit *before* it,
-so the supervisor audits the amendment alongside what was built to it) · `e2bea69` **13.1** `block create`
-· `d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test
-fix, carved from this file rather than from a task, ticking nothing · `c60d553` **13.4** the hook boundary
-· `ffa2c2d` **13.5** one `unreadable` shape across every read · `d484003` **13.6** a corrupt card told
-apart from a missing one when addressed by id · `c7069a5` **13.7** the enforcement fail-open closed ·
-`a028e27` **13.8** the loop proceeds when the tool cannot run (**Product Owner confirmed, 12 checks / 0
-failures**) · `3338ebc` — 13.9's work, ticking nothing.
+**14.7 is written last**, after 14.5 settles the creation verbs' command surface. Its pre-existing debts are
+listed under "`CLAUDE.md` and the agent definitions — still owed" below.
 
-**Six commits here are not blocks and tick nothing.** Two task-breakdown amendments (`b3c35cb`, `0de96bc`)
-took the section from 13.7 to 13.10; the amendment above takes it back to 13.8. **Three are remediation
-blocks, all provoked by the Product Owner's own run of 13.8's recipe** — `96a676b` (blank lines and `key:`
-no longer corrupt a hand-edited card) and `3eacc1f` (edge whitespace escaped, closing the silent-truncation
-case), plus the DEVLOG closes. And `3338ebc` lands 13.9's cover and its finding without ticking, because
-the task it was written for is now 14.6.
+### §13 as it closed
 
-Suite **1049 → 1174** (13.4 added no C#; its cover is a 64-case shell fixture held in scratch, not
-committed — a `make` target for it is unbuilt and would be new scope). **Fifteen remediation rounds
-spent** — 13.1, 13.3, **three on 13.4**, one each on 13.6 and 13.7, **three on 13.8** (two of them the
-recipe diverging from the run that produced its evidence), **three on the escape fix**, and **one on
-13.9** — the recipe transcript hand-transcribed rather than pasted, caught by re-running it cold. All
-real. **13.5 approved first pass.**
+Base `f100b77`. Eight tasks, ten commits, **sixteen remediation rounds**. Suite **1049 → 1174**.
+13.5 approved first pass; nothing else did.
 
-### What 13.9 found, carried into §14 rather than parked
+`a32f481` — the Product Owner's first spec amendment (§13's base is deliberately the commit *before* it, so
+the supervisor audited the amendment alongside what was built to it) · `e2bea69` **13.1** `block create` ·
+`d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test fix ·
+`c60d553` **13.4** the hook boundary · `ffa2c2d` **13.5** one `unreadable` shape across every read ·
+`d484003` **13.6** a corrupt card told apart from a missing one · `c7069a5` **13.7** the enforcement
+fail-open closed · `a028e27` **13.8** the loop proceeds when the tool cannot run (**Product Owner
+confirmed, 12 checks / 0 failures**) · `96a676b` and `3eacc1f` — remediation blocks from her own run of
+13.8's recipe · `3338ebc` — 13.9's work and its finding, ticking nothing · `78d42d9` — the second spec
+amendment, creating §14 · `faab3e5` — the section-review remediation.
 
-1. **Certification text escapes every space, not only edges** — a refusal's `rule`/`remedy`, a claim's and
-   limit's `text`, an authorisation's `reason`: precisely the fields documented as "sentences a later
-   reviewer reads". Traced to `CardFileFormat.cs:345-347` and its five call sites, confirmed by the
-   reviewer independently. **This is §14's reason to exist.**
-2. **The filename need not match the id** — `B-0099.md` holding `B-0001`. **14.5.**
-3. **The CLI's JSON output HTML-escapes `'`, `+`, `<`, `>`, `&` and backtick** — `doesn\u0027t` —
-   because `CliJsonContext.cs` configures no custom `Encoder` and `System.Text.Json` defaults to the
-   HTML-safe one. The reviewer enumerated the set directly against the unconfigured encoder rather than
-   from the repro. **Not in §14**: it is the tool's output, not the record, and 14.6 reads the file.
-   **Owed to the Product Owner as its own carve.**
-4. **Stale block-field-count doc comments** say five or six where the answer is seven — in
-   `BlockCardFields.cs`, `CardFileParser.cs` and `CardFile.cs`, wider than the one instance 13.9 cited.
-   A doc pass, not a block.
+**Six of those commits tick nothing**, by the workflow: two task-breakdown amendments, three remediation
+blocks, and 13.9's work.
+
+### What the section review caught that no block review could
+
+**Door two of block-card creation minted a card at `briefed` with `Base = null`.** Both doors came from the
+same amendment; only one was ever checked against "Blocks carry their brief context". Being a write and not
+a transition, door two never met the `BaseNotRecorded` guard, and `block base` then refused it permanently
+for not being at `drafting` — so a supervisor's own remediation block could run to `landed` with no base,
+and the one door the spec provides for recording it was closed by construction. **The comment at
+`CardStore.cs:1630` justified that refusal with an invariant door two was the sole counterexample to.**
+
+Three rulings came out of it:
+
+1. **A door added by an amendment must be checked against every requirement the door it parallels already
+   satisfies.** Two doors, one requirement, one door checked.
+2. **The absence of a test is the finding.** Nothing asserted a door-two card's `base` at all, which is why
+   three block reviews and a section's worth of gates never saw it.
+3. **Fixing the cause can retire the symmetry rather than requiring a refusal for it.** The supervisor's
+   second finding — `block transition --base` first-recording on any edge — needed no code: with `Base`
+   non-null at creation, that path now meets the mismatch check and refuses `BaseImmutable`, the same
+   answer `block base` gives. §9's coverage gate would have rejected an arm for an unprovokable case, and
+   the Architect's dismissal was re-derived from `BlockFlowTransitions` twice — by the worker and again by
+   the reviewer — rather than taken on the brief's word.
+
+**And the supervisor reversed itself on the record.** It recommended door two carry the *section's* base;
+the Architect overruled it in favour of the verdict's `range-to`, and it came back agreeing and said why its
+own answer was worse: `base..HEAD` on a section-based card hands that block's reviewer a diff spanning the
+whole section, and the value would stop discriminating between rounds exactly where that matters. **An
+overrule put back to the auditor in writing is how that got said out loud instead of settling silently.**
+
+### Owed, and small — pick it up when `CardStore.cs` is next touched
+
+`CardStore.cs:1631` still reads "A card past drafting always already carries a recorded base"
+**unconditionally**. It is now true of every card the tool mints, and false of a hand-authored one — which
+the amendment concedes exists, and which `block transition --base` will still first-record for, correctly,
+since refusing would leave it no route at all. **One clause: "every card the tool mints".** Same standard
+the remediation block invoked when it corrected that very comment. **14.5 touches this file** — take it
+there. Precedent for parking a wording correction this way: the escape remediation's own owed note above.
+
+**Also owed, its own carve, not §14's:** the CLI's JSON output HTML-escapes `'`, `+`, `<`, `>`, `&` and
+backtick — `doesn\u0027t` — because `CliJsonContext.cs` configures no custom `Encoder`. The reviewer
+enumerated the set directly against the unconfigured encoder. It is the tool's output, not the record, and
+14.6 reads the file. **To the Product Owner.**
+
+### The supervisor's four parked items — none a blocker, all still live
+
+1. **`index rebuild` is the eighth read and did not converge.** `IndexPopulator.cs:41-64` reports the same
+   two facts as its own `Failures` type under its own key. **13.5's "one shape across every read" is true
+   of seven.** A correction to a claim the section made about itself.
+2. **§13's own retry-safety ruling is not held by its other two doors.** A retried `comment add` appends a
+   second immutable comment and a second live thread; a retried `block create` mints a second block.
+   Punished in the record rather than by a refusal.
+3. **13.4 is unauditable at section level** — `git diff` on the guard is correctly blocked by the auditor
+   boundary. The sharper fact: **nothing in the repo can re-run its 64 cases**, so no gate would catch a
+   regression. A `make` target for it is unbuilt and would be new scope.
+4. **`78d42d9` adds four scenarios and §13 satisfies exactly one.** Not a blocker **because the same commit
+   moved 13.9 and 13.10 into §14** — had `tasks.md` left them in place, the identical spec text would have
+   been a blocker on this section. The other three are owned by 14.1–14.5.
 
 ## Homed under 13.5 and 13.6 — enumerated, not parked
 
