@@ -43891,110 +43891,273 @@ Nothing else in this block changed. Confirmed the baseline didn't move: `make ga
 
 → @architect
 
+**[supervisor]** **Section re-review — §14, `2734497..HEAD` (`1365997`), second and final round.
+Verdict: `Approve`.** The blocker I raised is closed, and the closure is complete: I re-derived the
+door set myself, from three seams rather than one, and all three agree on fourteen.
+
+### The union, re-derived — and why fourteen is the whole set this time
+
+I did not check the count; I recomputed it three independent ways. Two of the three are seams
+neither round used.
+
+1. **The allocation seam** (the reviewer's). `AllocateIdentity(`/`CardIdentityAllocator.Allocate(`
+   in `src/` — **six raw call sites in five methods**: `CardStore.cs:1142` (`DispositionNit`),
+   `:2713` (`RecordSectionVerdictUnderExistingLock`), `:3435` (`CreateCard`), `:4249`
+   (`PromoteComment`), `:5499` and `:5508` (`RecordFinding`, twice). Nothing outside those five.
+2. **The naming seam**, re-run for adjacency rather than for membership. `CardLayout.FileNameFor`
+   now has **six call sites** — `:1150`, `:2735`, `:3446`, `:4256`, `:5522`, `:5526` — one per
+   allocation site, each in the same method, each after its allocation. The two seams are now in
+   bijection, which is the structural fact round one's "eleven" could not state.
+3. **The seam that would catch a door invisible to both** — a card minted without the allocator, by
+   a hand-built id. `new CardFrontmatter(` in `src/` outside the parser: **six sites** —
+   `:1371`, `:2719`, `:3448`, `:4355`, `:5532`, `:5738` — exactly the same six methods. A new card
+   coming into being *is* a new frontmatter, whatever it did about ids or filenames. And there is no
+   id-shaped string construction anywhere outside `CardIdentityAllocator`: `CardIdentityPrefix.
+   PrefixFor` has one consumer, the allocator itself.
+
+**Three seams, one answer.** There is no fifteenth door. `9 + 2 + 1 + 1 + 1 = 14` doors / 15 cases
+under the stated simultaneous-vs-either-or convention is right, and — more to the point — the
+convention no longer has to be trusted, because seam 3 bounds the set independently of how anyone
+counts a two-card write.
+
+**The CLI half, checked separately.** `RefuseLeadingPositionalArgument` now has eight named call
+sites plus the shared `ParseCardCreate` (`CommandParser.cs:217, 780, 1455, 1767, 2091, 2198, 2437,
+2601`); `rule propose-compact` is still deliberately off it on the reasoning I cleared in round one.
+`--raise`, `--blind-spot-file` and the manifest's `new-card-file:` are gone from the parser (the only
+surviving spellings are the reference's own "these no longer exist" prose and the manifest's named
+refusal). **I checked the capability was not removed along with the flag, against `b96c0da`'s own
+parser rather than assuming:** `raiseKind` was already derived from `--disposition` there and the
+raise was already unconditional for `defer`/`decline`; only the path came off. Same for `comment
+promote --to`. No verb lost the ability to raise.
+
+**`card-model` now holds end to end** — *"The system SHALL name the file when it mints the identity;
+a caller names the container a card belongs in, never the file itself."* Container from the caller at
+all fourteen doors via scope + `--change` through `CardLayout.DirectoryFor` (which still refuses the
+reserved `archive` and still segment-checks), file from `FileNameFor` after allocation, at all
+fourteen. The exception prose is gone because the exception is gone.
+
+### The four checks the brief asked for
+
+**1 — the insurance policy, and parking the source scan.** `CardMintedFileBasenameTests` drives the
+real CLI across fifteen cases; each was watched red. **Parking the test-assembly source scan is
+acceptable, and I would not oblige it now** — the property is currently pinned by three agreeing
+seams and a fifteen-case test, the scan is new scope in a closing change, and the reviewer's legality
+argument (test-assembly-only, no AOT surface) makes it a clean carve for whoever adds door fifteen
+rather than something to rush at the end. **One thing to record with it, which the round-two review
+did not name:** the assertion's expected side is `CardLayout.FileNameFor(id)`, the production mapping
+itself — so the test pins *every door agrees with `FileNameFor`*, not *every door's basename is its
+id*. Change `FileNameFor` and the file stays green. `Assert.Equal($"{id}.md", …)` on at least one case
+would close that, and it belongs in the same carve as the scan.
+
+**2 — the refusals that do not record. Parking is right, and I can bound it.** `PromoteComment`'s two
+`RaisedCardAlreadyExists` constructions and `DispositionNit`'s race-fallback are byte-identical at
+`b96c0da` — outside my range, not something §14 introduced or worsened. What §14 *did* do is make
+them harder to reach (a fresh unique id, not a caller-named path), which sharpens rather than settles
+the §9 question: the gate's exclusion reasoning ("card creation never resolves an existing card to
+record against") is the same reasoning just judged wrong for `NewFindingCardAlreadyExists`, and both
+these verbs do operate against a real, already-existing host card. That is a §9 ruling to re-apply,
+not a §14 defect. **Product Owner's call at archive**, with the rest of `## NEXT`.
+
+**3 — nothing I cleared in round one was disturbed.** `git diff --numstat b96c0da..HEAD` over
+`CardFileFormat.cs`, `CardFileWriter.cs`, `CardFileParser.cs` is **empty** — the eight-family syntax
+union, `BlockOpenLinePrefixes`, the footer's exact-equality exclusion, the `\s` bound and the deleted
+helpers are all untouched. `CommandParser.cs`/`CommandDispatcher.cs` changed only additively, onto the
+guard `14.5` already built. No new refusal *case* was added by either round (I diffed all four outcome
+types); `RaisedCardLayoutMismatch` pre-existed both.
+
+**4 — the document.** I extracted every fenced block: **no runnable example uses a removed flag**;
+`finding record <path>`, `--blind-spot-file`, `--raise`, `new-card-file:` survive only in the prose
+that says they are gone. Round two added prose, not commands, so "every command in this file is one
+somebody ran" still holds after two rounds of edits.
+
+**Also discharged, and it should come off `## NEXT`:** §13 parked the unconditional "A card past
+drafting always already carries a recorded base" comment with *"14.5 touches this file — take it
+there"*. It was taken there, in `cfff4b6` — `CardStore.cs:1648` now reads "for every card the tool
+mints", with the hand-authored exception named.
+
+### For `## NEXT` — one new architectural note, and one nit
+
+**The same shape, one level up: four independent statements of kind → scope, and only one of them is
+checked.** `CardScopeRules.Validate` has exactly **one** call site in `src/` — `CardStore.cs:3419`,
+inside `CreateCard`. The other four minting doors each state the mapping themselves:
+`ScopeForRaisedCard` (`:5913`, an exhaustive `Match` — the good shape), `DispositionNit`'s inline
+ternary (`:1131`), `PromoteComment`'s inline ternary (`:4238`), and `section verdict`'s fixed
+`CardScope.Change`. **All four agree with `CardScopeRules` today — I checked each against the table** —
+so this is a hazard, not a defect, and not a blocker. But two of those four statements were added by
+*this* remediation's round two, as ternaries with an implicit `else`, in the very block whose lesson
+was "the same fact stated in N places is checked in one". A fifth that disagreed would file a card in
+a directory its own frontmatter scope contradicts — the record/layout divergence the design forbids —
+and nothing would refuse it. **The cheap fix when this file is next open: widen `ScopeForRaisedCard`
+to the full exhaustive `Match` and route the two ternaries through it.**
+
+**A nit, and it is the block review's to have caught, not a condition of closing:** `CardLayout.cs:100`
+— `FileNameFor`'s own summary, the single statement of the mapping — still says *"`CardStore.CreateCard`
+and `CardStore.RecordFinding` are the only callers"*. Round one wrote that; round two made it false
+(five callers). The clause after it ("no route from caller-supplied text to a card's basename") is
+still true, the code is right, and the correct enumeration now lives in `CardMintedFileBasenameTests`'
+own doc comment — so this obliges a one-line comment fix, of exactly the class the reviewer obliged
+for "twelve cases", not a third round. It is worth doing before archive precisely because the next
+person adding a minting door will read that sentence and re-derive the narrow seam that failed twice.
+Related and harmless: the same file's "exactly five call sites" means five *methods*, six sites.
+
+### The parked set, as the change closes — what is the Product Owner's call at archive
+
+1. **The JSON encoder's HTML-escaping.** Unchanged by the remediation; still has a 393-line committed
+   document depending on the relaxed shape. **Hers.**
+2. **`index rebuild`'s unconverged `unreadable` shape** — 13.5's "one shape across every read" is true
+   of seven of eight. **Hers**, and it is the last chance to say so.
+3. **The non-recording `RaisedCardAlreadyExists` pair** (item 2 above) — pre-existing, §9 ruling 1
+   applies. **Hers.**
+4. **The source-text scan over the allocation seam**, plus the non-tautological basename assertion
+   (item 1 above) — one carve. **Hers.**
+5. **The kind → scope duplication** and **`CardLayout.cs:100`** — both cheap, both for whoever next
+   opens `CardStore.cs`/`CardLayout.cs`.
+
+`ADR-0001`/`0002`/`0003`/`0004` intact across the whole section and both remediation rounds: no second
+surface, no reflection or dynamic code (the scan was rejected on exactly that ground and parked rather
+than smuggled in), every write still lock-and-rename — `AcquireLocksAndRecord` carries zero diff hunks,
+which I confirmed rather than took — the index still never authoritative and never a lock, and nothing
+in `tasks.md`/`CLAUDE.md`/`.claude/` written by the tool. `14.6`'s human-in-the-loop tick carries the
+Product Owner's recorded confirmation in this thread. Every block in §14 quoted its own
+`LABEL_EXIT:0` lines.
+
+**§14 is closed. That closes the change.**
+
+→ @architect
+
+**[worker]** **Supervisor nit fixed — `CardLayout.FileNameFor`'s doc comment now states the
+invariant, not a caller list.** It named `CreateCard`/`RecordFinding` as "the only callers", which
+round two's own three new doors already made false. Rewrote it to say what the method guarantees —
+every card-minting door names its file through this method, only ever after
+`CardIdentityAllocator.Allocate` has minted the id — and to point at `CardMintedFileBasenameTests`'s
+own standing re-derivation instruction for the actual current call-site set, rather than freezing a
+list that goes stale the next time a door is added. No caller names left in the comment for that
+reason.
+
+Nothing else changed. `make gates` → `GATES_EXIT:0` — `BUILD_EXIT:0`, `TEST_EXIT:0` (1229/1229, same
+baseline), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+→ @architect
+
 ## NEXT
 
-**§13 is closed — supervisor `Approve` on `f100b77..HEAD`, one remediation round.** **§14 is open and is
-the change's last section.** It has no base yet; post it before briefing its first block.
+**§14 is closed — supervisor `Approve` on `2734497..HEAD`, one remediation round.** **Every task in this
+change is ticked and every section carries a supervisor `Approve`. The change is complete and awaits the
+Product Owner's decision to archive.**
 
-### The resume point
+### The change as it stands
 
-**§14, block one: `14.1–14.3`** — the delimited block syntax, its termination, and the `-->` escape. Then
-`14.4` (the comment block onto the same syntax), `14.5` (the filename), then `14.6` and `14.7` singly. A
-block groups whole tasks and never subdivides one.
+Fourteen sections. §14's own commits: `acbf81e` **14.1–14.3** one delimited block syntax · `9e5ad77`
+**14.4** the comment block joins it · `cfff4b6` **14.5** the system names the file · `b9039ca` **14.6**
+the record verified legible (**Product Owner confirmed** — *"looks good to me"*) · `b96c0da` **14.7**
+`docs/agent-command-reference.md` · `1365997` the remediation block, ticking nothing. Suite **1174 →
+1229**.
 
-**Post §14's base first** (`git rev-parse --short HEAD`) as the first entry under the `## 14.` heading.
-Without it the section review has no scope.
+### What §14 was, in one line
 
-**The design is settled and recorded** in the amendment post above: one HTML comment per block, `key: value`
-lines inside it reusing the frontmatter line shape and escaper (which since `3eacc1f` escapes only *edge*
-whitespace, so prose reads as prose with no new table), the close required to be a line exactly equal to
-`-->`, and a literal `-->` in free text escaped by a composed step to `\->`. The per-family key sets
-already exist; what moves is the line shape they are read from.
+The record she could not read now reads as prose:
+`rule=work-lifecycle:\sblock\scards\smove\sthrough\sa\sdefined\sflow` is
+`rule: work-lifecycle: block cards move through a defined flow`, one syntax across all eight families,
+and a card's file is named for the card.
 
-**Do not write "seven families" into any brief.** That count is mine and unverified. The worker derives it
-from `CardFileWriter` and `CardFileParser`.
+### The Product Owner's own ruling from 14.6, so it is not re-litigated
 
-**14.6 ends at the Product Owner**, as 13.9 did. **Its recipe already exists** — `verify-13-9.sh`, whose
-two raw card files are the ones she read and called horrible. Re-running that same script after §14 lands
-is the cleanest before-and-after available, and the same file has to come back readable.
+She read the ported recipe's output and accepted a surviving `\s` in a frontmatter **title**
+(`title: Which retry policy applies?\s`). The reasoning she accepted: `record-retrieval`'s sentence
+requirement **enumerates** a refusal's rule and remedy, a certification's claims and limits, an
+authorisation's reason — **a title is not among them**, so frontmatter's own edge-whitespace convention is
+untouched by design rather than by oversight. **The requirement covers recorded prose, not every
+frontmatter value.** The supervisor confirmed the bound matches the spec text and that nothing else in the
+record carries a marker the requirement does reach.
 
-**14.7 is written last**, after 14.5 settles the creation verbs' command surface. Its pre-existing debts are
-listed under "`CLAUDE.md` and the agent definitions — still owed" below.
+### The one lesson §14 paid for four times over
 
-### §13 as it closed
+**Every derivation of the card-minting doors enumerated the set that already did the right thing.** §14.5
+derived from `CreateCard` call sites and got nine. The first remediation round derived from
+`FileNameFor` call sites and got eleven. **Both seams are blind by construction to a door that mints a
+card without calling the naming function** — which is exactly what `RecordFinding`, `DispositionNit`,
+`PromoteComment` and `RecordSectionVerdictUnderExistingLock` each were. Counts along the way: **seven,
+nine, ten, eleven, fifteen**, settling at **14 doors / 15 cases**.
 
-Base `f100b77`. Eight tasks, ten commits, **sixteen remediation rounds**. Suite **1049 → 1174**.
-13.5 approved first pass; nothing else did.
+**What finally closed it was three seams, not a better one.** The supervisor recomputed independently
+from allocation (`AllocateIdentity`, 6 raw sites in 5 methods), naming (`FileNameFor`, 6 sites, one per
+allocation, in the same method, after it — the two now in **bijection**), and **`new CardFrontmatter(`
+outside the parser** (6 sites, the same six methods), on the reasoning that *a card coming into being is a
+new frontmatter whatever it does about ids or filenames*. Three seams, one answer, **no fifteenth door**
+— and the third bounds the set independently of how a two-card write is counted, so the doors-vs-cases
+convention no longer has to be trusted at all.
 
-`a32f481` — the Product Owner's first spec amendment (§13's base is deliberately the commit *before* it, so
-the supervisor audited the amendment alongside what was built to it) · `e2bea69` **13.1** `block create` ·
-`d83227d` **13.2** `comment add` · `1790eea` **13.3** `block base` · `d524f38` — the §11 referent-test fix ·
-`c60d553` **13.4** the hook boundary · `ffa2c2d` **13.5** one `unreadable` shape across every read ·
-`d484003` **13.6** a corrupt card told apart from a missing one · `c7069a5` **13.7** the enforcement
-fail-open closed · `a028e27` **13.8** the loop proceeds when the tool cannot run (**Product Owner
-confirmed, 12 checks / 0 failures**) · `96a676b` and `3eacc1f` — remediation blocks from her own run of
-13.8's recipe · `3338ebc` — 13.9's work and its finding, ticking nothing · `78d42d9` — the second spec
-amendment, creating §14 · `faab3e5` — the section-review remediation.
+**The generalisable rule: to enumerate the things that must satisfy a property, never enumerate from the
+property.** Enumerate from the thing that brings them into existence, and confirm with a seam that is
+blind to the first two.
 
-**Six of those commits tick nothing**, by the workflow: two task-breakdown amendments, three remediation
-blocks, and 13.9's work.
+**Second lesson, the same shape one level up:** `14.7`'s worker **found** the tenth door and documented it
+accurately as an exception. The Architect asked the reviewer whether the asymmetry was *real*; it verified
+that it was. **Nobody asked whether it was allowed.** A documented exception to an unqualified SHALL is
+not an exception — **being written down is not being checked.**
 
-### What the section review caught that no block review could
+### Owed before archive — small, and each one named
 
-**Door two of block-card creation minted a card at `briefed` with `Base = null`.** Both doors came from the
-same amendment; only one was ever checked against "Blocks carry their brief context". Being a write and not
-a transition, door two never met the `BaseNotRecorded` guard, and `block base` then refused it permanently
-for not being at `drafting` — so a supervisor's own remediation block could run to `landed` with no base,
-and the one door the spec provides for recording it was closed by construction. **The comment at
-`CardStore.cs:1630` justified that refusal with an invariant door two was the sole counterexample to.**
+1. **`CardScopeRules.Validate` has exactly one call site** (`CardStore.cs:3419`, inside `CreateCard`). The
+   other four minting doors each state kind → scope themselves, and **two of those statements are
+   ternaries with an implicit else that the remediation's round two added** (`CardStore.cs:1131`,
+   `:4238`). All four agree with the table today — the supervisor checked each — but this is **§14's own
+   shape one level up, on scope instead of filename**, and it is now the most likely place the next
+   silent divergence appears. **Fix: widen `ScopeForRaisedCard` (`CardStore.cs:5913`) and route the
+   ternaries through it.**
+2. **`CardMintedFileBasenameTests` pins agreement, not the property.** Its expected side calls
+   `CardLayout.FileNameFor(id)` — the production mapping itself — so it asserts *every door agrees with
+   `FileNameFor`*, not *basename == id*. If `FileNameFor` were ever wrong, all 15 cases would agree with
+   it and stay green. Same carve as the doors themselves.
+3. **The test is not self-extending, and that is stated rather than implied.** No reflection-friendly
+   enumeration survives NativeAOT (ADR-0002), so it carries a standing re-derivation instruction instead.
+   **The true ceiling is higher:** a **test-assembly source-text scan** of `CardStore.cs` — the same
+   legality as `RefusalCoverageGateTests`' own reflection — could make a future door fail on arrival.
+   The supervisor ruled parking acceptable *given three agreeing seams and a 15-case CLI test*; it is
+   the same fifteen-line-source-scan shape §10 proposed for call site 34, and the two should be built
+   together or not at all.
 
-Three rulings came out of it:
+### Discharged — remove on archive
 
-1. **A door added by an amendment must be checked against every requirement the door it parallels already
-   satisfies.** Two doors, one requirement, one door checked.
-2. **The absence of a test is the finding.** Nothing asserted a door-two card's `base` at all, which is why
-   three block reviews and a section's worth of gates never saw it.
-3. **Fixing the cause can retire the symmetry rather than requiring a refusal for it.** The supervisor's
-   second finding — `block transition --base` first-recording on any edge — needed no code: with `Base`
-   non-null at creation, that path now meets the mismatch check and refuses `BaseImmutable`, the same
-   answer `block base` gives. §9's coverage gate would have rejected an arm for an unprovokable case, and
-   the Architect's dismissal was re-derived from `BlockFlowTransitions` twice — by the worker and again by
-   the reviewer — rather than taken on the brief's word.
+- ~~`CardStore.cs:1631` reads "A card past drafting always already carries a recorded base"
+  unconditionally.~~ **Taken in `cfff4b6`**; `CardStore.cs:1648` now reads "for every card the tool
+  mints".
+- ~~`CardLayout.cs:100` names `CreateCard`/`RecordFinding` as `FileNameFor`'s only callers.~~ **Taken
+  after §14 closed** — rewritten to state the invariant (every minting door names its file through
+  `FileNameFor`, only after the id is minted) rather than list callers, because a comment that lists
+  callers is wrong the moment someone adds a door.
 
-**And the supervisor reversed itself on the record.** It recommended door two carry the *section's* base;
-the Architect overruled it in favour of the verdict's `range-to`, and it came back agreeing and said why its
-own answer was worse: `base..HEAD` on a section-based card hands that block's reviewer a diff spanning the
-whole section, and the value would stop discriminating between rounds exactly where that matters. **An
-overrule put back to the auditor in writing is how that got said out loud instead of settling silently.**
+### The Product Owner's calls at archive time — none is §14's to have closed
 
-### Owed, and small — pick it up when `CardStore.cs` is next touched
+1. **The CLI's JSON output HTML-escapes `'`, `+`, `<`, `>`, `&` and backtick** — `doesn't` — because
+   `CliJsonContext.cs` configures no custom `Encoder`. **Newly sharper:** a 393-line committed document
+   now depends on that output being readable, and contains no `\u00…` anywhere.
+2. **`index rebuild` is the eighth read and did not converge** on 13.5's one `unreadable` shape
+   (`IndexPopulator.cs:41-64` reports the same two facts as its own `Failures` type under its own key).
+   **13.5's "one shape across every read" is true of seven.** With no section left, this is now yours.
+3. **A refusal that stopped recording, and the same shape pre-existing.** Removing the manifest pre-check
+   exposed that the write loop's `onAlreadyExists` arm was never wrapped in `RefuseAndRecord`, so
+   `NewFindingCardAlreadyExists` had stopped recording — **caught by the suite, not by inspection**. The
+   block reviewer then found the same shape **pre-existing** in `DispositionNit`'s race-fallback and in
+   **both** of `PromoteComment`'s paths, excluded from the coverage gate under reasoning it called
+   questionable by the standard just applied. §9 ruling 1 is the standard. The supervisor ruled it
+   genuinely outside its range (byte-identical at `b96c0da`) and noted **§14 made those paths *less*
+   reachable, which sharpens the §9 question rather than settling it.**
+4. **The view's visual design**, still deferred to a follow-on change, with **D5 binding it**.
+5. **Whether history should be visible when rendered.** Every marker block and every comment header is an
+   HTML comment: raw text is fully legible (**the binding reading, ADR-0003**), and **any Markdown
+   renderer drops all of it**, leaving comment bodies as unattributed paragraphs with no author,
+   timestamp, addressee or resolver. **Parked deliberately in her own amendment** — a bigger question
+   than an escaping fix, and it did not ride in on one. 14.6 re-confirmed the state and was straight that
+   the claim is **structural, not run** — no renderer was executed.
 
-`CardStore.cs:1631` still reads "A card past drafting always already carries a recorded base"
-**unconditionally**. It is now true of every card the tool mints, and false of a hand-authored one — which
-the amendment concedes exists, and which `block transition --base` will still first-record for, correctly,
-since refusing would leave it no route at all. **One clause: "every card the tool mints".** Same standard
-the remediation block invoked when it corrected that very comment. **14.5 touches this file** — take it
-there. Precedent for parking a wording correction this way: the escape remediation's own owed note above.
+### What a reader must still know that a card file does not tell them — 14.6's honest half
 
-**Also owed, its own carve, not §14's:** the CLI's JSON output HTML-escapes `'`, `+`, `<`, `>`, `&` and
-backtick — `doesn\u0027t` — because `CliJsonContext.cs` configures no custom `Encoder`. The reviewer
-enumerated the set directly against the unconfigured encoder. It is the tool's output, not the record, and
-14.6 reads the file. **To the Product Owner.**
-
-### The supervisor's four parked items — none a blocker, all still live
-
-1. **`index rebuild` is the eighth read and did not converge.** `IndexPopulator.cs:41-64` reports the same
-   two facts as its own `Failures` type under its own key. **13.5's "one shape across every read" is true
-   of seven.** A correction to a claim the section made about itself.
-2. **§13's own retry-safety ruling is not held by its other two doors.** A retried `comment add` appends a
-   second immutable comment and a second live thread; a retried `block create` mints a second block.
-   Punished in the record rather than by a refusal.
-3. **13.4 is unauditable at section level** — `git diff` on the guard is correctly blocked by the auditor
-   boundary. The sharper fact: **nothing in the repo can re-run its 64 cases**, so no gate would catch a
-   regression. A `make` target for it is unbuilt and would be new scope.
-4. **`78d42d9` adds four scenarios and §13 satisfies exactly one.** Not a blocker **because the same commit
-   moved 13.9 and 13.10 into §14** — had `tasks.md` left them in place, the identical spec text would have
-   been a blocker on this section. The other three are owned by 14.1–14.5.
+The absence/presence convention (`section:` present and empty vs `base:` omitted entirely — both read as
+"nothing here"); that the record is meant to be read **raw, not rendered**; the `\s` convention on
+frontmatter edge whitespace; the complete transition graph (a refusal names only what is available *from
+here*); and the role-permission rules, which appear only in the text of a refusal you have already
+provoked.
 
 ## Homed under 13.5 and 13.6 — enumerated, not parked
 

@@ -96,14 +96,19 @@ internal static class CardLayout
     /// <summary>
     /// The file name a card carrying <paramref name="id"/> is written under — its identity plus
     /// the <c>.md</c> extension, and nothing else (card-model: "A card's file SHALL be named for
-    /// its identity, so that a directory listing of the record is a list of card identities").
-    /// The single statement of that mapping (14.5, extended by the §14 supervisor remediation):
-    /// <see cref="CardStore.CreateCard"/> and <see cref="CardStore.RecordFinding"/> are the only
-    /// callers, and each only ever after <see cref="CardIdentityAllocator.Allocate"/> has already
-    /// minted <paramref name="id"/> — there is no route from caller-supplied text to a card's
-    /// basename. <see cref="RequireSafePathSegment"/> is defensive here, not load-bearing: every
-    /// <paramref name="id"/> this method ever sees was built by <see cref="CardIdentityAllocator"/>
-    /// itself, which never produces a separator or a <c>.</c>/<c>..</c> segment.
+    /// its identity, so that a directory listing of the record is a list of card identities"). The
+    /// single statement of that mapping (14.5, extended by the §14 supervisor remediation's second
+    /// round): <b>the invariant, not the current caller list, is what this method guarantees</b> —
+    /// every door in this codebase that mints a card calls this method to name it, only ever after
+    /// <see cref="CardIdentityAllocator.Allocate"/> has already minted <paramref name="id"/>, so
+    /// there is no route from caller-supplied text to a card's basename. Naming who currently calls
+    /// it here would go stale the moment a new one is added — this section's own remediation is the
+    /// worked example of exactly that failure, three times over. For the actual, current call site
+    /// set, re-derive it the way <c>CardMintedFileBasenameTests</c>'s own standing instruction
+    /// says to, rather than trusting a list frozen in a doc comment. <see cref="
+    /// RequireSafePathSegment"/> is defensive here, not load-bearing: every <paramref name="id"/>
+    /// this method ever sees was built by <see cref="CardIdentityAllocator"/> itself, which never
+    /// produces a separator or a <c>.</c>/<c>..</c> segment.
     /// </summary>
     internal static string FileNameFor(string id) => $"{RequireSafePathSegment(id, nameof(id))}.md";
 
