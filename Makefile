@@ -37,13 +37,25 @@ format:
 
 # --- spec ----------------------------------------------------------------------
 
-# Validates every active change (archive excluded). No active change is a failure,
-# not a silent pass — an empty run would otherwise report VALIDATE_EXIT:0 while
-# having validated nothing.
+# Validates every active change (archive excluded).
+#
+# No active change PASSES, and says so on its own line. It used to fail, on the
+# reasoning that an empty run would otherwise report VALIDATE_EXIT:0 while having
+# validated nothing — a real hazard, and the fix keeps it: the "nothing to validate"
+# line is printed unconditionally, so a vacuous pass can never be mistaken for a
+# substantive one by anybody reading the output.
+#
+# What the old reading got wrong was conflating two different states. "No change is
+# in flight" is the correct, expected state of this repo between changes — it is what
+# an archive produces, and it stayed invisible until establish-callboard became the
+# first change to actually archive. Failing there makes `make gates` red on a healthy
+# tree, which trains a reader to discount a red gate. That is a worse failure than the
+# one the original guard was defending against, because it degrades every other gate's
+# signal rather than just this one's.
 validate:
 	@fail=0; \
 	if [ -z "$(CHANGES)" ]; then \
-		echo "no active change found under openspec/changes/"; fail=1; \
+		echo "no active change under openspec/changes/ — nothing to validate"; \
 	else \
 		for c in $(CHANGES); do openspec validate $$c --strict || fail=1; done; \
 	fi; \
