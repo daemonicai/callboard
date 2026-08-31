@@ -160,12 +160,13 @@ public sealed class CommandDispatcherBlockBaseTests
     public void BlockBase_ThenTransitionToBriefed_Succeeds_TheFlowThirteenOneOpened()
     {
         using var repo = new TempGitRepo();
-        var createPath = Path.Combine(repo.CardsDirectory, "b-0007.md");
         var createOutput = new StringWriter();
         var createExit = RunInRepo(
-            ["block", "create", createPath, "--title", "Flow", "--role", "architect", "--change", ChangeName, "--task", "13.3"],
+            ["block", "create", "--title", "Flow", "--role", "architect", "--change", ChangeName, "--task", "13.3"],
             createOutput, repo.Path, "Body.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, createExit);
+        using var createDoc = JsonDocument.Parse(createOutput.ToString());
+        var createPath = createDoc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
 
         var baseOutput = new StringWriter();
         var baseExit = RunInRepo(

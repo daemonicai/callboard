@@ -12,6 +12,12 @@ namespace Callboard.Tests;
 /// and 9.9/9.10 remain later blocks' own — so this covers only that a question card can be created,
 /// repository-scoped, and refuses the same wrong-scope/missing-argument shapes every block A
 /// creation verb already refuses.
+///
+/// <para>
+/// 14.5: <c>question create</c> no longer takes a positional card file path — the file is named for
+/// the identity the system mints, and every test below learns the path from the response's own
+/// <c>filePath</c> field.
+/// </para>
 /// </summary>
 public sealed class CommandDispatcherQuestionCreateTests
 {
@@ -23,11 +29,10 @@ public sealed class CommandDispatcherQuestionCreateTests
     public void QuestionCreate_Succeeds_RepositoryScoped_OwnedByTheOwedByRole_NotTheActingRole()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "q-0001.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--title", "Should these rules become one family?", "--role", "worker", "--owed-by", "product-owner"],
+            ["question", "create", "--title", "Should these rules become one family?", "--role", "worker", "--owed-by", "product-owner"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -44,6 +49,8 @@ public sealed class CommandDispatcherQuestionCreateTests
         // entirely, since a question carries no RegisterCardFields for MapCardCreateOutcome's own
         // OwedBy read to fall back to.
         Assert.Equal("product-owner", result.GetProperty("owedBy").GetString());
+        var path = result.GetProperty("filePath").GetString()!;
+        Assert.Equal(Path.Combine(repo.RegisterDirectory, "Q-0001.md"), path);
         Assert.True(File.Exists(path));
 
         var card = AssertParseSuccess(CardStore.ReadCard(path));
@@ -58,54 +65,51 @@ public sealed class CommandDispatcherQuestionCreateTests
     public void QuestionCreate_MissingTitle_Refuses()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "q-0002.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--role", "worker", "--owed-by", "product-owner"],
+            ["question", "create", "--role", "worker", "--owed-by", "product-owner"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
-        Assert.False(File.Exists(path));
+        AssertNoQuestionCardWasWritten(repo);
     }
 
     [Fact]
     public void QuestionCreate_MissingOwedBy_Refuses_WithoutWritingAnything()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "q-0004.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--title", "Should these rules become one family?", "--role", "worker"],
+            ["question", "create", "--title", "Should these rules become one family?", "--role", "worker"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
-        Assert.False(File.Exists(path));
+        AssertNoQuestionCardWasWritten(repo);
     }
 
     [Fact]
     public void QuestionCreate_UnrecognisedOwedByRole_Refuses()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "q-0005.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--title", "Should these rules become one family?", "--role", "worker", "--owed-by", "nobody"],
+            ["question", "create", "--title", "Should these rules become one family?", "--role", "worker", "--owed-by", "nobody"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("unrecognised-role", refusal.GetProperty("code").GetString());
-        Assert.False(File.Exists(path));
+        AssertNoQuestionCardWasWritten(repo);
     }
 
     // §9 block E ruling: --section is optional, and records CardFrontmatter.Section — the fact
@@ -115,17 +119,17 @@ public sealed class CommandDispatcherQuestionCreateTests
     {
         using var repo = new TempGitRepo();
         var sectionId = WriteSectionCard(repo.Path, "establish-callboard", "s-0001", "S-0001");
-        var path = Path.Combine(repo.RegisterDirectory, "q-0006.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--title", "A section-raised question", "--role", "worker", "--owed-by", "product-owner", "--section", sectionId],
+            ["question", "create", "--title", "A section-raised question", "--role", "worker", "--owed-by", "product-owner", "--section", sectionId],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var result = doc.RootElement.GetProperty("result");
         Assert.Equal(sectionId, result.GetProperty("section").GetString());
+        var path = result.GetProperty("filePath").GetString()!;
 
         var card = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(sectionId, card.Frontmatter.Section);
@@ -137,17 +141,17 @@ public sealed class CommandDispatcherQuestionCreateTests
     public void QuestionCreate_WithoutSection_Succeeds_WithAnEmptySection()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "q-0007.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--title", "A repository-wide question", "--role", "worker", "--owed-by", "product-owner"],
+            ["question", "create", "--title", "A repository-wide question", "--role", "worker", "--owed-by", "product-owner"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var result = doc.RootElement.GetProperty("result");
         Assert.Equal(string.Empty, result.GetProperty("section").GetString());
+        var path = result.GetProperty("filePath").GetString()!;
 
         var card = AssertParseSuccess(CardStore.ReadCard(path));
         Assert.Equal(string.Empty, card.Frontmatter.Section);
@@ -160,15 +164,14 @@ public sealed class CommandDispatcherQuestionCreateTests
     public void QuestionCreate_WithSectionNamingNoRealCard_Refuses()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "q-0008.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--title", "A question", "--role", "worker", "--owed-by", "product-owner", "--section", "S-9999"],
+            ["question", "create", "--title", "A question", "--role", "worker", "--owed-by", "product-owner", "--section", "S-9999"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
-        Assert.False(File.Exists(path));
+        AssertNoQuestionCardWasWritten(repo);
     }
 
     [Fact]
@@ -201,25 +204,44 @@ public sealed class CommandDispatcherQuestionCreateTests
         Assert.Equal("unknown-subcommand", refusal.GetProperty("code").GetString());
     }
 
+    // 14.5: the caller can no longer collide with its own prior creation by naming the same path
+    // twice — the tool always names the next, unclaimed identity. `card-already-exists` is still
+    // reachable, but only the way `CardCreateTests.CreateCard_TargetAlreadyExists_Refuses` proves it
+    // for `decision create`: a hand-authored file sitting, unindexed, at the exact name the
+    // allocator's next identity resolves to. Retired the old caller-collision shape rather than
+    // preserving it unprovoked (§9 ruling 2: the coverage gate is the standard).
     [Fact]
-    public void QuestionCreate_AlreadyExistingPath_Refuses_WithCardAlreadyExists()
+    public void QuestionCreate_TargetAlreadyExists_Refuses_WithCardAlreadyExists()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "q-0003.md");
-        var firstOutput = new StringWriter();
-        Assert.Equal(
-            CommandDispatcher.SuccessExitCode,
-            RunInRepo(["question", "create", path, "--title", "First", "--role", "worker", "--owed-by", "product-owner"], firstOutput, repo.Path, "Body."));
+        var conflictingPath = Path.Combine(repo.RegisterDirectory, "Q-0001.md");
+        var handAuthored = new CardFile(
+            new CardFrontmatter("Q-9999", CardKind.Question, "Hand-authored, wrong name", "open", CardOwner.ProductOwner, CardScope.Repository, string.Empty, FixedNow, FixedNow),
+            "Body.", [], []);
+        File.WriteAllText(conflictingPath, CardFileWriter.Serialize(handAuthored));
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["question", "create", path, "--title", "Second", "--role", "worker", "--owed-by", "product-owner"],
+            ["question", "create", "--title", "First", "--role", "worker", "--owed-by", "product-owner"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("card-already-exists", refusal.GetProperty("code").GetString());
+    }
+
+    // 14.5: a refused 'question create' can no longer be checked against one caller-named path —
+    // the caller never named one. No file bearing the question kind prefix exists at all is the
+    // corresponding "wrote nothing" proof.
+    private static void AssertNoQuestionCardWasWritten(TempGitRepo repo)
+    {
+        if (!Directory.Exists(repo.RegisterDirectory))
+        {
+            return;
+        }
+
+        Assert.Empty(Directory.EnumerateFiles(repo.RegisterDirectory, "Q-*.md", SearchOption.TopDirectoryOnly));
     }
 
     private static string WriteSectionCard(string repoRoot, string changeName, string fileStem, string id)

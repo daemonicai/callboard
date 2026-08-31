@@ -42017,6 +42017,486 @@ untouched (no filename-related code touched anywhere in this diff).
 
 → @architect
 
+**[architect]** **Block two is landed** — `9e5ad77`, reviewer `Approve` first pass, gates green
+(`BUILD_EXIT:0` `TEST_EXIT:0` 1210/1210 `FORMAT_EXIT:0` `VALIDATE_EXIT:0`), `14.4` ticked. Two things
+from it belong in the record rather than only in the commit:
+
+- **The shared declaration gives recognition and nothing else.** Adding the eighth family still needed
+  wiring at the dispatcher, the writer and the three free-text fields. The reviewer judged that
+  irreducible — dispatch and serialisation were never derived from that list for any of the seven
+  either — so it is a **fact about the seam, not a debt**. Whoever adds a ninth family pays it again,
+  knowingly.
+- **A lossless-looking swap was not merely lossless.** Moving the comment header's fields onto
+  `UnescapeCardBlockValue` closed a latent gap nobody was looking for: the old comment-header escaper had
+  **no `\n`/`\r` path at all**. Found while checking the swap lost nothing, which is the check that keeps
+  finding things.
+
+**[architect]** **Brief — block three, `14.5`.** One task, and the largest surface in §14. **This is the
+task `14.7` is waiting on**, which is why it is written before the documentation and not after.
+
+### The task
+
+- **14.5** Name every card's file for its identity, taking the filename out of the caller's hands.
+
+### The spec it is built to — `card-model`, "Stable, human-quotable, kind-prefixed identity"
+
+> A card's file SHALL be named for its identity, so that a directory listing of the record is a list of
+> card identities. The system SHALL name the file when it mints the identity; a caller names the container
+> a card belongs in, never the file itself.
+
+> #### Scenario: The file is named for the card
+> - **WHEN** a card is created
+> - **THEN** its file is named for the identity the system issued, and the caller was never able to name it
+>   something else
+
+**"Was never able to"** is the operative phrase, and it is why this is structural rather than a check.
+`AnchoredCardPath` is the worked precedent and the Product Owner named it as such: it proves a card's
+*directory* at construction time and leaves the basename free — which is exactly why `B-0099.md` can
+hold `B-0001` today. **The caller stops being able to express a wrong name**, the same shape as the
+directory fix, rather than being told off for expressing one.
+
+### The shape
+
+Today every creation verb takes a positional **card file path**. After this task the caller names the
+**container** and the system names the file:
+
+- **The directory** is already determined by the card's scope, and by `--change` where the scope requires
+  one — `CardLayout.DirectoryFor(scope, changeName)` is that function and it already exists. The caller
+  who supplies `--change` has named the container; a repository-scoped card's container needs no naming
+  at all.
+- **The basename** comes from the identity the allocator mints. Which means **the path cannot be computed
+  before allocation** — that ordering is the structural heart of this task, not an implementation
+  detail. If you find yourself computing a path and then minting an id to put in it, you have built the
+  thing the spec says is not possible.
+- **The outcome reports where the card landed.** `MapCardCreateOutcome` already carries a `filePath`
+  through; a caller who no longer names the file learns the name from the result. Check that path is
+  reported for every creation verb, because it stops being something the caller already knew.
+
+### Boundaries — what moves and what does not
+
+- **Only *creation* moves.** A verb that addresses an **existing** card keeps taking a path (and the
+  `--id` forms already exist alongside). Do not touch addressing.
+- **Derive the set of creation verbs yourself** from `CommandParser`/`CommandDispatcher` — the
+  `CardStore.CreateCard` call sites are the reliable seam, and `MapCardCreateOutcome` is shared by all of
+  them. **State the set and how you derived it**, as block one did for the seven families. My own count
+  is not in this brief on purpose.
+- **`block create` and `section create` are in the set** and are §13's most recently touched doors. §13
+  closed on a defect where **two doors minting the same kind of card were checked against different
+  requirements** — one door was checked against "Blocks carry their brief context" and the other was
+  not. **The ruling that came out of it binds you directly:** a door must be checked against every
+  requirement the door it parallels already satisfies. Apply it here in the obvious way — **every** door
+  that mints a card gets its filename from its identity, or the scenario is false for the record even if
+  it is true for six verbs out of seven.
+- **Fixtures move, and one class of them is load-bearing in reverse.** Tests that deliberately construct
+  a card at a mismatched path — `B-0099.md` holding `B-0001` is the known one, and it is the file the
+  Product Owner read for 13.9 — exist *because* the basename was free. Some of those tests are asserting
+  behaviour that this task makes unreachable through the CLI. **Do not delete such a test to make it
+  pass.** A card file can still be hand-authored at a wrong name, and the reader must still cope; what
+  changes is that the tool can no longer produce one. Say which tests you re-aimed and why for each.
+
+### Owed here, and this is the block that pays it
+
+`CardStore.cs:1631` still reads *"A card past drafting always already carries a recorded base"*
+**unconditionally**. Since §13's remediation that is true of **every card the tool mints** and false of a
+hand-authored one — which the Product Owner's amendment concedes exists, and for which
+`block transition --base` still first-records, correctly. **One clause: "every card the tool mints".**
+This block touches this file, and §13's own remediation set the precedent for parking a wording
+correction until the file is next opened. Pay it.
+
+### Standing rulings that bind this block
+
+- **A regression test nobody has watched fail is a guess** (§13 ruling 5). Scratch copy, and say what you
+  **ran** versus what you **reasoned**.
+- **A brief that contradicts the codebase is a defect in the brief** (§13, item 8). Post it.
+- **Refusals name their remedy as a command that exists** (§9 ruling 3) and name the route by verb
+  (§13.3). If a refusal's text tells a caller to pass a path this task just removed, that is a defect in
+  this block, not a leftover.
+- **The coverage gate is the standard, not the brief** (§9 ruling 2). If a refusal about a caller-supplied
+  filename becomes unprovokable, the gate will not accept an arm for it — retire it rather than
+  preserving symmetry. §13's second supervisor finding is the worked example.
+- **Every write goes through the hand-entered-state guard at its call site** (§10, call site 34).
+
+### Done-gates
+
+`make gates` → `GATES_EXIT:0`, quoting `BUILD_EXIT:0`, `TEST_EXIT:0` (whole suite — 1210 green at
+`9e5ad77`), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+→ @worker
+
+**[worker]** **Block three, `14.5` — landed the door: a card's file is named for its identity, not
+the caller.**
+
+**The set of creation verbs, and how I derived it.** Grepped `CardStore.cs` for `CreateCard` call
+sites, per the brief's instruction — `CardStore.CreateCard` is the reliable seam. **Nine**, not the
+seven `MapCardCreateOutcome` shares:
+
+- Seven through the shared `MapCardCreateOutcome` helper: `rule create`, `hazard create`,
+  `obligation create`, `decision create`, `block create`, `section create`, `question create`.
+- Two more with their own inline `.Match` and their own result DTOs: `rule author`
+  (`RuleAuthorResult`) and `rule propose-compact` (`RuleProposeCompactResult`, via a caller-supplied
+  `--proposal-file` flag rather than a positional token — same defect, different argv shape).
+
+**❓ defect in the brief, per §13 item 8 — posting rather than working around it.** The brief states
+"`MapCardCreateOutcome` is shared by all of them" as the reason to trust it as the seam. It isn't —
+`RunRuleAuthor` and `RunRuleProposeCompact` never call it. The seam that's actually reliable is the
+one the brief also names correctly: the `CardStore.CreateCard` call sites themselves. All nine got
+fixed; none was skipped on the strength of the imprecise sentence.
+
+**The ordering — the structural heart, done the way §13 already established the invariant for scope
+refusal.** `CardStore.CreateCard` no longer takes a `filePath` parameter. Inside it, in this exact
+order:
+
+1. `CardScopeRules.Validate` — unchanged, still first, still burns no identity on a bad scope.
+2. `CardLayout.DirectoryFor(scope, changeName)` — resolves the **directory** only (no identity
+   needed to compute it), catching the `ArgumentException` a missing/invalid `changeName` throws and
+   returning `LayoutMismatch` **before any identity is allocated**. This is a genuine behaviour
+   improvement, not just refactor-shaped: previously a missing `--change` for a change-scoped `rule
+   create`/`rule author` (the two verbs with a caller-chosen scope) burned an identity before
+   `WriteCard`'s own `AnchoredCardPath` check ever ran. Now it doesn't, extending the "a refused
+   attempt costs nothing" guarantee `ScopeRefused` already had.
+3. `CardIdentityAllocator.Allocate` — mints the id.
+4. `CardLayout.FileNameFor(id)` (new — `CardLayout.cs`, `id + ".md"`, defensively routed through
+   `RequireSafePathSegment`) combined with the directory from step 2 — **only now** does a full path
+   exist anywhere in this method. There is no earlier point where a path is computed and an id is
+   then minted to fill a hole in it.
+
+`CardCreateOutcome.Created` gained a `FilePath` field — the caller's only way to learn where the card
+landed, since it can no longer say in advance.
+
+**Every one of the nine doors, checked against the same requirement — §13's ruling applied
+directly.** `block create` and `section create` are in the set, not exempted; both had their
+positional path removed and their result's `filePath` is what the caller reads now, same as the
+other seven. Verified by running the full suite green with all nine wired this way, not by spot-
+checking a subset.
+
+**Owed comment paid — `CardStore.cs`, the block-record-base guard.** "A card past drafting always
+already carries a recorded base" is now "…for every card the tool mints" plus one added sentence
+naming the hand-authored exception the Product Owner's amendment concedes exists. One clause, as
+asked.
+
+**Fixtures re-aimed, one by one — none deleted for asserting a now-tool-unreachable shape:**
+
+- `CardCreateTests.cs` — rewritten in full (the direct `CardStore.CreateCard` caller): every
+  assertion moved from a caller-supplied path to `created.FilePath`. `CreateCard_TargetAlreadyExists_
+  Refuses` **re-aimed, not deleted**: it now pre-places a *valid, parseable* hand-authored card
+  (`D-9999`'s frontmatter) at the exact name the allocator's *first* real allocation (`D-0001`) will
+  resolve to — proving `AlreadyExists` is still reachable the one way 14.5 leaves open (a hand-placed
+  file occupying the name the tool would have chosen), not the way that's now unreachable (two
+  caller-named identical paths). **Added**
+  `CreateCard_ChangeScoped_MissingChangeName_RefusesAsLayoutMismatch_AndNeverAllocatesAnIdentity` —
+  the ordering guarantee from step 2 above, watched to fail (below).
+- `CommandDispatcherQuestionCreateTests.cs` — same re-aim, applied to `question create`:
+  `QuestionCreate_AlreadyExistingPath_Refuses_WithCardAlreadyExists` (two calls, same caller path)
+  is **retired**, not kept for symmetry — the coverage gate would not have accepted an arm for a shape
+  the CLI can no longer provoke (§9 ruling 2, §13's second supervisor finding is the cited precedent).
+  Replaced with `QuestionCreate_TargetAlreadyExists_Refuses_WithCardAlreadyExists`, the same
+  hand-authored-collision shape `CardCreateTests` uses.
+- `CommandDispatcherBlockCreateTests.cs` — **kept as-is in spirit, re-aimed in mechanics.**
+  `BlockCreate_ARecordedIdentityIsRefused_AndRecordsAgainstTheCardAlreadyBearingIt` is the file the
+  Product Owner read for 13.9 (`b-0001.md` holding `B-0001`) — this is exactly the "some tests are
+  load-bearing in reverse" case the brief names. Untouched in mechanism: the hand-authored file still
+  sits at a name the tool would never write to (lower-case, no scope-anchoring by identity), still
+  carries the contested `B-0001` id in its frontmatter, and `IdentityAlreadyBorne` still fires because
+  `CardIdentityAllocator.ConfirmUnclaimed` matches on the **frontmatter id**, never the filename — the
+  filename's own mismatch is irrelevant to this refusal and always was. Only the *positional-path*
+  half of the test moved (the new-card side).
+- The other eight CLI-boundary test files (`CommandDispatcherRegisterTests`, `RuleAuthorTests`,
+  `RuleCompactTests`, `RuleProposeCompactTests`, `RulePromoteTests`, `RulePromoteConstitutionTests`,
+  `ChangeArchiveTests`, `FindingRecordTests`, `FindingStatusTests`, `UnreadableCardReportingTests`)
+  needed no behavioural re-aim — every creation call inside them was setup scaffolding for a verb
+  this block didn't touch, mechanically updated to stop passing a path and start reading
+  `result.filePath` back where a later step in the same test needed the path.
+
+**Regression tests actually watched fail — not just reasoned about (§13 ruling 5).** Exported `HEAD`
+via `git archive` into a scratch directory outside the repo (avoids the guard's write boundary),
+overlaid it with this block's `src/`/`tests/`, built and ran there (sandbox disabled only for that
+scratch build/test — `dotnet restore`'s own network call, not the guarded card store):
+
+1. **Reverted the ordering** (moved the `CardLayout.DirectoryFor` resolution back to *after*
+   allocation, restoring the pre-14.5 order) → ran
+   `CreateCard_ChangeScoped_MissingChangeName_RefusesAsLayoutMismatch_AndNeverAllocatesAnIdentity` →
+   failed exactly as predicted: the missing-`--change` attempt burned identity `R-0001`, so the
+   follow-up legitimate create got `R-0002` instead of `R-0001`. Reverted.
+2. **Hard-coded the basename** (`"card.md"` in place of `CardLayout.FileNameFor(id!)`) → ran
+   `CreateCard_Rule_ChangeScoped_Succeeds_AndAllocatesIdentityFromTheCounter` and
+   `RuleCreate_ChangeScoped_Succeeds` → both failed, `.../R-0001.md` expected vs `.../card.md` actual
+   — proving those path assertions are not vacuously true. Reverted.
+
+Real tree untouched throughout — scratch directory deleted after.
+
+**Gates on the real tree:** `BUILD_EXIT:0`, `TEST_EXIT:0` (1211/1211 — one net new fact-method beyond
+the 1210 baseline, from the added missing-`--change` ordering test; no test count shrank without a
+replacement), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+
+**Tasks completed:** `14.5`.
+
+→ @reviewer
+
+**[reviewer]** **Audit of block three, `14.5`** — naming every card's file for its identity. Read the
+brief and the worker's report in full before the diff (`git diff 9e5ad77`, 20 files, no new files —
+matches).
+
+Ran `make gates` on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1211/1211), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`, `GATES_EXIT:0` — confirmed, quoting the exit lines.
+
+**Verdict: Approve.**
+
+**1 — the ordering (ran).** Read `CardStore.CreateCard`: scope validate, then `CardLayout.DirectoryFor`
+(catching `ArgumentException` as `LayoutMismatch` before any allocation), then
+`CardIdentityAllocator.Allocate`, then `filePath` built from `CardLayout.FileNameFor(id!)` combined with
+the already-resolved directory — no earlier statement in the method computes a path. Independently
+reverted the ordering in a scratch copy (moved `DirectoryFor` back to after allocation, the pre-14.5
+shape) and ran `CreateCard_ChangeScoped_MissingChangeName_RefusesAsLayoutMismatch_AndNeverAllocatesAnIdentity`:
+failed exactly as the worker described — `Expected: "R-0001" Actual: "R-0002"`, the missing-`--change`
+attempt burning the first identity. Reverted; real tree untouched. The ordering holds on the failure path
+this task cares about (a refused layout resolution never reaches allocation) and on the success path
+(allocation always precedes the only `FileNameFor` call in the codebase — confirmed by grep, `CardStore.
+CreateCard` is its sole caller).
+
+**2 — the nine doors (re-derived independently, ran).** Grepped `src/Callboard/Cli/CommandDispatcher.cs`
+for `CardStore.CreateCard(` call sites and mapped each to its enclosing method: `RunRuleCreate`,
+`RunHazardCreate`, `RunObligationCreate`, `RunDecisionCreate`, `RunBlockCreate`, `RunSectionCreate`,
+`RunQuestionCreate`, `RunRuleAuthor`, `RunRuleProposeCompact` — nine, matching the worker's corrected
+count exactly. Separately grepped `MapCardCreateOutcome(` call sites: seven, confirming `RunRuleAuthor`
+and `RunRuleProposeCompact` are genuinely outside it and use their own inline `.Match` — the worker's
+correction of the brief holds. Read both inline `.Match` blocks in full: each reports `FilePath`/
+`ProposalFilePath` from `created.FilePath`, each handles the same six-case union (`onCreated`,
+`onScopeRefused`, `onAlreadyExists`, `onLayoutMismatch`, `onIdentityAlreadyBorne`, `onToolFailure`) the
+shared helper handles for the other seven — no divergence found in either. `MapCardCreateOutcome` itself
+(`CommandDispatcher.cs:2742`) reports `FilePath = created.FilePath` in `CardCreateResult` — every one of
+the nine reports the path.
+
+**3 — `--proposal-file` (ran, read both sides of the removal).** Read `9e5ad77`'s
+`ParseRuleProposeCompact`: `--proposal-file` was consumed only into `proposalFilePath`, required, and
+passed through unread as `ParsedCommand.RuleProposeCompact.ProposalFilePath` — its own doc comment states
+it plainly, "the caller names where" the new question card is written. The proposal's *content*
+(`CandidateText`) was, and still is, read from stdin via `StdinBodyReader.ReadBody` — an entirely separate
+path, untouched by this removal. Confirmed in the current tree: `--proposal-file` is gone from
+`ConsumeKnownFlags`'s dictionary, `ParsedCommand.RuleProposeCompact` carries no path field of any kind, and
+the stdin-read line is unchanged. **It was a naming flag, not a content flag — verified, not assumed.** No
+capability lost; `ProposalFilePath` survives only as an output field on `RuleProposeCompactResult`, sourced
+from `created.FilePath`.
+
+**4 — the retired refusal (ran).** `QuestionCreate_AlreadyExistingPath_Refuses_WithCardAlreadyExists` (two
+calls, same caller-named path) is genuinely unprovokable now: the path is always derived from a freshly
+minted, monotonically-increasing identity, so two consecutive `question create` calls can never collide on
+their own account. Its replacement, `QuestionCreate_TargetAlreadyExists_Refuses_WithCardAlreadyExists`, is
+a real hand-authored-collision fixture (`Q-9999` frontmatter sitting at the exact `Q-0001.md` path the
+allocator's next real allocation resolves to) — the one route `AlreadyExists` stays reachable through.
+Checked the other eight dispatcher-test files for a similarly-shaped caller-collision test that might have
+been missed: `CommandDispatcherRegisterTests.cs` and `CommandDispatcherBlockCreateTests.cs` never had one
+(grepped for `AlreadyExist` in both — zero matches, before or after this diff), so the register kinds' and
+`block create`'s equivalent coverage lived only in `CardCreateTests.cs` (`CardStore`-level, shared across
+all five), which is correctly re-aimed the same way (`CreateCard_TargetAlreadyExists_Refuses`, `D-9999` at
+`D-0001.md`). Nothing missed.
+
+**5 — the reverse-load-bearing fixtures (ran).** `WriteHandAuthoredBlockCard` in
+`CommandDispatcherBlockCreateTests.cs` is byte-for-byte unchanged in the diff (grepped: no hunk touches its
+body) — it still hand-places `b-0001.md` holding `B-0001`, and
+`BlockCreate_ARecordedIdentityIsRefused_AndRecordsAgainstTheCardAlreadyBearingIt` still proves
+`IdentityAlreadyBorne` fires on the frontmatter id regardless of the filename's own mismatch. Only the
+new-card side of that test (the positional path `block create` used to be given) moved to reading
+`result.filePath`. `CommandDispatcherChangeArchiveTests.cs`'s diff (the largest of the "mechanical" group)
+read the same way throughout — every changed assertion learns a path from a JSON result field it didn't
+already have; no assertion's *meaning* changed.
+
+**6 — the ordering behaviour improvement (ran, against both real binaries — stronger than a line-revert).**
+Exported `9e5ad77` via `git archive` (a read of history, not a write) into a scratch directory kept fully
+outside the guarded card store, built the current tree, and ran both against fresh throwaway repos
+initialised with `git init` alone:
+- **Old binary:** `rule create nonexistent-target-path.md --title "Needs a change" --role architect
+  --scope change` (no `--change`) → refused `card-layout-mismatch`. A follow-up `rule create
+  callboard/register/r-good.md --title Good --role architect --scope repository` then minted **`R-0002`**,
+  not `R-0001` — the refused attempt genuinely burned an identity.
+- **New binary:** the identical missing-`--change` attempt (now with no positional path at all) → refused
+  `card-layout-mismatch`, same message. The follow-up repository-scoped create then minted **`R-0001`** —
+  nothing was burned.
+
+This is a real, verified regression fix, not merely a refactor side-effect. The worker's own scratch-revert
+technique proves the same thing about the current tree's source; running the actual historical binary
+proves it about history, which is the stronger claim ("previously it did not" refuse before burning).
+
+**7 — refusal text (ran).** Grepped every remaining `"requires a card file path"`/`"requires ... <path>"`
+message in `CommandParser.cs`: all belong to *addressing* verbs (`block base`, `block transition`, `block
+gate`, `section verdict`/`authorise`/`close`/`status`, `finding status`/`record`, `question answer`/
+`defer`) — correctly out of this task's scope per the brief's own boundary. Grepped the nine creation
+verbs' own refusal text specifically for any leftover path reference: none. No dangling reference to
+`--proposal-file` anywhere in `src` or `tests`.
+
+**8 — the owed comment (`CardStore.cs:1631`).** Now reads "...for every card the tool mints" plus one
+added sentence naming the hand-authored exception the Product Owner's amendment concedes. The brief asked
+for "one clause"; the worker added the clause plus one further sentence. Judged: the added sentence is
+accurate, does not overclaim, and is a direct restatement of what the brief's own paragraph already
+conceded — not scope creep in substance, just slightly more than the brief's literal instruction. Noting
+it, not blocking on it.
+
+**The meta-question — is the structural property actually asserted, or just inexpressible by omission.**
+Investigated directly rather than taking the "1211, up from 1210" count at face value. Two things are true
+at once:
+- **Type-level, it is asserted, strongly.** `CardStore.CreateCard` no longer has a `filePath` parameter,
+  and every one of the nine `ParsedCommand.*Create`/`RuleAuthor`/`RuleProposeCompact` records had its own
+  `FilePath` field removed (confirmed in the diff). There is no longer a code path through which a caller's
+  text can reach a card's basename — the compiler enforces this, not a runtime check.
+- **Behaviourally, the caller-facing case is real but genuinely untested.** I fed the shipped binary the
+  old positional-path invocation directly: `rule create some-old-path.md --title X --role architect
+  --scope repository` → refused `"missing-argument", "'rule create' requires '--title <text>'"` — **not**
+  `unrecognised-argument`. Traced why: `ConsumeKnownFlags` peeks the next token and `break`s on the first
+  one that isn't a recognised flag; since the stray path is the very first token, the loop never advances
+  to see `--title` and the rest, so every flag reads as unset and the *first* missing-argument check fires
+  before the pre-existing, general `EnforceNoUnconsumedArguments` funnel (`ArgumentCursor.cs`) ever gets a
+  turn. **The safety property still holds** — no card is ever written, and no caller-influenced name is
+  ever honoured, whatever the message — but no test in this diff asserts this specific caller-facing
+  behaviour for any of the nine doors, and the diagnostic a caller adapting an old script would see is
+  misleading (it reads as "you forgot a flag," not "this argument no longer exists"). This is exactly the
+  "nobody wrote it down" half of the question, not the "became inexpressible" half — the property is true,
+  and I verified it true myself, but it is not written down anywhere in this diff.
+
+**This obliges a follow-up, not a re-open of this block:** add at least one regression test (any of the
+nine doors) proving the old positional-path invocation is refused before any card is written, and consider
+whether the refusal should read `unrecognised-argument` rather than a possibly-misleading
+`missing-argument` when the true cause is a stray leading token — a design call for whoever picks it up,
+not one I'm making here. Not a blocker: I directly verified the safety guarantee holds against the real
+binary — no card is ever created under a caller-chosen name via any route I could find, including this one.
+
+**Nits — do not block this Approve; informational only:**
+
+- Item 8's added sentence (see above) — no action obliged, recorded for the reason already given.
+
+→ @architect
+
+**[worker]** **`14.5` reviewer nit addressed — the regression test and the diagnostic, both.**
+
+**1. The regression test — watched red, per §13 ruling 5.** New file
+`CommandDispatcherLegacyPositionalArgumentTests.cs`, a `[Theory]` over three verbs chosen to cover
+the three distinct parser shapes 14.5 touched (`rule create`'s standalone hand-rolled parse function,
+the shared `ParseCardCreate` helper via `section create`, and `block create`'s extra required
+repeatable `--task` flag beyond the shared shape) — not exhaustive over all nine, proportionate to
+what changed. Each case feeds the exact historical positional invocation and asserts the card-model
+scenario text directly: no `.md` file exists anywhere in the repository afterward. **Ran it, watched
+it fail, before trusting it**: exported `HEAD` via `git archive` into a scratch directory again,
+overlaid this block's current `src`/`tests`, then mechanically stripped just the seven
+`RefuseLeadingPositionalArgument` call sites (leaving everything else — the nine-door fix, the
+ordering, `FileNameFor` — untouched) to reproduce the pre-remediation shape. All three theory cases
+failed exactly as the reviewer found: `"unexpected-positional-argument"` expected,
+`"missing-argument"` actual. Reverted; real tree untouched; scratch deleted.
+
+**2. The diagnostic — judged, not defaulted.** Ran the shipped binary by hand first (`rule create
+some/where/r-0001.md --title ... --role ... --scope ...`, in a throwaway repo) to confirm the
+reviewer's finding directly: `missing-argument: 'rule create' requires '--title <text>'` — misleading,
+since `--title` genuinely was supplied; a stray leading token stops `ConsumeKnownFlags` before it ever
+reaches the flags behind it. **The shape is cleanly distinguishable**: a leading token that does not
+begin with `--`, before any flag has been consumed, is — for every one of these verbs — always
+exactly "the old positional path", since none of them takes a bare positional any more. Added
+`CommandParser.RefuseLeadingPositionalArgument`, called first (before `ConsumeKnownFlags`) in all
+seven of the affected parse sites (`rule create`, `hazard create`, `obligation create`, `block
+create`, `question create`, `rule author`, and the shared `ParseCardCreate` helper covering `section
+create`/`decision create`). New code `unexpected-positional-argument`, message names the remedy that
+actually applies (§9 ruling 3): remove the token, read `filePath` from the response.
+
+**Judged the eighth door and left it alone.** `rule propose-compact` never had a positional path — its
+pre-14.5 shape was `--proposal-file <path>`, a flag. Ran it by hand too: removing that flag already
+produces a clean `unrecognised-argument: 'unrecognised: '--proposal-file'.'` through the existing
+`EnforceNoUnconsumedArguments` funnel, because every *required* flag (`--absorbs`, `--role`) gets
+consumed before the stray `--proposal-file` is ever reached — no flags are stranded behind it the way
+a leading positional strands everything. Nothing to contort; confirmed by the fourth test in the new
+file, `RuleProposeCompact_LegacyProposalFileFlag_Refuses_WithTheExistingUnrecognisedArgumentCode`
+(unaffected by the scratch-copy revert above, since it exercises a code path this remediation never
+touched).
+
+Gates on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1215/1215 — four new: the three-case theory
+plus the propose-compact confirmation), `FORMAT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** **Re-audit of the `14.5` delta** — the nit from my last Approve, addressed. Read the
+worker's post in full before the diff (`git diff 9e5ad77`; only `CommandParser.cs` grew beyond what I
+already cleared, plus the one new test file — `CardStore.cs`, `CardLayout.cs`, `CommandDispatcher.cs`,
+`CardCreateOutcome.cs` and every other test file are byte-identical to what I approved).
+
+Ran `make gates` on the real tree: `BUILD_EXIT:0`, `TEST_EXIT:0` (1215/1215), `FORMAT_EXIT:0`,
+`VALIDATE_EXIT:0`, `GATES_EXIT:0` — confirmed, quoting the exit lines.
+
+**Verdict: Approve. Nothing further obliged.**
+
+**1 — does the new test assert the property, or an instance of it? Checked the partition, not the
+three (ran).** Grepped every `RefuseLeadingPositionalArgument(` call site myself: six direct
+(`rule create`, `hazard create`, `obligation create`, `block create`, `question create`, `rule
+author`) plus the shared `ParseCardCreate` helper, which `ParseSectionCreate` and `ParseDecisionCreate`
+both call — eight doors reached, all of it literal source, not the worker's own count taken on trust.
+Read all eight call sites: every one of them calls the *identical* function as the *first* statement
+in its parse function, and `RefuseLeadingPositionalArgument` itself only ever `Peek()`s, never
+`TryTake()`s, on the path that returns `null` — so there is no way for the check's presence to alter
+downstream flag parsing when it doesn't fire, and no way for the eight call sites to diverge in
+behaviour from one another. That means the three "distinct parser shapes" the worker names
+(`rule create`'s standalone shape, the shared `ParseCardCreate` helper, `block create`'s extra
+`--task` flag) do not actually correspond to three different *risk profiles* for this specific
+property — the mechanism is call-site-invariant by construction, which is exactly what the test
+file's own doc comment says outright ("the mechanism is identical for the rest"), a more precise
+framing than the DEVLOG summary's "chosen to cover three distinct parser shapes." **So: three does not
+partition nine in any way that matters for correctness of this specific guard** — but that is because
+the guard needs no partition, not because the sample is unsound. I did not stop at reading the code:
+I built the real binary and ran the five *untested* doors live against a throwaway repo — `hazard
+create`, `obligation create`, `question create`, `rule author`, `decision create` — each fed the exact
+legacy-positional shape. All five refused `unexpected-positional-argument` with the correct message,
+naming the removed token; no `.md` file was ever written in any of the five. The property holds for
+every door, verified directly, not inferred from the sample.
+
+**2 — the coverage gate's opinion (ran, read the mechanism).** `RefusalCoverageGateTests.cs`'s
+bijection reflects `ICardRefusalReason` implementors in the product assembly and pairs each with the
+test proving it fires *and records against a card*. `CommandOutcome.Refusal` (`CommandOutcome.cs:36`)
+is a plain four-field record that does not implement `ICardRefusalReason` — confirmed by reading both
+types, not by assertion — and `unexpected-positional-argument` is constructed directly as a
+`new CommandOutcome.Refusal(...)` inside `RefuseLeadingPositionalArgument`, before any identity is
+allocated and with no card in existence to record against. **The gate has nothing to say here — said
+plainly, not implied.** This is §9's own documented limit (CLI-layer refusals sit outside its domain),
+not a gap this block opened. Grepped for any other coverage-style mechanism over generic CLI refusal
+codes: none exists. Nothing in the gate's `Exclusions` list or any sibling arm needed to move, and none
+did — confirmed by diff (`RefusalCoverageGateTests.cs` does not appear in `git diff 9e5ad77`'s file
+list at all).
+
+**3 — the remedy (ran, read the actual text and its factual claims).** The message a caller sees:
+`"'block create' does not take a card file path argument any more (14.5) — the file is named for the
+identity the system mints when it creates the card. Remove 'legacy-path.md' and read the created
+card's location from the response's 'filePath' field instead."` (verbatim from a live run). It names no
+command at all — no verb to be wrong about — only an instruction to drop the stray argument and a
+factual claim about the response shape. Checked that claim: `CardCreateResult.FilePath` and the two
+inline-`.Match` results' own `FilePath`/`ProposalFilePath` fields genuinely exist and are genuinely
+populated from `created.FilePath` (confirmed on the prior round, unchanged since). §9 ruling 3's two
+directions — a refusal naming a concept instead of a concrete action, and a refusal naming a verb that
+doesn't exist — are both satisfied: the instruction is concrete ("remove this token, read this field"),
+and nothing named is fictional. The two-argument `CommandOutcome.Refusal(code, message)` shape (no
+`Rule`/`Remedy` parameters) matches the existing convention for parse-time refusals — grepped
+`"missing-argument"` refusals elsewhere in `CommandParser.cs`: same two-argument shape, remedy folded
+into the message text rather than a separate field. No deviation.
+
+**4 — the watched-red claim (ran, independently, not accepted on trust).** Copied the working tree to
+a scratch directory and neutralised `RefuseLeadingPositionalArgument` to an unconditional `return null`
+(functionally identical to the worker's own "strip the seven call sites" approach, since the function
+has no other callers) — a single-point patch rather than eight, but it removes the exact same guard.
+Rebuilt, ran `CommandDispatcherLegacyPositionalArgumentTests`: the three-case theory failed on all
+three cases, each with `Expected: "unexpected-positional-argument" / Actual: "missing-argument"` — the
+worker's exact finding, reproduced. The fourth test
+(`RuleProposeCompact_LegacyProposalFileFlag_Refuses_WithTheExistingUnrecognisedArgumentCode`) passed
+unaffected, correctly, since it exercises a code path this remediation never touched. Reverted; real
+tree untouched throughout.
+
+**The ninth door, accounted for.** Six direct call sites + the shared `ParseCardCreate` helper
+(covering two more: `section create`, `decision create`) = eight doors carrying the new guard. `rule
+propose-compact` is the ninth, deliberately left alone — verified by hand (grepped `ConsumeKnownFlags`'s
+dictionary: `--proposal-file` is gone, and every required flag `rule propose-compact` still has
+(`--absorbs`, `--role`) is consumed before a stray `--proposal-file` would ever be reached, so nothing
+strands behind it the way a leading positional strands everything for the other eight) and by the
+worker's own fourth test, which I re-ran clean above. 8 + 1 = 9. Judgement on leaving it alone: sound —
+a flag-shaped stray argument and a positional-shaped one fail through genuinely different mechanisms
+(the funnel's own `EnforceNoUnconsumedArguments` catches the former cleanly because nothing else is
+stranded; only the latter needed a bespoke guard), and building one more special case to shave a
+slightly better message off an already-clean `unrecognised-argument: '--proposal-file'` would be the
+parser contortion the brief warned against, for no real gain.
+
+**Nits: none. Nothing further obliged on this block.**
+
+→ @architect
+
 ## NEXT
 
 **§13 is closed — supervisor `Approve` on `f100b77..HEAD`, one remediation round.** **§14 is open and is

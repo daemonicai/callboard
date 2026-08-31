@@ -26,18 +26,19 @@ public sealed class CommandDispatcherChangeArchiveTests
 
         var sectionOutput = new StringWriter();
         RunInRepo(
-            ["section", "create", Path.Combine(repo.CardsDirectory, "s-0001.md"), "--title", "7. Register", "--role", "architect", "--change", ChangeName],
+            ["section", "create", "--title", "7. Register", "--role", "architect", "--change", ChangeName],
             sectionOutput, repo.Path, "Body.");
         var sectionId = ExtractResultId(sectionOutput);
 
         var obligationOutput = new StringWriter();
         RunInRepo(
             [
-                "obligation", "create", Path.Combine(repo.CardsDirectory, "o-0001.md"), "--title", "Settle the migration",
+                "obligation", "create", "--title", "Settle the migration",
                 "--role", "architect", "--change", ChangeName, "--section", sectionId,
             ],
             obligationOutput, repo.Path, "Body.");
         var obligationId = ExtractResultId(obligationOutput);
+        var obligationFileName = Path.GetFileName(ExtractResultFilePath(obligationOutput));
 
         var archiveOutput = new StringWriter();
         var exitCode = RunInRepo(["change", "archive", ChangeName, "--role", "architect"], archiveOutput, repo.Path, string.Empty);
@@ -51,7 +52,7 @@ public sealed class CommandDispatcherChangeArchiveTests
         Assert.False(Directory.Exists(repo.CardsDirectory));
 
         var archivedDirectory = result.GetProperty("archivedDirectory").GetString()!;
-        var obligationPath = Path.Combine(archivedDirectory, "o-0001.md");
+        var obligationPath = Path.Combine(archivedDirectory, obligationFileName);
         var onDisk = AssertParseSuccess(CardStore.ReadCard(obligationPath));
         Assert.Equal(obligationId, onDisk.Frontmatter.Id);
         Assert.Equal("open", onDisk.Frontmatter.Status);
@@ -71,20 +72,21 @@ public sealed class CommandDispatcherChangeArchiveTests
 
         var sectionOutput = new StringWriter();
         RunInRepo(
-            ["section", "create", Path.Combine(repo.CardsDirectory, "s-0002.md"), "--title", "7. Register", "--role", "architect", "--change", ChangeName],
+            ["section", "create", "--title", "7. Register", "--role", "architect", "--change", ChangeName],
             sectionOutput, repo.Path, "Body.");
         var sectionId = ExtractResultId(sectionOutput);
+        var sectionPath = ExtractResultFilePath(sectionOutput);
 
         var closeOutput = new StringWriter();
         var closeExitCode = RunInRepo(
-            ["section", "close", Path.Combine(repo.CardsDirectory, "s-0002.md"), "--role", "architect", "--change", ChangeName],
+            ["section", "close", sectionPath, "--role", "architect", "--change", ChangeName],
             closeOutput, repo.Path, string.Empty);
         Assert.True(closeExitCode == CommandDispatcher.SuccessExitCode, $"expected section close to succeed: {closeOutput}");
 
         var obligationOutput = new StringWriter();
         RunInRepo(
             [
-                "obligation", "create", Path.Combine(repo.CardsDirectory, "o-0002.md"), "--title", "Settle the migration",
+                "obligation", "create", "--title", "Settle the migration",
                 "--role", "architect", "--change", ChangeName, "--section", sectionId,
             ],
             obligationOutput, repo.Path, "Body.");
@@ -134,7 +136,7 @@ public sealed class CommandDispatcherChangeArchiveTests
     {
         using var repo = new TempGitRepo();
         RunInRepo(
-            ["section", "create", Path.Combine(repo.CardsDirectory, "s-0002.md"), "--title", "7. Register", "--role", "architect", "--change", ChangeName],
+            ["section", "create", "--title", "7. Register", "--role", "architect", "--change", ChangeName],
             new StringWriter(), repo.Path, "Body.");
 
         var first = new StringWriter();
@@ -189,8 +191,8 @@ public sealed class CommandDispatcherChangeArchiveTests
     public void ChangeArchive_WithCompactFamilyAndAbsorbs_CompactsFirst_ThenArchives()
     {
         using var repo = new TempGitRepo();
-        var familyId = CreateChangeScopedRule(repo, "r-0001", "The family statement");
-        var memberId = CreateChangeScopedRule(repo, "r-0002", "A member rule");
+        var familyId = CreateChangeScopedRule(repo, "The family statement");
+        var memberId = CreateChangeScopedRule(repo, "A member rule");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -246,8 +248,8 @@ public sealed class CommandDispatcherChangeArchiveTests
     public void ChangeArchive_CompactionRequestedByNonArchitect_WithResolvableIds_Refuses_WithRoleNotPermitted_WithoutArchivingOrCompacting()
     {
         using var repo = new TempGitRepo();
-        var familyId = CreateChangeScopedRule(repo, "r-0003", "Family");
-        var memberId = CreateChangeScopedRule(repo, "r-0004", "Member");
+        var familyId = CreateChangeScopedRule(repo, "Family");
+        var (memberId, memberPath) = CreateChangeScopedRuleWithPath(repo, "Member");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -260,7 +262,6 @@ public sealed class CommandDispatcherChangeArchiveTests
         Assert.Equal("role-not-permitted", refusal.GetProperty("code").GetString());
         Assert.True(Directory.Exists(repo.CardsDirectory), "a refused compaction request must leave the change entirely unarchived.");
 
-        var memberPath = Path.Combine(repo.CardsDirectory, "r-0004.md");
         var memberOnDisk = AssertParseSuccess(CardStore.ReadCard(memberPath));
         Assert.Equal("open", memberOnDisk.Frontmatter.Status);
     }
@@ -277,7 +278,7 @@ public sealed class CommandDispatcherChangeArchiveTests
     public void ChangeArchive_CompactionRequestedByNonArchitect_WithAnUnresolvableAbsorbedId_Refuses_WithCardIdNotFound_NotRoleNotPermitted()
     {
         using var repo = new TempGitRepo();
-        var familyId = CreateChangeScopedRule(repo, "r-0006", "Family");
+        var familyId = CreateChangeScopedRule(repo, "Family");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -314,7 +315,7 @@ public sealed class CommandDispatcherChangeArchiveTests
     public void ChangeArchive_CompactionAbsorbsNamesAnIdThatDoesNotExist_Refuses_WithoutArchiving()
     {
         using var repo = new TempGitRepo();
-        var familyId = CreateChangeScopedRule(repo, "r-0005", "Family");
+        var familyId = CreateChangeScopedRule(repo, "Family");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -328,15 +329,17 @@ public sealed class CommandDispatcherChangeArchiveTests
         Assert.True(Directory.Exists(repo.CardsDirectory));
     }
 
-    private static string CreateChangeScopedRule(TempGitRepo repo, string fileStem, string title)
+    private static string CreateChangeScopedRule(TempGitRepo repo, string title) =>
+        CreateChangeScopedRuleWithPath(repo, title).Id;
+
+    private static (string Id, string FilePath) CreateChangeScopedRuleWithPath(TempGitRepo repo, string title)
     {
-        var path = Path.Combine(repo.CardsDirectory, fileStem + ".md");
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "create", path, "--title", title, "--role", "architect", "--scope", "change", "--change", ChangeName],
+            ["rule", "create", "--title", title, "--role", "architect", "--scope", "change", "--change", ChangeName],
             output, repo.Path, "Body.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
-        return ExtractResultId(output);
+        return (ExtractResultId(output), ExtractResultFilePath(output));
     }
 
     private static CardFile AssertParseSuccess(CardFileParseResult result) =>
@@ -348,6 +351,12 @@ public sealed class CommandDispatcherChangeArchiveTests
     {
         using var doc = JsonDocument.Parse(output.ToString());
         return doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
+    }
+
+    private static string ExtractResultFilePath(StringWriter output)
+    {
+        using var doc = JsonDocument.Parse(output.ToString());
+        return doc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

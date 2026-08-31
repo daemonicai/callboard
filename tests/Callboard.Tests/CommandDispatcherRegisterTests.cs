@@ -12,6 +12,14 @@ namespace Callboard.Tests;
 /// <see cref="HazardCreate_MissingCondition_Refuses_AndStatesTheConditionRequired"/>: register's
 /// "the system refuses and states the condition it requires" scenario, checked against the actual
 /// message text.
+///
+/// <para>
+/// 14.5: none of the six creation verbs exercised here (<c>rule</c>, <c>hazard</c>,
+/// <c>obligation</c>, <c>decision</c>, <c>section</c> create) take a positional card file path any
+/// more — the file is named for the identity the system mints, and every test below learns the
+/// path from the response's <c>filePath</c> field rather than supplying one. A discharge or
+/// supersede call still addresses an existing card by path, unchanged.
+/// </para>
 /// </summary>
 public sealed class CommandDispatcherRegisterTests
 {
@@ -22,11 +30,10 @@ public sealed class CommandDispatcherRegisterTests
     public void RuleCreate_ChangeScoped_Succeeds()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.CardsDirectory, "r-0001.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["rule", "create", path, "--title", "Never trust a path string", "--role", "architect", "--scope", "change", "--change", ChangeName],
+            ["rule", "create", "--title", "Never trust a path string", "--role", "architect", "--scope", "change", "--change", ChangeName],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -36,18 +43,19 @@ public sealed class CommandDispatcherRegisterTests
         Assert.Equal("rule", result.GetProperty("kind").GetString());
         Assert.Equal("change", result.GetProperty("scope").GetString());
         Assert.Equal("open", result.GetProperty("status").GetString());
-        Assert.True(File.Exists(path));
+        var filePath = result.GetProperty("filePath").GetString()!;
+        Assert.Equal(Path.Combine(repo.CardsDirectory, "R-0001.md"), filePath);
+        Assert.True(File.Exists(filePath));
     }
 
     [Fact]
     public void RuleCreate_SectionScoped_Refuses_WithTheSpecsExactWording()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.CardsDirectory, "r-0002.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["rule", "create", path, "--title", "Bad", "--role", "architect", "--scope", "section", "--change", ChangeName],
+            ["rule", "create", "--title", "Bad", "--role", "architect", "--scope", "section", "--change", ChangeName],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -55,19 +63,18 @@ public sealed class CommandDispatcherRegisterTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("scope-refused", refusal.GetProperty("code").GetString());
         Assert.Contains("a rule applying to one section is a constraint in a brief", refusal.GetProperty("message").GetString());
-        Assert.False(File.Exists(path));
+        Assert.False(Directory.Exists(repo.CardsDirectory) && Directory.EnumerateFiles(repo.CardsDirectory, "*.md").Any());
     }
 
     [Fact]
     public void HazardCreate_WithConditionAndCadence_Succeeds()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "h-0001.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "hazard", "create", path, "--title", "Rotating key", "--role", "worker",
+                "hazard", "create", "--title", "Rotating key", "--role", "worker",
                 "--condition", "The staging key changes every 90 days", "--cadence", "monthly",
             ],
             output, repo.Path, "Body.");
@@ -79,6 +86,7 @@ public sealed class CommandDispatcherRegisterTests
         Assert.Equal("repository", result.GetProperty("scope").GetString());
         Assert.Equal("The staging key changes every 90 days", result.GetProperty("condition").GetString());
         Assert.Equal("monthly", result.GetProperty("cadence").GetString());
+        Assert.Equal(Path.Combine(repo.RegisterDirectory, "H-0001.md"), result.GetProperty("filePath").GetString());
     }
 
     // The load-bearing refusal (register: "the system refuses and states the condition it
@@ -88,11 +96,10 @@ public sealed class CommandDispatcherRegisterTests
     public void HazardCreate_MissingCondition_Refuses_AndStatesTheConditionRequired()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "h-0002.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["hazard", "create", path, "--title", "Rotating key", "--role", "worker", "--cadence", "monthly"],
+            ["hazard", "create", "--title", "Rotating key", "--role", "worker", "--cadence", "monthly"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -100,7 +107,7 @@ public sealed class CommandDispatcherRegisterTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("hazard-missing-condition", refusal.GetProperty("code").GetString());
         Assert.Contains("condition", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
-        Assert.False(File.Exists(path));
+        Assert.False(Directory.Exists(repo.RegisterDirectory) && Directory.EnumerateFiles(repo.RegisterDirectory, "*.md").Any());
     }
 
     // Reviewer finding, block A review round 1: a missing --cadence must mint its own code
@@ -111,11 +118,10 @@ public sealed class CommandDispatcherRegisterTests
     public void HazardCreate_MissingCadence_Refuses_WithItsOwnDistinctCode()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "h-0003.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["hazard", "create", path, "--title", "Rotating key", "--role", "worker", "--condition", "The key rotates"],
+            ["hazard", "create", "--title", "Rotating key", "--role", "worker", "--condition", "The key rotates"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -129,19 +135,17 @@ public sealed class CommandDispatcherRegisterTests
     public void ObligationCreate_Succeeds()
     {
         using var repo = new TempGitRepo();
-        var sectionPath = Path.Combine(repo.CardsDirectory, "s-0001.md");
         var sectionOutput = new StringWriter();
         RunInRepo(
-            ["section", "create", sectionPath, "--title", "7. Register", "--role", "architect", "--change", ChangeName],
+            ["section", "create", "--title", "7. Register", "--role", "architect", "--change", ChangeName],
             sectionOutput, repo.Path, "Body.");
         using var sectionDoc = JsonDocument.Parse(sectionOutput.ToString());
         var sectionId = sectionDoc.RootElement.GetProperty("result").GetProperty("id").GetString();
 
-        var path = Path.Combine(repo.CardsDirectory, "o-0001.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["obligation", "create", path, "--title", "Settle the migration", "--role", "architect", "--change", ChangeName, "--section", sectionId!],
+            ["obligation", "create", "--title", "Settle the migration", "--role", "architect", "--change", ChangeName, "--section", sectionId!],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -155,11 +159,10 @@ public sealed class CommandDispatcherRegisterTests
     public void ObligationCreate_MissingOwedBy_Refuses_WithItsOwnDistinctCode()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.CardsDirectory, "o-0002.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["obligation", "create", path, "--title", "Settle the migration", "--role", "architect", "--change", ChangeName],
+            ["obligation", "create", "--title", "Settle the migration", "--role", "architect", "--change", ChangeName],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -167,19 +170,18 @@ public sealed class CommandDispatcherRegisterTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("obligation-missing-section", refusal.GetProperty("code").GetString());
         Assert.Contains("--section", refusal.GetProperty("message").GetString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-        Assert.False(File.Exists(path));
+        Assert.False(Directory.Exists(repo.CardsDirectory) && Directory.EnumerateFiles(repo.CardsDirectory, "*.md").Any());
     }
 
     [Fact]
     public void ObligationCreate_OwedByDoesNotResolve_Refuses()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.CardsDirectory, "o-0003.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "obligation", "create", path, "--title", "Settle the migration", "--role", "architect",
+                "obligation", "create", "--title", "Settle the migration", "--role", "architect",
                 "--change", ChangeName, "--section", "S-9999",
             ],
             output, repo.Path, "Body.");
@@ -187,27 +189,25 @@ public sealed class CommandDispatcherRegisterTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("card-id-not-found", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
-        Assert.False(File.Exists(path));
+        Assert.False(Directory.Exists(repo.CardsDirectory) && Directory.EnumerateFiles(repo.CardsDirectory, "*.md").Any());
     }
 
     [Fact]
     public void ObligationCreate_OwedByNamesANonSectionCard_Refuses()
     {
         using var repo = new TempGitRepo();
-        var decisionPath = Path.Combine(repo.DecisionsDirectory, "d-0009.md");
         var decisionOutput = new StringWriter();
         RunInRepo(
-            ["decision", "create", decisionPath, "--title", "Adopt option A", "--role", "product-owner"],
+            ["decision", "create", "--title", "Adopt option A", "--role", "product-owner"],
             decisionOutput, repo.Path, "Body.");
         using var decisionDoc = JsonDocument.Parse(decisionOutput.ToString());
         var decisionId = decisionDoc.RootElement.GetProperty("result").GetProperty("id").GetString();
 
-        var path = Path.Combine(repo.CardsDirectory, "o-0004.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
             [
-                "obligation", "create", path, "--title", "Settle the migration", "--role", "architect",
+                "obligation", "create", "--title", "Settle the migration", "--role", "architect",
                 "--change", ChangeName, "--section", decisionId!,
             ],
             output, repo.Path, "Body.");
@@ -215,18 +215,17 @@ public sealed class CommandDispatcherRegisterTests
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         Assert.Equal("wrong-card-kind", doc.RootElement.GetProperty("refusal").GetProperty("code").GetString());
-        Assert.False(File.Exists(path));
+        Assert.False(Directory.Exists(repo.CardsDirectory) && Directory.EnumerateFiles(repo.CardsDirectory, "*.md").Any(p => p.Contains("O-", StringComparison.Ordinal)));
     }
 
     [Fact]
     public void DecisionCreate_Succeeds_AndDoesNotAcceptAChangeFlag()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.DecisionsDirectory, "d-0001.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["decision", "create", path, "--title", "Adopt option A", "--role", "product-owner"],
+            ["decision", "create", "--title", "Adopt option A", "--role", "product-owner"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -239,11 +238,10 @@ public sealed class CommandDispatcherRegisterTests
     public void SectionCreate_Succeeds()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.CardsDirectory, "s-0001.md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["section", "create", path, "--title", "9. Review", "--role", "architect", "--change", ChangeName],
+            ["section", "create", "--title", "9. Review", "--role", "architect", "--change", ChangeName],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -273,23 +271,26 @@ public sealed class CommandDispatcherRegisterTests
     // obligation needs `--change` plus a real section id to resolve `--section` against; decision
     // needs neither; section needs `--change`) — that is business logic, not a reflectable shape —
     // so the data lives in one `MemberData` list instead: a sixth or seventh creation verb extends
-    // that list, not a sixth or seventh copy of this method.
+    // that list, not a sixth or seventh copy of this method. 14.5: none of these argv builders name
+    // a file any more — the card's own response `filePath` is what the cross-check reads back.
     [Theory]
     [MemberData(nameof(CreationVerbCrossCheckCases))]
     public void CreationVerb_ResponseActingRole_MatchesOwnerReadBackFromDisk(
-        string kindLabel, Func<TempGitRepo, (string[] Args, string FilePath)> buildRequest)
+        string kindLabel, Func<TempGitRepo, string[]> buildRequest)
     {
         using var repo = new TempGitRepo();
-        var (args, filePath) = buildRequest(repo);
+        var args = buildRequest(repo);
 
         var output = new StringWriter();
         var exitCode = RunInRepo(args, output, repo.Path, "Body.");
 
         Assert.True(exitCode == CommandDispatcher.SuccessExitCode, $"expected '{kindLabel} create' to succeed; got exit code {exitCode}: {output}");
         using var doc = JsonDocument.Parse(output.ToString());
-        var reportedActingRole = doc.RootElement.GetProperty("result").GetProperty("actingRole").GetString();
+        var result = doc.RootElement.GetProperty("result");
+        var reportedActingRole = result.GetProperty("actingRole").GetString();
         Assert.True("worker" == reportedActingRole, $"'{kindLabel} create' response actingRole was '{reportedActingRole}', expected 'worker'.");
 
+        var filePath = result.GetProperty("filePath").GetString()!;
         var onDisk = AssertParseSuccess(CardStore.ReadCard(filePath));
         Assert.True(
             reportedActingRole == onDisk.Frontmatter.Owner.ToWireString(),
@@ -303,63 +304,48 @@ public sealed class CommandDispatcherRegisterTests
         yield return new object[]
         {
             "rule",
-            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
-            {
-                var path = Path.Combine(repo.RegisterDirectory, "r-cross-check.md");
-                return (new[] { "rule", "create", path, "--title", "Cross-check", "--role", "worker", "--scope", "repository" }, path);
-            }),
+            (Func<TempGitRepo, string[]>)(_ =>
+                ["rule", "create", "--title", "Cross-check", "--role", "worker", "--scope", "repository"]),
         };
         yield return new object[]
         {
             "hazard",
-            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
-            {
-                var path = Path.Combine(repo.RegisterDirectory, "h-cross-check.md");
-                return (new[]
-                {
-                    "hazard", "create", path, "--title", "Cross-check", "--role", "worker",
+            (Func<TempGitRepo, string[]>)(_ =>
+                [
+                    "hazard", "create", "--title", "Cross-check", "--role", "worker",
                     "--condition", "The staging key never rotates", "--cadence", "weekly",
-                }, path);
-            }),
+                ]),
         };
         yield return new object[]
         {
             "obligation",
-            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
+            (Func<TempGitRepo, string[]>)(repo =>
             {
-                var sectionPath = Path.Combine(repo.CardsDirectory, "s-cross-check-obligation.md");
                 var sectionOutput = new StringWriter();
                 RunInRepo(
-                    ["section", "create", sectionPath, "--title", "Cross-check section", "--role", "worker", "--change", ChangeName],
+                    ["section", "create", "--title", "Cross-check section", "--role", "worker", "--change", ChangeName],
                     sectionOutput, repo.Path, "Body.");
                 using var sectionDoc = JsonDocument.Parse(sectionOutput.ToString());
                 var sectionId = sectionDoc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
 
-                var path = Path.Combine(repo.CardsDirectory, "o-cross-check.md");
-                return (new[]
-                {
-                    "obligation", "create", path, "--title", "Cross-check", "--role", "worker",
+                return
+                [
+                    "obligation", "create", "--title", "Cross-check", "--role", "worker",
                     "--change", ChangeName, "--section", sectionId,
-                }, path);
+                ];
             }),
         };
         yield return new object[]
         {
             "decision",
-            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
-            {
-                var path = Path.Combine(repo.DecisionsDirectory, "d-cross-check.md");
-                return (new[] { "decision", "create", path, "--title", "Cross-check", "--role", "worker" }, path);
-            }),
+            (Func<TempGitRepo, string[]>)(_ =>
+                ["decision", "create", "--title", "Cross-check", "--role", "worker"]),
         };
         yield return new object[]
         {
             "section",
-            (Func<TempGitRepo, (string[] Args, string FilePath)>)(repo =>
-            {
-                var path = Path.Combine(repo.CardsDirectory, "s-cross-check.md");
-                return (new[] { "section", "create", path, "--title", "Cross-check", "--role", "worker", "--change", ChangeName }, path);
-            }),
+            (Func<TempGitRepo, string[]>)(_ =>
+                ["section", "create", "--title", "Cross-check", "--role", "worker", "--change", ChangeName]),
         };
     }
 
@@ -367,11 +353,7 @@ public sealed class CommandDispatcherRegisterTests
     public void RuleDischarge_OnAnOpenRule_Succeeds()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "r-0003.md");
-        var createOutput = new StringWriter();
-        RunInRepo(
-            ["rule", "create", path, "--title", "A repository rule", "--role", "architect", "--scope", "repository"],
-            createOutput, repo.Path, "Body.");
+        var path = CreateRule(repo, "A repository rule", "architect", "repository");
 
         var output = new StringWriter();
         var exitCode = CommandDispatcher.Run(
@@ -392,13 +374,16 @@ public sealed class CommandDispatcherRegisterTests
     // tool-failure envelope — this is the CLI-level proof for the "register" command family,
     // exercised through `rule discharge`. Status "briefed" is not a legal register lifecycle
     // state, so the §12 block A parse door refuses the card at read time, and that refusal must
-    // reach the caller as `card-corrupt` with the field/value/kind/recognised-values intact.
+    // reach the caller as `card-corrupt` with the field/value/kind/recognised-values intact. This
+    // card is hand-authored directly to disk (not via `rule create`) precisely because it needs a
+    // status the tool itself would never write — exactly the kind of file 14.5 leaves reachable by
+    // a human hand even though the tool can no longer produce it.
     [Fact]
     public void RuleDischarge_CorruptCard_ExitsAsRefusal_WithReasonIntact()
     {
         using var repo = new TempGitRepo();
         Directory.CreateDirectory(repo.RegisterDirectory);
-        var path = Path.Combine(repo.RegisterDirectory, "r-9001.md");
+        var path = Path.Combine(repo.RegisterDirectory, "R-9001.md");
         var frontmatter = new CardFrontmatter(
             "R-9001", CardKind.Rule, "Title", "briefed", CardOwner.Architect, CardScope.Repository,
             string.Empty, FixedNow, FixedNow);
@@ -429,14 +414,15 @@ public sealed class CommandDispatcherRegisterTests
     public void HazardDischarge_WhoseConditionHasLapsed_Succeeds()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "h-0004.md");
         var createOutput = new StringWriter();
         RunInRepo(
             [
-                "hazard", "create", path, "--title", "Rotating key", "--role", "worker",
+                "hazard", "create", "--title", "Rotating key", "--role", "worker",
                 "--condition", "The staging key never rotates", "--cadence", "weekly",
             ],
             createOutput, repo.Path, "Body.");
+        using var createDoc = JsonDocument.Parse(createOutput.ToString());
+        var path = createDoc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
 
         var output = new StringWriter();
         var exitCode = CommandDispatcher.Run(
@@ -453,11 +439,7 @@ public sealed class CommandDispatcherRegisterTests
     public void Discharge_AlreadyDischarged_Refuses()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.DecisionsDirectory, "d-0002.md");
-        var createOutput = new StringWriter();
-        RunInRepo(
-            ["decision", "create", path, "--title", "Adopt option A", "--role", "product-owner"],
-            createOutput, repo.Path, "Body.");
+        var path = CreateDecisionPath(repo, "Adopt option A");
 
         var firstDischarge = new StringWriter();
         var firstExitCode = CommandDispatcher.Run(
@@ -479,11 +461,12 @@ public sealed class CommandDispatcherRegisterTests
     public void Discharge_TargetIsNotARegisterCard_Refuses()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.CardsDirectory, "s-0002.md");
         var createOutput = new StringWriter();
         RunInRepo(
-            ["section", "create", path, "--title", "10. Section", "--role", "architect", "--change", ChangeName],
+            ["section", "create", "--title", "10. Section", "--role", "architect", "--change", ChangeName],
             createOutput, repo.Path, "Body.");
+        using var createDoc = JsonDocument.Parse(createOutput.ToString());
+        var path = createDoc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
 
         var output = new StringWriter();
         var exitCode = CommandDispatcher.Run(
@@ -499,8 +482,8 @@ public sealed class CommandDispatcherRegisterTests
     public void DecisionSupersede_TwoOpenDecisions_Succeeds()
     {
         using var repo = new TempGitRepo();
-        var supersedingId = CreateDecision(repo, "d-0003", "Adopt option B");
-        var supersededId = CreateDecision(repo, "d-0004", "Adopt option A");
+        var supersedingId = CreateDecision(repo, "Adopt option B");
+        var supersededId = CreateDecision(repo, "Adopt option A");
 
         var output = new StringWriter();
         var exitCode = CommandDispatcher.Run(
@@ -519,7 +502,7 @@ public sealed class CommandDispatcherRegisterTests
     public void DecisionSupersede_SameIdOnBothSides_Refuses_WithoutHanging()
     {
         using var repo = new TempGitRepo();
-        var id = CreateDecision(repo, "d-0005", "Adopt option A");
+        var id = CreateDecision(repo, "Adopt option A");
 
         var output = new StringWriter();
         var exitCode = CommandDispatcher.Run(
@@ -535,9 +518,9 @@ public sealed class CommandDispatcherRegisterTests
     public void DecisionSupersede_SupersededAlreadyDischarged_Refuses()
     {
         using var repo = new TempGitRepo();
-        var first = CreateDecision(repo, "d-0006", "Adopt option A");
-        var second = CreateDecision(repo, "d-0007", "Adopt option B");
-        var third = CreateDecision(repo, "d-0008", "Adopt option C");
+        var first = CreateDecision(repo, "Adopt option A");
+        var second = CreateDecision(repo, "Adopt option B");
+        var third = CreateDecision(repo, "Adopt option C");
 
         var firstOutput = new StringWriter();
         CommandDispatcher.Run(
@@ -558,7 +541,7 @@ public sealed class CommandDispatcherRegisterTests
     public void DecisionSupersede_SupersedesIdDoesNotResolve_Refuses()
     {
         using var repo = new TempGitRepo();
-        var supersedingId = CreateDecision(repo, "d-0009", "Adopt option B");
+        var supersedingId = CreateDecision(repo, "Adopt option B");
 
         var output = new StringWriter();
         var exitCode = CommandDispatcher.Run(
@@ -574,12 +557,11 @@ public sealed class CommandDispatcherRegisterTests
     public void DecisionSupersede_SupersedesNamesANonDecisionCard_Refuses()
     {
         using var repo = new TempGitRepo();
-        var supersedingId = CreateDecision(repo, "d-0010", "Adopt option B");
+        var supersedingId = CreateDecision(repo, "Adopt option B");
 
-        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0010.md");
         var ruleOutput = new StringWriter();
         RunInRepo(
-            ["rule", "create", rulePath, "--title", "A repository rule", "--role", "architect", "--scope", "repository"],
+            ["rule", "create", "--title", "A repository rule", "--role", "architect", "--scope", "repository"],
             ruleOutput, repo.Path, "Body.");
         using var ruleDoc = JsonDocument.Parse(ruleOutput.ToString());
         var ruleId = ruleDoc.RootElement.GetProperty("result").GetProperty("id").GetString();
@@ -596,14 +578,14 @@ public sealed class CommandDispatcherRegisterTests
 
     // Retrieval by id after supersession, proven through the CLI boundary rather than the domain
     // layer alone: 'decision status' does not exist (11.1 is out of scope for this block), so this
-    // reads back the file CardStore.ReadCard sees, the same evidence the resolver itself uses.
+    // reads back the file CardStore.ReadCard sees, via the path the creating response itself
+    // reported, the same evidence the resolver itself uses.
     [Fact]
     public void DecisionSupersede_SupersededDecision_StillReadableFromDiskAfterwards()
     {
         using var repo = new TempGitRepo();
-        var supersedingId = CreateDecision(repo, "d-0011", "Adopt option B");
-        var supersededId = CreateDecision(repo, "d-0012", "Adopt option A");
-        var supersededPath = Path.Combine(repo.DecisionsDirectory, "d-0012.md");
+        var supersedingId = CreateDecision(repo, "Adopt option B");
+        var (supersededId, supersededPath) = CreateDecisionWithPath(repo, "Adopt option A");
 
         var output = new StringWriter();
         CommandDispatcher.Run(
@@ -616,14 +598,26 @@ public sealed class CommandDispatcherRegisterTests
         Assert.Equal(supersedingId, read.RegisterFields.SupersededBy);
     }
 
-    private static string CreateDecision(TempGitRepo repo, string fileStem, string title)
+    private static string CreateDecision(TempGitRepo repo, string title) => CreateDecisionWithPath(repo, title).Id;
+
+    private static (string Id, string Path) CreateDecisionWithPath(TempGitRepo repo, string title)
     {
-        var path = Path.Combine(repo.DecisionsDirectory, fileStem + ".md");
         var output = new StringWriter();
-        RunInRepo(["decision", "create", path, "--title", title, "--role", "product-owner"], output, repo.Path, "Body.");
+        RunInRepo(["decision", "create", "--title", title, "--role", "product-owner"], output, repo.Path, "Body.");
         using var doc = JsonDocument.Parse(output.ToString());
-        return doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
+        var result = doc.RootElement.GetProperty("result");
+        return (result.GetProperty("id").GetString()!, result.GetProperty("filePath").GetString()!);
     }
+
+    private static string CreateRule(TempGitRepo repo, string title, string role, string scope)
+    {
+        var output = new StringWriter();
+        RunInRepo(["rule", "create", "--title", title, "--role", role, "--scope", scope], output, repo.Path, "Body.");
+        using var doc = JsonDocument.Parse(output.ToString());
+        return doc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
+    }
+
+    private static string CreateDecisionPath(TempGitRepo repo, string title) => CreateDecisionWithPath(repo, title).Path;
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>
         CommandDispatcher.Run(

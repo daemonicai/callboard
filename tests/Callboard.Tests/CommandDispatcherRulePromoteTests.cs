@@ -20,10 +20,11 @@ public sealed class CommandDispatcherRulePromoteTests
     public void RulePromote_ChangeScopedRule_Succeeds_AndMovesTheFile()
     {
         using var repo = new TempGitRepo();
-        var oldPath = Path.Combine(repo.CardsDirectory, "r-0001.md");
+        var createOutput = new StringWriter();
         RunInRepo(
-            ["rule", "create", oldPath, "--title", "Never trust a path string", "--role", "architect", "--scope", "change", "--change", ChangeName],
-            new StringWriter(), repo.Path, "Body.");
+            ["rule", "create", "--title", "Never trust a path string", "--role", "architect", "--scope", "change", "--change", ChangeName],
+            createOutput, repo.Path, "Body.");
+        var oldPath = ExtractResultFilePath(createOutput);
 
         var output = new StringWriter();
         var exitCode = RunInRepo(["rule", "promote", "--id", "R-0001", "--role", "architect", "--change", ChangeName], output, repo.Path, string.Empty);
@@ -34,7 +35,7 @@ public sealed class CommandDispatcherRulePromoteTests
         Assert.Equal("R-0001", result.GetProperty("id").GetString());
         Assert.Equal(oldPath, result.GetProperty("oldFilePath").GetString());
         var newPath = result.GetProperty("newFilePath").GetString()!;
-        Assert.Equal(Path.Combine(repo.RegisterDirectory, "r-0001.md"), newPath);
+        Assert.Equal(Path.Combine(repo.RegisterDirectory, "R-0001.md"), newPath);
         Assert.Equal("repository", result.GetProperty("scope").GetString());
         Assert.Equal("architect", result.GetProperty("actingRole").GetString());
 
@@ -67,10 +68,11 @@ public sealed class CommandDispatcherRulePromoteTests
     public void RulePromote_AlreadyRepositoryScoped_Refuses()
     {
         using var repo = new TempGitRepo();
-        var path = Path.Combine(repo.RegisterDirectory, "r-0002.md");
+        var createOutput = new StringWriter();
         RunInRepo(
-            ["rule", "create", path, "--title", "Already there", "--role", "architect", "--scope", "repository"],
-            new StringWriter(), repo.Path, "Body.");
+            ["rule", "create", "--title", "Already there", "--role", "architect", "--scope", "repository"],
+            createOutput, repo.Path, "Body.");
+        var path = ExtractResultFilePath(createOutput);
 
         var output = new StringWriter();
         var exitCode = RunInRepo(["rule", "promote", "--id", "R-0001", "--role", "architect", "--change", ChangeName], output, repo.Path, string.Empty);
@@ -86,9 +88,8 @@ public sealed class CommandDispatcherRulePromoteTests
     public void RulePromote_IdNamesADecisionNotARule_Refuses_WithWrongCardKind()
     {
         using var repo = new TempGitRepo();
-        var decisionPath = Path.Combine(repo.DecisionsDirectory, "d-0001.md");
         RunInRepo(
-            ["decision", "create", decisionPath, "--title", "Adopt option B", "--role", "product-owner"],
+            ["decision", "create", "--title", "Adopt option B", "--role", "product-owner"],
             new StringWriter(), repo.Path, "Body.");
 
         var output = new StringWriter();
@@ -131,6 +132,12 @@ public sealed class CommandDispatcherRulePromoteTests
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
         Assert.Contains("--change", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+    }
+
+    private static string ExtractResultFilePath(StringWriter output)
+    {
+        using var doc = JsonDocument.Parse(output.ToString());
+        return doc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

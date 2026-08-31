@@ -189,11 +189,10 @@ public sealed class UnreadableCardReportingTests
         WriteRegisterCard(repo, "r-0004.md", "R-0004", CardKind.Rule, "open");
         WriteRegisterCard(repo, "r-0005.md", "R-0005", CardKind.Rule, "open");
         WriteBadStatusObligation(repo, "o-0005.md", "O-0005");
-        var proposalPath = Path.Combine(repo.RegisterDirectory, "q-proposal.md");
 
         var output = new StringWriter();
         var exitCode = CommandDispatcher.Run(
-            ["rule", "propose-compact", "--absorbs", "R-0004,R-0005", "--role", "worker", "--proposal-file", proposalPath],
+            ["rule", "propose-compact", "--absorbs", "R-0004,R-0005", "--role", "worker"],
             output, new StringReader("Generalised candidate text."), TextWriter.Null,
             isInputRedirected: true, workingDirectory: repo.Path, clock: static () => FixedNow);
 

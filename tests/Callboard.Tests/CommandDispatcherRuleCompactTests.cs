@@ -23,9 +23,9 @@ public sealed class CommandDispatcherRuleCompactTests
     public void RuleCompact_TwoOpenRules_Succeeds_AndRecordsAbsorbs()
     {
         using var repo = new TempGitRepo();
-        var familyId = CreateChangeScopedRule(repo, "r-0001", "The family statement");
-        var firstId = CreateChangeScopedRule(repo, "r-0002", "First member");
-        var secondId = CreateChangeScopedRule(repo, "r-0003", "Second member");
+        var familyId = CreateChangeScopedRule(repo, "The family statement");
+        var firstId = CreateChangeScopedRule(repo, "First member");
+        var secondId = CreateChangeScopedRule(repo, "Second member");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -59,8 +59,8 @@ public sealed class CommandDispatcherRuleCompactTests
     public void RuleCompact_ActingRoleIsNotArchitect_WithAWellFormedRequest_Refuses_WithRoleNotPermitted_AndCompactsNothing()
     {
         using var repo = new TempGitRepo();
-        var familyId = CreateChangeScopedRule(repo, "r-0009", "Family");
-        var memberId = CreateChangeScopedRule(repo, "r-0010", "Member");
+        var familyId = CreateChangeScopedRule(repo, "Family");
+        var (memberId, memberPath) = CreateChangeScopedRuleWithPath(repo, "Member");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -77,7 +77,6 @@ public sealed class CommandDispatcherRuleCompactTests
         Assert.Contains("architect", refusal.GetProperty("message").GetString());
         Assert.Contains("worker", refusal.GetProperty("message").GetString());
 
-        var memberPath = Path.Combine(repo.CardsDirectory, "r-0010.md");
         var memberOnDisk = AssertParseSuccess(CardStore.ReadCard(memberPath));
         Assert.Equal("open", memberOnDisk.Frontmatter.Status);
     }
@@ -92,7 +91,7 @@ public sealed class CommandDispatcherRuleCompactTests
     public void RuleCompact_ActingRoleIsNotArchitect_WithAnEmptyAbsorbSet_Refuses_WithEmptyAbsorbSet_NotRoleNotPermitted()
     {
         using var repo = new TempGitRepo();
-        var familyId = CreateChangeScopedRule(repo, "r-0011", "Family");
+        var familyId = CreateChangeScopedRule(repo, "Family");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -109,7 +108,7 @@ public sealed class CommandDispatcherRuleCompactTests
     public void RuleCompact_NoAbsorbsFlag_Refuses_AtParseTime_WithoutResolvingTheFamily()
     {
         using var repo = new TempGitRepo();
-        var familyId = CreateChangeScopedRule(repo, "r-0004", "Family");
+        var familyId = CreateChangeScopedRule(repo, "Family");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -158,7 +157,7 @@ public sealed class CommandDispatcherRuleCompactTests
     public void RuleCompact_FamilyIdDoesNotExist_Refuses_WithCardIdNotFound()
     {
         using var repo = new TempGitRepo();
-        var memberId = CreateChangeScopedRule(repo, "r-0005", "Member");
+        var memberId = CreateChangeScopedRule(repo, "Member");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -175,10 +174,10 @@ public sealed class CommandDispatcherRuleCompactTests
     public void RuleCompact_AbsorbedIdNamesASectionNotARule_Refuses_WithWrongCardKind()
     {
         using var repo = new TempGitRepo();
-        var familyId = CreateChangeScopedRule(repo, "r-0006", "Family");
+        var familyId = CreateChangeScopedRule(repo, "Family");
         var sectionOutput = new StringWriter();
         RunInRepo(
-            ["section", "create", Path.Combine(repo.CardsDirectory, "s-0001.md"), "--title", "7. Register", "--role", "architect", "--change", ChangeName],
+            ["section", "create", "--title", "7. Register", "--role", "architect", "--change", ChangeName],
             sectionOutput, repo.Path, "Body.");
         var sectionId = ExtractResultId(sectionOutput);
 
@@ -199,10 +198,10 @@ public sealed class CommandDispatcherRuleCompactTests
         using var repo = new TempGitRepo();
         var familyOutput = new StringWriter();
         RunInRepo(
-            ["rule", "create", Path.Combine(repo.RegisterDirectory, "r-0007.md"), "--title", "Already repository-scoped", "--role", "architect", "--scope", "repository"],
+            ["rule", "create", "--title", "Already repository-scoped", "--role", "architect", "--scope", "repository"],
             familyOutput, repo.Path, "Body.");
         var familyId = ExtractResultId(familyOutput);
-        var memberId = CreateChangeScopedRule(repo, "r-0008", "Member");
+        var memberId = CreateChangeScopedRule(repo, "Member");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -215,21 +214,29 @@ public sealed class CommandDispatcherRuleCompactTests
         Assert.Equal("card-layout-mismatch", refusal.GetProperty("code").GetString());
     }
 
-    private static string CreateChangeScopedRule(TempGitRepo repo, string fileStem, string title)
+    private static string CreateChangeScopedRule(TempGitRepo repo, string title) =>
+        CreateChangeScopedRuleWithPath(repo, title).Id;
+
+    private static (string Id, string FilePath) CreateChangeScopedRuleWithPath(TempGitRepo repo, string title)
     {
-        var path = Path.Combine(repo.CardsDirectory, fileStem + ".md");
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "create", path, "--title", title, "--role", "architect", "--scope", "change", "--change", ChangeName],
+            ["rule", "create", "--title", title, "--role", "architect", "--scope", "change", "--change", ChangeName],
             output, repo.Path, "Body.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
-        return ExtractResultId(output);
+        return (ExtractResultId(output), ExtractResultFilePath(output));
     }
 
     private static string ExtractResultId(StringWriter output)
     {
         using var doc = JsonDocument.Parse(output.ToString());
         return doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
+    }
+
+    private static string ExtractResultFilePath(StringWriter output)
+    {
+        using var doc = JsonDocument.Parse(output.ToString());
+        return doc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

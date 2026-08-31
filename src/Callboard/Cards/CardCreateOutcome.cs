@@ -46,7 +46,10 @@ internal abstract record CardCreateOutcome
         Func<ToolFailure, TResult> onToolFailure);
 
     /// <param name="Card">The card exactly as written.</param>
-    internal sealed record Created(CardFile Card) : CardCreateOutcome
+    /// <param name="FilePath">Where the card landed — <see cref="CardLayout.FileNameFor"/>'s result
+    /// under the directory its <see cref="CardScope"/> resolves to (14.5). The caller never chose
+    /// this: it is reported here because, as of 14.5, it is the only way the caller learns it.</param>
+    internal sealed record Created(CardFile Card, string FilePath) : CardCreateOutcome
     {
         internal override TResult Match<TResult>(Func<Created, TResult> onCreated, Func<ScopeRefused, TResult> onScopeRefused, Func<AlreadyExists, TResult> onAlreadyExists, Func<LayoutMismatch, TResult> onLayoutMismatch, Func<IdentityAlreadyBorne, TResult> onIdentityAlreadyBorne, Func<ToolFailure, TResult> onToolFailure) =>
             onCreated(this);

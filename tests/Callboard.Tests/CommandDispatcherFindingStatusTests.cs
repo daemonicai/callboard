@@ -466,17 +466,17 @@ public sealed class CommandDispatcherFindingStatusTests
 
     private string CreateSection(TempGitRepo repo)
     {
-        var sectionPath = Path.Combine(repo.CardsDirectory, "s-" + Guid.NewGuid().ToString("N") + ".md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["section", "create", sectionPath, "--title", "Section", "--role", "architect", "--change", ChangeName],
+            ["section", "create", "--title", "Section", "--role", "architect", "--change", ChangeName],
             output, repo.Path, "Section body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
-        var id = doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
-        _sectionPathsById[id] = sectionPath;
+        var result = doc.RootElement.GetProperty("result");
+        var id = result.GetProperty("id").GetString()!;
+        _sectionPathsById[id] = result.GetProperty("filePath").GetString()!;
         return id;
     }
 

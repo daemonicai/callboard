@@ -21,15 +21,14 @@ public sealed class CommandDispatcherRuleProposeCompactTests
     public void ProposeCompact_TwoOpenRepositoryRules_Succeeds_AndReportsCandidateBackingAndCitationCounts()
     {
         using var repo = new TempGitRepo();
-        var firstId = CreateRepositoryRule(repo, "r-0001", "First member");
-        var secondId = CreateRepositoryRule(repo, "r-0002", "Second member");
+        var firstId = CreateRepositoryRule(repo, "First member");
+        var secondId = CreateRepositoryRule(repo, "Second member");
         // A third card, elsewhere in the record, cites the first member once.
-        CreateRepositoryRule(repo, "r-0003", "Cites the first", body: $"This leans on {firstId}.");
-        var proposalPath = Path.Combine(repo.RegisterDirectory, "q-0001.md");
+        CreateRepositoryRule(repo, "Cites the first", body: $"This leans on {firstId}.");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", $"{firstId},{secondId}", "--role", "worker", "--proposal-file", proposalPath],
+            ["rule", "propose-compact", "--absorbs", $"{firstId},{secondId}", "--role", "worker"],
             output, repo.Path, "Generalised candidate text.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -41,7 +40,10 @@ public sealed class CommandDispatcherRuleProposeCompactTests
         var citationCounts = result.GetProperty("citationCounts").EnumerateArray().Select(static e => e.GetInt32()).ToList();
         Assert.Equal([1, 0], citationCounts);
         Assert.Equal("worker", result.GetProperty("actingRole").GetString());
-        Assert.Equal(proposalPath, result.GetProperty("proposalFilePath").GetString());
+        // 14.5: the caller never named this path — it is reported here because this is the only
+        // place the caller learns it.
+        var proposalPath = result.GetProperty("proposalFilePath").GetString()!;
+        Assert.Equal(Path.Combine(repo.RegisterDirectory, "Q-0001.md"), proposalPath);
         var proposalId = result.GetProperty("proposalId").GetString();
         Assert.NotNull(proposalId);
 
@@ -65,17 +67,14 @@ public sealed class CommandDispatcherRuleProposeCompactTests
     public void ProposeCompact_WellFormedRequest_MutatesNoBackingCard()
     {
         using var repo = new TempGitRepo();
-        var firstId = CreateRepositoryRule(repo, "r-0004", "First member");
-        var secondId = CreateRepositoryRule(repo, "r-0005", "Second member");
-        var firstPath = Path.Combine(repo.RegisterDirectory, "r-0004.md");
-        var secondPath = Path.Combine(repo.RegisterDirectory, "r-0005.md");
+        var (firstId, firstPath) = CreateRepositoryRuleWithPath(repo, "First member");
+        var (secondId, secondPath) = CreateRepositoryRuleWithPath(repo, "Second member");
         var firstBefore = File.ReadAllBytes(firstPath);
         var secondBefore = File.ReadAllBytes(secondPath);
-        var proposalPath = Path.Combine(repo.RegisterDirectory, "q-0002.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", $"{firstId},{secondId}", "--role", "architect", "--proposal-file", proposalPath],
+            ["rule", "propose-compact", "--absorbs", $"{firstId},{secondId}", "--role", "architect"],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
@@ -112,7 +111,7 @@ public sealed class CommandDispatcherRuleProposeCompactTests
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", "R-0001,R-0001", "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-dup.md")],
+            ["rule", "propose-compact", "--absorbs", "R-0001,R-0001", "--role", "worker"],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -128,7 +127,7 @@ public sealed class CommandDispatcherRuleProposeCompactTests
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", "R-9999", "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-missing.md")],
+            ["rule", "propose-compact", "--absorbs", "R-9999", "--role", "worker"],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -146,15 +145,15 @@ public sealed class CommandDispatcherRuleProposeCompactTests
         var changeDirectory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(changeName).Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(changeDirectory);
         RunInRepo(
-            ["rule", "create", Path.Combine(changeDirectory, "r-0006.md"), "--title", "Change-scoped", "--role", "architect", "--scope", "change", "--change", changeName],
+            ["rule", "create", "--title", "Change-scoped", "--role", "architect", "--scope", "change", "--change", changeName],
             changeScopedOutput, repo.Path, "Body.");
         var changeScopedId = ExtractResultId(changeScopedOutput);
-        var changeScopedPath = Path.Combine(changeDirectory, "r-0006.md");
+        var changeScopedPath = ExtractResultFilePath(changeScopedOutput);
         var before = File.ReadAllBytes(changeScopedPath);
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", changeScopedId, "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-change-scoped.md")],
+            ["rule", "propose-compact", "--absorbs", changeScopedId, "--role", "worker"],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -168,8 +167,12 @@ public sealed class CommandDispatcherRuleProposeCompactTests
     public void ProposeCompact_BackingIdAlreadyDischarged_Refuses_WithAlreadyDischarged()
     {
         using var repo = new TempGitRepo();
-        var dischargedId = CreateRepositoryRule(repo, "r-0007", "Will be discharged");
-        var dischargedPath = Path.Combine(repo.RegisterDirectory, "r-0007.md");
+        var createOutput = new StringWriter();
+        RunInRepo(
+            ["rule", "create", "--title", "Will be discharged", "--role", "architect", "--scope", "repository"],
+            createOutput, repo.Path, "Body.");
+        var dischargedId = ExtractResultId(createOutput);
+        var dischargedPath = ExtractResultFilePath(createOutput);
         var dischargeOutput = new StringWriter();
         var dischargeExitCode = RunInRepo(
             ["rule", "discharge", dischargedPath, "--role", "architect"],
@@ -178,7 +181,7 @@ public sealed class CommandDispatcherRuleProposeCompactTests
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", dischargedId, "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-discharged.md")],
+            ["rule", "propose-compact", "--absorbs", dischargedId, "--role", "worker"],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -196,13 +199,13 @@ public sealed class CommandDispatcherRuleProposeCompactTests
         Directory.CreateDirectory(changeDirectory);
         var sectionOutput = new StringWriter();
         RunInRepo(
-            ["section", "create", Path.Combine(changeDirectory, "s-0001.md"), "--title", "7. Register", "--role", "architect", "--change", changeName],
+            ["section", "create", "--title", "7. Register", "--role", "architect", "--change", changeName],
             sectionOutput, repo.Path, "Body.");
         var sectionId = ExtractResultId(sectionOutput);
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "propose-compact", "--absorbs", sectionId, "--role", "worker", "--proposal-file", Path.Combine(repo.RegisterDirectory, "q-section.md")],
+            ["rule", "propose-compact", "--absorbs", sectionId, "--role", "worker"],
             output, repo.Path, "Candidate text.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
@@ -211,21 +214,29 @@ public sealed class CommandDispatcherRuleProposeCompactTests
         Assert.Equal("wrong-card-kind", refusal.GetProperty("code").GetString());
     }
 
-    private static string CreateRepositoryRule(TempGitRepo repo, string fileStem, string title, string? body = null)
+    private static string CreateRepositoryRule(TempGitRepo repo, string title, string? body = null) =>
+        CreateRepositoryRuleWithPath(repo, title, body).Id;
+
+    private static (string Id, string FilePath) CreateRepositoryRuleWithPath(TempGitRepo repo, string title, string? body = null)
     {
-        var path = Path.Combine(repo.RegisterDirectory, fileStem + ".md");
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "create", path, "--title", title, "--role", "architect", "--scope", "repository"],
+            ["rule", "create", "--title", title, "--role", "architect", "--scope", "repository"],
             output, repo.Path, body ?? "Body.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
-        return ExtractResultId(output);
+        return (ExtractResultId(output), ExtractResultFilePath(output));
     }
 
     private static string ExtractResultId(StringWriter output)
     {
         using var doc = JsonDocument.Parse(output.ToString());
         return doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
+    }
+
+    private static string ExtractResultFilePath(StringWriter output)
+    {
+        using var doc = JsonDocument.Parse(output.ToString());
+        return doc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

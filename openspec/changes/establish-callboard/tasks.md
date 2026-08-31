@@ -162,6 +162,6 @@
 - [x] 14.2 Carry each block's fields as `key: value` lines, reusing the frontmatter line shape and escaper
 - [x] 14.3 Escape a literal `-->` in free text as a composed step, leaving ordinary prose untouched
 - [x] 14.4 Bring the comment block onto the same syntax, keeping its prose body and footer
-- [ ] 14.5 Name every card's file for its identity, taking the filename out of the caller's hands
+- [x] 14.5 Name every card's file for its identity, taking the filename out of the caller's hands
 - [ ] 14.6 Verify a card's status, owner, scope and history are determinable from the file alone
 - [ ] 14.7 Document the commands the worker, reviewer and supervisor agents use in place of `DEVLOG.md`

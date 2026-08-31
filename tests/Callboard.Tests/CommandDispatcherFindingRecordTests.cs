@@ -490,7 +490,7 @@ public sealed class CommandDispatcherFindingRecordTests
         using var repo = new TempGitRepo();
         var ruleOutput = new StringWriter();
         var ruleExit = RunInRepo(
-            ["rule", "create", Path.Combine(repo.RegisterDirectory, "r-0001.md"), "--title", "A rule", "--role", "architect", "--scope", "repository"],
+            ["rule", "create", "--title", "A rule", "--role", "architect", "--scope", "repository"],
             ruleOutput, repo.Path, "Rule body.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, ruleExit);
         using var ruleDoc = JsonDocument.Parse(ruleOutput.ToString());
@@ -580,11 +580,10 @@ public sealed class CommandDispatcherFindingRecordTests
     // envelope.
     private static string CreateSection(TempGitRepo repo)
     {
-        var sectionPath = Path.Combine(repo.CardsDirectory, "s-" + Guid.NewGuid().ToString("N") + ".md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["section", "create", sectionPath, "--title", "Section", "--role", "architect", "--change", ChangeName],
+            ["section", "create", "--title", "Section", "--role", "architect", "--change", ChangeName],
             output, repo.Path, "Section body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);

@@ -1630,13 +1630,15 @@ internal static class CardStore
 
                 // Architect ruling item 3: recording is allowed only while the card is at
                 // 'drafting'. Checked before BaseImmutable below. A card past drafting always
-                // already carries a recorded base: door one (block create -> drafting -> the
-                // brief transition) is guarded by BaseNotRecorded, and door two (a section
-                // verdict's first-time-finding remediation card, RecordSectionVerdictUnderExisting
-                // Lock) records Base at creation time — see that method's own comment — rather than
-                // minting a card this refusal would then permanently lock out. This names the more
-                // specific, more useful fact (which state the card is in) rather than folding it
-                // into "base already recorded".
+                // already carries a recorded base, for every card the tool mints: door one (block
+                // create -> drafting -> the brief transition) is guarded by BaseNotRecorded, and
+                // door two (a section verdict's first-time-finding remediation card,
+                // RecordSectionVerdictUnderExistingLock) records Base at creation time — see that
+                // method's own comment — rather than minting a card this refusal would then
+                // permanently lock out. This names the more specific, more useful fact (which state
+                // the card is in) rather than folding it into "base already recorded". A card
+                // hand-authored past drafting, never having gone through either door, is the one
+                // exception this file's own legibility guarantee still has to cope with.
                 if (currentState != BlockFlowState.Drafting)
                 {
                     return RefuseAndRecord<CardBlockRecordBaseOutcome, CardBlockRecordBaseOutcome.NotAtDrafting>(cardsRoot, card, filePath, changeName, actingRole, timestamp,
@@ -3323,15 +3325,33 @@ internal static class CardStore
     }
 
     /// <summary>
-    /// Creates a brand-new <paramref name="kind"/> card at <paramref name="filePath"/> (§7 block A):
-    /// the four register kinds' creation verbs and <c>section create</c> — one card, no dual-lock
-    /// complexity <see cref="RecordFinding"/> needs. <b>Scope is validated through
-    /// <see cref="CardScopeRules.Validate"/> here, unconditionally</b> — every caller passes its own
-    /// kind's scope (a caller-chosen value for <see cref="CardKind.Rule"/>, a fixed one for every
-    /// other kind this method is called for), and this method never trusts a caller's fixed value
-    /// as valid on its own say-so: it always asks the table, so a caller cannot restate — and
-    /// silently drift from — the rule <see cref="CardScopeRules"/> already owns. Checked before any
-    /// identity is allocated, so a refused scope never burns an identity number.
+    /// Creates a brand-new <paramref name="kind"/> card (§7 block A, extended 14.5): the four
+    /// register kinds' creation verbs, <c>section create</c>, <c>block create</c>, <c>question
+    /// create</c>, <c>rule author</c> and <c>rule propose-compact</c> — every <see cref="
+    /// CardStore.CreateCard"/> call site in this codebase — one card, no dual-lock complexity
+    /// <see cref="RecordFinding"/> needs. <b>Scope is validated through <see cref="
+    /// CardScopeRules.Validate"/> here, unconditionally</b> — every caller passes its own kind's
+    /// scope (a caller-chosen value for <see cref="CardKind.Rule"/>, a fixed one for every other
+    /// kind this method is called for), and this method never trusts a caller's fixed value as
+    /// valid on its own say-so: it always asks the table, so a caller cannot restate — and silently
+    /// drift from — the rule <see cref="CardScopeRules"/> already owns. Checked before any identity
+    /// is allocated, so a refused scope never burns an identity number.
+    ///
+    /// <para>
+    /// <b>14.5, card-model: "A card's file SHALL be named for its identity ... a caller names the
+    /// container a card belongs in, never the file itself."</b> There is no <c>filePath</c>
+    /// parameter any more — a caller no longer supplies one, so it cannot supply a wrong one. This
+    /// method names the file itself, and the ordering is the structural proof of "never able to":
+    /// <paramref name="scope"/>/<paramref name="changeName"/> resolve the <em>directory</em>
+    /// (<see cref="CardLayout.DirectoryFor"/>) before any identity is allocated — a missing or
+    /// invalid <paramref name="changeName"/> now refuses before burning an identity number too, the
+    /// same guarantee the scope check already had — and only once <see cref="
+    /// CardIdentityAllocator.Allocate"/> has minted <paramref name="id"/> does <see cref="
+    /// CardLayout.FileNameFor"/> turn it into a basename. The full path is combined strictly after
+    /// that mint; there is no earlier point in this method where a path exists to have been
+    /// computed from anything else.
+    /// </para>
+    ///
     /// <paramref name="initialStatus"/> is the wire text the caller's own lifecycle type already
     /// computed (<see cref="RegisterLifecycleStateWireFormat"/> for a register kind,
     /// <see cref="SectionFlowStateWireFormat"/> for a section) — this method does not choose it,
@@ -3344,7 +3364,6 @@ internal static class CardStore
     /// </summary>
     internal static CardCreateOutcome CreateCard(
         string cardsRoot,
-        string filePath,
         CardKind kind,
         CardScope scope,
         string title,
@@ -3364,6 +3383,16 @@ internal static class CardStore
             return new CardCreateOutcome.ScopeRefused(refused.Reason);
         }
 
+        string relativeDirectory;
+        try
+        {
+            relativeDirectory = CardLayout.DirectoryFor(scope, changeName);
+        }
+        catch (ArgumentException ex)
+        {
+            return new CardCreateOutcome.LayoutMismatch(ex.Message);
+        }
+
         var allocation = CardIdentityAllocator.Allocate(cardsRoot, kind, lockTimeout);
         var (id, allocationRefusal) = allocation.Match<(string? Id, CardCreateOutcome? Refusal)>(
             onAllocated: allocated => (allocated.Id, null),
@@ -3374,12 +3403,15 @@ internal static class CardStore
             return allocationRefusal;
         }
 
+        var filePath = Path.Combine(
+            cardsRoot, relativeDirectory.Replace('/', Path.DirectorySeparatorChar), CardLayout.FileNameFor(id!));
+
         var frontmatter = new CardFrontmatter(id!, kind, title, initialStatus, actingRole, scope, section, timestamp, timestamp);
         var cardFile = new CardFile(frontmatter, body, [], [], FindingFields: null, RegisterFields: registerFields, BlockFields: blockFields);
 
         var writeResult = WriteCard(cardsRoot, filePath, new NewCardFile(frontmatter, body, RegisterFields: registerFields, BlockFields: blockFields), lockTimeout, changeName);
         return writeResult.Match<CardCreateOutcome>(
-            onSuccess: _ => new CardCreateOutcome.Created(cardFile),
+            onSuccess: _ => new CardCreateOutcome.Created(cardFile, filePath),
             onNotFound: notFound => new CardCreateOutcome.ToolFailure(
                 $"unexpected 'not found' writing a brand-new card at '{notFound.FilePath}'."),
             onAlreadyExists: alreadyExists => new CardCreateOutcome.AlreadyExists(alreadyExists.FilePath),

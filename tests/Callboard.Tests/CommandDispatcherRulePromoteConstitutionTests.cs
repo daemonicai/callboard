@@ -30,8 +30,7 @@ public sealed class CommandDispatcherRulePromoteConstitutionTests
     public void PromoteConstitution_AnyRole_Refuses_WithRoleNotPermitted_AppendsACommentToTheRule_AndClaudeMdUnchanged(string role)
     {
         using var repo = new TempGitRepo();
-        var ruleId = CreateRepositoryRule(repo, "r-0001");
-        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0001.md");
+        var (ruleId, rulePath) = CreateRepositoryRuleWithPath(repo);
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -90,7 +89,7 @@ public sealed class CommandDispatcherRulePromoteConstitutionTests
         Directory.CreateDirectory(changeDirectory);
         var sectionOutput = new StringWriter();
         RunInRepo(
-            ["section", "create", Path.Combine(changeDirectory, "s-0001.md"), "--title", "7. Register", "--role", "architect", "--change", changeName],
+            ["section", "create", "--title", "7. Register", "--role", "architect", "--change", changeName],
             sectionOutput, repo.Path, "Body.");
         var sectionId = ExtractResultId(sectionOutput);
 
@@ -113,8 +112,7 @@ public sealed class CommandDispatcherRulePromoteConstitutionTests
     public void PromoteConstitution_CalledTwice_AppendsTwoDistinctComments_AndClaudeMdStillUnchanged()
     {
         using var repo = new TempGitRepo();
-        var ruleId = CreateRepositoryRule(repo, "r-0002");
-        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0002.md");
+        var (ruleId, rulePath) = CreateRepositoryRuleWithPath(repo);
 
         var firstOutput = new StringWriter();
         RunInRepo(["rule", "promote-constitution", "--id", ruleId, "--role", "worker"], firstOutput, repo.Path, string.Empty);
@@ -137,7 +135,7 @@ public sealed class CommandDispatcherRulePromoteConstitutionTests
     public void PromoteConstitution_NoClaudeMdPresent_Refuses_AndNoneIsCreated()
     {
         using var repo = new TempGitRepo(seedClaudeMd: false);
-        var ruleId = CreateRepositoryRule(repo, "r-0003");
+        var ruleId = CreateRepositoryRule(repo);
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -169,7 +167,7 @@ public sealed class CommandDispatcherRulePromoteConstitutionTests
     public void PromoteConstitution_MissingRoleFlag_Refuses_AtParseTime_AndClaudeMdUnchanged()
     {
         using var repo = new TempGitRepo();
-        var ruleId = CreateRepositoryRule(repo, "r-0004");
+        var (ruleId, rulePath) = CreateRepositoryRuleWithPath(repo);
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
@@ -182,25 +180,33 @@ public sealed class CommandDispatcherRulePromoteConstitutionTests
         Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
         Assert.Equal(OriginalClaudeMdContent, File.ReadAllText(repo.ClaudeMdPath));
 
-        var onDisk = AssertParseSuccess(CardStore.ReadCard(Path.Combine(repo.RegisterDirectory, "r-0004.md")));
+        var onDisk = AssertParseSuccess(CardStore.ReadCard(rulePath));
         Assert.Empty(onDisk.Comments);
     }
 
-    private static string CreateRepositoryRule(TempGitRepo repo, string fileStem)
+    private static string CreateRepositoryRule(TempGitRepo repo) =>
+        CreateRepositoryRuleWithPath(repo).Id;
+
+    private static (string Id, string FilePath) CreateRepositoryRuleWithPath(TempGitRepo repo)
     {
-        var path = Path.Combine(repo.RegisterDirectory, fileStem + ".md");
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "create", path, "--title", "A real rule", "--role", "architect", "--scope", "repository"],
+            ["rule", "create", "--title", "A real rule", "--role", "architect", "--scope", "repository"],
             output, repo.Path, "Body.");
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
-        return ExtractResultId(output);
+        return (ExtractResultId(output), ExtractResultFilePath(output));
     }
 
     private static string ExtractResultId(StringWriter output)
     {
         using var doc = JsonDocument.Parse(output.ToString());
         return doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
+    }
+
+    private static string ExtractResultFilePath(StringWriter output)
+    {
+        using var doc = JsonDocument.Parse(output.ToString());
+        return doc.RootElement.GetProperty("result").GetProperty("filePath").GetString()!;
     }
 
     private static int RunInRepo(string[] args, TextWriter output, string workingDirectory, string body) =>

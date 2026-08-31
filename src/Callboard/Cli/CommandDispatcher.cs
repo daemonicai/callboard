@@ -191,7 +191,7 @@ internal static class CommandDispatcher
         /// argv order — checked non-empty per item and non-empty overall during parse, the same
         /// repeatable-flag shape <c>--claims</c>/<c>--finding-recurred</c> already established.</param>
         internal sealed record BlockCreate(
-            string FilePath, string Title, CardOwner ActingRole, string Body, IReadOnlyList<string> Tasks, string ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Title, CardOwner ActingRole, string Body, IReadOnlyList<string> Tasks, string ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
@@ -404,7 +404,7 @@ internal static class CommandDispatcher
         /// wire-format validity of the flag's own text, is checked during parse).
         /// </summary>
         internal sealed record RuleCreate(
-            string FilePath, string Title, CardOwner ActingRole, CardScope Scope, string Body, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Title, CardOwner ActingRole, CardScope Scope, string Body, string? ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
@@ -417,7 +417,7 @@ internal static class CommandDispatcher
         /// so there is no <c>--change</c> flag for this verb.
         /// </summary>
         internal sealed record HazardCreate(
-            string FilePath, string Title, CardOwner ActingRole, string Body, string Condition, string Cadence, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Title, CardOwner ActingRole, string Body, string Condition, string Cadence, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
@@ -432,7 +432,7 @@ internal static class CommandDispatcher
         /// carries one.
         /// </summary>
         internal sealed record ObligationCreate(
-            string FilePath, string Title, CardOwner ActingRole, string Body, string ChangeName, string OwedById, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Title, CardOwner ActingRole, string Body, string ChangeName, string OwedById, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
@@ -443,7 +443,7 @@ internal static class CommandDispatcher
         /// <see cref="ObligationCreate"/>/<see cref="SectionCreate"/>, there is no <c>--change</c> flag.
         /// </summary>
         internal sealed record DecisionCreate(
-            string FilePath, string Title, CardOwner ActingRole, string Body, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Title, CardOwner ActingRole, string Body, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
@@ -454,7 +454,7 @@ internal static class CommandDispatcher
         /// <see cref="CardScopeRules.Validate"/> already gives <c>section</c> in 4.4's table.
         /// </summary>
         internal sealed record SectionCreate(
-            string FilePath, string Title, CardOwner ActingRole, string Body, string ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Title, CardOwner ActingRole, string Body, string ChangeName, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
@@ -483,7 +483,7 @@ internal static class CommandDispatcher
         /// </para>
         /// </summary>
         internal sealed record QuestionCreate(
-            string FilePath, string Title, CardOwner ActingRole, CardOwner OwedByRole, string Body, string? SectionId, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Title, CardOwner ActingRole, CardOwner OwedByRole, string Body, string? SectionId, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
@@ -690,7 +690,7 @@ internal static class CommandDispatcher
         /// confirmed to be a <c>finding</c> card at execute time — never written to, only read.
         /// </summary>
         internal sealed record RuleAuthor(
-            string FilePath, string Title, CardOwner ActingRole, CardScope Scope, string Body, string? ChangeName, IReadOnlyList<string> EarnedFrom, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string Title, CardOwner ActingRole, CardScope Scope, string Body, string? ChangeName, IReadOnlyList<string> EarnedFrom, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
@@ -729,16 +729,16 @@ internal static class CommandDispatcher
         /// <para>
         /// <b>§7 remediation, blocker 1: this now creates one <c>question</c> card, owned by the
         /// Product Owner, recording the candidate text, the backing set and the citation counts —
-        /// the durable record register's own "records the proposal" requires.</b> <see cref="
-        /// ProposalFilePath"/> is that card's caller-supplied path, the same "the caller always
-        /// names a new card's file" convention every other creation verb in this codebase follows
-        /// (block A's five verbs, and <see cref="QuestionCreate"/> itself) — this is the one place
-        /// that convention could have been broken (the tool inventing a path for a card the caller
-        /// never asked to create directly) and deliberately was not.
+        /// the durable record register's own "records the proposal" requires.</b> No file path is
+        /// carried on this record at all (14.5): the card is named for the identity the system
+        /// mints when it is created, the same "the tool names the file, never the caller" shape
+        /// every other creation verb in this codebase now follows — <see cref="
+        /// RunRuleProposeCompact"/> reports where it landed through <see cref="
+        /// RuleProposeCompactResult.ProposalFilePath"/>.
         /// </para>
         /// </summary>
         internal sealed record RuleProposeCompact(
-            string CandidateText, IReadOnlyList<string> BackingIds, string ProposalFilePath, CardOwner ActingRole, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
+            string CandidateText, IReadOnlyList<string> BackingIds, CardOwner ActingRole, string WorkingDirectory, DateTimeOffset Timestamp) : ParsedCommand
         {
             internal override TResult Accept<TResult>(ICommandVisitor<TResult> visitor) => visitor.Visit(this);
         }
@@ -2392,13 +2392,12 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, filePath, CardKind.Rule, parsed.Scope, parsed.Title,
+            repoRoot, CardKind.Rule, parsed.Scope, parsed.Title,
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
+        return MapCardCreateOutcome(outcome, parsed.ActingRole);
     }
 
     /// <summary>
@@ -2418,14 +2417,13 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, filePath, CardKind.Hazard, CardScope.Repository, parsed.Title,
+            repoRoot, CardKind.Hazard, CardScope.Repository, parsed.Title,
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: new RegisterCardFields(parsed.Condition, parsed.Cadence, null, null),
             parsed.Timestamp, lockTimeout, changeName: null);
 
-        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
+        return MapCardCreateOutcome(outcome, parsed.ActingRole);
     }
 
     /// <summary>
@@ -2456,14 +2454,13 @@ internal static class CommandDispatcher
             return owedBySection.Refusal;
         }
 
-        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, filePath, CardKind.Obligation, CardScope.Change, parsed.Title,
+            repoRoot, CardKind.Obligation, CardScope.Change, parsed.Title,
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: new RegisterCardFields(null, null, null, null, OwedBy: parsed.OwedById),
             parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
+        return MapCardCreateOutcome(outcome, parsed.ActingRole);
     }
 
     /// <summary><c>decision create</c> (§7 block A). Scope is always <see cref="CardScope.Capability"/>.</summary>
@@ -2477,13 +2474,12 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, filePath, CardKind.Decision, CardScope.Capability, parsed.Title,
+            repoRoot, CardKind.Decision, CardScope.Capability, parsed.Title,
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, changeName: null);
 
-        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
+        return MapCardCreateOutcome(outcome, parsed.ActingRole);
     }
 
     /// <summary>
@@ -2510,14 +2506,13 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, filePath, CardKind.Block, CardScope.Change, parsed.Title,
+            repoRoot, CardKind.Block, CardScope.Change, parsed.Title,
             BlockFlowState.Drafting.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, parsed.ChangeName,
             blockFields: new BlockCardFields(null, null, parsed.Tasks, 1, [], []));
 
-        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
+        return MapCardCreateOutcome(outcome, parsed.ActingRole);
     }
 
     /// <summary>
@@ -2538,13 +2533,12 @@ internal static class CommandDispatcher
                 $"no git repository found above '{parsed.WorkingDirectory}'; run callboard from inside the repository.");
         }
 
-        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, filePath, CardKind.Section, CardScope.Change, parsed.Title,
+            repoRoot, CardKind.Section, CardScope.Change, parsed.Title,
             SectionFlowState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, parsed.ChangeName);
 
-        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole);
+        return MapCardCreateOutcome(outcome, parsed.ActingRole);
     }
 
     /// <summary>
@@ -2597,13 +2591,12 @@ internal static class CommandDispatcher
             sectionId = parsed.SectionId;
         }
 
-        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, filePath, CardKind.Question, CardScope.Repository, parsed.Title,
+            repoRoot, CardKind.Question, CardScope.Repository, parsed.Title,
             QuestionStatus.Open.ToWireString(), parsed.OwedByRole, parsed.Body,
             registerFields: null, parsed.Timestamp, lockTimeout, changeName: null, section: sectionId);
 
-        return MapCardCreateOutcome(outcome, filePath, parsed.ActingRole, owedByRoleOverride: parsed.OwedByRole.ToWireString());
+        return MapCardCreateOutcome(outcome, parsed.ActingRole, owedByRoleOverride: parsed.OwedByRole.ToWireString());
     }
 
     /// <summary>
@@ -2746,11 +2739,11 @@ internal static class CommandDispatcher
     /// unchanged, so this method's output is byte-identical for the five kinds that already worked.
     /// </para>
     /// </summary>
-    private static CommandOutcome MapCardCreateOutcome(CardCreateOutcome outcome, string filePath, CardOwner actingRole, string? owedByRoleOverride = null) =>
+    private static CommandOutcome MapCardCreateOutcome(CardCreateOutcome outcome, CardOwner actingRole, string? owedByRoleOverride = null) =>
         outcome.Match<CommandOutcome>(
             onCreated: created => new CommandOutcome.Success(new CardCreateResult
             {
-                FilePath = filePath,
+                FilePath = created.FilePath,
                 Id = created.Card.Frontmatter.Id,
                 Title = created.Card.Frontmatter.Title,
                 Kind = created.Card.Frontmatter.Kind.ToWireString(),
@@ -3488,9 +3481,8 @@ internal static class CommandDispatcher
             }
         }
 
-        var filePath = ResolveFilePath(parsed.WorkingDirectory, parsed.FilePath);
         var outcome = CardStore.CreateCard(
-            repoRoot, filePath, CardKind.Rule, parsed.Scope, parsed.Title,
+            repoRoot, CardKind.Rule, parsed.Scope, parsed.Title,
             RegisterLifecycleState.Open.ToWireString(), parsed.ActingRole, parsed.Body,
             registerFields: new RegisterCardFields(null, null, null, null, EarnedFrom: parsed.EarnedFrom),
             parsed.Timestamp, lockTimeout, parsed.ChangeName);
@@ -3498,7 +3490,7 @@ internal static class CommandDispatcher
         return outcome.Match<CommandOutcome>(
             onCreated: created => new CommandOutcome.Success(new RuleAuthorResult
             {
-                FilePath = filePath,
+                FilePath = created.FilePath,
                 Id = created.Card.Frontmatter.Id,
                 Title = created.Card.Frontmatter.Title,
                 Scope = created.Card.Frontmatter.Scope.ToWireString(),
@@ -3642,9 +3634,10 @@ internal static class CommandDispatcher
     /// established the fix's shape for the sibling verb this section's own reviewer found the same
     /// defect in. The card's body carries the candidate text, the backing set and the citation
     /// counts read above — see <see cref="BuildProposalCardBody"/>. Creating it uses the identical
-    /// <see cref="Cards.CardStore.CreateCard"/> path <see cref="RunQuestionCreate"/> does, at the
-    /// caller-supplied <see cref="ParsedCommand.RuleProposeCompact.ProposalFilePath"/> — no new way
-    /// to put a card on disk, and still nothing written to any backing rule.
+    /// <see cref="Cards.CardStore.CreateCard"/> path <see cref="RunQuestionCreate"/> does — no new
+    /// way to put a card on disk, and still nothing written to any backing rule. Since 14.5 there is
+    /// no caller-supplied path at all: the created card's file is named for its own identity, and
+    /// <see cref="RuleProposeCompactResult.ProposalFilePath"/> reports where it landed.
     /// </para>
     /// </summary>
     private static CommandOutcome RunRuleProposeCompact(ParsedCommand.RuleProposeCompact parsed, TimeSpan lockTimeout)
@@ -3734,10 +3727,9 @@ internal static class CommandDispatcher
             citationCounts.Add(citingCards);
         }
 
-        var proposalFilePath = ResolveFilePath(parsed.WorkingDirectory, parsed.ProposalFilePath);
         var proposalBody = BuildProposalCardBody(parsed, backingFilePaths, citationCounts);
         var createOutcome = CardStore.CreateCard(
-            repoRoot, proposalFilePath, CardKind.Question, CardScope.Repository,
+            repoRoot, CardKind.Question, CardScope.Repository,
             "Repository rule compaction proposal", "open", CardOwner.ProductOwner, proposalBody,
             registerFields: null, parsed.Timestamp, lockTimeout, changeName: null);
 
@@ -3749,7 +3741,7 @@ internal static class CommandDispatcher
                 BackingFilePaths = backingFilePaths,
                 CitationCounts = citationCounts,
                 ProposalId = created.Card.Frontmatter.Id,
-                ProposalFilePath = proposalFilePath,
+                ProposalFilePath = created.FilePath,
                 ActingRole = parsed.ActingRole.ToWireString(),
                 ProposedAt = parsed.Timestamp,
             }),

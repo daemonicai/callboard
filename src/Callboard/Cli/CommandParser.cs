@@ -201,8 +201,8 @@ internal static class CommandParser
 
     /// <summary>
     /// Builds <c>block create</c>'s <see cref="CommandDispatcher.ParsedCommand.BlockCreate"/> (§13,
-    /// work-lifecycle: "Every block card is minted by the tool") — one positional token (card file
-    /// path), <c>--role</c>/<c>--title</c>/<c>--change</c> required the same shape <see
+    /// work-lifecycle: "Every block card is minted by the tool") — no positional card file path
+    /// (14.5), <c>--role</c>/<c>--title</c>/<c>--change</c> required the same shape <see
     /// cref="ParseSectionCreate"/> already gives <c>section create</c>, plus repeatable <c>--task
     /// &lt;reference&gt;</c> (§8 remediation blocker 3's shape, same as <c>--claims</c>/<c>
     /// --finding-recurred</c>: one flag occurrence per item, taken in argv order). At least one
@@ -214,11 +214,10 @@ internal static class CommandParser
     /// </summary>
     private static CommandDispatcher.ParseResult ParseBlockCreate(CommandDispatcher.CommandContext context)
     {
-        var filePath = context.Arguments.TryTake();
-        if (filePath is null)
+        var positionalRefusal = RefuseLeadingPositionalArgument(context, "'block create'");
+        if (positionalRefusal is not null)
         {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'block create' requires a card file path."));
+            return new CommandDispatcher.ParseResult.Refused(positionalRefusal);
         }
 
         string? title = null;
@@ -289,7 +288,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.BlockCreate(
-            filePath, title, role, body, tasks, changeName, context.WorkingDirectory, context.Clock()));
+            title, role, body, tasks, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>
@@ -675,6 +674,51 @@ internal static class CommandParser
     }
 
     /// <summary>
+    /// 14.5's own regression, closed by a reviewer nit on the block's Approve: before this block,
+    /// every one of these verbs' leading token was a caller-supplied card file path, consumed
+    /// before any flag was ever looked at. Now none of them takes a bare positional at all — the
+    /// file is named for the identity the system mints (14.5, card-model: "a caller names the
+    /// container a card belongs in, never the file itself") — so a caller still spelling the old
+    /// invocation strands that leading token in front of every flag that follows it.
+    /// <see cref="ConsumeKnownFlags"/> stops at the first token it does not recognise as a flag and
+    /// leaves it unconsumed for <see cref="CommandDispatcher.EnforceNoUnconsumedArguments"/>'s own
+    /// <c>unrecognised-argument</c> refusal to catch — but that check only ever runs once a parse
+    /// arm has otherwise <em>succeeded</em>; here the stray leading token blocks every flag behind
+    /// it from ever being read, so the verb's own required-flag checks fire first and refuse
+    /// <c>missing-argument</c> for a flag the caller did, in fact, supply. Misleading, and named
+    /// here rather than left as a foreseeable regression: §9 ruling 3 requires a refusal name a
+    /// remedy that exists, and <c>missing-argument</c>'s own remedy ("supply the flag") does not
+    /// apply to a caller who already did.
+    ///
+    /// <para>
+    /// <b>Why this shape, and only this shape, is safe to name explicitly.</b> A token that does not
+    /// begin with <c>--</c>, in the leading position before any flag has been consumed, is — for
+    /// every verb this method's callers cover — never anything else: none of them has a legitimate
+    /// bare positional any more. Checked <em>before</em> <see cref="ConsumeKnownFlags"/> ever runs,
+    /// so a genuine <c>missing-argument</c> for a flag truly never supplied is untouched; this only
+    /// intercepts the one shape that would otherwise masquerade as one. A token elsewhere in the
+    /// argument list (between two flags, say) is not covered — that shape does not uniquely identify
+    /// "the old positional path" the way the leading position does, and guessing at a message for it
+    /// would be exactly the parser contortion the Architect's brief warned against; it is left to the
+    /// existing, generic refusal it already gets.
+    /// </para>
+    /// </summary>
+    private static CommandOutcome.Refusal? RefuseLeadingPositionalArgument(CommandDispatcher.CommandContext context, string commandLabel)
+    {
+        var next = context.Arguments.Peek();
+        if (next is null || next.StartsWith("--", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return new CommandOutcome.Refusal(
+            "unexpected-positional-argument",
+            $"{commandLabel} does not take a card file path argument any more (14.5) — the file is " +
+            $"named for the identity the system mints when it creates the card. Remove '{next}' and " +
+            "read the created card's location from the response's 'filePath' field instead.");
+    }
+
+    /// <summary>
     /// The <c>--role</c> (required)/<c>--change</c> (optional) flag pair every §5 block D verb
     /// takes, factored out once both <see cref="ParseBlockGate"/> and
     /// <see cref="ParseBlockedByMutation"/> needed it — built over the same <see cref="
@@ -713,13 +757,16 @@ internal static class CommandParser
 
     /// <summary>
     /// The shape every §7 block A creation verb shares once its kind-specific fields (if any) are
-    /// out of the way: one positional token (card file path), <c>--role</c> and <c>--title</c>
-    /// (both required), <c>--change</c> (required exactly when <paramref name="requireChange"/> is
-    /// <see langword="true"/>), and a body read from stdin — the same read-only-extraction
-    /// discipline <see cref="ParseFindingRecord"/> already applies. <paramref name="build"/> is the
-    /// one place the resulting <see cref="CommandDispatcher.ParsedCommand"/> case differs; used
-    /// directly by <see cref="ParseSectionCreate"/> and <see cref="ParseDecisionCreate"/>, whose
-    /// argv shape is otherwise identical. <see cref="ParseRuleCreate"/>, <see cref="ParseHazardCreate"/>
+    /// out of the way: <c>--role</c> and <c>--title</c> (both required), <c>--change</c> (required
+    /// exactly when <paramref name="requireChange"/> is <see langword="true"/>), and a body read
+    /// from stdin — the same read-only-extraction discipline <see cref="ParseFindingRecord"/>
+    /// already applies. No positional card file path (14.5, card-model: "a caller names the
+    /// container a card belongs in, never the file itself") — <c>--change</c> is the only container
+    /// a caller ever names here; the file itself is named by <see cref="Cards.CardStore.CreateCard"/>
+    /// once it has minted the card's identity. <paramref name="build"/> is the one place the
+    /// resulting <see cref="CommandDispatcher.ParsedCommand"/> case differs; used directly by
+    /// <see cref="ParseSectionCreate"/> and <see cref="ParseDecisionCreate"/>, whose argv shape is
+    /// otherwise identical. <see cref="ParseRuleCreate"/>, <see cref="ParseHazardCreate"/>
     /// and <see cref="ParseObligationCreate"/> do not use this — each has an extra required flag
     /// (<c>--scope</c>; <c>--condition</c>/<c>--cadence</c>; <c>--owed-by</c>, §7 block C) this
     /// shape has no room for.
@@ -728,13 +775,12 @@ internal static class CommandParser
         CommandDispatcher.CommandContext context,
         string commandLabel,
         bool requireChange,
-        Func<string, string, CardOwner, string, string?, string, DateTimeOffset, CommandDispatcher.ParsedCommand> build)
+        Func<string, CardOwner, string, string?, string, DateTimeOffset, CommandDispatcher.ParsedCommand> build)
     {
-        var filePath = context.Arguments.TryTake();
-        if (filePath is null)
+        var positionalRefusal = RefuseLeadingPositionalArgument(context, commandLabel);
+        if (positionalRefusal is not null)
         {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", $"{commandLabel} requires a card file path."));
+            return new CommandDispatcher.ParseResult.Refused(positionalRefusal);
         }
 
         string? title = null;
@@ -793,7 +839,7 @@ internal static class CommandParser
 
         var body = StdinBodyReader.ReadBody(stdin!);
 
-        return new CommandDispatcher.ParseResult.Ready(build(filePath, title, role, body, changeName, context.WorkingDirectory, context.Clock()));
+        return new CommandDispatcher.ParseResult.Ready(build(title, role, body, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>
@@ -1057,15 +1103,15 @@ internal static class CommandParser
 
     /// <summary>
     /// Builds <c>section create</c>'s <see cref="CommandDispatcher.ParsedCommand.SectionCreate"/>
-    /// (§7 block A, Product Owner ruling: "<c>section create</c> is in §7's scope"). One positional
-    /// token (card file path); <c>--role</c>, <c>--title</c> and <c>--change</c> are required. The
+    /// (§7 block A, Product Owner ruling: "<c>section create</c> is in §7's scope"). No positional
+    /// card file path (14.5) — <c>--role</c>, <c>--title</c> and <c>--change</c> are required. The
     /// body is read from stdin during this parse, the same read-only-extraction discipline
     /// <see cref="ParseFindingRecord"/> already applies.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseSectionCreate(CommandDispatcher.CommandContext context) =>
         ParseCardCreate(context, "'section create'", requireChange: true, build:
-            (filePath, title, role, body, changeName, workingDirectory, timestamp) =>
-                new CommandDispatcher.ParsedCommand.SectionCreate(filePath, title, role, body, changeName!, workingDirectory, timestamp));
+            (title, role, body, changeName, workingDirectory, timestamp) =>
+                new CommandDispatcher.ParsedCommand.SectionCreate(title, role, body, changeName!, workingDirectory, timestamp));
 
     /// <summary>
     /// Builds <c>section verdict</c>'s <see cref="CommandDispatcher.ParsedCommand.SectionVerdict"/>:
@@ -1715,8 +1761,9 @@ internal static class CommandParser
     /// <summary>
     /// Builds <c>rule author</c>'s <see cref="CommandDispatcher.ParsedCommand.RuleAuthor"/> (§7
     /// block E, register: "Authoring a rule from findings SHALL create a new card and SHALL record
-    /// which findings it was earned from"). Same shape as <see cref="ParseRuleCreate"/> (a card file
-    /// path, a caller-chosen <c>--scope</c>) plus <c>--earned-from</c>: a comma-separated list of
+    /// which findings it was earned from"). Same shape as <see cref="ParseRuleCreate"/> (no
+    /// positional card file path, §14.5; a caller-chosen <c>--scope</c>) plus <c>--earned-from</c>:
+    /// a comma-separated list of
     /// finding card ids, reusing the same <see cref="CardFileFormat.SplitFrontmatterList"/>-style
     /// comma convention <c>finding record</c>'s own <c>--extent-value</c> already uses for a list
     /// flag, required and non-empty (checked here, argv-decidable — whether each id actually
@@ -1725,11 +1772,10 @@ internal static class CommandParser
     /// </summary>
     private static CommandDispatcher.ParseResult ParseRuleAuthor(CommandDispatcher.CommandContext context)
     {
-        var filePath = context.Arguments.TryTake();
-        if (filePath is null)
+        var positionalRefusal = RefuseLeadingPositionalArgument(context, "'rule author'");
+        if (positionalRefusal is not null)
         {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'rule author' requires a card file path."));
+            return new CommandDispatcher.ParseResult.Refused(positionalRefusal);
         }
 
         string? title = null;
@@ -1809,7 +1855,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleAuthor(
-            filePath, title, role, scope, body, changeName, earnedFrom, context.WorkingDirectory, context.Clock()));
+            title, role, scope, body, changeName, earnedFrom, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>
@@ -1895,22 +1941,20 @@ internal static class CommandParser
     /// Unlike <see cref="ParseRuleCompact"/> there is no <c>--id</c> (no family card exists yet) and
     /// no <c>--change</c> (this proposes over the repository-scoped register, not one named change's
     /// own rules). The candidate text is read from stdin the same way <see cref="ParseRuleAuthor"/>'s
-    /// body is — new proposed wording, not a path to something already on disk. <c>--proposal-file</c>
-    /// (§7 remediation, blocker 1) is required for the same reason every card-creation verb requires
-    /// a path: this call now creates one <c>question</c> card recording the proposal, and the caller
-    /// names where, the same convention <see cref="ParseQuestionCreate"/> itself follows.
+    /// body is — new proposed wording, not a path to something already on disk. No <c>
+    /// --proposal-file</c> any more (14.5) — this call still creates one <c>question</c> card
+    /// recording the proposal, but the file it lands at is named for the identity the system mints
+    /// when it creates that card, never a caller-supplied path.
     /// </summary>
     private static CommandDispatcher.ParseResult ParseRuleProposeCompact(CommandDispatcher.CommandContext context)
     {
         string? absorbsRaw = null;
         string? roleText = null;
-        string? proposalFilePath = null;
 
         var flagRefusal = ConsumeKnownFlags(context, new Dictionary<string, Action<string>>(StringComparer.Ordinal)
         {
             ["--absorbs"] = value => absorbsRaw = value,
             ["--role"] = value => roleText = value,
-            ["--proposal-file"] = value => proposalFilePath = value,
         });
         if (flagRefusal is not null)
         {
@@ -1946,14 +1990,6 @@ internal static class CommandParser
                 "unrecognised-role", $"unrecognised role: '{roleText}'. Recognised roles: {CardOwnerWireFormat.RecognisedValues}."));
         }
 
-        if (string.IsNullOrEmpty(proposalFilePath))
-        {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument",
-                "'rule propose-compact' requires '--proposal-file <path>' — the file the recorded " +
-                "proposal (a 'question' card owned by the Product Owner) is written to."));
-        }
-
         var stdinRefusal = StdinBodyReader.RedirectedStdin.TryCreate(context.Input, context.IsInputRedirected, out var stdin);
         if (stdinRefusal is not null)
         {
@@ -1963,7 +1999,7 @@ internal static class CommandParser
         var candidateText = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleProposeCompact(
-            candidateText, backingIds, proposalFilePath, role, context.WorkingDirectory, context.Clock()));
+            candidateText, backingIds, role, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>
@@ -2060,11 +2096,10 @@ internal static class CommandParser
     /// </summary>
     private static CommandDispatcher.ParseResult ParseRuleCreate(CommandDispatcher.CommandContext context)
     {
-        var filePath = context.Arguments.TryTake();
-        if (filePath is null)
+        var positionalRefusal = RefuseLeadingPositionalArgument(context, "'rule create'");
+        if (positionalRefusal is not null)
         {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'rule create' requires a card file path."));
+            return new CommandDispatcher.ParseResult.Refused(positionalRefusal);
         }
 
         string? title = null;
@@ -2123,7 +2158,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.RuleCreate(
-            filePath, title, role, scope, body, changeName, context.WorkingDirectory, context.Clock()));
+            title, role, scope, body, changeName, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>
@@ -2168,11 +2203,10 @@ internal static class CommandParser
     /// </summary>
     private static CommandDispatcher.ParseResult ParseHazardCreate(CommandDispatcher.CommandContext context)
     {
-        var filePath = context.Arguments.TryTake();
-        if (filePath is null)
+        var positionalRefusal = RefuseLeadingPositionalArgument(context, "'hazard create'");
+        if (positionalRefusal is not null)
         {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'hazard create' requires a card file path."));
+            return new CommandDispatcher.ParseResult.Refused(positionalRefusal);
         }
 
         string? title = null;
@@ -2235,7 +2269,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.HazardCreate(
-            filePath, title, role, body, condition, cadence, context.WorkingDirectory, context.Clock()));
+            title, role, body, condition, cadence, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>
@@ -2408,11 +2442,10 @@ internal static class CommandParser
     /// </summary>
     private static CommandDispatcher.ParseResult ParseObligationCreate(CommandDispatcher.CommandContext context)
     {
-        var filePath = context.Arguments.TryTake();
-        if (filePath is null)
+        var positionalRefusal = RefuseLeadingPositionalArgument(context, "'obligation create'");
+        if (positionalRefusal is not null)
         {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'obligation create' requires a card file path."));
+            return new CommandDispatcher.ParseResult.Refused(positionalRefusal);
         }
 
         string? title = null;
@@ -2473,7 +2506,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.ObligationCreate(
-            filePath, title, role, body, changeName, owedBy, context.WorkingDirectory, context.Clock()));
+            title, role, body, changeName, owedBy, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>
@@ -2514,8 +2547,8 @@ internal static class CommandParser
     /// </summary>
     private static CommandDispatcher.ParseResult ParseDecisionCreate(CommandDispatcher.CommandContext context) =>
         ParseCardCreate(context, "'decision create'", requireChange: false, build:
-            (filePath, title, role, body, _, workingDirectory, timestamp) =>
-                new CommandDispatcher.ParsedCommand.DecisionCreate(filePath, title, role, body, workingDirectory, timestamp));
+            (title, role, body, _, workingDirectory, timestamp) =>
+                new CommandDispatcher.ParsedCommand.DecisionCreate(title, role, body, workingDirectory, timestamp));
 
     /// <summary>
     /// <c>question</c> (§7 remediation, blocker 1, creation; §9 block D, <c>answer</c>/<c>defer</c>
@@ -2573,11 +2606,10 @@ internal static class CommandParser
     /// </summary>
     private static CommandDispatcher.ParseResult ParseQuestionCreate(CommandDispatcher.CommandContext context)
     {
-        var filePath = context.Arguments.TryTake();
-        if (filePath is null)
+        var positionalRefusal = RefuseLeadingPositionalArgument(context, "'question create'");
+        if (positionalRefusal is not null)
         {
-            return new CommandDispatcher.ParseResult.Refused(new CommandOutcome.Refusal(
-                "missing-argument", "'question create' requires a card file path."));
+            return new CommandDispatcher.ParseResult.Refused(positionalRefusal);
         }
 
         string? title = null;
@@ -2639,7 +2671,7 @@ internal static class CommandParser
         var body = StdinBodyReader.ReadBody(stdin!);
 
         return new CommandDispatcher.ParseResult.Ready(new CommandDispatcher.ParsedCommand.QuestionCreate(
-            filePath, title, actingRole, owedByRole, body, sectionId, context.WorkingDirectory, context.Clock()));
+            title, actingRole, owedByRole, body, sectionId, context.WorkingDirectory, context.Clock()));
     }
 
     /// <summary>

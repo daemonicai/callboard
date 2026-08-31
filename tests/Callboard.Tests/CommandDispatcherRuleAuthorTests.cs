@@ -28,7 +28,7 @@ public sealed class CommandDispatcherRuleAuthorTests
 
         var otherChangeDirectory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(OtherChangeName).Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(otherChangeDirectory);
-        var sectionTwo = CreateSection(repo, OtherChangeName, directory: otherChangeDirectory);
+        var sectionTwo = CreateSection(repo, OtherChangeName);
         var findingTwo = CreateFinding(repo, "f-0002", sectionTwo, OtherChangeName, directory: otherChangeDirectory);
 
         var findingOnePath = Path.Combine(repo.CardsDirectory, "f-0001.md");
@@ -38,11 +38,10 @@ public sealed class CommandDispatcherRuleAuthorTests
         var findingTwoBytesBefore = File.ReadAllBytes(findingTwoPath);
         var findingTwoMtimeBefore = File.GetLastWriteTimeUtc(findingTwoPath);
 
-        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0001.md");
         var output = new StringWriter();
         var exitCode = RunInRepo(
             [
-                "rule", "author", rulePath, "--title", "Never trust a path string", "--role", "architect",
+                "rule", "author", "--title", "Never trust a path string", "--role", "architect",
                 "--scope", "repository", "--earned-from", $"{findingOne},{findingTwo}",
             ],
             output, repo.Path, "Earned from two independent incidents.");
@@ -55,6 +54,8 @@ public sealed class CommandDispatcherRuleAuthorTests
         Assert.Equal("open", result.GetProperty("status").GetString());
         var earnedFrom = result.GetProperty("earnedFrom").EnumerateArray().Select(static e => e.GetString()).ToList();
         Assert.Equal([findingOne, findingTwo], earnedFrom);
+        var rulePath = result.GetProperty("filePath").GetString()!;
+        Assert.Equal(Path.Combine(repo.RegisterDirectory, "R-0001.md"), rulePath);
 
         var cardOnDisk = AssertParseSuccess(CardStore.ReadCard(rulePath));
         Assert.True(cardOnDisk.RegisterFields.EarnedFrom.SequenceEqual([findingOne, findingTwo], StringComparer.Ordinal));
@@ -86,7 +87,7 @@ public sealed class CommandDispatcherRuleAuthorTests
         const string ArchivedChangeName = "archived-change";
         var archivedLiveDirectory = Path.Combine(repo.Path, CardLayout.ChangesDirectory(ArchivedChangeName).Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(archivedLiveDirectory);
-        var archivedSectionId = CreateSection(repo, ArchivedChangeName, directory: archivedLiveDirectory);
+        var archivedSectionId = CreateSection(repo, ArchivedChangeName);
         var archivedFindingId = CreateFinding(repo, "f-0007", archivedSectionId, ArchivedChangeName, directory: archivedLiveDirectory);
 
         var archiveOutput = new StringWriter();
@@ -101,11 +102,10 @@ public sealed class CommandDispatcherRuleAuthorTests
         var archivedFindingBytesBefore = File.ReadAllBytes(archivedFindingPath);
         var archivedFindingMtimeBefore = File.GetLastWriteTimeUtc(archivedFindingPath);
 
-        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0006.md");
         var output = new StringWriter();
         var exitCode = RunInRepo(
             [
-                "rule", "author", rulePath, "--title", "Earned across the archive boundary", "--role", "architect",
+                "rule", "author", "--title", "Earned across the archive boundary", "--role", "architect",
                 "--scope", "repository", "--earned-from", $"{liveFindingId},{archivedFindingId}",
             ],
             output, repo.Path, "One live finding, one already archived.");
@@ -115,6 +115,7 @@ public sealed class CommandDispatcherRuleAuthorTests
         var result = doc.RootElement.GetProperty("result");
         var earnedFrom = result.GetProperty("earnedFrom").EnumerateArray().Select(static e => e.GetString()).ToList();
         Assert.Equal([liveFindingId, archivedFindingId], earnedFrom);
+        var rulePath = result.GetProperty("filePath").GetString()!;
 
         var cardOnDisk = AssertParseSuccess(CardStore.ReadCard(rulePath));
         Assert.True(cardOnDisk.RegisterFields.EarnedFrom.SequenceEqual([liveFindingId, archivedFindingId], StringComparer.Ordinal));
@@ -133,30 +134,28 @@ public sealed class CommandDispatcherRuleAuthorTests
     public void RuleAuthor_NoEarnedFromFlag_Refuses_AtParseTime()
     {
         using var repo = new TempGitRepo();
-        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0002.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
-            ["rule", "author", rulePath, "--title", "No evidence chain", "--role", "architect", "--scope", "repository"],
+            ["rule", "author", "--title", "No evidence chain", "--role", "architect", "--scope", "repository"],
             output, repo.Path, "Body.");
 
         Assert.Equal(CommandDispatcher.RefusalExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("missing-argument", refusal.GetProperty("code").GetString());
-        Assert.False(File.Exists(rulePath));
+        AssertNoRuleFileWasCreated(repo);
     }
 
     [Fact]
     public void RuleAuthor_EarnedFromNamesAnIdThatDoesNotExist_Refuses_WithCardIdNotFound_AndWritesNothing()
     {
         using var repo = new TempGitRepo();
-        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0003.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
             [
-                "rule", "author", rulePath, "--title", "Bad evidence", "--role", "architect",
+                "rule", "author", "--title", "Bad evidence", "--role", "architect",
                 "--scope", "repository", "--earned-from", "F-9999",
             ],
             output, repo.Path, "Body.");
@@ -165,7 +164,7 @@ public sealed class CommandDispatcherRuleAuthorTests
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("card-id-not-found", refusal.GetProperty("code").GetString());
-        Assert.False(File.Exists(rulePath));
+        AssertNoRuleFileWasCreated(repo);
     }
 
     [Fact]
@@ -173,12 +172,11 @@ public sealed class CommandDispatcherRuleAuthorTests
     {
         using var repo = new TempGitRepo();
         var sectionId = CreateSection(repo, ChangeName);
-        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0004.md");
 
         var output = new StringWriter();
         var exitCode = RunInRepo(
             [
-                "rule", "author", rulePath, "--title", "Wrong kind", "--role", "architect",
+                "rule", "author", "--title", "Wrong kind", "--role", "architect",
                 "--scope", "repository", "--earned-from", sectionId,
             ],
             output, repo.Path, "Body.");
@@ -187,7 +185,7 @@ public sealed class CommandDispatcherRuleAuthorTests
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("wrong-card-kind", refusal.GetProperty("code").GetString());
-        Assert.False(File.Exists(rulePath));
+        AssertNoRuleFileWasCreated(repo);
     }
 
     // Two findings, the second one unresolvable — the whole attempt refuses without writing the
@@ -202,11 +200,10 @@ public sealed class CommandDispatcherRuleAuthorTests
         var findingPath = Path.Combine(repo.CardsDirectory, "f-0005.md");
         var findingBytesBefore = File.ReadAllBytes(findingPath);
 
-        var rulePath = Path.Combine(repo.RegisterDirectory, "r-0005.md");
         var output = new StringWriter();
         var exitCode = RunInRepo(
             [
-                "rule", "author", rulePath, "--title", "Half real", "--role", "architect",
+                "rule", "author", "--title", "Half real", "--role", "architect",
                 "--scope", "repository", "--earned-from", $"{findingId},F-9999",
             ],
             output, repo.Path, "Body.");
@@ -215,23 +212,34 @@ public sealed class CommandDispatcherRuleAuthorTests
         using var doc = JsonDocument.Parse(output.ToString());
         var refusal = doc.RootElement.GetProperty("refusal");
         Assert.Equal("card-id-not-found", refusal.GetProperty("code").GetString());
-        Assert.False(File.Exists(rulePath));
+        AssertNoRuleFileWasCreated(repo);
         Assert.Equal(findingBytesBefore, File.ReadAllBytes(findingPath));
     }
 
-    private static string CreateSection(TempGitRepo repo, string changeName, string? directory = null)
+    private static string CreateSection(TempGitRepo repo, string changeName)
     {
-        var sectionDirectory = directory ?? repo.CardsDirectory;
-        var sectionPath = Path.Combine(sectionDirectory, "s-" + Guid.NewGuid().ToString("N") + ".md");
         var output = new StringWriter();
 
         var exitCode = RunInRepo(
-            ["section", "create", sectionPath, "--title", "Section", "--role", "architect", "--change", changeName],
+            ["section", "create", "--title", "Section", "--role", "architect", "--change", changeName],
             output, repo.Path, "Section body.");
 
         Assert.Equal(CommandDispatcher.SuccessExitCode, exitCode);
         using var doc = JsonDocument.Parse(output.ToString());
         return doc.RootElement.GetProperty("result").GetProperty("id").GetString()!;
+    }
+
+    // 14.5: a refused 'rule author' can no longer be checked against one caller-named path — the
+    // caller never named one. Absence of any card bearing the rule's own kind prefix in the
+    // register directory is the corresponding "wrote nothing" proof.
+    private static void AssertNoRuleFileWasCreated(TempGitRepo repo)
+    {
+        if (!Directory.Exists(repo.RegisterDirectory))
+        {
+            return;
+        }
+
+        Assert.Empty(Directory.EnumerateFiles(repo.RegisterDirectory, "R-*.md", SearchOption.TopDirectoryOnly));
     }
 
     private static string CreateFinding(TempGitRepo repo, string fileStem, string sectionId, string changeName, string? directory = null)
